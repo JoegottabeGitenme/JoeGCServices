@@ -1,0 +1,86 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+.directory
+
+# Docker files (local builds only, not the Dockerfiles themselves)
+docker-compose.override.yml
+
+# Kubernetes local development
+minikube/
+.kube/
+kubeconfig
+
+# Helm
+charts/
+*.tgz
+
+# Build outputs
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.def
+*.exp
+
+# Testing
+.coverage
+*.profraw
+*.profdata
+/coverage/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+.tmp/
+
+# Node (if used for any tooling)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python (if used for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+.venv
+
+# Misc development
+.cache/
+.clangd/
+compile_commands.json
