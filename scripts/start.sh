@@ -140,6 +140,10 @@ start_compose() {
     
     echo ""
     show_compose_access_info
+    
+    # Run test rendering to verify the system is working
+    sleep 3  # Give API a moment to fully stabilize
+    run_test_rendering
 }
 
 stop_compose() {
@@ -223,6 +227,44 @@ show_compose_access_info() {
      echo "Stop services:"
      echo "  ./start.sh --stop"
      echo ""
+     echo "Generate test rendering images:"
+     echo "  bash scripts/test_rendering.sh"
+     echo ""
+}
+
+run_test_rendering() {
+    log_info "Running test rendering to verify ingestion and rendering..."
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    
+    # Check if API is ready
+    local retries=10
+    while [ $retries -gt 0 ]; do
+        if curl -s "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities" &>/dev/null; then
+            break
+        fi
+        echo -ne "\rWaiting for API to be ready... ($retries seconds remaining)"
+        sleep 1
+        retries=$((retries - 1))
+    done
+    
+    if [ $retries -eq 0 ]; then
+        log_warn "API may not be fully ready yet. Skipping test rendering."
+        return
+    fi
+    
+    echo ""
+    
+    # Run the test script
+    if bash scripts/test_rendering.sh; then
+        log_success "Test rendering completed!"
+        echo ""
+        log_info "Sample images saved to: test_renders/"
+        echo "  Verify the images contain colored temperature data, not gray placeholders"
+    else
+        log_warn "Test rendering had issues, but services are still running"
+    fi
 }
 
 #------------------------------------------------------------------------------

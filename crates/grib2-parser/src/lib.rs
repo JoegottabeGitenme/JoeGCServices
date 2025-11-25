@@ -137,6 +137,35 @@ impl Grib2Message {
             self.grid_definition.num_points_longitude,
         )
     }
+
+    /// Unpack the grid data values (supports simple packing only for now)
+    pub fn unpack_data(&self) -> Grib2Result<Vec<f32>> {
+        match self.data_representation.packing_method {
+            0 => {
+                // Simple packing
+                let num_points = (self.grid_definition.num_points_latitude as u32)
+                    * (self.grid_definition.num_points_longitude as u32);
+                
+                let values = unpacking::unpack_simple(
+                    &self.data_section.data,
+                    num_points,
+                    self.data_representation.bits_per_value,
+                    self.data_representation.reference_value,
+                    self.data_representation.binary_scale_factor,
+                    self.data_representation.decimal_scale_factor,
+                    None, // bitmap not used for now
+                )
+                .map_err(|e| Grib2Error::UnpackingError(format!("Simple unpacking failed: {}", e)))?;
+                
+                // Convert Option<f32> to f32, using 0.0 for missing values
+                Ok(values.into_iter().map(|v| v.unwrap_or(0.0)).collect())
+            }
+            method => Err(Grib2Error::UnsupportedTemplate {
+                template_number: method as u16,
+                reason: format!("Packing method {} not yet supported", method),
+            }),
+        }
+    }
 }
 
 /// GRIB2 file reader that iterates over messages.

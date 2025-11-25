@@ -11,6 +11,8 @@ path = "src/main.rs"
 wms-common = { path = "../../crates/wms-common" }
 wms-protocol = { path = "../../crates/wms-protocol" }
 storage = { path = "../../crates/storage" }
+grib2-parser = { path = "../../crates/grib2-parser" }
+renderer = { path = "../../crates/renderer" }
 
 tokio = { workspace = true }
 axum = { workspace = true }

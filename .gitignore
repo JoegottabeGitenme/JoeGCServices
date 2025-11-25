@@ -84,3 +84,8 @@ venv/
 .cache/
 .clangd/
 compile_commands.json
+
+# Test renders and sample images
+/test_renders/
+/renders/
+/samples/

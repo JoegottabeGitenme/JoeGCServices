@@ -26,10 +26,16 @@ impl Catalog {
 
     /// Run database migrations.
     pub async fn migrate(&self) -> WmsResult<()> {
-        sqlx::query(SCHEMA_SQL)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WmsError::DatabaseError(format!("Migration failed: {}", e)))?;
+        // Split SQL statements and execute them individually
+        for statement in SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| WmsError::DatabaseError(format!("Migration failed: {}", e)))?;
+            }
+        }
 
         Ok(())
     }
@@ -207,6 +213,24 @@ impl Catalog {
         .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
 
         Ok(rows)
+    }
+
+    /// Get recently ingested datasets (last N minutes).
+    pub async fn get_recent_ingestions(&self, minutes: i64) -> WmsResult<Vec<CatalogEntry>> {
+        let cutoff = Utc::now() - chrono::Duration::minutes(minutes);
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE ingested_at > $1 AND status = 'available' \
+             ORDER BY ingested_at DESC LIMIT 50",
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
     /// Mark old datasets for cleanup.

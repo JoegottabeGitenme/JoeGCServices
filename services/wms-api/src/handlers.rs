@@ -4,13 +4,17 @@ use axum::{
     extract::{Extension, Path, Query},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::collections::HashMap;
 use tracing::{info, instrument};
 
 use storage::CacheKey;
 use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
+use bytes::Bytes;
+use renderer::gradient;
 
 use crate::state::AppState;
 
@@ -20,29 +24,29 @@ use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct WmsParams {
-    #[serde(rename = "SERVICE")]
+    #[serde(rename = "SERVICE", alias = "service")]
     service: Option<String>,
-    #[serde(rename = "REQUEST")]
+    #[serde(rename = "REQUEST", alias = "request")]
     request: Option<String>,
-    #[serde(rename = "VERSION")]
+    #[serde(rename = "VERSION", alias = "version")]
     version: Option<String>,
-    #[serde(rename = "LAYERS")]
+    #[serde(rename = "LAYERS", alias = "layers")]
     layers: Option<String>,
-    #[serde(rename = "STYLES")]
+    #[serde(rename = "STYLES", alias = "styles")]
     styles: Option<String>,
-    #[serde(rename = "CRS", alias = "SRS")]
+    #[serde(rename = "CRS", alias = "SRS", alias = "crs", alias = "srs")]
     crs: Option<String>,
-    #[serde(rename = "BBOX")]
+    #[serde(rename = "BBOX", alias = "bbox")]
     bbox: Option<String>,
-    #[serde(rename = "WIDTH")]
+    #[serde(rename = "WIDTH", alias = "width")]
     width: Option<u32>,
-    #[serde(rename = "HEIGHT")]
+    #[serde(rename = "HEIGHT", alias = "height")]
     height: Option<u32>,
-    #[serde(rename = "FORMAT")]
+    #[serde(rename = "FORMAT", alias = "format")]
     format: Option<String>,
-    #[serde(rename = "TIME")]
+    #[serde(rename = "TIME", alias = "time")]
     time: Option<String>,
-    #[serde(rename = "TRANSPARENT")]
+    #[serde(rename = "TRANSPARENT", alias = "transparent")]
     transparent: Option<String>,
 }
 
@@ -51,7 +55,9 @@ pub async fn wms_handler(
     Extension(state): Extension<Arc<AppState>>,
     Query(params): Query<WmsParams>,
 ) -> Response {
-    if params.service.as_deref() != Some("WMS") {
+    // Normalize service parameter to uppercase for comparison
+    let service = params.service.as_deref().map(|s| s.to_uppercase());
+    if service.as_deref() != Some("WMS") {
         return wms_exception(
             "InvalidParameterValue",
             "SERVICE must be WMS",
@@ -59,9 +65,11 @@ pub async fn wms_handler(
         );
     }
 
-    match params.request.as_deref() {
-        Some("GetCapabilities") => wms_get_capabilities(state, params).await,
-        Some("GetMap") => wms_get_map(state, params).await,
+    // Normalize request parameter to match pattern
+    let request = params.request.as_deref().map(|s| s.to_uppercase());
+    match request.as_deref() {
+        Some("GETCAPABILITIES") => wms_get_capabilities(state, params).await,
+        Some("GETMAP") => wms_get_map(state, params).await,
         Some(req) => wms_exception(
             "OperationNotSupported",
             &format!("Unknown request: {}", req),
@@ -78,7 +86,15 @@ pub async fn wms_handler(
 async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Response {
     let version = params.version.as_deref().unwrap_or("1.3.0");
     let models = state.catalog.list_models().await.unwrap_or_default();
-    let xml = build_wms_capabilities_xml(version, &models);
+    
+    // Get parameters for each model
+    let mut model_params = HashMap::new();
+    for model in &models {
+        let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
+        model_params.insert(model.clone(), params_list);
+    }
+    
+    let xml = build_wms_capabilities_xml(version, &models, &model_params);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -102,12 +118,26 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let style = params.styles.as_deref().unwrap_or("default");
 
     info!(layer = %layers, style = %style, width = width, height = height, "GetMap request");
-    let placeholder = generate_placeholder_image(width, height);
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "image/png")
-        .body(placeholder.into())
-        .unwrap()
+    
+    // Try to render actual data, fall back to placeholder on error
+    match render_weather_data(&state, layers, width, height).await {
+        Ok(png_data) => {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .body(png_data.into())
+                .unwrap()
+        }
+        Err(e) => {
+            info!(error = %e, "Rendering failed, using placeholder");
+            let placeholder = generate_placeholder_image(width, height);
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .body(placeholder.into())
+                .unwrap()
+        }
+    }
 }
 
 // ============================================================================
@@ -254,6 +284,179 @@ pub async fn metrics_handler() -> impl IntoResponse {
 }
 
 // ============================================================================
+// Rendering
+// ============================================================================
+
+async fn render_weather_data(
+    state: &Arc<AppState>,
+    layer: &str,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, String> {
+    // Parse layer name (format: "model_parameter")
+    let parts: Vec<&str> = layer.split('_').collect();
+    if parts.len() < 2 {
+        return Err("Invalid layer format".to_string());
+    }
+
+    let model = parts[0];
+    let parameter = parts[1..].join("_");
+
+    // Get latest dataset for this parameter
+    let entry = state
+        .catalog
+        .get_latest(model, &parameter)
+        .await
+        .map_err(|e| format!("Catalog query failed: {}", e))?
+        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
+
+    // Load GRIB2 file from storage
+    let grib_data = state
+        .storage
+        .get(&entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+
+    // Parse GRIB2 and find matching message
+    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
+    let mut message = None;
+
+    while let Some(msg) = reader
+        .next_message()
+        .map_err(|e| format!("GRIB2 parse error: {}", e))?
+    {
+        // Match by parameter and level
+        if msg.parameter() == &parameter[..] {
+            message = Some(msg);
+            break;
+        }
+    }
+
+    let msg = message.ok_or_else(|| format!("Parameter {} not found in GRIB2", parameter))?;
+
+    // Unpack grid data
+    let grid_data = msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking failed: {}", e))?;
+
+    let (grid_height, grid_width) = msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+
+    if grid_data.len() != grid_width * grid_height {
+        return Err(format!(
+            "Grid data size mismatch: {} vs {}x{}",
+            grid_data.len(),
+            grid_width,
+            grid_height
+        ));
+    }
+
+    // Find data min/max for scaling
+    let (min_val, max_val) = grid_data
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &val| {
+            (min.min(val), max.max(val))
+        });
+
+    // Render based on parameter type
+    let rgba_data = if parameter.contains("TMP") || parameter.contains("TEMP") {
+        // Temperature in Kelvin, convert to Celsius for rendering
+        let celsius_data: Vec<f32> = grid_data.iter().map(|k| k - 273.15).collect();
+        let min_c = min_val - 273.15;
+        let max_c = max_val - 273.15;
+        renderer::gradient::render_temperature(&celsius_data, grid_width, grid_height, min_c, max_c)
+    } else {
+        // Generic gradient rendering
+        renderer::gradient::render_grid(
+            &grid_data,
+            grid_width,
+            grid_height,
+            min_val,
+            max_val,
+            |norm| {
+                // Generic blue-red gradient
+                let hue = (1.0 - norm) * 240.0; // Blue to red
+                let rgb = hsv_to_rgb(hue, 1.0, 1.0);
+                gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
+            },
+        )
+    };
+
+    // Convert to PNG and scale to requested size
+    let png = renderer::png::create_png(&rgba_data, grid_width, grid_height)
+        .map_err(|e| format!("PNG encoding failed: {}", e))?;
+
+    Ok(png)
+}
+
+/// Convert HSV to RGB (simplified version)
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let h = h % 360.0;
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    (
+        ((r + m) * 255.0) as u8,
+        ((g + m) * 255.0) as u8,
+        ((b + m) * 255.0) as u8,
+    )
+}
+
+// ============================================================================
+// Ingestion Events API
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct IngestionEvent {
+    pub model: String,
+    pub parameter: String,
+    pub level: String,
+    pub reference_time: String,
+    pub forecast_hour: u32,
+    pub file_size: u64,
+}
+
+#[instrument(skip(state))]
+pub async fn ingestion_events_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Json<Vec<IngestionEvent>> {
+    // Get recent ingestions from the last 60 minutes
+    match state.catalog.get_recent_ingestions(60).await {
+        Ok(entries) => {
+            let events = entries
+                .into_iter()
+                .map(|entry| IngestionEvent {
+                    model: entry.model,
+                    parameter: entry.parameter,
+                    level: entry.level,
+                    reference_time: entry.reference_time.to_rfc3339(),
+                    forecast_hour: entry.forecast_hour,
+                    file_size: entry.file_size,
+                })
+                .collect();
+            Json(events)
+        }
+        Err(_) => Json(Vec::new()),
+    }
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -281,14 +484,32 @@ fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
         .unwrap()
 }
 
-fn build_wms_capabilities_xml(version: &str, models: &[String]) -> String {
+fn build_wms_capabilities_xml(
+    version: &str,
+    models: &[String],
+    model_params: &HashMap<String, Vec<String>>,
+) -> String {
+    let empty_params = Vec::new();
     let layers: String = models
         .iter()
-        .map(|m| {
+        .map(|model| {
+            let params = model_params.get(model).unwrap_or(&empty_params);
+            let param_layers = params
+                .iter()
+                .map(|p| {
+                    format!(
+                        r#"<Layer><Name>{}_{}</Name><Title>{} - {}</Title></Layer>"#,
+                        model, p, model.to_uppercase(), p
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            
             format!(
-                r#"<Layer><Name>{}</Name><Title>{}</Title></Layer>"#,
-                m,
-                m.to_uppercase()
+                r#"<Layer><Name>{}</Name><Title>{}</Title>{}</Layer>"#,
+                model,
+                model.to_uppercase(),
+                param_layers
             )
         })
         .collect();

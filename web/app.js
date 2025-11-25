@@ -1,21 +1,30 @@
 // WMS Dashboard Application
 
 const API_BASE = 'http://localhost:8080';
+const REDIS_URL = 'http://localhost:8080/api/ingestion'; // Placeholder - would need API endpoint
 let map;
 let wmsLayer = null;
 let selectedLayer = null;
+let ingestionStatusInterval = null;
 
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
 const wmtsStatusEl = document.getElementById('wmts-status');
 const layersListEl = document.getElementById('layers-list');
 const layerDetailsEl = document.getElementById('layer-details');
+const ingesterServiceStatusEl = document.getElementById('ingester-service-status');
+const lastIngestTimeEl = document.getElementById('last-ingest-time');
+const datasetCountEl = document.getElementById('dataset-count');
+const modelsListEl = document.getElementById('models-list');
+const storageSizeEl = document.getElementById('storage-size');
+const ingestLogEl = document.getElementById('ingest-log');
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     checkServiceStatus();
     loadCapabilities();
+    initIngestionStatus();
 });
 
 // Initialize Leaflet map
@@ -297,6 +306,117 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Initialize ingestion status monitoring
+function initIngestionStatus() {
+    checkIngestionStatus();
+    // Refresh ingestion status every 10 seconds
+    ingestionStatusInterval = setInterval(() => {
+        checkIngestionStatus();
+    }, 10000);
+}
+
+// Check ingestion status from catalog database
+async function checkIngestionStatus() {
+    try {
+        // For now, we'll simulate ingestion status
+        // In a production system, this would fetch from the ingester API
+        await updateIngestionMetrics();
+    } catch (error) {
+        console.error('Failed to check ingestion status:', error);
+        setIngestionStatus('unknown');
+    }
+}
+
+// Update ingestion metrics from WMS capabilities
+async function updateIngestionMetrics() {
+    try {
+        const response = await fetch(
+            `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`,
+            { mode: 'cors', cache: 'no-cache' }
+        );
+        
+        if (!response.ok) {
+            setIngestionStatus('offline');
+            return;
+        }
+
+        const text = await response.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, 'text/xml');
+        
+        // Count available layers
+        const layers = xml.querySelectorAll('Layer[queryable="1"]');
+        const datasetCount = layers.length;
+        
+        // Extract unique models from layer names
+        const models = new Set();
+        layers.forEach(layer => {
+            const name = getElementText(layer, 'Name');
+            if (name) {
+                const model = name.split(':')[0];
+                if (model) models.add(model);
+            }
+        });
+
+        // Update UI
+        setIngestionStatus('online');
+        datasetCountEl.textContent = datasetCount;
+        modelsListEl.textContent = Array.from(models).join(', ') || 'None';
+        
+        // Update timestamp
+        const now = new Date();
+        lastIngestTimeEl.textContent = now.toLocaleTimeString();
+        
+        // Simulate storage size (would come from actual API in production)
+        if (datasetCount > 0) {
+            const estimatedSize = (datasetCount * 100).toFixed(0);
+            storageSizeEl.textContent = formatBytes(estimatedSize);
+        }
+        
+        // Add log entry
+        addLogEntry(`Found ${datasetCount} datasets, models: ${Array.from(models).join(', ')}`, 'success');
+        
+    } catch (error) {
+        console.error('Error updating ingestion metrics:', error);
+        addLogEntry(`Error: ${error.message}`, 'error');
+        setIngestionStatus('offline');
+    }
+}
+
+// Set ingestion service status
+function setIngestionStatus(status) {
+    const statusDot = ingesterServiceStatusEl.querySelector('.status-dot');
+    const statusText = ingesterServiceStatusEl.querySelector('.status-text');
+    
+    statusDot.className = `status-dot ${status}`;
+    statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+// Add entry to ingestion log
+function addLogEntry(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.textContent = `[${timestamp}] ${message}`;
+    
+    // Keep log to last 10 entries
+    while (ingestLogEl.children.length >= 10) {
+        ingestLogEl.removeChild(ingestLogEl.firstChild);
+    }
+    
+    ingestLogEl.appendChild(entry);
+    ingestLogEl.scrollTop = ingestLogEl.scrollHeight;
+}
+
+// Format bytes to human readable
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 // Auto-refresh status every 30 seconds

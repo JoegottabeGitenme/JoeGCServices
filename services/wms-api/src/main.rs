@@ -76,6 +76,8 @@ async fn main() -> Result<()> {
         .route("/ready", get(handlers::ready_handler))
         // Metrics
         .route("/metrics", get(handlers::metrics_handler))
+        // Ingestion events API
+        .route("/api/ingestion/events", get(handlers::ingestion_events_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())

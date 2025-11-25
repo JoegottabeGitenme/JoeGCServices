@@ -39,6 +39,41 @@
         <div class="main-content">
             <!-- Sidebar -->
             <aside class="sidebar">
+                <!-- Ingestion Status Section -->
+                <div class="sidebar-section ingestion-status-section">
+                    <h2>Ingestion Status</h2>
+                    <div id="ingestion-status" class="ingestion-status">
+                        <div class="status-box">
+                            <div class="status-row">
+                                <span class="label">Service:</span>
+                                <div class="status-badge" id="ingester-service-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Unknown</span>
+                                </div>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Last Run:</span>
+                                <span class="value" id="last-ingest-time">Never</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Datasets:</span>
+                                <span class="value" id="dataset-count">0</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Models:</span>
+                                <span class="value" id="models-list">None</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Storage:</span>
+                                <span class="value" id="storage-size">0 B</span>
+                            </div>
+                        </div>
+                        <div class="ingest-log" id="ingest-log">
+                            <div class="log-entry">Waiting for ingestion data...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="sidebar-section">
                     <h2>Layers</h2>
                     <div id="layers-list" class="layers-list">
