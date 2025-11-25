@@ -44,6 +44,28 @@ services:
       timeout: 5s
       retries: 5
 
+  web-dashboard:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./web:/app
+    ports:
+      - "8000:8000"
+    command: python3 server.py
+    environment:
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      - minio
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - default
+
 volumes:
   postgres_data:
   redis_data:
