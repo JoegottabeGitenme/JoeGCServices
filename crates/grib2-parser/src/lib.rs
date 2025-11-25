@@ -203,38 +203,38 @@ impl Grib2Reader {
 
         let message_data = &self.data[message_offset..message_offset + message_length];
 
-        // Parse all sections
+        // Parse all sections - use the full message data for the parsers
         let identification =
-            sections::parse_identification(&message_data[16..]).map_err(|e| Grib2Error::ParseError {
+            sections::parse_identification(message_data).map_err(|e| Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse identification: {}", e),
             })?;
 
         let grid_definition =
-            sections::parse_grid_definition(&message_data[16..]).map_err(|e| {
+            sections::parse_grid_definition(message_data).map_err(|e| {
                 Grib2Error::ParseError {
                     offset: message_offset + 16,
                     reason: format!("Failed to parse grid definition: {}", e),
                 }
             })?;
 
-        let product_definition = sections::parse_product_definition(&message_data[16..])
+        let product_definition = sections::parse_product_definition(message_data)
             .map_err(|e| Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse product definition: {}", e),
             })?;
 
         let data_representation =
-            sections::parse_data_representation(&message_data[16..]).map_err(|e| {
+            sections::parse_data_representation(message_data).map_err(|e| {
                 Grib2Error::ParseError {
                     offset: message_offset + 16,
                     reason: format!("Failed to parse data representation: {}", e),
                 }
             })?;
 
-        let bitmap = sections::parse_bitmap(&message_data[16..]).ok();
+        let bitmap = sections::parse_bitmap(message_data).ok();
 
-        let data_section = sections::parse_data_section(&message_data[16..]).map_err(|e| {
+        let data_section = sections::parse_data_section(message_data).map_err(|e| {
             Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse data section: {}", e),
@@ -295,9 +295,9 @@ mod tests {
 
     #[test]
     fn test_grib2_magic() {
-        let data = Bytes::from(b"GRIB\x00\x00\x00\x02hello7777");
+        let data = Bytes::from(&b"GRIB\x00\x00\x00\x02hello7777"[..]);
         let reader = Grib2Reader::new(data);
-        assert_eq!(reader.size(), 16);
+        assert_eq!(reader.size(), 17);
     }
 
     #[test]
