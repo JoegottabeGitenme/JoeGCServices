@@ -69,10 +69,11 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"]
+      test: ["CMD", "curl", "-f", "http://wms-api:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   web-dashboard:
@@ -95,10 +96,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/\").read()' 2>/dev/null && echo OK || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 5s
     restart: unless-stopped
 
 volumes:
