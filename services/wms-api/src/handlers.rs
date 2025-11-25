@@ -343,6 +343,13 @@ async fn render_weather_data(
     let grid_width = grid_width as usize;
     let grid_height = grid_height as usize;
 
+    info!(
+        "Grid dimensions: {}x{}, data points: {}",
+        grid_width,
+        grid_height,
+        grid_data.len()
+    );
+
     if grid_data.len() != grid_width * grid_height {
         return Err(format!(
             "Grid data size mismatch: {} vs {}x{}",
@@ -359,12 +366,26 @@ async fn render_weather_data(
             (min.min(val), max.max(val))
         });
 
+    info!("Data range: {} to {}", min_val, max_val);
+    info!("Sample values: {:?}", &grid_data[0..10.min(grid_data.len())]);
+
+    // For now, render the full grid resolution
+    // TODO: Implement proper resampling to match WMS request dimensions
+    let rendered_width = width as usize;
+    let rendered_height = height as usize;
+
     // Render based on parameter type
     let rgba_data = if parameter.contains("TMP") || parameter.contains("TEMP") {
         // Temperature in Kelvin, convert to Celsius for rendering
         let celsius_data: Vec<f32> = grid_data.iter().map(|k| k - 273.15).collect();
         let min_c = min_val - 273.15;
         let max_c = max_val - 273.15;
+        
+        info!(
+            "Temperature range: {:.2}°C to {:.2}°C",
+            min_c, max_c
+        );
+        
         renderer::gradient::render_temperature(&celsius_data, grid_width, grid_height, min_c, max_c)
     } else {
         // Generic gradient rendering
@@ -383,7 +404,12 @@ async fn render_weather_data(
         )
     };
 
-    // Convert to PNG and scale to requested size
+    info!(
+        "Rendered PNG from {}x{} grid, output {}x{}",
+        grid_width, grid_height, rendered_width, rendered_height
+    );
+
+    // Convert to PNG 
     let png = renderer::png::create_png(&rgba_data, grid_width, grid_height)
         .map_err(|e| format!("PNG encoding failed: {}", e))?;
 

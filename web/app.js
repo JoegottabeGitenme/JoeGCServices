@@ -19,6 +19,20 @@ const modelsListEl = document.getElementById('models-list');
 const storageSizeEl = document.getElementById('storage-size');
 const ingestLogEl = document.getElementById('ingest-log');
 
+// Performance Tracking
+const performanceStats = {
+    tilesLoaded: 0,
+    tileTimes: [],
+    currentLayer: null,
+    layerStartTime: null
+};
+
+const lastTileTimeEl = document.getElementById('last-tile-time');
+const avgTileTimeEl = document.getElementById('avg-tile-time');
+const tilesLoadedCountEl = document.getElementById('tiles-loaded-count');
+const slowestTileTimeEl = document.getElementById('slowest-tile-time');
+const currentLayerNameEl = document.getElementById('current-layer-name');
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
@@ -264,6 +278,12 @@ function displayLayerDetails(layer) {
 
 // Add WMS layer to map
 function addWmsLayerToMap(layer) {
+    // Reset performance tracking for new layer
+    performanceStats.currentLayer = layer.name;
+    performanceStats.tileTimes = [];
+    performanceStats.tilesLoaded = 0;
+    updatePerformanceDisplay();
+
     // Remove existing WMS layer
     if (wmsLayer) {
         map.removeLayer(wmsLayer);
@@ -296,6 +316,25 @@ function addWmsLayerToMap(layer) {
         transparent: true,
         attribution: `Layer: ${layer.title}`,
         opacity: 0.7
+    });
+
+    // Hook into tile load events for performance tracking
+    wmsLayer.on('loading', function() {
+        performanceStats.layerStartTime = Date.now();
+    });
+    
+    wmsLayer.on('load', function() {
+        if (performanceStats.layerStartTime) {
+            const loadTime = Date.now() - performanceStats.layerStartTime;
+            trackTileLoadTime(loadTime);
+        }
+    });
+    
+    wmsLayer.on('tileerror', function() {
+        if (performanceStats.layerStartTime) {
+            const loadTime = Date.now() - performanceStats.layerStartTime;
+            trackTileLoadTime(loadTime);
+        }
     });
 
     wmsLayer.addTo(map);
@@ -417,6 +456,74 @@ function formatBytes(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// ============================================================================
+// Performance Tracking
+// ============================================================================
+
+function trackTileLoadTime(time) {
+    performanceStats.tileTimes.push(time);
+    performanceStats.tilesLoaded++;
+    
+    // Keep only last 100 tiles in memory
+    if (performanceStats.tileTimes.length > 100) {
+        performanceStats.tileTimes.shift();
+    }
+    
+    updatePerformanceDisplay();
+}
+
+function updatePerformanceDisplay() {
+    // Last tile time
+    if (performanceStats.tileTimes.length > 0) {
+        const lastTime = performanceStats.tileTimes[performanceStats.tileTimes.length - 1];
+        lastTileTimeEl.textContent = `${lastTime.toFixed(0)}ms`;
+        lastTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
+        if (lastTime < 500) {
+            lastTileTimeEl.parentElement.classList.add('fast');
+        } else if (lastTime < 1500) {
+            lastTileTimeEl.parentElement.classList.add('medium');
+        } else {
+            lastTileTimeEl.parentElement.classList.add('slow');
+        }
+    }
+    
+    // Average time
+    if (performanceStats.tileTimes.length > 0) {
+        const avgTime = performanceStats.tileTimes.reduce((a, b) => a + b, 0) / performanceStats.tileTimes.length;
+        avgTileTimeEl.textContent = `${avgTime.toFixed(0)}ms`;
+        avgTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
+        if (avgTime < 500) {
+            avgTileTimeEl.parentElement.classList.add('fast');
+        } else if (avgTime < 1500) {
+            avgTileTimeEl.parentElement.classList.add('medium');
+        } else {
+            avgTileTimeEl.parentElement.classList.add('slow');
+        }
+    }
+    
+    // Slowest time
+    if (performanceStats.tileTimes.length > 0) {
+        const slowestTime = Math.max(...performanceStats.tileTimes);
+        slowestTileTimeEl.textContent = `${slowestTime.toFixed(0)}ms`;
+        slowestTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
+        if (slowestTime < 500) {
+            slowestTileTimeEl.parentElement.classList.add('fast');
+        } else if (slowestTime < 1500) {
+            slowestTileTimeEl.parentElement.classList.add('medium');
+        } else {
+            slowestTileTimeEl.parentElement.classList.add('slow');
+        }
+    }
+    
+    // Tiles loaded
+    tilesLoadedCountEl.textContent = performanceStats.tilesLoaded;
+    
+    // Current layer
+    if (performanceStats.currentLayer) {
+        currentLayerNameEl.textContent = performanceStats.currentLayer;
+    }
 }
 
 // Auto-refresh status every 30 seconds
