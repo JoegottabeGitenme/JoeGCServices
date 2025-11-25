@@ -256,29 +256,55 @@ impl IngestionPipeline {
         storage_path: &str,
         file_size: u64,
     ) -> Result<()> {
-        // TODO: Implement actual GRIB2 parsing to extract the parameter
-        // For now, we'll register the raw file in the catalog
-
         // Parse reference time
         let reference_time = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")?
             .and_hms_opt(cycle, 0, 0)
             .ok_or_else(|| anyhow!("Invalid time"))?;
         let reference_time = chrono::Utc.from_utc_datetime(&reference_time);
 
-        // Create catalog entry
-        let entry = CatalogEntry {
-            model: model_id.to_string(),
-            parameter: param_config.name.clone(),
-            level: param_config.grib_filter.level.clone(),
-            reference_time,
-            forecast_hour: fhr,
-            bbox: get_model_bbox(model_id),
-            storage_path: storage_path.to_string(),
-            file_size,
-        };
+        // Parse GRIB2 file and find matching parameter
+        let mut reader = grib2_parser::Grib2Reader::new(data.clone());
+        let mut found_matching_message = false;
 
-        self.catalog.register_dataset(&entry).await?;
-        info!("Registered parameter in catalog");
+        while let Some(message) = reader.next_message().ok().flatten() {
+            // Check if this message matches the parameter we're looking for
+            if message.product_definition.parameter_short_name == param_config.grib_filter.parameter
+                && message.product_definition.level_description.contains(&param_config.grib_filter.level)
+            {
+                found_matching_message = true;
+                
+                debug!(
+                    "Found matching parameter message: {} at level {}",
+                    param_config.grib_filter.parameter,
+                    param_config.grib_filter.level
+                );
+
+                // For now, just register the raw file in the catalog
+                // Full data extraction and unpacking can be added later
+            }
+        }
+
+        if found_matching_message {
+            // Create catalog entry for this parameter
+            let entry = CatalogEntry {
+                model: model_id.to_string(),
+                parameter: param_config.name.clone(),
+                level: param_config.grib_filter.level.clone(),
+                reference_time,
+                forecast_hour: fhr,
+                bbox: get_model_bbox(model_id),
+                storage_path: storage_path.to_string(),
+                file_size,
+            };
+
+            self.catalog.register_dataset(&entry).await?;
+            info!("Registered parameter in catalog");
+        } else {
+            debug!(
+                "Parameter {} not found in GRIB2 file at level {}",
+                param_config.grib_filter.parameter, param_config.grib_filter.level
+            );
+        }
 
         Ok(())
     }

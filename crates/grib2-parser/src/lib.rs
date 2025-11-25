@@ -38,6 +38,8 @@ pub mod sections;
 pub mod templates;
 pub mod unpacking;
 
+pub use unpacking::unpack_simple;
+
 use bytes::Bytes;
 use thiserror::Error;
 
