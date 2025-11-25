@@ -4,10 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use wms_common::{
-    BoundingBox, CrsCode, WmsError, WmsResult,
-    TileCoord, TileMatrixSet,
-};
+use wms_common::{BoundingBox, CrsCode, TileCoord, TileMatrixSet, WmsError, WmsResult};
 
 /// WMTS request types.
 #[derive(Debug, Clone)]
@@ -29,31 +26,31 @@ pub struct GetCapabilitiesRequest {
 pub struct GetTileRequest {
     /// Layer identifier
     pub layer: String,
-    
+
     /// Style identifier
     pub style: String,
-    
+
     /// Output format (e.g., "image/png")
     pub format: String,
-    
+
     /// TileMatrixSet identifier
     pub tile_matrix_set: String,
-    
+
     /// TileMatrix (zoom level) identifier
     pub tile_matrix: String,
-    
+
     /// Tile row
     pub tile_row: u32,
-    
+
     /// Tile column
     pub tile_col: u32,
-    
+
     /// Optional time dimension
     pub time: Option<String>,
-    
+
     /// Optional elevation dimension
     pub elevation: Option<String>,
-    
+
     /// Other dimensions
     pub dimensions: std::collections::HashMap<String, String>,
 }
@@ -61,12 +58,14 @@ pub struct GetTileRequest {
 impl GetTileRequest {
     /// Convert to TileCoord.
     pub fn to_tile_coord(&self) -> WmsResult<TileCoord> {
-        let z: u32 = self.tile_matrix.parse()
+        let z: u32 = self
+            .tile_matrix
+            .parse()
             .map_err(|_| WmsError::InvalidParameter {
                 param: "TileMatrix".to_string(),
                 message: format!("Invalid zoom level: {}", self.tile_matrix),
             })?;
-        
+
         Ok(TileCoord {
             z,
             x: self.tile_col,
@@ -110,45 +109,45 @@ pub struct GetFeatureInfoRequest {
 pub struct WmtsKvpParams {
     #[serde(rename = "SERVICE")]
     pub service: Option<String>,
-    
+
     #[serde(rename = "REQUEST")]
     pub request: Option<String>,
-    
+
     #[serde(rename = "VERSION")]
     pub version: Option<String>,
-    
+
     // GetTile params
     #[serde(rename = "LAYER")]
     pub layer: Option<String>,
-    
+
     #[serde(rename = "STYLE")]
     pub style: Option<String>,
-    
+
     #[serde(rename = "FORMAT")]
     pub format: Option<String>,
-    
+
     #[serde(rename = "TILEMATRIXSET")]
     pub tile_matrix_set: Option<String>,
-    
+
     #[serde(rename = "TILEMATRIX")]
     pub tile_matrix: Option<String>,
-    
+
     #[serde(rename = "TILEROW")]
     pub tile_row: Option<u32>,
-    
+
     #[serde(rename = "TILECOL")]
     pub tile_col: Option<u32>,
-    
+
     #[serde(rename = "TIME")]
     pub time: Option<String>,
-    
+
     // GetFeatureInfo params
     #[serde(rename = "I")]
     pub i: Option<u32>,
-    
+
     #[serde(rename = "J")]
     pub j: Option<u32>,
-    
+
     #[serde(rename = "INFOFORMAT")]
     pub info_format: Option<String>,
 }
@@ -165,24 +164,27 @@ impl WmtsKvpParams {
         }
 
         match self.request.as_deref() {
-            Some("GetCapabilities") => {
-                Ok(WmtsRequest::GetCapabilities(GetCapabilitiesRequest {
-                    version: self.version,
-                    sections: None,
-                }))
-            }
+            Some("GetCapabilities") => Ok(WmtsRequest::GetCapabilities(GetCapabilitiesRequest {
+                version: self.version,
+                sections: None,
+            })),
             Some("GetTile") => {
-                let layer = self.layer
+                let layer = self
+                    .layer
                     .ok_or_else(|| WmsError::MissingParameter("LAYER".to_string()))?;
                 let style = self.style.unwrap_or_else(|| "default".to_string());
                 let format = self.format.unwrap_or_else(|| "image/png".to_string());
-                let tile_matrix_set = self.tile_matrix_set
+                let tile_matrix_set = self
+                    .tile_matrix_set
                     .ok_or_else(|| WmsError::MissingParameter("TILEMATRIXSET".to_string()))?;
-                let tile_matrix = self.tile_matrix
+                let tile_matrix = self
+                    .tile_matrix
                     .ok_or_else(|| WmsError::MissingParameter("TILEMATRIX".to_string()))?;
-                let tile_row = self.tile_row
+                let tile_row = self
+                    .tile_row
                     .ok_or_else(|| WmsError::MissingParameter("TILEROW".to_string()))?;
-                let tile_col = self.tile_col
+                let tile_col = self
+                    .tile_col
                     .ok_or_else(|| WmsError::MissingParameter("TILECOL".to_string()))?;
 
                 Ok(WmtsRequest::GetTile(GetTileRequest {
@@ -199,21 +201,28 @@ impl WmtsKvpParams {
                 }))
             }
             Some("GetFeatureInfo") => {
-                let layer = self.layer
+                let layer = self
+                    .layer
                     .ok_or_else(|| WmsError::MissingParameter("LAYER".to_string()))?;
                 let style = self.style.unwrap_or_else(|| "default".to_string());
                 let format = self.format.unwrap_or_else(|| "image/png".to_string());
-                let tile_matrix_set = self.tile_matrix_set
+                let tile_matrix_set = self
+                    .tile_matrix_set
                     .ok_or_else(|| WmsError::MissingParameter("TILEMATRIXSET".to_string()))?;
-                let tile_matrix = self.tile_matrix
+                let tile_matrix = self
+                    .tile_matrix
                     .ok_or_else(|| WmsError::MissingParameter("TILEMATRIX".to_string()))?;
-                let tile_row = self.tile_row
+                let tile_row = self
+                    .tile_row
                     .ok_or_else(|| WmsError::MissingParameter("TILEROW".to_string()))?;
-                let tile_col = self.tile_col
+                let tile_col = self
+                    .tile_col
                     .ok_or_else(|| WmsError::MissingParameter("TILECOL".to_string()))?;
-                let i = self.i
+                let i = self
+                    .i
                     .ok_or_else(|| WmsError::MissingParameter("I".to_string()))?;
-                let j = self.j
+                let j = self
+                    .j
                     .ok_or_else(|| WmsError::MissingParameter("J".to_string()))?;
                 let info_format = self.info_format.unwrap_or_else(|| "text/plain".to_string());
 
@@ -254,13 +263,13 @@ pub struct WmtsRestPath {
 
 impl WmtsRestPath {
     /// Parse a RESTful WMTS URL path.
-    /// 
+    ///
     /// Expected formats:
     /// - /{layer}/{style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.{format}
     /// - /{layer}/{style}/{time}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.{format}
     pub fn parse(path: &str) -> WmsResult<Self> {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-        
+
         if parts.len() < 6 {
             return Err(WmsError::InvalidParameter {
                 param: "path".to_string(),
@@ -279,7 +288,8 @@ impl WmtsRestPath {
 
         let tile_matrix_set = parts[tms_idx];
         let tile_matrix = parts[tms_idx + 1];
-        let tile_row: u32 = parts[tms_idx + 2].parse()
+        let tile_row: u32 = parts[tms_idx + 2]
+            .parse()
             .map_err(|_| WmsError::InvalidParameter {
                 param: "TileRow".to_string(),
                 message: "Invalid tile row".to_string(),
@@ -287,13 +297,15 @@ impl WmtsRestPath {
 
         // Last part is TileCol.format
         let last = parts[tms_idx + 3];
-        let (tile_col_str, format) = last.rsplit_once('.')
-            .ok_or_else(|| WmsError::InvalidParameter {
-                param: "TileCol".to_string(),
-                message: "Missing format extension".to_string(),
-            })?;
+        let (tile_col_str, format) =
+            last.rsplit_once('.')
+                .ok_or_else(|| WmsError::InvalidParameter {
+                    param: "TileCol".to_string(),
+                    message: "Missing format extension".to_string(),
+                })?;
 
-        let tile_col: u32 = tile_col_str.parse()
+        let tile_col: u32 = tile_col_str
+            .parse()
             .map_err(|_| WmsError::InvalidParameter {
                 param: "TileCol".to_string(),
                 message: "Invalid tile column".to_string(),
@@ -374,32 +386,40 @@ pub struct WmtsDimensionInfo {
 impl WmtsCapabilitiesBuilder {
     pub fn build(&self) -> String {
         let mut xml = String::new();
-        
-        xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+
+        xml.push_str(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <Capabilities xmlns="http://www.opengis.net/wmts/1.0"
     xmlns:ows="http://www.opengis.net/ows/1.1"
     xmlns:xlink="http://www.w3.org/1999/xlink"
     xmlns:gml="http://www.opengis.net/gml"
     version="1.0.0">
-"#);
+"#,
+        );
 
         // ServiceIdentification
-        xml.push_str(&format!(r#"  <ows:ServiceIdentification>
+        xml.push_str(&format!(
+            r#"  <ows:ServiceIdentification>
     <ows:Title>{}</ows:Title>
     <ows:Abstract>{}</ows:Abstract>
     <ows:ServiceType>OGC WMTS</ows:ServiceType>
     <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
   </ows:ServiceIdentification>
-"#, self.service_title, self.service_abstract));
+"#,
+            self.service_title, self.service_abstract
+        ));
 
         // ServiceProvider (minimal)
-        xml.push_str(r#"  <ows:ServiceProvider>
+        xml.push_str(
+            r#"  <ows:ServiceProvider>
     <ows:ProviderName>Weather WMS</ows:ProviderName>
   </ows:ServiceProvider>
-"#);
+"#,
+        );
 
         // OperationsMetadata
-        xml.push_str(&format!(r#"  <ows:OperationsMetadata>
+        xml.push_str(&format!(
+            r#"  <ows:OperationsMetadata>
     <ows:Operation name="GetCapabilities">
       <ows:DCP>
         <ows:HTTP>
@@ -428,34 +448,51 @@ impl WmtsCapabilitiesBuilder {
       </ows:DCP>
     </ows:Operation>
   </ows:OperationsMetadata>
-"#, self.service_url));
+"#,
+            self.service_url
+        ));
 
         // Contents
         xml.push_str("  <Contents>\n");
 
         // Layers
         for layer in &self.layers {
-            xml.push_str(&format!(r#"    <Layer>
+            xml.push_str(&format!(
+                r#"    <Layer>
       <ows:Title>{}</ows:Title>
       <ows:Identifier>{}</ows:Identifier>
-"#, layer.title, layer.identifier));
+"#,
+                layer.title, layer.identifier
+            ));
 
             // Bounding box
-            xml.push_str(&format!(r#"      <ows:WGS84BoundingBox>
+            xml.push_str(&format!(
+                r#"      <ows:WGS84BoundingBox>
         <ows:LowerCorner>{} {}</ows:LowerCorner>
         <ows:UpperCorner>{} {}</ows:UpperCorner>
       </ows:WGS84BoundingBox>
-"#, layer.bounding_box.min_x, layer.bounding_box.min_y,
-    layer.bounding_box.max_x, layer.bounding_box.max_y));
+"#,
+                layer.bounding_box.min_x,
+                layer.bounding_box.min_y,
+                layer.bounding_box.max_x,
+                layer.bounding_box.max_y
+            ));
 
             // Styles
             for style in &layer.styles {
-                let default = if style.is_default { "\n        <ows:Keyword>default</ows:Keyword>" } else { "" };
-                xml.push_str(&format!(r#"      <Style isDefault="{}">
+                let default = if style.is_default {
+                    "\n        <ows:Keyword>default</ows:Keyword>"
+                } else {
+                    ""
+                };
+                xml.push_str(&format!(
+                    r#"      <Style isDefault="{}">
         <ows:Title>{}</ows:Title>
         <ows:Identifier>{}</ows:Identifier>{}
       </Style>
-"#, style.is_default, style.title, style.identifier, default));
+"#,
+                    style.is_default, style.title, style.identifier, default
+                ));
             }
 
             // Formats
@@ -465,20 +502,28 @@ impl WmtsCapabilitiesBuilder {
 
             // TileMatrixSetLinks
             for tms_link in &layer.tile_matrix_set_links {
-                xml.push_str(&format!(r#"      <TileMatrixSetLink>
+                xml.push_str(&format!(
+                    r#"      <TileMatrixSetLink>
         <TileMatrixSet>{}</TileMatrixSet>
       </TileMatrixSetLink>
-"#, tms_link));
+"#,
+                    tms_link
+                ));
             }
 
             // Dimensions (TIME, etc.)
             for dim in &layer.dimensions {
-                xml.push_str(&format!(r#"      <Dimension>
+                xml.push_str(&format!(
+                    r#"      <Dimension>
         <ows:Identifier>{}</ows:Identifier>
         <Default>{}</Default>
         <Value>{}</Value>
       </Dimension>
-"#, dim.identifier, dim.default, dim.values.join(",")));
+"#,
+                    dim.identifier,
+                    dim.default,
+                    dim.values.join(",")
+                ));
             }
 
             // ResourceURL (RESTful)
@@ -491,17 +536,25 @@ impl WmtsCapabilitiesBuilder {
 
         // TileMatrixSets
         for tms in &self.tile_matrix_sets {
-            xml.push_str(&format!(r#"    <TileMatrixSet>
+            xml.push_str(&format!(
+                r#"    <TileMatrixSet>
       <ows:Identifier>{}</ows:Identifier>
       <ows:SupportedCRS>urn:ogc:def:crs:EPSG::{}</ows:SupportedCRS>
-"#, tms.identifier, crs_to_epsg_code(&tms.crs)));
+"#,
+                tms.identifier,
+                crs_to_epsg_code(&tms.crs)
+            ));
 
             if let Some(ref wkss) = tms.well_known_scale_set {
-                xml.push_str(&format!("      <WellKnownScaleSet>{}</WellKnownScaleSet>\n", wkss));
+                xml.push_str(&format!(
+                    "      <WellKnownScaleSet>{}</WellKnownScaleSet>\n",
+                    wkss
+                ));
             }
 
             for matrix in &tms.tile_matrices {
-                xml.push_str(&format!(r#"      <TileMatrix>
+                xml.push_str(&format!(
+                    r#"      <TileMatrix>
         <ows:Identifier>{}</ows:Identifier>
         <ScaleDenominator>{}</ScaleDenominator>
         <TopLeftCorner>{} {}</TopLeftCorner>
@@ -510,10 +563,11 @@ impl WmtsCapabilitiesBuilder {
         <MatrixWidth>{}</MatrixWidth>
         <MatrixHeight>{}</MatrixHeight>
       </TileMatrix>
-"#, 
+"#,
                     matrix.identifier,
                     matrix.scale_denominator,
-                    matrix.top_left_corner.0, matrix.top_left_corner.1,
+                    matrix.top_left_corner.0,
+                    matrix.top_left_corner.1,
                     matrix.tile_width,
                     matrix.tile_height,
                     matrix.matrix_width,
@@ -544,12 +598,15 @@ fn crs_to_epsg_code(crs: &CrsCode) -> u32 {
 
 /// Generate WMTS exception XML.
 pub fn wmts_exception(code: &str, message: &str) -> String {
-    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1" version="1.0.0">
   <ows:Exception exceptionCode="{}">
     <ows:ExceptionText>{}</ows:ExceptionText>
   </ows:Exception>
-</ows:ExceptionReport>"#, code, message)
+</ows:ExceptionReport>"#,
+        code, message
+    )
 }
 
 #[cfg(test)]
@@ -560,7 +617,7 @@ mod tests {
     fn test_rest_path_parsing() {
         let path = "/gfs_temp/gradient/WebMercatorQuad/5/10/15.png";
         let parsed = WmtsRestPath::parse(path).unwrap();
-        
+
         assert_eq!(parsed.layer, "gfs_temp");
         assert_eq!(parsed.style, "gradient");
         assert_eq!(parsed.tile_matrix_set, "WebMercatorQuad");
@@ -574,7 +631,7 @@ mod tests {
     fn test_rest_path_with_time() {
         let path = "/gfs_temp/gradient/2024-01-15T12:00:00Z/WebMercatorQuad/5/10/15.png";
         let parsed = WmtsRestPath::parse(path).unwrap();
-        
+
         assert_eq!(parsed.layer, "gfs_temp");
         assert_eq!(parsed.time, Some("2024-01-15T12:00:00Z".to_string()));
     }

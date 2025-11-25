@@ -22,14 +22,14 @@ pub enum CrsCode {
 
 impl CrsCode {
     /// Parse a CRS string from WMS request (supports both SRS and CRS parameter formats).
-    /// 
+    ///
     /// Accepts formats like:
     /// - "EPSG:4326"
     /// - "epsg:4326"
     /// - "CRS:84" (equivalent to EPSG:4326 with lon/lat axis order)
     pub fn from_wms_string(s: &str) -> Result<Self, CrsParseError> {
         let normalized = s.to_uppercase();
-        
+
         match normalized.as_str() {
             "EPSG:4326" | "CRS:84" => Ok(CrsCode::Epsg4326),
             "EPSG:3857" | "EPSG:900913" => Ok(CrsCode::Epsg3857),
@@ -42,7 +42,7 @@ impl CrsCode {
     }
 
     /// Get the axis order for this CRS in WMS 1.3.0.
-    /// 
+    ///
     /// WMS 1.3.0 uses the "natural" axis order of the CRS:
     /// - Geographic CRS: lat, lon (y, x)
     /// - Projected CRS: easting, northing (x, y)
@@ -88,7 +88,7 @@ pub enum AxisOrder {
 }
 
 /// Full CRS definition with projection parameters.
-/// 
+///
 /// This will be expanded to include full projection math.
 #[derive(Debug, Clone)]
 pub struct Crs {
@@ -104,11 +104,9 @@ impl Crs {
     /// Get the valid bounds for this CRS.
     pub fn valid_bounds(&self) -> crate::BoundingBox {
         use crate::BoundingBox;
-        
+
         match self.code {
-            CrsCode::Epsg4326 | CrsCode::Epsg4269 => {
-                BoundingBox::new(-180.0, -90.0, 180.0, 90.0)
-            }
+            CrsCode::Epsg4326 | CrsCode::Epsg4269 => BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
             CrsCode::Epsg3857 => {
                 // Web Mercator bounds (approx ±85.06° latitude)
                 let max_extent = 20037508.342789244;
@@ -138,9 +136,18 @@ mod tests {
 
     #[test]
     fn test_parse_crs() {
-        assert_eq!(CrsCode::from_wms_string("EPSG:4326").unwrap(), CrsCode::Epsg4326);
-        assert_eq!(CrsCode::from_wms_string("epsg:3857").unwrap(), CrsCode::Epsg3857);
-        assert_eq!(CrsCode::from_wms_string("CRS:84").unwrap(), CrsCode::Epsg4326);
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:4326").unwrap(),
+            CrsCode::Epsg4326
+        );
+        assert_eq!(
+            CrsCode::from_wms_string("epsg:3857").unwrap(),
+            CrsCode::Epsg3857
+        );
+        assert_eq!(
+            CrsCode::from_wms_string("CRS:84").unwrap(),
+            CrsCode::Epsg4326
+        );
         assert!(CrsCode::from_wms_string("EPSG:99999").is_err());
     }
 
@@ -148,7 +155,7 @@ mod tests {
     fn test_axis_order() {
         assert_eq!(CrsCode::Epsg4326.axis_order_wms_1_3(), AxisOrder::LatLon);
         assert_eq!(CrsCode::Epsg3857.axis_order_wms_1_3(), AxisOrder::XY);
-        
+
         // WMS 1.1.1 always uses X,Y
         assert_eq!(CrsCode::Epsg4326.axis_order_wms_1_1(), AxisOrder::XY);
     }

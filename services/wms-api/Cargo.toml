@@ -33,3 +33,4 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
+dotenvy = { workspace = true }

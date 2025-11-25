@@ -2,8 +2,8 @@
 //!
 //! Implements OGC WMTS tile matrix concepts for tiled map services.
 
-use serde::{Deserialize, Serialize};
 use crate::{BoundingBox, CrsCode};
+use serde::{Deserialize, Serialize};
 
 /// A tile coordinate (z/x/y).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -47,7 +47,11 @@ impl TileCoord {
             TileCoord { z, x, y },
             TileCoord { z, x: x + 1, y },
             TileCoord { z, x, y: y + 1 },
-            TileCoord { z, x: x + 1, y: y + 1 },
+            TileCoord {
+                z,
+                x: x + 1,
+                y: y + 1,
+            },
         ]
     }
 }
@@ -57,22 +61,22 @@ impl TileCoord {
 pub struct TileMatrix {
     /// Identifier (usually zoom level as string)
     pub identifier: String,
-    
+
     /// Scale denominator
     pub scale_denominator: f64,
-    
+
     /// Top-left corner coordinates
     pub top_left_corner: (f64, f64),
-    
+
     /// Tile width in pixels
     pub tile_width: u32,
-    
+
     /// Tile height in pixels
     pub tile_height: u32,
-    
+
     /// Number of tile columns
     pub matrix_width: u32,
-    
+
     /// Number of tile rows
     pub matrix_height: u32,
 }
@@ -107,7 +111,8 @@ impl TileMatrix {
         let col = ((x - self.top_left_corner.0) / tile_span_x).floor() as i64;
         let row = ((self.top_left_corner.1 - y) / tile_span_y).floor() as i64;
 
-        if col < 0 || row < 0 || col >= self.matrix_width as i64 || row >= self.matrix_height as i64 {
+        if col < 0 || row < 0 || col >= self.matrix_width as i64 || row >= self.matrix_height as i64
+        {
             return None;
         }
 
@@ -120,16 +125,16 @@ impl TileMatrix {
 pub struct TileMatrixSet {
     /// Identifier for the tile matrix set
     pub identifier: String,
-    
+
     /// Coordinate reference system
     pub crs: CrsCode,
-    
+
     /// Bounding box of the tile matrix set
     pub bounding_box: BoundingBox,
-    
+
     /// Well-known scale set URI (optional)
     pub well_known_scale_set: Option<String>,
-    
+
     /// Individual tile matrices (zoom levels)
     pub tile_matrices: Vec<TileMatrix>,
 }
@@ -137,7 +142,9 @@ pub struct TileMatrixSet {
 impl TileMatrixSet {
     /// Get a tile matrix by identifier (zoom level).
     pub fn get_matrix(&self, identifier: &str) -> Option<&TileMatrix> {
-        self.tile_matrices.iter().find(|m| m.identifier == identifier)
+        self.tile_matrices
+            .iter()
+            .find(|m| m.identifier == identifier)
     }
 
     /// Get a tile matrix by zoom level number.
@@ -155,12 +162,12 @@ impl TileMatrixSet {
 /// Standard Web Mercator (Google/OSM) tile matrix set.
 pub fn web_mercator_tile_matrix_set() -> TileMatrixSet {
     let max_extent = 20037508.342789244;
-    
+
     let tile_matrices: Vec<TileMatrix> = (0..=22)
         .map(|z| {
             let n = 2u32.pow(z);
             let scale = 559082264.0287178 / (n as f64);
-            
+
             TileMatrix {
                 identifier: z.to_string(),
                 scale_denominator: scale,
@@ -178,7 +185,7 @@ pub fn web_mercator_tile_matrix_set() -> TileMatrixSet {
         crs: CrsCode::Epsg3857,
         bounding_box: BoundingBox::new(-max_extent, -max_extent, max_extent, max_extent),
         well_known_scale_set: Some(
-            "http://www.opengis.net/def/wkss/OGC/1.0/GoogleMapsCompatible".to_string()
+            "http://www.opengis.net/def/wkss/OGC/1.0/GoogleMapsCompatible".to_string(),
         ),
         tile_matrices,
     }
@@ -191,7 +198,7 @@ pub fn wgs84_tile_matrix_set() -> TileMatrixSet {
             let n_cols = 2u32.pow(z + 1);
             let n_rows = 2u32.pow(z);
             let scale = 559082264.0287178 / (n_rows as f64);
-            
+
             TileMatrix {
                 identifier: z.to_string(),
                 scale_denominator: scale,
@@ -209,7 +216,7 @@ pub fn wgs84_tile_matrix_set() -> TileMatrixSet {
         crs: CrsCode::Epsg4326,
         bounding_box: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
         well_known_scale_set: Some(
-            "http://www.opengis.net/def/wkss/OGC/1.0/GoogleCRS84Quad".to_string()
+            "http://www.opengis.net/def/wkss/OGC/1.0/GoogleCRS84Quad".to_string(),
         ),
         tile_matrices,
     }
@@ -218,24 +225,30 @@ pub fn wgs84_tile_matrix_set() -> TileMatrixSet {
 /// Convert lat/lon to Web Mercator tile coordinates.
 pub fn latlon_to_tile(lat: f64, lon: f64, zoom: u32) -> TileCoord {
     let n = 2u32.pow(zoom) as f64;
-    
+
     let x = ((lon + 180.0) / 360.0 * n).floor() as u32;
     let lat_rad = lat.to_radians();
     let y = ((1.0 - lat_rad.tan().asinh() / std::f64::consts::PI) / 2.0 * n).floor() as u32;
-    
+
     TileCoord { z: zoom, x, y }
 }
 
 /// Convert Web Mercator tile coordinates to lat/lon bounds.
 pub fn tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
     let n = 2u32.pow(coord.z) as f64;
-    
+
     let lon_min = coord.x as f64 / n * 360.0 - 180.0;
     let lon_max = (coord.x + 1) as f64 / n * 360.0 - 180.0;
-    
-    let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * coord.y as f64 / n)).sinh().atan().to_degrees();
-    let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (coord.y + 1) as f64 / n)).sinh().atan().to_degrees();
-    
+
+    let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * coord.y as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+    let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (coord.y + 1) as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+
     BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
 }
 
@@ -272,7 +285,7 @@ mod tests {
     fn test_tile_bbox() {
         let tms = web_mercator_tile_matrix_set();
         let bbox = tms.tile_bbox(&TileCoord { z: 0, x: 0, y: 0 }).unwrap();
-        
+
         // Zoom 0 should cover entire extent
         let max_extent = 20037508.342789244;
         assert!((bbox.min_x - (-max_extent)).abs() < 1.0);

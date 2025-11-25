@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPoolOptions, PgPool, FromRow};
+use sqlx::{postgres::PgPoolOptions, FromRow, PgPool};
 use uuid::Uuid;
 
 use wms_common::{BoundingBox, LayerId, ValidTime, WmsError, WmsResult};
@@ -57,7 +57,7 @@ impl Catalog {
                 file_size = EXCLUDED.file_size,
                 ingested_at = EXCLUDED.ingested_at,
                 status = EXCLUDED.status
-            "#
+            "#,
         )
         .bind(id)
         .bind(&entry.model)
@@ -86,9 +86,9 @@ impl Catalog {
         let mut sql = String::from(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets WHERE status = 'available'"
+             storage_path, file_size FROM datasets WHERE status = 'available'",
         );
-        
+
         let mut params: Vec<String> = Vec::new();
         let mut param_idx = 1;
 
@@ -109,7 +109,7 @@ impl Catalog {
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size FROM datasets WHERE status = 'available' \
-             ORDER BY valid_time DESC LIMIT 100"
+             ORDER BY valid_time DESC LIMIT 100",
         )
         .fetch_all(&self.pool)
         .await
@@ -119,13 +119,17 @@ impl Catalog {
     }
 
     /// Get the most recent dataset for a layer.
-    pub async fn get_latest(&self, model: &str, parameter: &str) -> WmsResult<Option<CatalogEntry>> {
+    pub async fn get_latest(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
-             ORDER BY valid_time DESC LIMIT 1"
+             ORDER BY valid_time DESC LIMIT 1",
         )
         .bind(model)
         .bind(parameter)
@@ -148,7 +152,7 @@ impl Catalog {
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
-             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1"
+             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
         )
         .bind(model)
         .bind(parameter)
@@ -169,7 +173,7 @@ impl Catalog {
         let rows = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT DISTINCT valid_time FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
-             ORDER BY valid_time DESC"
+             ORDER BY valid_time DESC",
         )
         .bind(model)
         .bind(parameter)
@@ -183,7 +187,7 @@ impl Catalog {
     /// Get list of available models.
     pub async fn list_models(&self) -> WmsResult<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT model FROM datasets WHERE status = 'available' ORDER BY model"
+            "SELECT DISTINCT model FROM datasets WHERE status = 'available' ORDER BY model",
         )
         .fetch_all(&self.pool)
         .await
@@ -208,7 +212,7 @@ impl Catalog {
     /// Mark old datasets for cleanup.
     pub async fn mark_expired(&self, older_than: DateTime<Utc>) -> WmsResult<u64> {
         let result = sqlx::query(
-            "UPDATE datasets SET status = 'expired' WHERE valid_time < $1 AND status = 'available'"
+            "UPDATE datasets SET status = 'expired' WHERE valid_time < $1 AND status = 'available'",
         )
         .bind(older_than)
         .execute(&self.pool)

@@ -100,14 +100,14 @@ impl WmsError {
             | WmsError::InvalidBbox(_)
             | WmsError::InvalidTime(_)
             | WmsError::UnsupportedFormat(_) => 400,
-            
+
             WmsError::LayerNotFound(_)
             | WmsError::StyleNotFound(_)
             | WmsError::DataNotAvailable(_) => 404,
-            
+
             WmsError::ServiceUnavailable(_) => 503,
             WmsError::Timeout => 504,
-            
+
             _ => 500,
         }
     }

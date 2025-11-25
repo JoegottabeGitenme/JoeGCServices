@@ -88,7 +88,8 @@ impl ObjectStorage {
     pub async fn get(&self, path: &str) -> WmsResult<Bytes> {
         let location = Path::from(path);
 
-        let result = self.store
+        let result = self
+            .store
             .get(&location)
             .await
             .map_err(|e| WmsError::StorageError(format!("Failed to read {}: {}", path, e)))?;
@@ -107,7 +108,8 @@ impl ObjectStorage {
     pub async fn get_range(&self, path: &str, start: usize, end: usize) -> WmsResult<Bytes> {
         let location = Path::from(path);
 
-        let result = self.store
+        let result = self
+            .store
             .get_range(&location, start..end)
             .await
             .map_err(|e| WmsError::StorageError(format!("Failed to read range {}: {}", path, e)))?;
@@ -122,7 +124,10 @@ impl ObjectStorage {
         match self.store.head(&location).await {
             Ok(_) => Ok(true),
             Err(object_store::Error::NotFound { .. }) => Ok(false),
-            Err(e) => Err(WmsError::StorageError(format!("Failed to check {}: {}", path, e))),
+            Err(e) => Err(WmsError::StorageError(format!(
+                "Failed to check {}: {}",
+                path, e
+            ))),
         }
     }
 
@@ -134,8 +139,10 @@ impl ObjectStorage {
         let mut paths = Vec::new();
 
         let mut stream = self.store.list(Some(&prefix_path));
-        while let Some(meta) = stream.try_next().await
-            .map_err(|e| WmsError::StorageError(format!("List failed: {}", e)))? 
+        while let Some(meta) = stream
+            .try_next()
+            .await
+            .map_err(|e| WmsError::StorageError(format!("List failed: {}", e)))?
         {
             paths.push(meta.location.to_string());
         }

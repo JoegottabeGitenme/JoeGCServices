@@ -2,15 +2,19 @@
 #
 # Weather WMS - Local Development Start Script
 #
-# This script sets up a complete local development environment using minikube.
-# It's designed to be dummy-proof - just run it and everything will be set up.
+# This script sets up a complete local development environment.
+# Default: docker-compose (fast, no Kubernetes overhead)
+# Optional: Full Kubernetes with minikube
 #
 # Usage:
-#   ./start.sh              # Full setup (first time)
-#   ./start.sh --quick      # Skip rebuilding images
+#   ./start.sh              # Start with docker-compose (fast)
+#   ./start.sh --compose    # Start with docker-compose (same as above)
+#   ./start.sh --kubernetes # Full Kubernetes setup with minikube
+#   ./start.sh --k8s        # Same as --kubernetes
+#   ./start.sh --stop       # Stop docker-compose
 #   ./start.sh --clean      # Delete everything and start fresh
-#   ./start.sh --stop       # Stop the cluster
-#   ./start.sh --status     # Show status of all components
+#   ./start.sh --status     # Show status
+#   ./start.sh --help       # Show this help message
 #
 
 set -euo pipefail
@@ -59,6 +63,12 @@ check_command() {
         log_error "$1 is required but not installed."
         echo "Please install $1 and try again."
         case "$1" in
+            docker)
+                echo "  https://docs.docker.com/get-docker/"
+                ;;
+            docker-compose)
+                echo "  https://docs.docker.com/compose/install/"
+                ;;
             minikube)
                 echo "  macOS: brew install minikube"
                 echo "  Linux: https://minikube.sigs.k8s.io/docs/start/"
@@ -71,56 +81,147 @@ check_command() {
                 echo "  macOS: brew install helm"
                 echo "  Linux: https://helm.sh/docs/intro/install/"
                 ;;
-            docker)
-                echo "  https://docs.docker.com/get-docker/"
-                ;;
         esac
         exit 1
     fi
 }
 
-wait_for_pods() {
-    local namespace=$1
-    local timeout=${2:-300}
-    local selector=${3:-""}
+#------------------------------------------------------------------------------
+# Docker Compose Functions
+#------------------------------------------------------------------------------
+
+check_compose_prerequisites() {
+    log_info "Checking prerequisites for docker-compose..."
     
-    log_info "Waiting for pods in namespace '$namespace' to be ready..."
+    check_command docker
+    check_command docker-compose
     
-    local selector_arg=""
-    if [ -n "$selector" ]; then
-        selector_arg="-l $selector"
+    # Check Docker is running
+    if ! docker info &> /dev/null; then
+        log_error "Docker is not running. Please start Docker and try again."
+        exit 1
     fi
     
-    local start_time=$(date +%s)
-    while true; do
-        local current_time=$(date +%s)
-        local elapsed=$((current_time - start_time))
-        
-        if [ $elapsed -gt $timeout ]; then
-            log_error "Timeout waiting for pods"
-            kubectl get pods -n "$namespace" $selector_arg
-            return 1
+    log_success "All prerequisites satisfied!"
+}
+
+start_compose() {
+    log_info "Starting weather-wms stack with docker-compose..."
+    
+    cd "$PROJECT_ROOT"
+    
+    # Check if already running
+    if docker-compose ps 2>/dev/null | grep -q "Up"; then
+        log_warn "Stack is already running!"
+        log_info "Run './start.sh --stop' to stop it"
+        show_compose_access_info
+        return
+    fi
+    
+    docker-compose up -d
+    
+    # Wait for services to be ready
+    log_info "Waiting for services to be ready..."
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        if docker-compose exec -T postgres pg_isready -U weatherwms &>/dev/null && \
+           docker-compose exec -T redis redis-cli ping &>/dev/null 2>&1; then
+            log_success "All services are ready!"
+            break
         fi
-        
-        local not_ready=$(kubectl get pods -n "$namespace" $selector_arg -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "False" || echo "0")
-        local pending=$(kubectl get pods -n "$namespace" $selector_arg --field-selector=status.phase=Pending 2>/dev/null | wc -l || echo "0")
-        
-        if [ "$not_ready" -eq 0 ] && [ "$pending" -le 1 ]; then
-            log_success "All pods are ready!"
-            return 0
-        fi
-        
-        echo -ne "\r  Waiting... ($elapsed/$timeout seconds, $not_ready not ready)    "
-        sleep 5
+        echo -ne "\rWaiting... ($retries seconds remaining)"
+        sleep 1
+        retries=$((retries - 1))
     done
+    
+    if [ $retries -eq 0 ]; then
+        log_warn "Services may not be fully ready yet. Check with: docker-compose ps"
+    fi
+    
+    echo ""
+    show_compose_access_info
+}
+
+stop_compose() {
+    log_info "Stopping docker-compose stack..."
+    
+    cd "$PROJECT_ROOT"
+    
+    if docker-compose ps 2>/dev/null | grep -q "Up"; then
+        docker-compose down
+        log_success "Stack stopped!"
+    else
+        log_info "Stack is not running"
+    fi
+}
+
+show_compose_status() {
+    log_info "=== Docker Compose Stack Status ==="
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    docker-compose ps
+    
+    echo ""
+    log_info "Service URLs:"
+    echo "  PostgreSQL:  localhost:5432  (weatherwms/weatherwms)"
+    echo "  Redis:       localhost:6379  (no auth)"
+    echo "  MinIO:       localhost:9000  (minioadmin/minioadmin)"
+    echo "  MinIO UI:    localhost:9001  (minioadmin/minioadmin)"
+}
+
+show_compose_access_info() {
+    echo ""
+    log_success "=== Quick Start ==="
+    echo ""
+    echo "Run the WMS API in another terminal:"
+    echo "  cargo run --bin wms-api"
+    echo ""
+    echo "Or with debug logging:"
+    echo "  RUST_LOG=debug cargo run --bin wms-api"
+    echo ""
+    echo "Test it:"
+    echo "  curl \"http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities\""
+    echo ""
+    log_success "=== Service Credentials ==="
+    echo ""
+    echo "PostgreSQL:"
+    echo "  User: weatherwms"
+    echo "  Pass: weatherwms"
+    echo "  DB:   weatherwms"
+    echo "  Host: localhost:5432"
+    echo ""
+    echo "Redis:"
+    echo "  Host: localhost:6379"
+    echo "  No authentication"
+    echo ""
+    echo "MinIO (Object Storage):"
+    echo "  User: minioadmin"
+    echo "  Pass: minioadmin"
+    echo "  API:  localhost:9000"
+    echo "  UI:   localhost:9001"
+    echo ""
+    log_success "=== Other Commands ==="
+    echo ""
+    echo "Run tests:"
+    echo "  cargo test"
+    echo ""
+    echo "View service logs:"
+    echo "  docker-compose logs -f postgresql"
+    echo "  docker-compose logs -f redis"
+    echo "  docker-compose logs -f minio"
+    echo ""
+    echo "Stop services:"
+    echo "  ./start.sh --stop"
+    echo ""
 }
 
 #------------------------------------------------------------------------------
-# Main Functions
+# Kubernetes Functions
 #------------------------------------------------------------------------------
 
-check_prerequisites() {
-    log_info "Checking prerequisites..."
+check_k8s_prerequisites() {
+    log_info "Checking prerequisites for Kubernetes..."
     
     check_command minikube
     check_command kubectl
@@ -142,7 +243,7 @@ start_minikube() {
     # Check if cluster already exists
     if minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
         log_info "Cluster already exists, starting..."
-        minikube start -p "$MINIKUBE_PROFILE"
+        minikube start -p "$MINIKUBE_PROFILE" --wait=all
     else
         log_info "Creating new cluster..."
         minikube start \
@@ -151,90 +252,17 @@ start_minikube() {
             --memory="$MINIKUBE_MEMORY" \
             --disk-size="$MINIKUBE_DISK" \
             --driver=docker \
-            --addons=ingress \
-            --addons=metrics-server \
-            --addons=dashboard
+            --wait=all
     fi
     
     # Set kubectl context
     kubectl config use-context "$MINIKUBE_PROFILE"
     
+    # Enable only essential addons (dashboard often has DNS issues)
+    minikube addons enable ingress -p "$MINIKUBE_PROFILE" || true
+    minikube addons enable metrics-server -p "$MINIKUBE_PROFILE" || true
+    
     log_success "Minikube cluster is running!"
-}
-
-build_images() {
-    log_info "Building Docker images..."
-    
-    # Point docker to minikube's docker daemon
-    eval $(minikube -p "$MINIKUBE_PROFILE" docker-env)
-    
-    cd "$PROJECT_ROOT"
-    
-    # Build each service
-    for service in ingester renderer-worker wms-api; do
-        log_info "Building $service..."
-        
-        # Create Dockerfile if it doesn't exist
-        local dockerfile="services/$service/Dockerfile"
-        if [ ! -f "$dockerfile" ]; then
-            create_dockerfile "$service"
-        fi
-        
-        docker build \
-            -f "$dockerfile" \
-            -t "weather-wms/$service:latest" \
-            .
-        
-        log_success "Built $service"
-    done
-    
-    log_success "All images built!"
-}
-
-create_dockerfile() {
-    local service=$1
-    local dockerfile="services/$service/Dockerfile"
-    
-    log_info "Creating Dockerfile for $service..."
-    
-    mkdir -p "$(dirname "$dockerfile")"
-    
-    cat > "$dockerfile" << 'EOF'
-# Build stage
-FROM rust:1.75-bookworm as builder
-
-WORKDIR /app
-
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY services ./services
-
-# Build the service
-ARG SERVICE_NAME
-RUN cargo build --release --package ${SERVICE_NAME}
-
-# Runtime stage
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
-
-ARG SERVICE_NAME
-COPY --from=builder /app/target/release/${SERVICE_NAME} /usr/local/bin/app
-
-# Create non-root user
-RUN useradd -m -u 1000 appuser
-USER appuser
-
-ENTRYPOINT ["/usr/local/bin/app"]
-EOF
-
-    # Update dockerfile with specific service name
-    sed -i.bak "s/\${SERVICE_NAME}/$service/g" "$dockerfile"
-    rm -f "${dockerfile}.bak"
 }
 
 setup_namespace() {
@@ -254,32 +282,8 @@ deploy_dependencies() {
     log_success "Helm repositories updated!"
 }
 
-deploy_helm_chart() {
-    log_info "Deploying Weather WMS Helm chart..."
-    
-    cd "$PROJECT_ROOT/deploy/helm"
-    
-    # Update dependencies
-    helm dependency update weather-wms
-    
-    # Install/upgrade the chart
-    helm upgrade --install "$HELM_RELEASE" weather-wms \
-        --namespace "$NAMESPACE" \
-        --create-namespace \
-        --values weather-wms/values.yaml \
-        --set api.image.pullPolicy=Never \
-        --set renderer.image.pullPolicy=Never \
-        --set ingester.image.pullPolicy=Never \
-        --wait \
-        --timeout 10m
-    
-    log_success "Helm chart deployed!"
-}
-
 deploy_dev_stack() {
-    log_info "Deploying development stack (standalone components)..."
-    
-    # Deploy MinIO, PostgreSQL, and Redis using Helm directly for dev simplicity
+    log_info "Deploying development stack..."
     
     # Redis
     log_info "Deploying Redis..."
@@ -313,7 +317,36 @@ deploy_dev_stack() {
     log_success "Development stack deployed!"
 }
 
-show_status() {
+wait_for_pods() {
+    local namespace=$1
+    local timeout=${2:-300}
+    
+    log_info "Waiting for pods in namespace '$namespace' to be ready..."
+    
+    local start_time=$(date +%s)
+    while true; do
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+        
+        if [ $elapsed -gt $timeout ]; then
+            log_error "Timeout waiting for pods"
+            kubectl get pods -n "$namespace"
+            return 1
+        fi
+        
+        local not_ready=$(kubectl get pods -n "$namespace" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "False" || echo "0")
+        
+        if [ "$not_ready" -eq 0 ]; then
+            log_success "All pods are ready!"
+            return 0
+        fi
+        
+        echo -ne "\rWaiting... ($elapsed/$timeout seconds, $not_ready not ready)    "
+        sleep 5
+    done
+}
+
+show_k8s_status() {
     echo ""
     log_info "=== Cluster Status ==="
     echo ""
@@ -328,58 +361,57 @@ show_status() {
     echo ""
     echo "Services in $NAMESPACE:"
     kubectl get svc -n "$NAMESPACE" || true
-    
-    echo ""
-    echo "Ingress:"
-    kubectl get ingress -n "$NAMESPACE" || true
 }
 
-show_access_info() {
+show_k8s_access_info() {
     echo ""
-    log_success "=== Access Information ==="
+    log_success "=== Kubernetes Cluster Running ==="
     echo ""
     
-    # Get minikube IP
     local minikube_ip=$(minikube ip -p "$MINIKUBE_PROFILE")
     
     echo "Minikube IP: $minikube_ip"
     echo ""
-    echo "To access services:"
+    
+    log_success "=== View Resources ==="
     echo ""
-    echo "  WMS API (via port-forward):"
-    echo "    kubectl port-forward -n $NAMESPACE svc/${HELM_RELEASE}-weather-wms-api 8080:8080"
-    echo "    Then open: http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"
+    echo "List all resources:"
+    echo "  kubectl get all -n $NAMESPACE"
     echo ""
-    echo "  MinIO Console:"
-    echo "    kubectl port-forward -n $NAMESPACE svc/minio 9001:9001"
-    echo "    Then open: http://localhost:9001 (minioadmin/minioadmin)"
+    echo "Watch pods live:"
+    echo "  kubectl get pods -n $NAMESPACE -w"
     echo ""
-    echo "  PostgreSQL:"
-    echo "    kubectl port-forward -n $NAMESPACE svc/postgresql 5432:5432"
-    echo "    psql -h localhost -U weatherwms -d weatherwms"
+    echo "View pod logs:"
+    echo "  kubectl logs -n $NAMESPACE <pod-name> -f"
     echo ""
-    echo "  Redis:"
-    echo "    kubectl port-forward -n $NAMESPACE svc/redis-master 6379:6379"
-    echo "    redis-cli -h localhost"
+    echo "See MONITORING.md for 100+ more kubectl commands"
     echo ""
-    echo "  Kubernetes Dashboard:"
-    echo "    minikube dashboard -p $MINIKUBE_PROFILE"
+    
+    log_success "=== Access Services ==="
     echo ""
-    echo "To view logs:"
-    echo "    kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=api -f"
-    echo "    kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=renderer -f"
-    echo "    kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=ingester -f"
+    echo "PostgreSQL (port-forward in another terminal):"
+    echo "  kubectl port-forward -n $NAMESPACE svc/postgresql 5432:5432"
+    echo "  psql -h localhost -U weatherwms -d weatherwms"
+    echo ""
+    echo "Redis:"
+    echo "  kubectl port-forward -n $NAMESPACE svc/redis-master 6379:6379"
+    echo "  redis-cli -h localhost"
+    echo ""
+    echo "MinIO:"
+    echo "  kubectl port-forward -n $NAMESPACE svc/minio 9000:9000"
+    echo "  kubectl port-forward -n $NAMESPACE svc/minio 9001:9001"
+    echo "  Access UI: http://localhost:9001 (minioadmin/minioadmin)"
     echo ""
 }
 
-stop_cluster() {
+stop_k8s() {
     log_info "Stopping minikube cluster..."
     minikube stop -p "$MINIKUBE_PROFILE"
     log_success "Cluster stopped!"
 }
 
-clean_all() {
-    log_warn "This will delete the entire minikube cluster and all data!"
+clean_k8s() {
+    log_warn "This will delete the entire minikube cluster!"
     read -p "Are you sure? (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -389,25 +421,6 @@ clean_all() {
     else
         log_info "Cancelled."
     fi
-}
-
-#------------------------------------------------------------------------------
-# Development Helpers
-#------------------------------------------------------------------------------
-
-dev_build_and_deploy() {
-    log_info "Building and deploying services for development..."
-    
-    # Point to minikube docker
-    eval $(minikube -p "$MINIKUBE_PROFILE" docker-env)
-    
-    # Build images
-    build_images
-    
-    # Restart deployments to pick up new images
-    kubectl rollout restart deployment -n "$NAMESPACE" -l app.kubernetes.io/name=weather-wms || true
-    
-    log_success "Services rebuilt and redeployed!"
 }
 
 #------------------------------------------------------------------------------
@@ -422,51 +435,77 @@ main() {
     echo ""
     
     case "${1:-}" in
-        --quick)
-            check_prerequisites
+        --kubernetes|--k8s)
+            check_k8s_prerequisites
             start_minikube
             setup_namespace
+            deploy_dependencies
             deploy_dev_stack
             wait_for_pods "$NAMESPACE" 300
-            show_status
-            show_access_info
+            show_k8s_status
+            show_k8s_access_info
             ;;
-        --clean)
-            clean_all
+        --compose|"")
+            check_compose_prerequisites
+            start_compose
             ;;
         --stop)
-            stop_cluster
+            log_info "Stopping services..."
+            # Try docker-compose first
+            if [ -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+                cd "$PROJECT_ROOT"
+                docker-compose down || true
+                log_success "Docker-compose stack stopped!"
+            fi
+            # Also stop minikube if running
+            if minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
+                stop_k8s
+            fi
+            ;;
+        --clean)
+            log_info "Cleaning up..."
+            # Clean docker-compose
+            cd "$PROJECT_ROOT"
+            docker-compose down -v || true
+            log_success "Docker-compose cleaned!"
+            # Clean minikube
+            clean_k8s
             ;;
         --status)
-            show_status
-            ;;
-        --rebuild)
-            dev_build_and_deploy
+            if minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
+                show_k8s_status
+            else
+                show_compose_status
+            fi
             ;;
         --help|-h)
             echo "Usage: $0 [option]"
             echo ""
             echo "Options:"
-            echo "  (none)      Full setup - creates cluster, builds images, deploys everything"
-            echo "  --quick     Quick start - skip image building"
-            echo "  --clean     Delete everything and start fresh"
-            echo "  --stop      Stop the cluster (preserves data)"
-            echo "  --status    Show status of all components"
-            echo "  --rebuild   Rebuild images and redeploy"
-            echo "  --help      Show this help message"
+            echo "  (none)         Start with docker-compose (RECOMMENDED - fast)"
+            echo "  --compose      Start with docker-compose"
+            echo "  --kubernetes   Full Kubernetes setup with minikube (slower)"
+            echo "  --k8s          Same as --kubernetes"
+            echo "  --stop         Stop docker-compose or minikube"
+            echo "  --clean        Delete everything and start fresh"
+            echo "  --status       Show status of services"
+            echo "  --help         Show this help message"
+            echo ""
+            echo "RECOMMENDED WORKFLOW:"
+            echo "  1. Run: ./start.sh          (starts docker-compose)"
+            echo "  2. In another terminal:"
+            echo "     cargo run --bin wms-api"
+            echo "  3. Test:"
+            echo "     curl 'http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities'"
+            echo ""
+            echo "For full Kubernetes setup:"
+            echo "  ./start.sh --kubernetes"
             echo ""
             ;;
         *)
-            # Full setup
-            check_prerequisites
-            start_minikube
-            setup_namespace
-            deploy_dependencies
-            build_images
-            deploy_dev_stack
-            wait_for_pods "$NAMESPACE" 300
-            show_status
-            show_access_info
+            log_error "Unknown option: $1"
+            echo "Run './start.sh --help' for usage information"
+            exit 1
             ;;
     esac
 }

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather WMS Dashboard</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🗺️ Weather WMS Dashboard</h1>
+                <div class="status-indicators">
+                    <div class="status-item">
+                        <span class="status-label">WMS:</span>
+                        <div class="status-badge" id="wms-status">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Checking...</span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">WMTS:</span>
+                        <div class="status-badge" id="wmts-status">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Checking...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h2>Layers</h2>
+                    <div id="layers-list" class="layers-list">
+                        <p class="empty-state">Loading layers...</p>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h2>Layer Details</h2>
+                    <div id="layer-details" class="layer-details">
+                        <p class="empty-state">Select a layer to view details</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Map -->
+            <main class="map-container">
+                <div id="map"></div>
+            </main>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Weather WMS Service - Powered by Rust & Leaflet</p>
+        </footer>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <!-- Application JS -->
+    <script src="app.js"></script>
+</body>
+</html>

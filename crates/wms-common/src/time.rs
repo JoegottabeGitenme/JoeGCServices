@@ -1,10 +1,10 @@
 //! Time handling utilities for meteorological data.
 
-use chrono::{DateTime, Duration, NaiveDateTime, Utc, TimeZone};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Represents a valid time for meteorological data.
-/// 
+///
 /// Combines reference time (model run time) and forecast offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ValidTime {
@@ -16,12 +16,18 @@ pub struct ValidTime {
 
 impl ValidTime {
     pub fn new(reference_time: DateTime<Utc>, forecast_hour: u32) -> Self {
-        Self { reference_time, forecast_hour }
+        Self {
+            reference_time,
+            forecast_hour,
+        }
     }
 
     /// Create from analysis time (forecast_hour = 0)
     pub fn analysis(reference_time: DateTime<Utc>) -> Self {
-        Self { reference_time, forecast_hour: 0 }
+        Self {
+            reference_time,
+            forecast_hour: 0,
+        }
     }
 
     /// Calculate the actual valid time (reference + forecast offset)
@@ -42,7 +48,9 @@ impl ValidTime {
         }
 
         // Try date only
-        if let Ok(ndt) = NaiveDateTime::parse_from_str(&format!("{}T00:00:00", s), "%Y-%m-%dT%H:%M:%S") {
+        if let Ok(ndt) =
+            NaiveDateTime::parse_from_str(&format!("{}T00:00:00", s), "%Y-%m-%dT%H:%M:%S")
+        {
             return Ok(Utc.from_utc_datetime(&ndt));
         }
 
@@ -72,7 +80,7 @@ impl TimeRange {
     }
 
     /// Parse WMS TIME parameter.
-    /// 
+    ///
     /// Supports:
     /// - Single time: "2024-01-15T12:00:00Z"
     /// - Time range: "2024-01-15T00:00:00Z/2024-01-16T00:00:00Z"
@@ -162,7 +170,12 @@ impl ModelCycle {
 
     /// Get all cycles for models that run 4x daily
     pub fn all_4x_daily() -> &'static [ModelCycle] {
-        &[ModelCycle::Z00, ModelCycle::Z06, ModelCycle::Z12, ModelCycle::Z18]
+        &[
+            ModelCycle::Z00,
+            ModelCycle::Z06,
+            ModelCycle::Z12,
+            ModelCycle::Z18,
+        ]
     }
 }
 
@@ -193,10 +206,7 @@ mod tests {
 
     #[test]
     fn test_valid_time_storage_path() {
-        let vt = ValidTime::new(
-            Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
-            6
-        );
+        let vt = ValidTime::new(Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(), 6);
         assert_eq!(vt.storage_path(), "2024/01/15/12z/006");
     }
 }

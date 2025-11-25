@@ -1,7 +1,7 @@
 //! Grid specifications for meteorological data.
 
-use serde::{Deserialize, Serialize};
 use crate::BoundingBox;
+use serde::{Deserialize, Serialize};
 
 /// Specification of a regular lat/lon grid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,12 +25,23 @@ pub struct GridSpec {
 impl GridSpec {
     /// Create a new grid specification.
     pub fn new(
-        nx: usize, ny: usize,
-        dx: f64, dy: f64,
-        first_x: f64, first_y: f64,
+        nx: usize,
+        ny: usize,
+        dx: f64,
+        dy: f64,
+        first_x: f64,
+        first_y: f64,
         scan_mode: ScanMode,
     ) -> Self {
-        Self { nx, ny, dx, dy, first_x, first_y, scan_mode }
+        Self {
+            nx,
+            ny,
+            dx,
+            dy,
+            first_x,
+            first_y,
+            scan_mode,
+        }
     }
 
     /// Calculate the bounding box of this grid.
@@ -53,7 +64,7 @@ impl GridSpec {
         }
 
         let (i_eff, j_eff) = self.scan_mode.adjust_indices(i, j, self.nx, self.ny);
-        
+
         Some(GridPoint {
             x: self.first_x + i_eff as f64 * self.dx,
             y: self.first_y + j_eff as f64 * self.dy,
@@ -103,7 +114,7 @@ pub struct GridPoint {
 }
 
 /// Scan mode flags for grid data ordering.
-/// 
+///
 /// Based on GRIB2 scanning mode (Flag Table 3.4).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ScanMode {
@@ -118,7 +129,7 @@ pub struct ScanMode {
 }
 
 impl ScanMode {
-    /// Most common mode: data starts at top-left, rows go west to east, 
+    /// Most common mode: data starts at top-left, rows go west to east,
     /// columns go north to south.
     pub fn standard() -> Self {
         Self {
@@ -165,32 +176,33 @@ pub mod grids {
     /// GFS 0.25° global grid
     pub fn gfs_0p25() -> GridSpec {
         GridSpec::new(
-            1440, 721,      // 0.25° resolution
-            0.25, -0.25,    // dx, dy (negative because data goes N to S)
-            0.0, 90.0,      // starts at 0°E, 90°N
+            1440,
+            721, // 0.25° resolution
+            0.25,
+            -0.25, // dx, dy (negative because data goes N to S)
+            0.0,
+            90.0, // starts at 0°E, 90°N
             ScanMode::standard(),
         )
     }
 
     /// GFS 0.5° global grid
     pub fn gfs_0p50() -> GridSpec {
-        GridSpec::new(
-            720, 361,
-            0.5, -0.5,
-            0.0, 90.0,
-            ScanMode::standard(),
-        )
+        GridSpec::new(720, 361, 0.5, -0.5, 0.0, 90.0, ScanMode::standard())
     }
 
     /// HRRR CONUS grid (3km Lambert Conformal)
     pub fn hrrr_conus() -> GridSpec {
         GridSpec::new(
-            1799, 1059,
-            3000.0, 3000.0,   // 3km in meters
-            -2697568.0, -1587306.0,  // SW corner in projection coords
+            1799,
+            1059,
+            3000.0,
+            3000.0, // 3km in meters
+            -2697568.0,
+            -1587306.0, // SW corner in projection coords
             ScanMode {
                 i_negative: false,
-                j_positive: true,  // HRRR goes south to north
+                j_positive: true, // HRRR goes south to north
                 j_consecutive: false,
                 alternating_rows: false,
             },
@@ -200,9 +212,12 @@ pub mod grids {
     /// NAM CONUS 12km grid
     pub fn nam_conus_12km() -> GridSpec {
         GridSpec::new(
-            614, 428,
-            12191.0, 12191.0,  // ~12km
-            -4226108.0, -832698.0,
+            614,
+            428,
+            12191.0,
+            12191.0, // ~12km
+            -4226108.0,
+            -832698.0,
             ScanMode::standard(),
         )
     }
@@ -216,7 +231,7 @@ mod tests {
     fn test_gfs_grid_bbox() {
         let grid = grids::gfs_0p25();
         let bbox = grid.bbox();
-        
+
         // GFS global grid should cover entire world
         assert!(bbox.min_x >= -0.001 && bbox.min_x <= 0.001);
         assert!(bbox.min_y >= -90.001 && bbox.min_y <= -89.999);
@@ -227,7 +242,7 @@ mod tests {
     #[test]
     fn test_index_to_coord() {
         let grid = grids::gfs_0p25();
-        
+
         let point = grid.index_to_coord(0, 0).unwrap();
         assert!((point.x - 0.0).abs() < 0.001);
         assert!((point.y - 90.0).abs() < 0.001);

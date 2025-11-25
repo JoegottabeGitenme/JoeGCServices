@@ -6,18 +6,10 @@ mod handlers;
 mod state;
 
 use anyhow::Result;
-use axum::{
-    Router,
-    routing::get,
-    extract::Extension,
-};
+use axum::{extract::Extension, routing::get, Router};
 use clap::Parser;
 use std::{env, net::SocketAddr, sync::Arc};
-use tower_http::{
-    cors::CorsLayer,
-    trace::TraceLayer,
-    compression::CompressionLayer,
-};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -38,6 +30,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load environment variables from .env file
+    dotenvy::dotenv().ok();
+    
     let args = Args::parse();
 
     // Initialize tracing
@@ -66,24 +61,21 @@ async fn main() -> Result<()> {
         // WMS endpoints
         .route("/wms", get(handlers::wms_handler))
         .route("/wms/", get(handlers::wms_handler))
-        
         // WMTS endpoints (KVP)
         .route("/wmts", get(handlers::wmts_kvp_handler))
         .route("/wmts/", get(handlers::wmts_kvp_handler))
-        
         // WMTS RESTful endpoints
         .route("/wmts/rest/*path", get(handlers::wmts_rest_handler))
-        
         // Simple tile endpoints (XYZ/TMS style for easy integration)
-        .route("/tiles/:layer/:style/:z/:x/:y", get(handlers::xyz_tile_handler))
-        
+        .route(
+            "/tiles/:layer/:style/:z/:x/:y",
+            get(handlers::xyz_tile_handler),
+        )
         // Health check
         .route("/health", get(handlers::health_handler))
         .route("/ready", get(handlers::ready_handler))
-        
         // Metrics
         .route("/metrics", get(handlers::metrics_handler))
-        
         // Layer extensions
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())

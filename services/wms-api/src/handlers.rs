@@ -1,16 +1,16 @@
 //! HTTP request handlers for WMS and WMTS.
 
 use axum::{
-    extract::{Extension, Query, Path},
-    http::{StatusCode, header},
+    extract::{Extension, Path, Query},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{info, instrument};
 
-use wms_common::{BoundingBox, CrsCode, TileCoord, tile::web_mercator_tile_matrix_set};
 use storage::CacheKey;
+use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
 
 use crate::state::AppState;
 
@@ -52,14 +52,26 @@ pub async fn wms_handler(
     Query(params): Query<WmsParams>,
 ) -> Response {
     if params.service.as_deref() != Some("WMS") {
-        return wms_exception("InvalidParameterValue", "SERVICE must be WMS", StatusCode::BAD_REQUEST);
+        return wms_exception(
+            "InvalidParameterValue",
+            "SERVICE must be WMS",
+            StatusCode::BAD_REQUEST,
+        );
     }
 
     match params.request.as_deref() {
         Some("GetCapabilities") => wms_get_capabilities(state, params).await,
         Some("GetMap") => wms_get_map(state, params).await,
-        Some(req) => wms_exception("OperationNotSupported", &format!("Unknown request: {}", req), StatusCode::BAD_REQUEST),
-        None => wms_exception("MissingParameterValue", "REQUEST is required", StatusCode::BAD_REQUEST),
+        Some(req) => wms_exception(
+            "OperationNotSupported",
+            &format!("Unknown request: {}", req),
+            StatusCode::BAD_REQUEST,
+        ),
+        None => wms_exception(
+            "MissingParameterValue",
+            "REQUEST is required",
+            StatusCode::BAD_REQUEST,
+        ),
     }
 }
 
@@ -77,7 +89,13 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
 async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let layers = match &params.layers {
         Some(l) => l,
-        None => return wms_exception("MissingParameterValue", "LAYERS is required", StatusCode::BAD_REQUEST),
+        None => {
+            return wms_exception(
+                "MissingParameterValue",
+                "LAYERS is required",
+                StatusCode::BAD_REQUEST,
+            )
+        }
     };
     let width = params.width.unwrap_or(256);
     let height = params.height.unwrap_or(256);
@@ -122,21 +140,32 @@ pub async fn wmts_kvp_handler(
     Query(params): Query<WmtsKvpParams>,
 ) -> Response {
     if params.service.as_deref() != Some("WMTS") {
-        return wmts_exception("InvalidParameterValue", "SERVICE must be WMTS", StatusCode::BAD_REQUEST);
+        return wmts_exception(
+            "InvalidParameterValue",
+            "SERVICE must be WMTS",
+            StatusCode::BAD_REQUEST,
+        );
     }
 
     match params.request.as_deref() {
         Some("GetCapabilities") => wmts_get_capabilities(state).await,
         Some("GetTile") => {
             let layer = params.layer.clone().unwrap_or_default();
-            let style = params.style.clone().unwrap_or_else(|| "default".to_string());
+            let style = params
+                .style
+                .clone()
+                .unwrap_or_else(|| "default".to_string());
             let tile_matrix = params.tile_matrix.clone().unwrap_or_default();
             let tile_row = params.tile_row.unwrap_or(0);
             let tile_col = params.tile_col.unwrap_or(0);
             let z: u32 = tile_matrix.parse().unwrap_or(0);
             wmts_get_tile(state, &layer, &style, z, tile_col, tile_row).await
         }
-        _ => wmts_exception("MissingParameterValue", "REQUEST is required", StatusCode::BAD_REQUEST),
+        _ => wmts_exception(
+            "MissingParameterValue",
+            "REQUEST is required",
+            StatusCode::BAD_REQUEST,
+        ),
     }
 }
 
@@ -147,7 +176,11 @@ pub async fn wmts_rest_handler(
 ) -> Response {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if parts.len() < 6 {
-        return wmts_exception("InvalidParameterValue", "Invalid path", StatusCode::BAD_REQUEST);
+        return wmts_exception(
+            "InvalidParameterValue",
+            "Invalid path",
+            StatusCode::BAD_REQUEST,
+        );
     }
     let layer = parts[0];
     let style = parts[1];
@@ -180,7 +213,14 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         .unwrap()
 }
 
-async fn wmts_get_tile(state: Arc<AppState>, layer: &str, style: &str, z: u32, x: u32, y: u32) -> Response {
+async fn wmts_get_tile(
+    state: Arc<AppState>,
+    layer: &str,
+    style: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+) -> Response {
     info!(layer = %layer, style = %style, z = z, x = x, y = y, "GetTile request");
     let tms = web_mercator_tile_matrix_set();
     let coord = TileCoord::new(z, x, y);
@@ -200,44 +240,88 @@ async fn wmts_get_tile(state: Arc<AppState>, layer: &str, style: &str, z: u32, x
 // Health
 // ============================================================================
 
-pub async fn health_handler() -> impl IntoResponse { (StatusCode::OK, "OK") }
+pub async fn health_handler() -> impl IntoResponse {
+    (StatusCode::OK, "OK")
+}
 pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     match state.catalog.list_models().await {
         Ok(_) => (StatusCode::OK, "Ready"),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Not ready"),
     }
 }
-pub async fn metrics_handler() -> impl IntoResponse { (StatusCode::OK, "# metrics\n") }
+pub async fn metrics_handler() -> impl IntoResponse {
+    (StatusCode::OK, "# metrics\n")
+}
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 fn wms_exception(code: &str, msg: &str, status: StatusCode) -> Response {
-    let xml = format!(r#"<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="{}">{}</ServiceException></ServiceExceptionReport>"#, code, msg);
-    Response::builder().status(status).header(header::CONTENT_TYPE, "application/xml").body(xml.into()).unwrap()
+    let xml = format!(
+        r#"<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="{}">{}</ServiceException></ServiceExceptionReport>"#,
+        code, msg
+    );
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(xml.into())
+        .unwrap()
 }
 
 fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
-    let xml = format!(r#"<?xml version="1.0"?><ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1"><ows:Exception exceptionCode="{}"><ows:ExceptionText>{}</ows:ExceptionText></ows:Exception></ows:ExceptionReport>"#, code, msg);
-    Response::builder().status(status).header(header::CONTENT_TYPE, "application/xml").body(xml.into()).unwrap()
+    let xml = format!(
+        r#"<?xml version="1.0"?><ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1"><ows:Exception exceptionCode="{}"><ows:ExceptionText>{}</ows:ExceptionText></ows:Exception></ows:ExceptionReport>"#,
+        code, msg
+    );
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(xml.into())
+        .unwrap()
 }
 
 fn build_wms_capabilities_xml(version: &str, models: &[String]) -> String {
-    let layers: String = models.iter().map(|m| format!(r#"<Layer><Name>{}</Name><Title>{}</Title></Layer>"#, m, m.to_uppercase())).collect();
-    format!(r#"<?xml version="1.0"?><WMS_Capabilities version="{}"><Service><Title>Weather WMS</Title></Service><Capability><Layer>{}</Layer></Capability></WMS_Capabilities>"#, version, layers)
+    let layers: String = models
+        .iter()
+        .map(|m| {
+            format!(
+                r#"<Layer><Name>{}</Name><Title>{}</Title></Layer>"#,
+                m,
+                m.to_uppercase()
+            )
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0"?><WMS_Capabilities version="{}"><Service><Title>Weather WMS</Title></Service><Capability><Layer>{}</Layer></Capability></WMS_Capabilities>"#,
+        version, layers
+    )
 }
 
 fn build_wmts_capabilities_xml(models: &[String]) -> String {
-    let layers: String = models.iter().map(|m| format!(r#"<Layer><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Layer>"#, m, m.to_uppercase())).collect();
-    format!(r#"<?xml version="1.0"?><Capabilities xmlns="http://www.opengis.net/wmts/1.0" xmlns:ows="http://www.opengis.net/ows/1.1"><ows:ServiceIdentification><ows:Title>Weather WMTS</ows:Title></ows:ServiceIdentification><Contents>{}</Contents></Capabilities>"#, layers)
+    let layers: String = models
+        .iter()
+        .map(|m| {
+            format!(
+                r#"<Layer><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Layer>"#,
+                m,
+                m.to_uppercase()
+            )
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0"?><Capabilities xmlns="http://www.opengis.net/wmts/1.0" xmlns:ows="http://www.opengis.net/ows/1.1"><ows:ServiceIdentification><ows:Title>Weather WMTS</ows:Title></ows:ServiceIdentification><Contents>{}</Contents></Capabilities>"#,
+        layers
+    )
 }
 
 fn generate_placeholder_image(width: u32, height: u32) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut pixels = vec![200u8; w * h * 4];
-    for i in 0..pixels.len()/4 { pixels[i*4+3] = 255; }
+    for i in 0..pixels.len() / 4 {
+        pixels[i * 4 + 3] = 255;
+    }
     let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&width.to_be_bytes());
@@ -245,7 +329,13 @@ fn generate_placeholder_image(width: u32, height: u32) -> Vec<u8> {
     ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
     write_chunk(&mut png, b"IHDR", &ihdr);
     let mut raw = Vec::new();
-    for y in 0..h { raw.push(0); for x in 0..w { let idx = (y*w+x)*4; raw.extend_from_slice(&pixels[idx..idx+4]); } }
+    for y in 0..h {
+        raw.push(0);
+        for x in 0..w {
+            let idx = (y * w + x) * 4;
+            raw.extend_from_slice(&pixels[idx..idx + 4]);
+        }
+    }
     use std::io::Write;
     let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     enc.write_all(&raw).unwrap();

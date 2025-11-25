@@ -1,18 +1,20 @@
 //! Ingestion pipeline for processing weather data.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tracing::{debug, info, warn, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
-use storage::{ObjectStorage, Catalog, CatalogEntry, ObjectStorageConfig};
+use storage::{Catalog, CatalogEntry, ObjectStorage, ObjectStorageConfig};
 use wms_common::BoundingBox;
 
 use crate::config::{IngesterConfig, ModelConfig, ParameterConfig};
-use crate::sources::{create_fetcher, DataSourceFetcher, RemoteFile, latest_available_cycle, cycles_to_check};
+use crate::sources::{
+    create_fetcher, cycles_to_check, latest_available_cycle, DataSourceFetcher, RemoteFile,
+};
 
 /// Main ingestion pipeline.
 pub struct IngestionPipeline {
@@ -27,7 +29,7 @@ impl IngestionPipeline {
     pub async fn new(config: &IngesterConfig) -> Result<Self> {
         let storage = ObjectStorage::new(&config.storage)?;
         let catalog = Catalog::connect(&config.database_url).await?;
-        
+
         // Run migrations
         catalog.migrate().await?;
 
@@ -60,8 +62,9 @@ impl IngestionPipeline {
                 "Sleeping until next cycle"
             );
             tokio::time::sleep(std::time::Duration::from_secs(
-                self.config.poll_interval_secs
-            )).await;
+                self.config.poll_interval_secs,
+            ))
+            .await;
         }
     }
 
@@ -78,29 +81,24 @@ impl IngestionPipeline {
     /// Ingest a specific model.
     #[instrument(skip(self), fields(model = %model_id))]
     pub async fn ingest_model(&self, model_id: &str) -> Result<()> {
-        let model_config = self.config.models
+        let model_config = self
+            .config
+            .models
             .get(model_id)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_id))?;
 
         info!(model = %model_config.name, "Starting model ingestion");
 
-        let fetcher = create_fetcher(
-            &model_config.source,
-            model_id,
-            &model_config.resolution,
-        );
+        let fetcher = create_fetcher(&model_config.source, model_id, &model_config.resolution);
 
         // Get cycles to check (look back 24 hours)
         let cycles = cycles_to_check(&model_config.cycles, 24);
-        
+
         for (date, cycle) in cycles {
-            if let Err(e) = self.ingest_cycle(
-                model_id,
-                model_config,
-                &*fetcher,
-                &date,
-                cycle,
-            ).await {
+            if let Err(e) = self
+                .ingest_cycle(model_id, model_config, &*fetcher, &date, cycle)
+                .await
+            {
                 warn!(
                     model = %model_id,
                     date = %date,
@@ -128,14 +126,15 @@ impl IngestionPipeline {
 
         // List available files
         let available_files = fetcher.list_files(date, cycle).await?;
-        
+
         if available_files.is_empty() {
             debug!("No files found for this cycle");
             return Ok(());
         }
 
         // Process each forecast hour
-        let tasks: Vec<_> = model_config.forecast_hours
+        let tasks: Vec<_> = model_config
+            .forecast_hours
             .iter()
             .map(|&fhr| {
                 let sem = self.download_semaphore.clone();
@@ -147,7 +146,7 @@ impl IngestionPipeline {
                     cycle,
                     fhr,
                 );
-                
+
                 async move {
                     let _permit = sem.acquire().await?;
                     // Return file pattern for matching
@@ -164,20 +163,13 @@ impl IngestionPipeline {
 
         // Match and download files
         for (fhr, pattern) in file_patterns {
-            let matching_file = available_files
-                .iter()
-                .find(|f| f.path.contains(&pattern));
+            let matching_file = available_files.iter().find(|f| f.path.contains(&pattern));
 
             if let Some(file) = matching_file {
-                if let Err(e) = self.process_file(
-                    model_id,
-                    model_config,
-                    fetcher,
-                    file,
-                    date,
-                    cycle,
-                    fhr,
-                ).await {
+                if let Err(e) = self
+                    .process_file(model_id, model_config, fetcher, file, date, cycle, fhr)
+                    .await
+                {
                     warn!(
                         file = %file.path,
                         error = %e,
@@ -204,8 +196,10 @@ impl IngestionPipeline {
     ) -> Result<()> {
         // Check if already ingested
         let storage_path = format!(
-            "raw/{}/{}/{:02}/{}", 
-            model_id, date, cycle,
+            "raw/{}/{}/{:02}/{}",
+            model_id,
+            date,
+            cycle,
             file.path.split('/').last().unwrap_or(&file.path)
         );
 
@@ -225,16 +219,19 @@ impl IngestionPipeline {
 
         // Parse and extract parameters
         for param_config in &model_config.parameters {
-            if let Err(e) = self.extract_parameter(
-                model_id,
-                date,
-                cycle,
-                fhr,
-                &data,
-                param_config,
-                &storage_path,
-                file_size,
-            ).await {
+            if let Err(e) = self
+                .extract_parameter(
+                    model_id,
+                    date,
+                    cycle,
+                    fhr,
+                    &data,
+                    param_config,
+                    &storage_path,
+                    file_size,
+                )
+                .await
+            {
                 warn!(
                     parameter = %param_config.name,
                     error = %e,
@@ -261,7 +258,7 @@ impl IngestionPipeline {
     ) -> Result<()> {
         // TODO: Implement actual GRIB2 parsing to extract the parameter
         // For now, we'll register the raw file in the catalog
-        
+
         // Parse reference time
         let reference_time = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")?
             .and_hms_opt(cycle, 0, 0)
@@ -289,7 +286,7 @@ impl IngestionPipeline {
     /// Clean up old data.
     async fn cleanup_old_data(&self) -> Result<()> {
         let cutoff = Utc::now() - Duration::hours(self.config.retention_hours as i64);
-        
+
         let expired = self.catalog.mark_expired(cutoff).await?;
         if expired > 0 {
             info!(count = expired, "Marked expired datasets");

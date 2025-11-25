@@ -1,7 +1,7 @@
 //! Redis Streams-based job queue for render requests.
 
 use chrono::{DateTime, Utc};
-use redis::{aio::MultiplexedConnection, AsyncCommands, Client, streams::*};
+use redis::{aio::MultiplexedConnection, streams::*, AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -66,7 +66,8 @@ impl JobQueue {
             .count(1)
             .block(5000); // 5 second block
 
-        let result: StreamReadReply = self.conn
+        let result: StreamReadReply = self
+            .conn
             .xread_options(&[STREAM_KEY], &[">"], &opts)
             .await
             .map_err(|e| WmsError::CacheError(format!("Read failed: {}", e)))?;
@@ -76,8 +77,9 @@ impl JobQueue {
                 if let Some(data) = entry.map.get("data") {
                     let bytes: Vec<u8> = redis::from_redis_value(data)
                         .map_err(|e| WmsError::InternalError(format!("Parse failed: {}", e)))?;
-                    let job: RenderJob = serde_json::from_slice(&bytes)
-                        .map_err(|e| WmsError::InternalError(format!("Deserialize failed: {}", e)))?;
+                    let job: RenderJob = serde_json::from_slice(&bytes).map_err(|e| {
+                        WmsError::InternalError(format!("Deserialize failed: {}", e))
+                    })?;
                     return Ok(Some(job));
                 }
             }
@@ -124,7 +126,11 @@ impl JobQueue {
     }
 
     /// Wait for a job result.
-    pub async fn wait_for_result(&mut self, job_id: &Uuid, timeout_ms: u64) -> WmsResult<JobResult> {
+    pub async fn wait_for_result(
+        &mut self,
+        job_id: &Uuid,
+        timeout_ms: u64,
+    ) -> WmsResult<JobResult> {
         let result_key = format!("{}{}", RESULTS_PREFIX, job_id);
 
         // Poll for result (simple implementation)
@@ -132,7 +138,8 @@ impl JobQueue {
         let timeout = std::time::Duration::from_millis(timeout_ms);
 
         loop {
-            let result: Option<Vec<u8>> = self.conn
+            let result: Option<Vec<u8>> = self
+                .conn
                 .get(&result_key)
                 .await
                 .map_err(|e| WmsError::CacheError(format!("Get result failed: {}", e)))?;
@@ -157,7 +164,8 @@ impl JobQueue {
 
     /// Get queue depth (pending jobs).
     pub async fn queue_depth(&mut self) -> WmsResult<u64> {
-        let info: StreamInfoStreamReply = self.conn
+        let info: StreamInfoStreamReply = self
+            .conn
             .xinfo_stream(STREAM_KEY)
             .await
             .map_err(|e| WmsError::CacheError(format!("XINFO failed: {}", e)))?;

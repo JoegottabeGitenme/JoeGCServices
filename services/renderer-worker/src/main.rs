@@ -5,11 +5,11 @@
 use anyhow::Result;
 use clap::Parser;
 use std::env;
-use tracing::{info, warn, error, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use storage::{ObjectStorage, ObjectStorageConfig, JobQueue, RenderJob, TileCache, CacheKey};
+use storage::{CacheKey, JobQueue, ObjectStorage, ObjectStorageConfig, RenderJob, TileCache};
 
 #[derive(Parser, Debug)]
 #[command(name = "renderer-worker")]
@@ -48,14 +48,14 @@ async fn main() -> Result<()> {
 
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let worker_name = args.name
+    let worker_name = args
+        .name
         .unwrap_or_else(|| format!("worker-{}", Uuid::new_v4()));
 
     info!(name = %worker_name, "Starting renderer worker");
 
     // Connect to services
-    let redis_url = env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://redis:6379".to_string());
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
 
     let mut queue = JobQueue::connect(&redis_url).await?;
     let mut cache = TileCache::connect(&redis_url).await?;
@@ -140,12 +140,12 @@ async fn render_tile(storage: &ObjectStorage, job: &RenderJob) -> Result<Vec<u8>
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 4;
-            
+
             // Simple gradient pattern
-            pixels[idx] = (x * 255 / width) as u8;     // R
+            pixels[idx] = (x * 255 / width) as u8; // R
             pixels[idx + 1] = (y * 255 / height) as u8; // G
-            pixels[idx + 2] = 128;                       // B
-            pixels[idx + 3] = 255;                       // A
+            pixels[idx + 2] = 128; // B
+            pixels[idx + 3] = 255; // A
         }
     }
 
@@ -158,24 +158,24 @@ async fn render_tile(storage: &ObjectStorage, job: &RenderJob) -> Result<Vec<u8>
 fn encode_test_png(width: usize, height: usize, rgba: &[u8]) -> Vec<u8> {
     // This is a placeholder - real implementation would use the renderer crate
     // For now, return a minimal valid PNG
-    
+
     let mut png = Vec::new();
-    
+
     // PNG signature
     png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    
+
     // IHDR chunk
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&(width as u32).to_be_bytes());
     ihdr.extend_from_slice(&(height as u32).to_be_bytes());
-    ihdr.push(8);  // bit depth
-    ihdr.push(6);  // color type (RGBA)
-    ihdr.push(0);  // compression
-    ihdr.push(0);  // filter
-    ihdr.push(0);  // interlace
-    
+    ihdr.push(8); // bit depth
+    ihdr.push(6); // color type (RGBA)
+    ihdr.push(0); // compression
+    ihdr.push(0); // filter
+    ihdr.push(0); // interlace
+
     write_png_chunk(&mut png, b"IHDR", &ihdr);
-    
+
     // IDAT chunk (compressed image data)
     // For simplicity, using uncompressed deflate
     let mut raw_data = Vec::new();
@@ -186,18 +186,18 @@ fn encode_test_png(width: usize, height: usize, rgba: &[u8]) -> Vec<u8> {
             raw_data.extend_from_slice(&rgba[idx..idx + 4]);
         }
     }
-    
+
     // Compress with deflate
     use std::io::Write;
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder.write_all(&raw_data).unwrap();
     let compressed = encoder.finish().unwrap();
-    
+
     write_png_chunk(&mut png, b"IDAT", &compressed);
-    
+
     // IEND chunk
     write_png_chunk(&mut png, b"IEND", &[]);
-    
+
     png
 }
 
@@ -205,10 +205,10 @@ fn write_png_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
     output.extend_from_slice(&(data.len() as u32).to_be_bytes());
     output.extend_from_slice(chunk_type);
     output.extend_from_slice(data);
-    
+
     let crc = crc32fast::hash(&[chunk_type.as_slice(), data].concat());
     output.extend_from_slice(&crc.to_be_bytes());
 }
 
-use flate2;
 use crc32fast;
+use flate2;

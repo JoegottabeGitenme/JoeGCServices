@@ -6,9 +6,9 @@
 //! - Wind barbs
 //! - Wind arrows
 
-pub mod gradient;
-pub mod contour;
 pub mod barbs;
+pub mod contour;
+pub mod gradient;
 pub mod png;
 
 // TODO: Implement rendering algorithms

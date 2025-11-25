@@ -3,9 +3,9 @@
 //! Polls NOAA data sources (NOMADS, AWS Open Data) and ingests
 //! GRIB2/NetCDF files into object storage with catalog updates.
 
-mod sources;
-mod ingest;
 mod config;
+mod ingest;
+mod sources;
 
 use anyhow::Result;
 use clap::Parser;
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     if args.once {
         // Single run mode
         info!("Running single ingestion cycle");
-        
+
         if let Some(model) = &args.model {
             pipeline.ingest_model(model).await?;
         } else {

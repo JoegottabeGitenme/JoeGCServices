@@ -5,14 +5,13 @@
 //! - WMTS 1.0.0 specification (KVP and RESTful bindings)
 
 pub mod capabilities;
-pub mod getmap;
-pub mod getfeatureinfo;
 pub mod exceptions;
+pub mod getfeatureinfo;
+pub mod getmap;
 pub mod wmts;
 
 pub use wmts::{
-    WmtsRequest, WmtsKvpParams, WmtsRestPath,
-    GetTileRequest, GetCapabilitiesRequest, GetFeatureInfoRequest,
-    WmtsCapabilitiesBuilder, WmtsLayerInfo, WmtsStyleInfo, WmtsDimensionInfo,
-    wmts_exception,
+    wmts_exception, GetCapabilitiesRequest, GetFeatureInfoRequest, GetTileRequest,
+    WmtsCapabilitiesBuilder, WmtsDimensionInfo, WmtsKvpParams, WmtsLayerInfo, WmtsRequest,
+    WmtsRestPath, WmtsStyleInfo,
 };

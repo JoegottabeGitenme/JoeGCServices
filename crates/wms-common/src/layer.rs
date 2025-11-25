@@ -1,8 +1,8 @@
 //! Layer definitions and metadata for WMS services.
 
+use crate::{BoundingBox, CrsCode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::{BoundingBox, CrsCode};
 
 /// Unique identifier for a layer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,28 +33,28 @@ impl std::fmt::Display for LayerId {
 pub struct Layer {
     /// Unique layer identifier
     pub id: LayerId,
-    
+
     /// Human-readable title for GetCapabilities
     pub title: String,
-    
+
     /// Optional description/abstract
     pub description: Option<String>,
-    
+
     /// Supported coordinate reference systems
     pub supported_crs: Vec<CrsCode>,
-    
+
     /// Geographic bounding box (always in EPSG:4326)
     pub geographic_bbox: BoundingBox,
-    
+
     /// Available styles for this layer
     pub styles: Vec<LayerStyle>,
-    
+
     /// Time dimension info (if applicable)
     pub time_dimension: Option<TimeDimension>,
-    
+
     /// Elevation dimension info (if applicable)
     pub elevation_dimension: Option<ElevationDimension>,
-    
+
     /// Data source metadata
     pub metadata: LayerMetadata,
 }
@@ -64,10 +64,10 @@ pub struct Layer {
 pub struct LayerStyle {
     /// Style name (used in GetMap requests)
     pub name: String,
-    
+
     /// Human-readable title
     pub title: String,
-    
+
     /// Style configuration
     pub config: StyleConfig,
 }
@@ -83,13 +83,13 @@ pub enum StyleConfig {
         /// Units for the legend
         units: String,
     },
-    
+
     /// Discrete classification
     Classified {
         /// Classification breaks and colors
         classes: Vec<ClassBreak>,
     },
-    
+
     /// Contour/isoline rendering
     Contour {
         /// Contour interval
@@ -101,7 +101,7 @@ pub enum StyleConfig {
         /// Whether to label contours
         labels: bool,
     },
-    
+
     /// Wind barb rendering
     WindBarbs {
         /// Spacing between barbs in pixels
@@ -109,7 +109,7 @@ pub enum StyleConfig {
         /// Barb color
         color: [u8; 4],
     },
-    
+
     /// Wind arrow rendering
     WindArrows {
         /// Spacing between arrows in pixels
@@ -143,7 +143,7 @@ pub struct ClassBreak {
 pub struct TimeDimension {
     /// Default time value
     pub default: TimeDefault,
-    
+
     /// Available times (ISO 8601 format)
     /// Can be explicit list or interval notation
     pub extent: TimeExtent,
@@ -161,7 +161,7 @@ pub enum TimeDefault {
 pub enum TimeExtent {
     /// Explicit list of available times
     List(Vec<DateTime<Utc>>),
-    
+
     /// Interval notation: start/end/resolution
     Interval {
         start: DateTime<Utc>,
@@ -175,10 +175,10 @@ pub enum TimeExtent {
 pub struct ElevationDimension {
     /// Default elevation
     pub default: f64,
-    
+
     /// Available elevations
     pub values: Vec<f64>,
-    
+
     /// Units (e.g., "hPa", "m")
     pub units: String,
 }
@@ -188,19 +188,19 @@ pub struct ElevationDimension {
 pub struct LayerMetadata {
     /// Data model/source (e.g., "GFS", "HRRR", "NAM")
     pub model: String,
-    
+
     /// Parameter name in the source data
     pub parameter: String,
-    
+
     /// Level/surface description
     pub level: String,
-    
+
     /// Native grid specification
     pub native_grid: Option<String>,
-    
+
     /// Update frequency
     pub update_frequency: Option<String>,
-    
+
     /// Attribution/credits
     pub attribution: Option<String>,
 }

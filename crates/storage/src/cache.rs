@@ -34,7 +34,8 @@ impl TileCache {
     pub async fn get(&mut self, key: &CacheKey) -> WmsResult<Option<Bytes>> {
         let key_str = key.to_string();
 
-        let result: Option<Vec<u8>> = self.conn
+        let result: Option<Vec<u8>> = self
+            .conn
             .get(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache get failed: {}", e)))?;
@@ -43,7 +44,12 @@ impl TileCache {
     }
 
     /// Store a tile in cache.
-    pub async fn set(&mut self, key: &CacheKey, data: &[u8], ttl: Option<Duration>) -> WmsResult<()> {
+    pub async fn set(
+        &mut self,
+        key: &CacheKey,
+        data: &[u8],
+        ttl: Option<Duration>,
+    ) -> WmsResult<()> {
         let key_str = key.to_string();
         let ttl = ttl.unwrap_or(self.default_ttl);
 
@@ -59,7 +65,8 @@ impl TileCache {
     pub async fn exists(&mut self, key: &CacheKey) -> WmsResult<bool> {
         let key_str = key.to_string();
 
-        let exists: bool = self.conn
+        let exists: bool = self
+            .conn
             .exists(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache exists check failed: {}", e)))?;
@@ -104,9 +111,10 @@ impl TileCache {
         }
 
         let count = keys.len() as u64;
-        
+
         for key in keys {
-            let _: () = self.conn
+            let _: () = self
+                .conn
                 .del(&key)
                 .await
                 .map_err(|e| WmsError::CacheError(format!("Delete failed: {}", e)))?;

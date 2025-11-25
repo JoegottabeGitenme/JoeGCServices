@@ -3,8 +3,8 @@
 //! Implements map projections from scratch without external dependencies.
 
 pub mod geographic;
-pub mod mercator;
 pub mod lambert;
+pub mod mercator;
 pub mod polar;
 pub mod transform;
 

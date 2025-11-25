@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A geographic or projected bounding box.
-/// 
+///
 /// For geographic CRS (EPSG:4326), coordinates are in degrees.
 /// For projected CRS (EPSG:3857, etc.), coordinates are in meters.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -17,7 +17,12 @@ pub struct BoundingBox {
 impl BoundingBox {
     /// Create a new bounding box from corner coordinates.
     pub fn new(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {
-        Self { min_x, min_y, max_x, max_y }
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 
     /// Parse a WMS BBOX parameter string: "minx,miny,maxx,maxy"
@@ -28,10 +33,18 @@ impl BoundingBox {
         }
 
         Ok(Self {
-            min_x: parts[0].parse().map_err(|_| BboxParseError::InvalidNumber(parts[0].to_string()))?,
-            min_y: parts[1].parse().map_err(|_| BboxParseError::InvalidNumber(parts[1].to_string()))?,
-            max_x: parts[2].parse().map_err(|_| BboxParseError::InvalidNumber(parts[2].to_string()))?,
-            max_y: parts[3].parse().map_err(|_| BboxParseError::InvalidNumber(parts[3].to_string()))?,
+            min_x: parts[0]
+                .parse()
+                .map_err(|_| BboxParseError::InvalidNumber(parts[0].to_string()))?,
+            min_y: parts[1]
+                .parse()
+                .map_err(|_| BboxParseError::InvalidNumber(parts[1].to_string()))?,
+            max_x: parts[2]
+                .parse()
+                .map_err(|_| BboxParseError::InvalidNumber(parts[2].to_string()))?,
+            max_y: parts[3]
+                .parse()
+                .map_err(|_| BboxParseError::InvalidNumber(parts[3].to_string()))?,
         })
     }
 
@@ -86,7 +99,7 @@ impl BoundingBox {
 pub enum BboxParseError {
     #[error("Invalid BBOX format: {0}. Expected 'minx,miny,maxx,maxy'")]
     InvalidFormat(String),
-    
+
     #[error("Invalid number in BBOX: {0}")]
     InvalidNumber(String),
 }
