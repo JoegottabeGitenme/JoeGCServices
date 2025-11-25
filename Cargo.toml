@@ -1,0 +1,72 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wms-common",
+    "crates/grib2-parser",
+    "crates/netcdf-parser",
+    "crates/projection",
+    "crates/renderer",
+    "crates/wms-protocol",
+    "crates/storage",
+    "services/ingester",
+    "services/renderer-worker",
+    "services/wms-api",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/yourorg/weather-wms"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# HTTP
+axum = { version = "0.7", features = ["macros"] }
+hyper = { version = "1.1", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+reqwest = { version = "0.11", features = ["stream", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+quick-xml = { version = "0.31", features = ["serialize"] }
+bytes = "1.5"
+
+# Storage
+object_store = { version = "0.9", features = ["aws", "http"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }
+redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+
+# Time & IDs
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.22"
+metrics-exporter-prometheus = "0.13"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Image processing (minimal deps, we'll implement PNG ourselves)
+flate2 = "1.0"  # for PNG deflate compression
+crc32fast = "1.3"  # for PNG CRC
+
+# Math
+nalgebra = "0.32"
+num-traits = "0.2"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Testing
+tokio-test = "0.4"

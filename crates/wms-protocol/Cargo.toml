@@ -1,0 +1,10 @@
+[package]
+name = "wms-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wms-common = { path = "../wms-common" }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

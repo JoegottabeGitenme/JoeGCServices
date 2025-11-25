@@ -1,0 +1,105 @@
+{
+  "version": "1.0",
+  "styles": {
+    "wind_speed_knots": {
+      "name": "Wind Speed (Knots)",
+      "description": "Wind speed gradient in knots",
+      "type": "gradient",
+      "units": "kt",
+      "transform": {
+        "type": "mps_to_knots"
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF", "label": "Calm" },
+        { "value": 5, "color": "#AAFFAA", "label": "5 kt" },
+        { "value": 10, "color": "#00FF00", "label": "10 kt" },
+        { "value": 15, "color": "#00C000", "label": "15 kt" },
+        { "value": 20, "color": "#FFFF00", "label": "20 kt" },
+        { "value": 25, "color": "#FFC000", "label": "25 kt" },
+        { "value": 30, "color": "#FF8000", "label": "30 kt" },
+        { "value": 40, "color": "#FF4000", "label": "40 kt" },
+        { "value": 50, "color": "#FF0000", "label": "50 kt" },
+        { "value": 64, "color": "#C00000", "label": "64 kt (Storm)" },
+        { "value": 80, "color": "#800080", "label": "80 kt" },
+        { "value": 100, "color": "#FF00FF", "label": "100+ kt" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend"
+    },
+    "wind_speed_mps": {
+      "name": "Wind Speed (m/s)",
+      "description": "Wind speed gradient in meters per second",
+      "type": "gradient",
+      "units": "m/s",
+      "stops": [
+        { "value": 0, "color": "#FFFFFF", "label": "Calm" },
+        { "value": 2, "color": "#AAFFAA", "label": "2" },
+        { "value": 5, "color": "#00FF00", "label": "5" },
+        { "value": 10, "color": "#00C000", "label": "10" },
+        { "value": 15, "color": "#FFFF00", "label": "15" },
+        { "value": 20, "color": "#FF8000", "label": "20" },
+        { "value": 25, "color": "#FF0000", "label": "25" },
+        { "value": 30, "color": "#C00000", "label": "30" },
+        { "value": 40, "color": "#800080", "label": "40" },
+        { "value": 50, "color": "#FF00FF", "label": "50+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend"
+    },
+    "wind_barbs": {
+      "name": "Wind Barbs",
+      "description": "Traditional meteorological wind barbs",
+      "type": "wind_barbs",
+      "units": "kt",
+      "spacing": 50,
+      "color": "#000000",
+      "size": 25.0,
+      "knots": true,
+      "calm_threshold": 2.5
+    },
+    "wind_arrows": {
+      "name": "Wind Arrows",
+      "description": "Wind direction arrows colored by speed",
+      "type": "wind_arrows",
+      "units": "m/s",
+      "spacing": 40,
+      "scale": 1.0,
+      "min_length": 5.0,
+      "max_length": 40.0,
+      "color_by_speed": {
+        "stops": [
+          { "value": 0, "color": "#808080" },
+          { "value": 5, "color": "#00FF00" },
+          { "value": 10, "color": "#FFFF00" },
+          { "value": 20, "color": "#FF8000" },
+          { "value": 30, "color": "#FF0000" }
+        ],
+        "interpolation": "linear",
+        "out_of_range": "clamp"
+      }
+    },
+    "wind_gust": {
+      "name": "Wind Gust",
+      "description": "Maximum wind gust speed",
+      "type": "gradient",
+      "units": "kt",
+      "transform": {
+        "type": "mps_to_knots"
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 20, "color": "#FFFF00", "label": "20" },
+        { "value": 30, "color": "#FF8000", "label": "30" },
+        { "value": 40, "color": "#FF4000", "label": "40" },
+        { "value": 50, "color": "#FF0000", "label": "50" },
+        { "value": 60, "color": "#C00000", "label": "60" },
+        { "value": 75, "color": "#800080", "label": "75" },
+        { "value": 100, "color": "#FF00FF", "label": "100+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "no_data_value": 0,
+      "no_data_color": "transparent"
+    }
+  }
+}

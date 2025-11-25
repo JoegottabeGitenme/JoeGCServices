@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-config
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+data:
+  S3_ENDPOINT: {{ include "weather-wms.s3Endpoint" . | quote }}
+  S3_BUCKET: {{ .Values.config.s3.bucket | quote }}
+  S3_REGION: {{ .Values.config.s3.region | quote }}
+  S3_ALLOW_HTTP: "true"
+  DATABASE_URL: {{ include "weather-wms.databaseUrl" . | quote }}
+  REDIS_URL: {{ include "weather-wms.redisUrl" . | quote }}

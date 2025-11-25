@@ -1,0 +1,10 @@
+[package]
+name = "grib2-parser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wms-common = { path = "../wms-common" }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

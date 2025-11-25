@@ -1,0 +1,1 @@
+//! WMS getfeatureinfo handling

@@ -1,0 +1,130 @@
+{
+  "version": "1.0",
+  "styles": {
+    "pressure_msl": {
+      "name": "Mean Sea Level Pressure",
+      "description": "MSLP with contours",
+      "type": "contour",
+      "units": "hPa",
+      "transform": {
+        "type": "pa_to_hpa"
+      },
+      "interval": 4,
+      "base": 1000,
+      "color": "#000000",
+      "line_width": 1.0,
+      "major_interval": 20,
+      "major_line_width": 2.0,
+      "labels": true,
+      "label_font_size": 10.0,
+      "min_value": 900,
+      "max_value": 1100
+    },
+    "pressure_msl_filled": {
+      "name": "Mean Sea Level Pressure (Filled)",
+      "description": "MSLP as filled gradient",
+      "type": "gradient",
+      "units": "hPa",
+      "transform": {
+        "type": "pa_to_hpa"
+      },
+      "stops": [
+        { "value": 960, "color": "#4B0082", "label": "960" },
+        { "value": 980, "color": "#0000FF", "label": "980" },
+        { "value": 1000, "color": "#00FFFF", "label": "1000" },
+        { "value": 1013, "color": "#00FF00", "label": "1013" },
+        { "value": 1020, "color": "#FFFF00", "label": "1020" },
+        { "value": 1030, "color": "#FFA500", "label": "1030" },
+        { "value": 1040, "color": "#FF0000", "label": "1040" },
+        { "value": 1050, "color": "#800000", "label": "1050" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "geopotential_500": {
+      "name": "500mb Geopotential Height",
+      "description": "500mb height contours",
+      "type": "contour",
+      "units": "dam",
+      "transform": {
+        "type": "linear",
+        "scale": 0.1,
+        "offset": 0
+      },
+      "interval": 6,
+      "color": "#0000FF",
+      "line_width": 1.5,
+      "major_interval": 12,
+      "major_line_width": 2.5,
+      "labels": true,
+      "label_font_size": 11.0
+    },
+    "relative_humidity": {
+      "name": "Relative Humidity",
+      "description": "Relative humidity percentage",
+      "type": "gradient",
+      "units": "%",
+      "stops": [
+        { "value": 0, "color": "#8B4513", "label": "0%" },
+        { "value": 20, "color": "#CD853F", "label": "20%" },
+        { "value": 40, "color": "#F5DEB3", "label": "40%" },
+        { "value": 60, "color": "#98FB98", "label": "60%" },
+        { "value": 80, "color": "#00CED1", "label": "80%" },
+        { "value": 100, "color": "#0000FF", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "cloud_cover": {
+      "name": "Cloud Cover",
+      "description": "Total cloud coverage percentage",
+      "type": "gradient",
+      "units": "%",
+      "stops": [
+        { "value": 0, "color": "#00000000", "label": "Clear" },
+        { "value": 10, "color": "#FFFFFF20", "label": "10%" },
+        { "value": 25, "color": "#FFFFFF40", "label": "25%" },
+        { "value": 50, "color": "#FFFFFF80", "label": "50%" },
+        { "value": 75, "color": "#FFFFFFC0", "label": "75%" },
+        { "value": 100, "color": "#C0C0C0", "label": "Overcast" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "visibility": {
+      "name": "Visibility",
+      "description": "Surface visibility",
+      "type": "gradient",
+      "units": "km",
+      "stops": [
+        { "value": 0, "color": "#800000", "label": "<1 km" },
+        { "value": 1, "color": "#FF0000", "label": "1 km" },
+        { "value": 3, "color": "#FF8000", "label": "3 km" },
+        { "value": 5, "color": "#FFFF00", "label": "5 km" },
+        { "value": 10, "color": "#00FF00", "label": "10 km" },
+        { "value": 20, "color": "#00FFFF", "label": "20 km" },
+        { "value": 50, "color": "#FFFFFF", "label": ">50 km" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "cape": {
+      "name": "CAPE (Convective Available Potential Energy)",
+      "description": "Atmospheric instability indicator",
+      "type": "gradient",
+      "units": "J/kg",
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 250, "color": "#FFFACD", "label": "Marginal" },
+        { "value": 500, "color": "#FFFF00", "label": "Weak" },
+        { "value": 1000, "color": "#FFA500", "label": "Moderate" },
+        { "value": 2000, "color": "#FF4500", "label": "Strong" },
+        { "value": 3000, "color": "#FF0000", "label": "Extreme" },
+        { "value": 4000, "color": "#8B0000", "label": "4000+" },
+        { "value": 5000, "color": "#4B0082", "label": "5000+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend"
+    }
+  }
+}

@@ -1,0 +1,75 @@
+# Development values - minimal resources, no persistence
+
+# API - reduced replicas
+api:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# Renderer - single replica
+renderer:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Ingester - disabled for initial testing
+ingester:
+  enabled: false
+
+# Redis - minimal
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: false
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# PostgreSQL - minimal
+postgresql:
+  enabled: true
+  auth:
+    username: weatherwms
+    password: weatherwms
+    database: weatherwms
+  primary:
+    persistence:
+      enabled: false
+    resources:
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# MinIO - minimal
+minio:
+  enabled: true
+  mode: standalone
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+  persistence:
+    enabled: false
+  resources:
+    limits:
+      cpu: 100m
+      memory: 256Mi
+  defaultBuckets: "weather-data"

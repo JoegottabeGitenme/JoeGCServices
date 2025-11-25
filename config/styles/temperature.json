@@ -1,0 +1,79 @@
+{
+  "version": "1.0",
+  "styles": {
+    "temperature_celsius": {
+      "name": "Temperature (Celsius)",
+      "description": "Standard temperature gradient from cold (purple) to hot (red)",
+      "type": "gradient",
+      "units": "°C",
+      "transform": {
+        "type": "kelvin_to_celsius"
+      },
+      "stops": [
+        { "value": -50, "color": "#4B0082", "label": "-50°C" },
+        { "value": -40, "color": "#9400D3", "label": "-40°C" },
+        { "value": -30, "color": "#0000FF", "label": "-30°C" },
+        { "value": -20, "color": "#00BFFF", "label": "-20°C" },
+        { "value": -10, "color": "#00FFFF", "label": "-10°C" },
+        { "value": 0, "color": "#00FF7F", "label": "0°C" },
+        { "value": 10, "color": "#7FFF00", "label": "10°C" },
+        { "value": 20, "color": "#FFFF00", "label": "20°C" },
+        { "value": 30, "color": "#FFA500", "label": "30°C" },
+        { "value": 40, "color": "#FF4500", "label": "40°C" },
+        { "value": 50, "color": "#FF0000", "label": "50°C" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Temperature",
+        "orientation": "horizontal",
+        "ticks": 11,
+        "width": 300,
+        "height": 30
+      }
+    },
+    "temperature_fahrenheit": {
+      "name": "Temperature (Fahrenheit)",
+      "description": "Temperature gradient in Fahrenheit",
+      "type": "gradient",
+      "units": "°F",
+      "transform": {
+        "type": "kelvin_to_fahrenheit"
+      },
+      "stops": [
+        { "value": -60, "color": "#4B0082", "label": "-60°F" },
+        { "value": -40, "color": "#9400D3", "label": "-40°F" },
+        { "value": -20, "color": "#0000FF", "label": "-20°F" },
+        { "value": 0, "color": "#00BFFF", "label": "0°F" },
+        { "value": 20, "color": "#00FFFF", "label": "20°F" },
+        { "value": 32, "color": "#00FF7F", "label": "32°F" },
+        { "value": 50, "color": "#7FFF00", "label": "50°F" },
+        { "value": 70, "color": "#FFFF00", "label": "70°F" },
+        { "value": 90, "color": "#FFA500", "label": "90°F" },
+        { "value": 110, "color": "#FF4500", "label": "110°F" },
+        { "value": 130, "color": "#FF0000", "label": "130°F" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "temperature_anomaly": {
+      "name": "Temperature Anomaly",
+      "description": "Diverging color scale for temperature departures from normal",
+      "type": "gradient",
+      "units": "°C",
+      "stops": [
+        { "value": -15, "color": "#08306B", "label": "-15°C" },
+        { "value": -10, "color": "#2171B5", "label": "-10°C" },
+        { "value": -5, "color": "#6BAED6", "label": "-5°C" },
+        { "value": -2, "color": "#BDD7E7", "label": "-2°C" },
+        { "value": 0, "color": "#FFFFFF", "label": "0°C" },
+        { "value": 2, "color": "#FCAE91", "label": "+2°C" },
+        { "value": 5, "color": "#FB6A4A", "label": "+5°C" },
+        { "value": 10, "color": "#CB181D", "label": "+10°C" },
+        { "value": 15, "color": "#67000D", "label": "+15°C" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    }
+  }
+}

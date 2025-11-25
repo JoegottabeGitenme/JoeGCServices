@@ -1,0 +1,184 @@
+# Default values for weather-wms
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# API Service
+api:
+  replicaCount: 2
+  image:
+    repository: weather-wms/wms-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8080
+  
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    hosts:
+      - host: wms.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+  env:
+    LOG_LEVEL: info
+
+# Renderer Workers
+renderer:
+  replicaCount: 3
+  image:
+    repository: weather-wms/renderer-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    # Scale based on queue depth via KEDA or custom metrics
+    targetQueueDepth: 10
+
+  env:
+    LOG_LEVEL: info
+    CONCURRENCY: "4"
+
+# Ingester
+ingester:
+  enabled: true
+  
+  # Run as CronJob or Deployment
+  mode: deployment  # or "cronjob"
+  
+  image:
+    repository: weather-wms/ingester
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  # CronJob settings (if mode: cronjob)
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+  env:
+    LOG_LEVEL: info
+    PARALLEL_DOWNLOADS: "4"
+
+  # Models to ingest
+  models:
+    gfs:
+      enabled: true
+      pollInterval: 3600
+    hrrr:
+      enabled: true
+      pollInterval: 3600
+
+# Redis configuration
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+  replica:
+    replicaCount: 0
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  auth:
+    username: weatherwms
+    password: weatherwms
+    database: weatherwms
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# MinIO configuration
+minio:
+  enabled: true
+  mode: standalone
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+  persistence:
+    enabled: true
+    size: 50Gi
+  defaultBuckets: "weather-data"
+
+# Shared configuration
+config:
+  # S3/MinIO settings (auto-configured from minio chart if enabled)
+  s3:
+    endpoint: ""  # Leave empty to auto-configure
+    bucket: weather-data
+    region: us-east-1
+  
+  # Database URL (auto-configured from postgresql chart if enabled)
+  database:
+    url: ""  # Leave empty to auto-configure
+  
+  # Redis URL (auto-configured from redis chart if enabled)  
+  redis:
+    url: ""  # Leave empty to auto-configure
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Node selectors
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

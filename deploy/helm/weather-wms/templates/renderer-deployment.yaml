@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-renderer
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: renderer
+spec:
+  {{- if not .Values.renderer.autoscaling.enabled }}
+  replicas: {{ .Values.renderer.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weather-wms.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: renderer
+  template:
+    metadata:
+      labels:
+        {{- include "weather-wms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: renderer
+    spec:
+      serviceAccountName: {{ include "weather-wms.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: renderer
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.renderer.image.repository }}:{{ .Values.renderer.image.tag }}"
+          imagePullPolicy: {{ .Values.renderer.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "weather-wms.fullname" . }}-config
+            - secretRef:
+                name: {{ include "weather-wms.fullname" . }}-secrets
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.renderer.env.LOG_LEVEL | quote }}
+            - name: CONCURRENCY
+              value: {{ .Values.renderer.env.CONCURRENCY | quote }}
+            - name: WORKER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            {{- toYaml .Values.renderer.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,35 @@
+[package]
+name = "wms-api"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "wms-api"
+path = "src/main.rs"
+
+[dependencies]
+wms-common = { path = "../../crates/wms-common" }
+wms-protocol = { path = "../../crates/wms-protocol" }
+storage = { path = "../../crates/storage" }
+
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+quick-xml = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+
+clap = { workspace = true }
+anyhow = { workspace = true }
+flate2 = { workspace = true }
+crc32fast = { workspace = true }

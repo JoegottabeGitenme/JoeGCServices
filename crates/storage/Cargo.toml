@@ -1,0 +1,24 @@
+[package]
+name = "storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wms-common = { path = "../wms-common" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+object_store = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+tracing = { workspace = true }
+thiserror = { workspace = true }

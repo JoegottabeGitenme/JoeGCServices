@@ -1,0 +1,29 @@
+[package]
+name = "ingester"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ingester"
+path = "src/main.rs"
+
+[dependencies]
+wms-common = { path = "../../crates/wms-common" }
+storage = { path = "../../crates/storage" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+clap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

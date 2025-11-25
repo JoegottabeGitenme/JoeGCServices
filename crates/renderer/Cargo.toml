@@ -1,0 +1,12 @@
+[package]
+name = "renderer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wms-common = { path = "../wms-common" }
+projection = { path = "../projection" }
+
+flate2 = { workspace = true }
+crc32fast = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,102 @@
+//! WMS/WMTS API service.
+//!
+//! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
+
+mod handlers;
+mod state;
+
+use anyhow::Result;
+use axum::{
+    Router,
+    routing::get,
+    extract::Extension,
+};
+use clap::Parser;
+use std::{env, net::SocketAddr, sync::Arc};
+use tower_http::{
+    cors::CorsLayer,
+    trace::TraceLayer,
+    compression::CompressionLayer,
+};
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
+
+use state::AppState;
+
+#[derive(Parser, Debug)]
+#[command(name = "wms-api")]
+#[command(about = "OGC WMS/WMTS API server")]
+struct Args {
+    /// Listen address
+    #[arg(short, long, default_value = "0.0.0.0:8080")]
+    listen: String,
+
+    /// Log level
+    #[arg(long, default_value = "info")]
+    log_level: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Initialize tracing
+    let level = match args.log_level.to_lowercase().as_str() {
+        "trace" => Level::TRACE,
+        "debug" => Level::DEBUG,
+        "warn" => Level::WARN,
+        "error" => Level::ERROR,
+        _ => Level::INFO,
+    };
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(level)
+        .json()
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    info!("Starting WMS/WMTS API server");
+
+    // Initialize application state
+    let state = Arc::new(AppState::new().await?);
+
+    // Build router
+    let app = Router::new()
+        // WMS endpoints
+        .route("/wms", get(handlers::wms_handler))
+        .route("/wms/", get(handlers::wms_handler))
+        
+        // WMTS endpoints (KVP)
+        .route("/wmts", get(handlers::wmts_kvp_handler))
+        .route("/wmts/", get(handlers::wmts_kvp_handler))
+        
+        // WMTS RESTful endpoints
+        .route("/wmts/rest/*path", get(handlers::wmts_rest_handler))
+        
+        // Simple tile endpoints (XYZ/TMS style for easy integration)
+        .route("/tiles/:layer/:style/:z/:x/:y", get(handlers::xyz_tile_handler))
+        
+        // Health check
+        .route("/health", get(handlers::health_handler))
+        .route("/ready", get(handlers::ready_handler))
+        
+        // Metrics
+        .route("/metrics", get(handlers::metrics_handler))
+        
+        // Layer extensions
+        .layer(Extension(state))
+        .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
+        .layer(CorsLayer::permissive());
+
+    // Parse listen address
+    let addr: SocketAddr = args.listen.parse()?;
+    info!(address = %addr, "Listening");
+
+    // Start server
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
