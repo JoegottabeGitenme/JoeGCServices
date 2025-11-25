@@ -7,7 +7,7 @@
 # Optional: Full Kubernetes with minikube
 #
 # Usage:
-#   ./start.sh              # Start with docker-compose (fast)
+#   ./start.sh              # Start with docker-compose and ingest test data (fast)
 #   ./start.sh --compose    # Start with docker-compose (same as above)
 #   ./start.sh --kubernetes # Full Kubernetes setup with minikube
 #   ./start.sh --k8s        # Same as --kubernetes
@@ -15,6 +15,13 @@
 #   ./start.sh --clean      # Delete everything and start fresh
 #   ./start.sh --status     # Show status
 #   ./start.sh --help       # Show this help message
+#
+# On startup, the system will:
+#   1. Start all Docker containers (PostgreSQL, Redis, MinIO, WMS API, Dashboard)
+#   2. Wait for services to be ready
+#   3. Ingest test GRIB2 data (254MB GFS sample)
+#   4. Verify ingestion with test renders
+#   5. Display dashboard at http://localhost:8000
 #
 
 set -euo pipefail
@@ -141,8 +148,11 @@ start_compose() {
     echo ""
     show_compose_access_info
     
-    # Run test rendering to verify the system is working
+    # Ingest test data to populate the system
     sleep 3  # Give API a moment to fully stabilize
+    run_data_ingestion
+    
+    # Run test rendering to verify the system is working
     run_test_rendering
 }
 
@@ -180,13 +190,17 @@ show_compose_access_info() {
     echo ""
     log_success "=== Quick Start ==="
     echo ""
-    echo "All services are running! Open your browser:"
-    echo "  http://localhost:8000  (Web Dashboard)"
-    echo ""
-    echo "Everything is automatically configured and ready to use!"
-    echo ""
-    echo "Test the API directly:"
-    echo "  curl \"http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities\""
+     echo "All services are running with test data ingested! Open your browser:"
+     echo "  http://localhost:8000  (Web Dashboard)"
+     echo ""
+     echo "Everything is automatically configured, tested, and ready to use!"
+     echo "  ✓ Services running"
+     echo "  ✓ Test data ingested (254MB GFS sample)"
+     echo "  ✓ Datasets registered in catalog"
+     echo "  ✓ Sample images generated"
+     echo ""
+     echo "Test the API directly:"
+     echo "  curl \"http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities\""
     echo ""
     log_success "=== Service URLs & Credentials ==="
     echo ""
@@ -230,6 +244,21 @@ show_compose_access_info() {
      echo "Generate test rendering images:"
      echo "  bash scripts/test_rendering.sh"
      echo ""
+}
+
+run_data_ingestion() {
+    log_info "Ingesting test weather data..."
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    
+    # Run the ingestion script
+    if bash scripts/ingest_test_data.sh; then
+        log_success "Data ingestion completed successfully!"
+    else
+        log_error "Data ingestion failed!"
+        return 1
+    fi
 }
 
 run_test_rendering() {
