@@ -1,7 +1,5 @@
 //! Gradient/heatmap rendering for gridded weather data.
 
-use std::cmp::min;
-
 /// Subset global grid data to a geographic bounding box.
 ///
 /// Assumes data is a global lat/lon grid with:
