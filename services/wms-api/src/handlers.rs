@@ -318,18 +318,34 @@ async fn wmts_get_tile(
     let model = parts[0];
     let parameter = parts[1..].join("_");
     
-    // Render the tile with spatial subsetting
-    match crate::rendering::render_weather_data(
-        &state.storage,
-        &state.catalog,
-        model,
-        &parameter,
-        None, // forecast_hour (use default/latest)
-        256,  // tile width
-        256,  // tile height
-        Some(bbox_array),
-    )
-    .await
+    // Check if this is a wind barbs composite layer
+    let result = if parameter == "WIND_BARBS" {
+        crate::rendering::render_wind_barbs_layer(
+            &state.storage,
+            &state.catalog,
+            model,
+            256,  // tile width
+            256,  // tile height
+            Some(bbox_array),
+            None, // Use default barb spacing
+        )
+        .await
+    } else {
+        // Render the tile with spatial subsetting
+        crate::rendering::render_weather_data(
+            &state.storage,
+            &state.catalog,
+            model,
+            &parameter,
+            None, // forecast_hour (use default/latest)
+            256,  // tile width
+            256,  // tile height
+            Some(bbox_array),
+        )
+        .await
+    };
+    
+    match result
     {
         Ok(png_data) => Response::builder()
             .status(StatusCode::OK)
@@ -730,7 +746,7 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
     let empty_params = Vec::new();
     
     // Build layer definitions for each model/parameter combination
-    let layers: String = models
+    let mut all_layers: Vec<String> = models
         .iter()
         .flat_map(|model| {
             let params = model_params.get(model).unwrap_or(&empty_params);
@@ -806,8 +822,49 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
                 )
             })
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect::<Vec<_>>();
+    
+    // Add composite WIND_BARBS layers for each model that has both UGRD and VGRD
+    for model in models {
+        let params = model_params.get(model).unwrap_or(&empty_params);
+        let has_ugrd = params.iter().any(|p| p == "UGRD");
+        let has_vgrd = params.iter().any(|p| p == "VGRD");
+        
+        if has_ugrd && has_vgrd {
+            let layer_id = format!("{}_WIND_BARBS", model);
+            let layer_title = format!("{} - Wind Barbs", model.to_uppercase());
+            
+            let wind_barbs_layer = format!(
+                r#"    <Layer>
+      <ows:Title>{}</ows:Title>
+      <ows:Identifier>{}</ows:Identifier>
+      <ows:WGS84BoundingBox>
+        <ows:LowerCorner>-180.0 -90.0</ows:LowerCorner>
+        <ows:UpperCorner>180.0 90.0</ows:UpperCorner>
+      </ows:WGS84BoundingBox>
+      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Format>image/png</Format>
+      <TileMatrixSetLink>
+        <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
+      </TileMatrixSetLink>
+      <Dimension>
+        <ows:Identifier>TIME</ows:Identifier>
+        <Default>0</Default>
+        <Value>0</Value>
+      </Dimension>
+      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+    </Layer>"#,
+                layer_title, layer_id, layer_id
+            );
+            
+            all_layers.push(wind_barbs_layer);
+        }
+    }
+    
+    let layers = all_layers.join("\n");
     
     // Build TileMatrixSet for WebMercatorQuad (zoom levels 0-18)
     let tile_matrices: String = (0..=18)
