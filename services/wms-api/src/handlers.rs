@@ -607,9 +607,22 @@ fn build_wms_capabilities_xml(
             let param_layers = params
                 .iter()
                 .map(|p| {
+                    // Add styles and dimensions to each layer
+                    let styles = if p.contains("TMP") || p.contains("TEMP") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style>"
+                    } else if p.contains("WIND") || p.contains("GUST") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style>"
+                    } else if p.contains("PRES") || p.contains("PRMSL") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style>"
+                    } else if p.contains("RH") || p.contains("HUMID") || p.contains("PRECIP") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style>"
+                    } else {
+                        "<Style><Name>default</Name><Title>Default</Title></Style>"
+                    };
+                    
                     format!(
-                        r#"<Layer><Name>{}_{}</Name><Title>{} - {}</Title></Layer>"#,
-                        model, p, model.to_uppercase(), p
+                        r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/>{}<Dimension name="time" units="ISO8601" default="0">0</Dimension></Layer>"#,
+                        model, p, model.to_uppercase(), p, styles
                     )
                 })
                 .collect::<Vec<_>>()
@@ -624,7 +637,44 @@ fn build_wms_capabilities_xml(
         })
         .collect();
     format!(
-        r#"<?xml version="1.0"?><WMS_Capabilities version="{}"><Service><Title>Weather WMS</Title></Service><Capability><Layer>{}</Layer></Capability></WMS_Capabilities>"#,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<WMS_Capabilities version="{}" xmlns="http://www.opengis.net/wms" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <Service>
+    <Name>WMS</Name>
+    <Title>Weather WMS Service</Title>
+    <Abstract>Web Map Service for weather model data</Abstract>
+    <OnlineResource xlink:href="http://localhost:8080/wms"/>
+  </Service>
+  <Capability>
+    <Request>
+      <GetCapabilities>
+        <Format>text/xml</Format>
+        <DCPType>
+          <HTTP>
+            <Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get>
+          </HTTP>
+        </DCPType>
+      </GetCapabilities>
+      <GetMap>
+        <Format>image/png</Format>
+        <DCPType>
+          <HTTP>
+            <Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get>
+          </HTTP>
+        </DCPType>
+      </GetMap>
+    </Request>
+    <Exception>
+      <Format>XML</Format>
+    </Exception>
+    <Layer>
+      <Title>Weather Data</Title>
+      <CRS>EPSG:4326</CRS>
+      <CRS>EPSG:3857</CRS>
+      {}
+    </Layer>
+  </Capability>
+</WMS_Capabilities>"#,
         version, layers
     )
 }
@@ -641,6 +691,50 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
                 let layer_id = format!("{}_{}", model, param);
                 let layer_title = format!("{} - {}", model.to_uppercase(), param);
                 
+                // Determine available styles based on parameter type
+                let styles = if param.contains("TMP") || param.contains("TEMP") {
+                    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Temperature Gradient</ows:Title>
+        <ows:Identifier>temperature</ows:Identifier>
+      </Style>"#
+                } else if param.contains("WIND") || param.contains("GUST") {
+                    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Wind Speed</ows:Title>
+        <ows:Identifier>wind</ows:Identifier>
+      </Style>"#
+                } else if param.contains("PRES") || param.contains("PRMSL") {
+                    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Atmospheric Pressure</ows:Title>
+        <ows:Identifier>atmospheric</ows:Identifier>
+      </Style>"#
+                } else if param.contains("RH") || param.contains("HUMID") || param.contains("PRECIP") {
+                    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Precipitation</ows:Title>
+        <ows:Identifier>precipitation</ows:Identifier>
+      </Style>"#
+                } else {
+                    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>"#
+                };
+                
                 format!(
                     r#"    <Layer>
       <ows:Title>{}</ows:Title>
@@ -649,17 +743,19 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
         <ows:LowerCorner>-180.0 -90.0</ows:LowerCorner>
         <ows:UpperCorner>180.0 90.0</ows:UpperCorner>
       </ows:WGS84BoundingBox>
-      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
+{}
       <Format>image/png</Format>
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
+      <Dimension>
+        <ows:Identifier>TIME</ows:Identifier>
+        <Default>0</Default>
+        <Value>0</Value>
+      </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
-                    layer_title, layer_id, layer_id
+                    layer_title, layer_id, styles, layer_id
                 )
             })
         })
