@@ -5,6 +5,7 @@
 mod handlers;
 mod rendering;
 mod state;
+mod validation;
 
 use anyhow::Result;
 use axum::{extract::Extension, routing::get, Router};
@@ -82,6 +83,9 @@ async fn main() -> Result<()> {
         .route("/api/parameters/:model", get(handlers::parameters_handler))
         // Ingestion events API
         .route("/api/ingestion/events", get(handlers::ingestion_events_handler))
+        // Validation API
+        .route("/api/validation/status", get(handlers::validation_status_handler))
+        .route("/api/validation/run", get(handlers::validation_run_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())

@@ -25,6 +25,7 @@ quick-xml = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+reqwest = { workspace = true }
 
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

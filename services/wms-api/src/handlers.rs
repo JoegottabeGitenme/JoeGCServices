@@ -48,6 +48,17 @@ pub struct WmsParams {
     time: Option<String>,
     #[serde(rename = "TRANSPARENT", alias = "transparent")]
     transparent: Option<String>,
+    // GetFeatureInfo parameters
+    #[serde(rename = "QUERY_LAYERS", alias = "query_layers")]
+    query_layers: Option<String>,
+    #[serde(rename = "INFO_FORMAT", alias = "info_format")]
+    info_format: Option<String>,
+    #[serde(rename = "I", alias = "i", alias = "X", alias = "x")]
+    i: Option<u32>,
+    #[serde(rename = "J", alias = "j", alias = "Y", alias = "y")]
+    j: Option<u32>,
+    #[serde(rename = "FEATURE_COUNT", alias = "feature_count")]
+    feature_count: Option<u32>,
 }
 
 #[instrument(skip(state))]
@@ -70,6 +81,7 @@ pub async fn wms_handler(
     match request.as_deref() {
         Some("GETCAPABILITIES") => wms_get_capabilities(state, params).await,
         Some("GETMAP") => wms_get_map(state, params).await,
+        Some("GETFEATUREINFO") => wms_get_feature_info(state, params).await,
         Some(req) => wms_exception(
             "OperationNotSupported",
             &format!("Unknown request: {}", req),
@@ -87,17 +99,23 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
     let version = params.version.as_deref().unwrap_or("1.3.0");
     let models = state.catalog.list_models().await.unwrap_or_default();
     
-    // Get parameters for each model
+    // Get parameters and dimensions for each model
     let mut model_params = HashMap::new();
+    let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
     for model in &models {
         let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
         model_params.insert(model.clone(), params_list);
+        
+        // Get RUN and FORECAST dimensions
+        let dimensions = state.catalog.get_model_dimensions(model).await.unwrap_or_default();
+        model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params);
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(xml.into())
         .unwrap()
 }
@@ -123,11 +141,12 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, "GetMap request");
     
     // Try to render actual data, return error on failure
-    match render_weather_data(&state, layers, width, height, bbox, crs, time.as_deref()).await {
+    match render_weather_data(&state, layers, style, width, height, bbox, crs, time.as_deref()).await {
         Ok(png_data) => {
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/png")
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .body(png_data.into())
                 .unwrap()
         }
@@ -140,6 +159,159 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             )
         }
     }
+}
+
+async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Response {
+    use wms_protocol::{InfoFormat, FeatureInfoResponse};
+    
+    // Validate required parameters
+    let query_layers = match &params.query_layers {
+        Some(l) => l,
+        None => {
+            return wms_exception(
+                "MissingParameterValue",
+                "QUERY_LAYERS is required",
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    };
+    
+    let bbox = match &params.bbox {
+        Some(b) => b,
+        None => {
+            return wms_exception(
+                "MissingParameterValue",
+                "BBOX is required",
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    };
+    
+    let width = params.width.unwrap_or(256);
+    let height = params.height.unwrap_or(256);
+    let crs = params.crs.as_deref().unwrap_or("EPSG:4326");
+    
+    let i = match params.i {
+        Some(i) => i,
+        None => {
+            return wms_exception(
+                "MissingParameterValue",
+                "I (or X) parameter is required",
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    };
+    
+    let j = match params.j {
+        Some(j) => j,
+        None => {
+            return wms_exception(
+                "MissingParameterValue",
+                "J (or Y) parameter is required",
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    };
+    
+    // Parse INFO_FORMAT
+    let info_format = params
+        .info_format
+        .as_deref()
+        .and_then(|f| InfoFormat::from_mime(f))
+        .unwrap_or(InfoFormat::Html);
+    
+    // Parse BBOX
+    let bbox_coords: Result<Vec<f64>, _> = bbox
+        .split(',')
+        .map(|s| s.trim().parse())
+        .collect();
+    
+    let bbox_array = match bbox_coords {
+        Ok(coords) if coords.len() == 4 => {
+            [coords[0], coords[1], coords[2], coords[3]]
+        }
+        _ => {
+            return wms_exception(
+                "InvalidParameterValue",
+                "BBOX must contain 4 coordinates",
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    };
+    
+    info!(
+        query_layers = %query_layers,
+        bbox = ?bbox_array,
+        width = width,
+        height = height,
+        i = i,
+        j = j,
+        crs = crs,
+        info_format = ?info_format,
+        "GetFeatureInfo request"
+    );
+    
+    // Query each layer
+    let layers: Vec<&str> = query_layers.split(',').map(|s| s.trim()).collect();
+    let mut all_features = Vec::new();
+    
+    for layer in layers {
+        match crate::rendering::query_point_value(
+            &state.storage,
+            &state.catalog,
+            layer,
+            bbox_array,
+            width,
+            height,
+            i,
+            j,
+            crs,
+        )
+        .await
+        {
+            Ok(mut features) => {
+                all_features.append(&mut features);
+            }
+            Err(e) => {
+                error!(layer = %layer, error = %e, "Failed to query layer");
+                // Continue with other layers instead of failing completely
+            }
+        }
+    }
+    
+    let response = FeatureInfoResponse::new(all_features);
+    
+    // Format response based on INFO_FORMAT
+    let (body, content_type) = match info_format {
+        InfoFormat::Json => {
+            match response.to_json() {
+                Ok(json) => (json, "application/json"),
+                Err(e) => {
+                    return wms_exception(
+                        "NoApplicableCode",
+                        &format!("JSON encoding failed: {}", e),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    )
+                }
+            }
+        }
+        InfoFormat::Html => {
+            (response.to_html(), "text/html")
+        }
+        InfoFormat::Xml => {
+            (response.to_xml(), "text/xml")
+        }
+        InfoFormat::Text => {
+            (response.to_text(), "text/plain")
+        }
+    };
+    
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(body.into())
+        .unwrap()
 }
 
 // ============================================================================
@@ -248,17 +420,23 @@ pub async fn xyz_tile_handler(
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
     let models = state.catalog.list_models().await.unwrap_or_default();
     
-    // Get parameters for each model
+    // Get parameters and dimensions for each model
     let mut model_params = HashMap::new();
+    let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
     for model in &models {
         let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
         model_params.insert(model.clone(), params_list);
+        
+        // Get RUN and FORECAST dimensions
+        let dimensions = state.catalog.get_model_dimensions(model).await.unwrap_or_default();
+        model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wmts_capabilities_xml(&models, &model_params);
+    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(xml.into())
         .unwrap()
 }
@@ -320,14 +498,36 @@ async fn wmts_get_tile(
     
     // Check if this is a wind barbs composite layer
     let result = if parameter == "WIND_BARBS" {
-        crate::rendering::render_wind_barbs_layer(
+        crate::rendering::render_wind_barbs_tile(
             &state.storage,
             &state.catalog,
             model,
+            Some(coord),  // Pass tile coordinate for expanded rendering
             256,  // tile width
             256,  // tile height
-            Some(bbox_array),
-            None, // Use default barb spacing
+            bbox_array,
+        )
+        .await
+    } else if style == "isolines" {
+        // Render isolines (contours) for this parameter
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature_isolines.json", style_config_dir)
+        } else {
+            // Default to temperature isolines for now
+            format!("{}/temperature_isolines.json", style_config_dir)
+        };
+        
+        crate::rendering::render_isolines_tile(
+            &state.storage,
+            &state.catalog,
+            model,
+            &parameter,
+            Some(coord),  // Pass tile coordinate for expanded rendering
+            256,  // tile width
+            256,  // tile height
+            bbox_array,
+            &style_file,
         )
         .await
     } else {
@@ -351,6 +551,7 @@ async fn wmts_get_tile(
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/png")
             .header(header::CACHE_CONTROL, "max-age=3600")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(png_data.into())
             .unwrap(),
         Err(e) => {
@@ -396,6 +597,7 @@ fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
 async fn render_weather_data(
     state: &Arc<AppState>,
     layer: &str,
+    style: &str,
     width: u32,
     height: u32,
     bbox: Option<&str>,
@@ -475,7 +677,32 @@ async fn render_weather_data(
     // Parse TIME parameter (format: "H" for forecast hour)
     let forecast_hour: Option<u32> = time.and_then(|t| t.parse().ok());
     
-    info!(forecast_hour = ?forecast_hour, bbox = ?parsed_bbox, "Parsed WMS parameters");
+    info!(forecast_hour = ?forecast_hour, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
+
+    // Check if isolines style is requested
+    if style == "isolines" {
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature_isolines.json", style_config_dir)
+        } else {
+            // Default to temperature isolines for now
+            format!("{}/temperature_isolines.json", style_config_dir)
+        };
+        
+        // For WMS, we don't have tile coordinates, so pass None
+        return crate::rendering::render_isolines_tile(
+            &state.storage,
+            &state.catalog,
+            model,
+            &parameter,
+            None,  // No tile coordinate - render full bbox
+            width,
+            height,
+            parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
+            &style_file,
+        )
+        .await;
+    }
 
     // Use shared rendering logic
     crate::rendering::render_weather_data(
@@ -650,18 +877,34 @@ fn build_wms_capabilities_xml(
     version: &str,
     models: &[String],
     model_params: &HashMap<String, Vec<String>>,
+    model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
 ) -> String {
     let empty_params = Vec::new();
+    let empty_dims = (Vec::new(), Vec::new());
+    
     let layers: String = models
         .iter()
         .map(|model| {
             let params = model_params.get(model).unwrap_or(&empty_params);
+            let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+            
+            // Build dimension elements
+            let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
+            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+            let forecast_values = if forecasts.is_empty() { "0".to_string() } else { forecasts.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",") };
+            let forecast_default = forecasts.first().unwrap_or(&0);
+            
+            let dimensions = format!(
+                r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
+                run_default, run_values, forecast_default, forecast_values
+            );
+            
             let param_layers = params
                 .iter()
                 .map(|p| {
                     // Add styles and dimensions to each layer
                     let styles = if p.contains("TMP") || p.contains("TEMP") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style>"
                     } else if p.contains("WIND") || p.contains("GUST") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style>"
                     } else if p.contains("PRES") || p.contains("PRMSL") {
@@ -673,8 +916,8 @@ fn build_wms_capabilities_xml(
                     };
                     
                     format!(
-                        r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/>{}<Dimension name="time" units="ISO8601" default="0">0</Dimension></Layer>"#,
-                        model, p, model.to_uppercase(), p, styles
+                        r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/>{}{}</Layer>"#,
+                        model, p, model.to_uppercase(), p, styles, dimensions
                     )
                 })
                 .collect::<Vec<_>>()
@@ -683,8 +926,8 @@ fn build_wms_capabilities_xml(
              // Add composite wind barbs layer if we have both UGRD and VGRD
              let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
                  format!(
-                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style><Dimension name="time" units="ISO8601" default="0">0</Dimension></Layer>"#,
-                     model, model.to_uppercase()
+                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}</Layer>"#,
+                     model, model.to_uppercase(), dimensions
                  )
              } else {
                  String::new()
@@ -726,6 +969,17 @@ fn build_wms_capabilities_xml(
           </HTTP>
         </DCPType>
       </GetMap>
+      <GetFeatureInfo>
+        <Format>text/html</Format>
+        <Format>application/json</Format>
+        <Format>text/xml</Format>
+        <Format>text/plain</Format>
+        <DCPType>
+          <HTTP>
+            <Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get>
+          </HTTP>
+        </DCPType>
+      </GetFeatureInfo>
     </Request>
     <Exception>
       <Format>XML</Format>
@@ -742,14 +996,35 @@ fn build_wms_capabilities_xml(
     )
 }
 
-fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String, Vec<String>>) -> String {
+fn build_wmts_capabilities_xml(
+    models: &[String], 
+    model_params: &HashMap<String, Vec<String>>,
+    model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
+) -> String {
     let empty_params = Vec::new();
+    let empty_dims = (Vec::new(), Vec::new());
     
     // Build layer definitions for each model/parameter combination
     let mut all_layers: Vec<String> = models
         .iter()
         .flat_map(|model| {
             let params = model_params.get(model).unwrap_or(&empty_params);
+            let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+            
+            // Build dimension values
+            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+            let run_values: Vec<String> = if runs.is_empty() { 
+                vec!["latest".to_string()] 
+            } else { 
+                runs.clone() 
+            };
+            let forecast_default = forecasts.first().unwrap_or(&0);
+            let forecast_values: Vec<i32> = if forecasts.is_empty() { 
+                vec![0] 
+            } else { 
+                forecasts.clone() 
+            };
+            
             params.iter().map(move |param| {
                 let layer_id = format!("{}_{}", model, param);
                 let layer_title = format!("{} - {}", model.to_uppercase(), param);
@@ -763,6 +1038,10 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
       <Style>
         <ows:Title>Temperature Gradient</ows:Title>
         <ows:Identifier>temperature</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Temperature Isolines</ows:Title>
+        <ows:Identifier>isolines</ows:Identifier>
       </Style>"#
                 } else if param.contains("WIND") || param.contains("GUST") {
                     r#"      <Style isDefault="true">
@@ -798,6 +1077,16 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
       </Style>"#
                 };
                 
+                // Build dimension elements for RUN and FORECAST
+                let run_values_xml: String = run_values.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let forecast_values_xml: String = forecast_values.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                
                 format!(
                     r#"    <Layer>
       <ows:Title>{}</ows:Title>
@@ -812,13 +1101,21 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <Dimension>
-        <ows:Identifier>TIME</ows:Identifier>
-        <Default>0</Default>
-        <Value>0</Value>
+        <ows:Identifier>RUN</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>
+      <Dimension>
+        <ows:Identifier>FORECAST</ows:Identifier>
+        <Default>{}</Default>
+{}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
-                    layer_title, layer_id, styles, layer_id
+                    layer_title, layer_id, styles, 
+                    run_default, run_values_xml,
+                    forecast_default, forecast_values_xml,
+                    layer_id
                 )
             })
         })
@@ -827,12 +1124,32 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
     // Add composite WIND_BARBS layers for each model that has both UGRD and VGRD
     for model in models {
         let params = model_params.get(model).unwrap_or(&empty_params);
+        let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
         let has_ugrd = params.iter().any(|p| p == "UGRD");
         let has_vgrd = params.iter().any(|p| p == "VGRD");
         
         if has_ugrd && has_vgrd {
             let layer_id = format!("{}_WIND_BARBS", model);
             let layer_title = format!("{} - Wind Barbs", model.to_uppercase());
+            
+            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+            let run_values_xml: String = if runs.is_empty() {
+                "        <Value>latest</Value>".to_string()
+            } else {
+                runs.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let forecast_default = forecasts.first().unwrap_or(&0);
+            let forecast_values_xml: String = if forecasts.is_empty() {
+                "        <Value>0</Value>".to_string()
+            } else {
+                forecasts.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
             
             let wind_barbs_layer = format!(
                 r#"    <Layer>
@@ -851,13 +1168,21 @@ fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String,
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <Dimension>
-        <ows:Identifier>TIME</ows:Identifier>
-        <Default>0</Default>
-        <Value>0</Value>
+        <ows:Identifier>RUN</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>
+      <Dimension>
+        <ows:Identifier>FORECAST</ows:Identifier>
+        <Default>{}</Default>
+{}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
-                layer_title, layer_id, layer_id
+                layer_title, layer_id, 
+                run_default, run_values_xml,
+                forecast_default, forecast_values_xml,
+                layer_id
             );
             
             all_layers.push(wind_barbs_layer);
@@ -981,4 +1306,45 @@ fn write_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(name);
     out.extend_from_slice(data);
     out.extend_from_slice(&crc32fast::hash(&[name.as_slice(), data].concat()).to_be_bytes());
+}
+
+// ============================================================================
+// Validation API Handlers
+// ============================================================================
+
+/// GET /api/validation/status - Get current validation status
+#[instrument(skip(state))]
+pub async fn validation_status_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<crate::validation::ValidationStatus>, StatusCode> {
+    info!("Validation status requested");
+    
+    // Get base URL from environment or use localhost
+    let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    
+    let status = crate::validation::run_validation(&base_url).await;
+    
+    Ok(Json(status))
+}
+
+/// GET /api/validation/run - Run validation and return results
+#[instrument(skip(state))]
+pub async fn validation_run_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<crate::validation::ValidationStatus>, StatusCode> {
+    info!("Manual validation run requested");
+    
+    // Get base URL from environment or use localhost
+    let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    
+    let status = crate::validation::run_validation(&base_url).await;
+    
+    info!(
+        wms_status = status.wms.status,
+        wmts_status = status.wmts.status,
+        overall_status = status.overall_status,
+        "Validation completed"
+    );
+    
+    Ok(Json(status))
 }
