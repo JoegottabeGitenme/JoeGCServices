@@ -5,6 +5,7 @@ use renderer::barbs::{self, BarbConfig};
 use renderer::style::{StyleConfig, apply_style_gradient};
 use storage::{Catalog, ObjectStorage};
 use std::path::Path;
+use tracing::{info, debug, warn};
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -421,6 +422,28 @@ pub async fn render_wind_barbs_layer(
     let (grid_height, grid_width) = u_msg.grid_dims();
     let grid_width = grid_width as usize;
     let grid_height = grid_height as usize;
+    
+    // Debug: Log data statistics
+    let u_stats: (f32, f32, f32) = u_data.iter()
+        .filter(|v| !v.is_nan())
+        .fold((f32::MAX, f32::MIN, 0.0), |(min, max, sum), &v| {
+            (min.min(v), max.max(v), sum + v)
+        });
+    let v_stats: (f32, f32, f32) = v_data.iter()
+        .filter(|v| !v.is_nan())
+        .fold((f32::MAX, f32::MIN, 0.0), |(min, max, sum), &v| {
+            (min.min(v), max.max(v), sum + v)
+        });
+    
+    info!(
+        grid_width = grid_width,
+        grid_height = grid_height,
+        u_min = u_stats.0,
+        u_max = u_stats.1,
+        v_min = v_stats.0,
+        v_max = v_stats.1,
+        "Loaded wind component data"
+    );
 
     // Validate data sizes
     if u_data.len() != grid_width * grid_height {
@@ -448,9 +471,30 @@ pub async fn render_wind_barbs_layer(
 
     // If bbox is specified, we need to resample to that region
     let (u_to_render, v_to_render, render_width, render_height) = if let Some(bbox) = bbox {
+        info!(
+            bbox_min_lon = bbox[0],
+            bbox_min_lat = bbox[1],
+            bbox_max_lon = bbox[2],
+            bbox_max_lat = bbox[3],
+            output_width = output_width,
+            output_height = output_height,
+            "Resampling wind data for bbox"
+        );
+        
         // Resample from geographic coordinates
         let u_resampled = resample_from_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox);
         let v_resampled = resample_from_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox);
+        
+        // Debug: check resampled data
+        let u_non_zero = u_resampled.iter().filter(|&&v| v != 0.0 && !v.is_nan()).count();
+        let v_non_zero = v_resampled.iter().filter(|&&v| v != 0.0 && !v.is_nan()).count();
+        info!(
+            u_non_zero = u_non_zero,
+            v_non_zero = v_non_zero,
+            total = u_resampled.len(),
+            "Resampled wind data stats"
+        );
+        
         (u_resampled, v_resampled, output_width, output_height)
     } else {
         // Full globe or resample to output size
@@ -473,12 +517,28 @@ pub async fn render_wind_barbs_layer(
     let mut config = BarbConfig::default();
     config.spacing = spacing as u32;
     
+    info!(
+        render_width = render_width,
+        render_height = render_height,
+        barb_spacing = config.spacing,
+        barb_size = config.size,
+        "Rendering wind barbs"
+    );
+    
     let barb_pixels = barbs::render_wind_barbs(
         &u_to_render,
         &v_to_render,
         render_width,
         render_height,
         &config,
+    );
+    
+    // Debug: check rendered pixels
+    let non_transparent = barb_pixels.chunks(4).filter(|c| c[3] > 0).count();
+    info!(
+        non_transparent = non_transparent,
+        total_pixels = render_width * render_height,
+        "Wind barb rendering complete"
     );
 
     // Encode as PNG

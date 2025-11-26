@@ -285,8 +285,10 @@ fn render_barb_at_position(
     // Calculate scale to fit SVG into our pixmap
     let scale = (size as f32 / svg_width).min(size as f32 / svg_height);
     
-    // Center of pixmap
+    // Center of output pixmap
     let center = size as f32 / 2.0;
+    // Center of SVG (in SVG coordinates)
+    let svg_center = svg_width / 2.0;
     
     // Convert direction from radians to degrees
     // SVG barbs point upward (North) by default
@@ -294,20 +296,24 @@ fn render_barb_at_position(
     // Adjust by -90 degrees since SVG points up but our 0 is East
     let angle_deg = ((direction_rad - PI / 2.0) * 180.0 / PI) as f32;
     
-    // Build transform step by step:
-    // 1. Scale the SVG to fit the pixmap
-    // 2. Rotate around the center of the pixmap
-    // The key insight: resvg expects a transform that maps SVG coords to pixmap coords
+    // Build transform to:
+    // 1. Move SVG center to origin
+    // 2. Rotate around origin
+    // 3. Move back
+    // 4. Scale to fit pixmap
+    // 5. Center in pixmap
+    //
+    // With post_* operations applied left-to-right, we build:
+    // point -> translate(-svg_center) -> rotate -> translate(svg_center) -> scale -> translate(offset)
+    
+    let scaled_offset = center - (svg_center * scale);
     
     let transform = tiny_skia::Transform::identity()
-        // Move origin to center of pixmap
-        .post_translate(center, center)
-        // Rotate around center
-        .post_rotate(angle_deg)
-        // Move back
-        .post_translate(-center, -center)
-        // Scale the SVG
-        .post_scale(scale, scale);
+        .post_translate(-svg_center, -svg_center)  // Move SVG center to origin
+        .post_rotate(angle_deg)                     // Rotate around origin
+        .post_translate(svg_center, svg_center)    // Move back
+        .post_scale(scale, scale)                   // Scale down
+        .post_translate(scaled_offset, scaled_offset); // Center in pixmap
     
     // Render the SVG tree onto the pixmap
     resvg::render(&tree, transform, &mut pixmap.as_mut());
@@ -340,9 +346,13 @@ fn composite_barb_onto_canvas(
     let start_x = center_x.saturating_sub(half_size);
     let start_y = center_y.saturating_sub(half_size);
     
+    // Use actual pixmap dimensions for correct indexing
+    let pixmap_width = pixmap.width() as usize;
+    let pixmap_height = pixmap.height() as usize;
+    
     // Composite each pixel
-    for py in 0..size {
-        for px in 0..size {
+    for py in 0..pixmap_height.min(size) {
+        for px in 0..pixmap_width.min(size) {
             let canvas_x = start_x + px;
             let canvas_y = start_y + py;
             
@@ -352,7 +362,8 @@ fn composite_barb_onto_canvas(
             }
             
             // Get pixel from source pixmap (RGBA premultiplied)
-            let src_idx = (py * size + px) * 4;
+            // Use pixmap_width for correct row stride
+            let src_idx = (py * pixmap_width + px) * 4;
             let src_data = pixmap.data();
             if src_idx + 3 >= src_data.len() {
                 continue;
