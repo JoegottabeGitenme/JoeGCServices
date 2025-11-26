@@ -9,7 +9,7 @@ use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use storage::{CacheKey, JobQueue, ObjectStorage, ObjectStorageConfig, RenderJob, TileCache};
+use storage::{CacheKey, JobQueue, ObjectStorage, ObjectStorageConfig, RenderJob, TileCache, Catalog};
 
 #[derive(Parser, Debug)]
 #[command(name = "renderer-worker")]
@@ -56,9 +56,11 @@ async fn main() -> Result<()> {
 
     // Connect to services
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://user:password@db:5432/weather".to_string());
 
     let mut queue = JobQueue::connect(&redis_url).await?;
     let mut cache = TileCache::connect(&redis_url).await?;
+    let catalog = Catalog::connect(&db_url).await?;
 
     let storage_config = ObjectStorageConfig {
         endpoint: env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://minio:9000".to_string()),
@@ -71,7 +73,7 @@ async fn main() -> Result<()> {
 
     let storage = ObjectStorage::new(&storage_config)?;
 
-    info!("Connected to Redis and object storage");
+    info!("Connected to Redis, database, and object storage");
 
     // Main worker loop
     loop {
@@ -79,7 +81,7 @@ async fn main() -> Result<()> {
             Ok(Some(job)) => {
                 info!(job_id = %job.id, layer = %job.layer, "Processing render job");
 
-                match render_tile(&storage, &job).await {
+                match render_tile(&storage, &catalog, &job).await {
                     Ok(image_data) => {
                         // Store in cache
                         let cache_key = CacheKey::new(
@@ -114,6 +116,7 @@ async fn main() -> Result<()> {
             }
             Ok(None) => {
                 // No jobs available, continue polling
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             Err(e) => {
                 error!(error = %e, "Error claiming job");
@@ -124,91 +127,214 @@ async fn main() -> Result<()> {
 }
 
 /// Render a tile for the given job.
-async fn render_tile(storage: &ObjectStorage, job: &RenderJob) -> Result<Vec<u8>> {
-    // TODO: Implement actual rendering
-    // 1. Load grid data from storage
-    // 2. Apply coordinate transformation
-    // 3. Render using appropriate style
-    // 4. Encode as PNG
+async fn render_tile(storage: &ObjectStorage, catalog: &Catalog, job: &RenderJob) -> Result<Vec<u8>> {
+    // Parse layer name (format: "model_parameter")
+    let parts: Vec<&str> = job.layer.split('_').collect();
+    if parts.len() < 2 {
+        return Err(anyhow::anyhow!("Invalid layer format: {}", job.layer));
+    }
 
-    // For now, generate a test pattern
-    let width = job.width as usize;
-    let height = job.height as usize;
+    let model = parts[0];
+    let parameter = parts[1..].join("_");
 
-    let mut pixels = vec![0u8; width * height * 4];
+    // Parse TIME parameter (format: "H" for forecast hour)
+    let forecast_hour: Option<u32> = job.time.as_ref().and_then(|t| t.parse().ok());
+    
+    info!(forecast_hour = ?forecast_hour, "Parsed TIME parameter");
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * 4;
+    // Get dataset for this parameter
+    let entry = if let Some(hour) = forecast_hour {
+        // Find dataset with matching forecast hour
+        catalog
+            .find_by_forecast_hour(model, &parameter, hour)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No data found for {}/{} at hour {}", model, parameter, hour))?
+    } else {
+        // Get latest dataset
+        catalog
+            .get_latest(model, &parameter)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No data found for {}/{}", model, parameter))?
+    };
 
-            // Simple gradient pattern
-            pixels[idx] = (x * 255 / width) as u8; // R
-            pixels[idx + 1] = (y * 255 / height) as u8; // G
-            pixels[idx + 2] = 128; // B
-            pixels[idx + 3] = 255; // A
+    // Load GRIB2 file from storage
+    let grib_data = storage
+        .get(&entry.storage_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load GRIB2 file: {}", e))?;
+
+    // Parse GRIB2 and find matching message
+    // Strategy: Look for exact match first, then substring match
+    // If multiple messages match, prefer the one with the lowest level (e.g., surface over upper-level)
+    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
+    let mut exact_match = None;
+    let mut substring_matches = Vec::new();
+
+    while let Some(msg) = reader.next_message()? {
+        let msg_param = msg.parameter();
+        
+        // Look for exact match
+        if msg_param == &parameter[..] {
+            exact_match = Some(msg);
+            break; // Exact match takes priority
+        }
+        
+        // Look for substring matches
+        if msg_param.contains(&parameter[..]) || parameter.contains(msg_param) {
+            substring_matches.push(msg);
         }
     }
 
-    // Encode as PNG (placeholder - using a simple format)
-    // TODO: Use proper PNG encoder from renderer crate
-    Ok(encode_test_png(width, height, &pixels))
-}
+    let msg = if let Some(msg) = exact_match {
+        msg
+    } else if !substring_matches.is_empty() {
+        // Use the first substring match
+        substring_matches.into_iter().next().unwrap()
+    } else {
+        return Err(anyhow::anyhow!("Parameter {} not found in GRIB2", parameter));
+    };
 
-/// Simple PNG encoder for test patterns.
-fn encode_test_png(width: usize, height: usize, rgba: &[u8]) -> Vec<u8> {
-    // This is a placeholder - real implementation would use the renderer crate
-    // For now, return a minimal valid PNG
+    // Unpack grid data
+    let grid_data = msg.unpack_data()?;
 
-    let mut png = Vec::new();
+    let (grid_height, grid_width) = msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
 
-    // PNG signature
-    png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    info!(
+        "Grid dimensions: {}x{}, data points: {}",
+        grid_width,
+        grid_height,
+        grid_data.len()
+    );
 
-    // IHDR chunk
-    let mut ihdr = Vec::new();
-    ihdr.extend_from_slice(&(width as u32).to_be_bytes());
-    ihdr.extend_from_slice(&(height as u32).to_be_bytes());
-    ihdr.push(8); // bit depth
-    ihdr.push(6); // color type (RGBA)
-    ihdr.push(0); // compression
-    ihdr.push(0); // filter
-    ihdr.push(0); // interlace
-
-    write_png_chunk(&mut png, b"IHDR", &ihdr);
-
-    // IDAT chunk (compressed image data)
-    // For simplicity, using uncompressed deflate
-    let mut raw_data = Vec::new();
-    for y in 0..height {
-        raw_data.push(0); // filter type: none
-        for x in 0..width {
-            let idx = (y * width + x) * 4;
-            raw_data.extend_from_slice(&rgba[idx..idx + 4]);
-        }
+    if grid_data.len() != grid_width * grid_height {
+        return Err(anyhow::anyhow!(
+            "Grid data size mismatch: {} vs {}x{}",
+            grid_data.len(),
+            grid_width,
+            grid_height
+        ));
     }
 
-    // Compress with deflate
-    use std::io::Write;
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-    encoder.write_all(&raw_data).unwrap();
-    let compressed = encoder.finish().unwrap();
+    // Find data min/max for scaling
+    let (min_val, max_val) = grid_data
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &val| {
+            (min.min(val), max.max(val))
+        });
 
-    write_png_chunk(&mut png, b"IDAT", &compressed);
+    info!("Data range: {} to {}", min_val, max_val);
+    info!("Sample values: {:?}", &grid_data[0..10.min(grid_data.len())]);
 
-    // IEND chunk
-    write_png_chunk(&mut png, b"IEND", &[]);
+    // Resample grid to match request dimensions
+    let rendered_width = job.width as usize;
+    let rendered_height = job.height as usize;
 
-    png
+    let resampled_data = if grid_width != rendered_width || grid_height != rendered_height {
+        info!(
+            "Resampling grid from {}x{} to {}x{}",
+            grid_width, grid_height, rendered_width, rendered_height
+        );
+        renderer::gradient::resample_grid(&grid_data, grid_width, grid_height, rendered_width, rendered_height)
+    } else {
+        grid_data.clone()
+    };
+
+    // Render based on parameter type
+    let rgba_data = if parameter.contains("TMP") || parameter.contains("TEMP") {
+        // Temperature in Kelvin, convert to Celsius for rendering
+        let celsius_data: Vec<f32> = resampled_data.iter().map(|k| k - 273.15).collect();
+        let min_c = min_val - 273.15;
+        let max_c = max_val - 273.15;
+        
+        info!(
+            "Temperature range: {:.2}°C to {:.2}°C",
+            min_c, max_c
+        );
+        
+        renderer::gradient::render_temperature(&celsius_data, rendered_width, rendered_height, min_c, max_c)
+    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
+        // Wind speed in m/s
+        info!(
+            "Wind speed range: {:.2} to {:.2} m/s",
+            min_val, max_val
+        );
+        
+        renderer::gradient::render_wind_speed(&resampled_data, rendered_width, rendered_height, min_val, max_val)
+    } else if parameter.contains("PRES") || parameter.contains("PRESS") {
+        // Pressure in Pa, convert to hPa
+        let hpa_data: Vec<f32> = resampled_data.iter().map(|pa| pa / 100.0).collect();
+        let min_hpa = min_val / 100.0;
+        let max_hpa = max_val / 100.0;
+        
+        info!(
+            "Pressure range: {:.2} to {:.2} hPa",
+            min_hpa, max_hpa
+        );
+        
+        renderer::gradient::render_pressure(&hpa_data, rendered_width, rendered_height, min_hpa, max_hpa)
+    } else if parameter.contains("RH") || parameter.contains("HUMID") {
+        // Relative humidity in percent (0-100)
+        info!(
+            "Humidity range: {:.2}% to {:.2}%",
+            min_val, max_val
+        );
+        
+        renderer::gradient::render_humidity(&resampled_data, rendered_width, rendered_height, min_val, max_val)
+    } else {
+        // Generic gradient rendering
+        renderer::gradient::render_grid(
+            &resampled_data,
+            rendered_width,
+            rendered_height,
+            min_val,
+            max_val,
+            |norm| {
+                // Generic blue-red gradient
+                let hue = (1.0 - norm) * 240.0; // Blue to red
+                let rgb = hsv_to_rgb(hue, 1.0, 1.0);
+                renderer::gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
+            },
+        )
+    };
+
+    info!(
+        "Rendered PNG from {}x{} grid, output {}x{}",
+        grid_width, grid_height, rendered_width, rendered_height
+    );
+
+    // Convert to PNG 
+    let png = renderer::png::create_png(&rgba_data, rendered_width, rendered_height)
+        .map_err(|e| anyhow::anyhow!("PNG encoding failed: {}", e))?;
+
+    Ok(png)
 }
 
-fn write_png_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
-    output.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    output.extend_from_slice(chunk_type);
-    output.extend_from_slice(data);
+/// Convert HSV to RGB (simplified version)
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let h = h % 360.0;
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
 
-    let crc = crc32fast::hash(&[chunk_type.as_slice(), data].concat());
-    output.extend_from_slice(&crc.to_be_bytes());
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    (
+        ((r + m) * 255.0) as u8,
+        ((g + m) * 255.0) as u8,
+        ((b + m) * 255.0) as u8,
+    )
 }
-
-use crc32fast;
-use flate2;

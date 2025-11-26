@@ -9,6 +9,7 @@
 # Usage:
 #   ./start.sh              # Start with docker-compose and ingest test data (fast)
 #   ./start.sh --compose    # Start with docker-compose (same as above)
+#   ./start.sh --rebuild    # Force rebuild of Docker images
 #   ./start.sh --kubernetes # Full Kubernetes setup with minikube
 #   ./start.sh --k8s        # Same as --kubernetes
 #   ./start.sh --stop       # Stop docker-compose
@@ -112,6 +113,43 @@ check_compose_prerequisites() {
     log_success "All prerequisites satisfied!"
 }
 
+rebuild_images_if_needed() {
+    log_info "Checking if Docker images need rebuilding..."
+    
+    cd "$PROJECT_ROOT"
+    
+    # Check if images exist
+    local need_rebuild=false
+    
+    if ! docker images weather-wms-wms-api | grep -q weather-wms-wms-api; then
+        log_info "WMS API image not found, will build"
+        need_rebuild=true
+    else
+        # Check if source code is newer than image
+        local image_time=$(docker inspect -f '{{ .Created }}' weather-wms-wms-api:latest 2>/dev/null || echo "1970-01-01T00:00:00Z")
+        local image_epoch=$(date -d "$image_time" +%s 2>/dev/null || echo 0)
+        
+        # Find newest Rust source file
+        local newest_src=$(find crates/ services/ -name "*.rs" -o -name "Cargo.toml" 2>/dev/null | xargs ls -t 2>/dev/null | head -1)
+        if [ -n "$newest_src" ]; then
+            local src_epoch=$(stat -c %Y "$newest_src" 2>/dev/null || echo 0)
+            
+            if [ $src_epoch -gt $image_epoch ]; then
+                log_info "Source code has changed since last build, will rebuild"
+                need_rebuild=true
+            fi
+        fi
+    fi
+    
+    if [ "$need_rebuild" = true ]; then
+        log_info "Rebuilding Docker images..."
+        docker-compose build
+        log_success "Docker images rebuilt!"
+    else
+        log_info "Docker images are up to date"
+    fi
+}
+
 start_compose() {
     log_info "Starting weather-wms stack with docker-compose..."
     
@@ -124,6 +162,9 @@ start_compose() {
         show_compose_access_info
         return
     fi
+    
+    # Rebuild images if source code changed
+    rebuild_images_if_needed
     
     docker-compose up -d
     
@@ -529,6 +570,13 @@ main() {
             check_compose_prerequisites
             start_compose
             ;;
+        --rebuild)
+            log_info "Forcing rebuild of Docker images..."
+            cd "$PROJECT_ROOT"
+            docker-compose build
+            log_success "Docker images rebuilt!"
+            log_info "Run './start.sh' to start with rebuilt images"
+            ;;
         --stop)
             log_info "Stopping services..."
             # Try docker-compose first
@@ -564,12 +612,15 @@ main() {
             echo "Options:"
             echo "  (none)         Start with docker-compose (RECOMMENDED - fast)"
             echo "  --compose      Start with docker-compose"
+            echo "  --rebuild      Force rebuild of Docker images (use after code changes)"
             echo "  --kubernetes   Full Kubernetes setup with minikube (slower)"
             echo "  --k8s          Same as --kubernetes"
             echo "  --stop         Stop docker-compose or minikube"
             echo "  --clean        Delete everything and start fresh"
             echo "  --status       Show status of services"
             echo "  --help         Show this help message"
+            echo ""
+            echo "NOTE: Images are automatically rebuilt if source code changed since last build"
             echo ""
              echo "RECOMMENDED WORKFLOW:"
              echo "  1. Run: ./start.sh"

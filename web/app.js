@@ -19,6 +19,13 @@ const modelsListEl = document.getElementById('models-list');
 const storageSizeEl = document.getElementById('storage-size');
 const ingestLogEl = document.getElementById('ingest-log');
 
+// Model/Parameter Selection Elements
+const protocolSelectEl = document.getElementById('protocol-select');
+const modelSelectEl = document.getElementById('model-select');
+const parameterSelectEl = document.getElementById('parameter-select');
+const forecastHourSelectEl = document.getElementById('forecast-hour-select');
+const loadLayerBtnEl = document.getElementById('load-layer-btn');
+
 // Performance Tracking
 const performanceStats = {
     tilesLoaded: 0,
@@ -33,13 +40,37 @@ const tilesLoadedCountEl = document.getElementById('tiles-loaded-count');
 const slowestTileTimeEl = document.getElementById('slowest-tile-time');
 const currentLayerNameEl = document.getElementById('current-layer-name');
 
+// State for model/parameter selection
+let availableModels = [];
+let selectedProtocol = 'wmts';
+let selectedModel = null;
+let selectedParameter = null;
+let selectedForecastHour = null;
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     checkServiceStatus();
     loadCapabilities();
+    loadAvailableModels();
     initIngestionStatus();
+    setupEventListeners();
 });
+
+// Setup event listeners for model/parameter selection
+function setupEventListeners() {
+    protocolSelectEl.addEventListener('change', onProtocolChange);
+    modelSelectEl.addEventListener('change', onModelChange);
+    parameterSelectEl.addEventListener('change', onParameterChange);
+    forecastHourSelectEl.addEventListener('change', onForecastHourChange);
+    loadLayerBtnEl.addEventListener('click', onLoadLayer);
+}
+
+// Handle protocol selection change
+function onProtocolChange() {
+    selectedProtocol = protocolSelectEl.value;
+    console.log('Protocol changed to:', selectedProtocol);
+}
 
 // Initialize Leaflet map
 function initMap() {
@@ -90,6 +121,131 @@ function setStatusIndicator(service, status) {
 
     statusDot.className = `status-dot ${status}`;
     statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+// Load available models from WMS capabilities
+async function loadAvailableModels() {
+    try {
+        const response = await fetch(
+            `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`,
+            { mode: 'cors' }
+        );
+        const text = await response.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, 'text/xml');
+
+        // Extract unique model names from layer names (format: model_parameter)
+        const modelSet = new Set();
+        const layerElements = xml.querySelectorAll('Layer > Name');
+        layerElements.forEach(el => {
+            const name = el.textContent;
+            if (name) {
+                const parts = name.split('_');
+                if (parts.length >= 2) {
+                    modelSet.add(parts[0]);
+                }
+            }
+        });
+
+        availableModels = Array.from(modelSet).sort();
+        
+        // Populate model select
+        modelSelectEl.innerHTML = '<option value="">Select a model...</option>';
+        availableModels.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model.toUpperCase();
+            modelSelectEl.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load available models:', error);
+    }
+}
+
+// Handle model selection change
+async function onModelChange() {
+    selectedModel = modelSelectEl.value;
+    parameterSelectEl.innerHTML = '<option value="">Select a parameter...</option>';
+    forecastHourSelectEl.innerHTML = '<option value="">Select forecast hour...</option>';
+    
+    if (!selectedModel) return;
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/api/parameters/${selectedModel}`,
+            { mode: 'cors' }
+        );
+        if (!response.ok) throw new Error('Failed to fetch parameters');
+        
+        const data = await response.json();
+        data.parameters.forEach(param => {
+            const option = document.createElement('option');
+            option.value = param;
+            option.textContent = formatParameterName(param);
+            parameterSelectEl.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load parameters:', error);
+    }
+}
+
+// Handle parameter selection change
+async function onParameterChange() {
+    selectedParameter = parameterSelectEl.value;
+    forecastHourSelectEl.innerHTML = '<option value="">Select forecast hour...</option>';
+    
+    if (!selectedModel || !selectedParameter) return;
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/api/forecast-times/${selectedModel}/${selectedParameter}`,
+            { mode: 'cors' }
+        );
+        if (!response.ok) throw new Error('Failed to fetch forecast hours');
+        
+        const data = await response.json();
+        data.forecast_hours.forEach(hour => {
+            const option = document.createElement('option');
+            option.value = hour;
+            option.textContent = `Hour ${hour}`;
+            forecastHourSelectEl.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load forecast hours:', error);
+    }
+}
+
+// Handle load layer button click
+function onLoadLayer() {
+    if (!selectedModel || !selectedParameter || !selectedForecastHour) {
+        alert('Please select a model, parameter, and forecast hour');
+        return;
+    }
+    
+    const layerName = `${selectedModel}_${selectedParameter}`;
+    loadLayerOnMap(layerName);
+}
+
+// Handle forecast hour selection
+function onForecastHourChange() {
+    selectedForecastHour = forecastHourSelectEl.value;
+}
+
+// Format parameter name for display
+function formatParameterName(param) {
+    const names = {
+        'TMP': 'Temperature',
+        'WIND': 'Wind Speed',
+        'PRES': 'Pressure',
+        'RH': 'Relative Humidity',
+        'GUST': 'Wind Gust'
+    };
+    
+    for (const [key, name] of Object.entries(names)) {
+        if (param.includes(key)) return name;
+    }
+    
+    return param;
 }
 
 // Load WMS/WMTS capabilities
@@ -171,6 +327,48 @@ function parseCapabilities(xml) {
 function getElementText(parent, tagName) {
     const element = parent.querySelector(tagName);
     return element ? element.textContent : '';
+}
+
+// Load a specific layer on the map
+function loadLayerOnMap(layerName) {
+    // Remove existing WMS layer
+    if (wmsLayer) {
+        map.removeLayer(wmsLayer);
+    }
+
+    if (selectedProtocol === 'wmts') {
+        // Create WMTS layer using Leaflet TileLayer with direct URL pattern
+        // WMTS tile URL format: /wmts/rest/{layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png
+        const wmtsUrl = `${API_BASE}/wmts/rest/${layerName}/default/WebMercatorQuad/{z}/{x}/{y}.png`;
+        
+        wmsLayer = L.tileLayer(wmtsUrl, {
+            attribution: 'Weather Data (WMTS)',
+            maxZoom: 18,
+            tileSize: 256,
+            opacity: 0.7
+        }).addTo(map);
+        
+        console.log('Loaded WMTS layer:', wmtsUrl);
+    } else {
+        // Create WMS layer for the selected parameter
+        wmsLayer = L.tileLayer.wms(`${API_BASE}/wms`, {
+            layers: layerName,
+            styles: 'default',
+            format: 'image/png',
+            transparent: true,
+            attribution: 'Weather Data (WMS)',
+            version: '1.3.0',
+            opacity: 0.7
+        }).addTo(map);
+        
+        console.log('Loaded WMS layer:', layerName);
+    }
+
+    // Update current layer display
+    currentLayerNameEl.textContent = formatParameterName(selectedParameter) + ` (${selectedProtocol.toUpperCase()})`;
+    performanceStats.currentLayer = layerName;
+    performanceStats.tileTimes = [];
+    performanceStats.tilesLoaded = 0;
 }
 
 // Display layers in sidebar
@@ -289,34 +487,48 @@ function addWmsLayerToMap(layer) {
         map.removeLayer(wmsLayer);
     }
 
-    // Create WMS layer
-    const wmsUrl = `${API_BASE}/wms`;
-    const params = {
-        'SERVICE': 'WMS',
-        'VERSION': '1.3.0',
-        'REQUEST': 'GetMap',
-        'LAYERS': layer.name,
-        'STYLES': '',
-        'FORMAT': 'image/png',
-        'BBOX': '{bbox}',
-        'WIDTH': '{width}',
-        'HEIGHT': '{height}',
-        'CRS': 'EPSG:4326',
-        'TRANSPARENT': 'true'
-    };
+    if (selectedProtocol === 'wmts') {
+        // Create WMTS layer using Leaflet TileLayer with direct URL pattern
+        const wmtsUrl = `${API_BASE}/wmts/rest/${layer.name}/default/WebMercatorQuad/{z}/{x}/{y}.png`;
+        
+        wmsLayer = L.tileLayer(wmtsUrl, {
+            attribution: `Layer: ${layer.title} (WMTS)`,
+            maxZoom: 18,
+            tileSize: 256,
+            opacity: 0.7
+        });
+        
+        console.log('Loaded WMTS layer:', wmtsUrl);
+    } else {
+        // Create WMS layer
+        const wmsUrl = `${API_BASE}/wms`;
+        const params = {
+            'SERVICE': 'WMS',
+            'VERSION': '1.3.0',
+            'REQUEST': 'GetMap',
+            'LAYERS': layer.name,
+            'STYLES': '',
+            'FORMAT': 'image/png',
+            'BBOX': '{bbox}',
+            'WIDTH': '{width}',
+            'HEIGHT': '{height}',
+            'CRS': 'EPSG:4326',
+            'TRANSPARENT': 'true'
+        };
 
-    // Add TIME dimension if available
-    if (layer.dimensions.some(d => d.name === 'TIME') && layer.dimensions[0].default) {
-        params['TIME'] = layer.dimensions[0].default;
+        // Add TIME dimension if available
+        if (layer.dimensions.some(d => d.name === 'TIME') && layer.dimensions[0].default) {
+            params['TIME'] = layer.dimensions[0].default;
+        }
+
+        wmsLayer = L.tileLayer.wms(wmsUrl, {
+            layers: layer.name,
+            format: 'image/png',
+            transparent: true,
+            attribution: `Layer: ${layer.title} (WMS)`,
+            opacity: 0.7
+        });
     }
-
-    wmsLayer = L.tileLayer.wms(wmsUrl, {
-        layers: layer.name,
-        format: 'image/png',
-        transparent: true,
-        attribution: `Layer: ${layer.title}`,
-        opacity: 0.7
-    });
 
     // Hook into tile load events for performance tracking
     wmsLayer.on('loading', function() {

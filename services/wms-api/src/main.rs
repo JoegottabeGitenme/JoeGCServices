@@ -3,6 +3,7 @@
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
 mod handlers;
+mod rendering;
 mod state;
 
 use anyhow::Result;
@@ -76,6 +77,9 @@ async fn main() -> Result<()> {
         .route("/ready", get(handlers::ready_handler))
         // Metrics
         .route("/metrics", get(handlers::metrics_handler))
+        // API endpoints
+        .route("/api/forecast-times/:model/:parameter", get(handlers::forecast_times_handler))
+        .route("/api/parameters/:model", get(handlers::parameters_handler))
         // Ingestion events API
         .route("/api/ingestion/events", get(handlers::ingestion_events_handler))
         // Layer extensions

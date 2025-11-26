@@ -75,6 +75,40 @@
                 </div>
 
                 <div class="sidebar-section">
+                    <h2>Model Selection</h2>
+                    <div class="control-group">
+                        <label for="protocol-select">Protocol:</label>
+                        <select id="protocol-select" class="control-input">
+                            <option value="wms">WMS (Web Map Service)</option>
+                            <option value="wmts" selected>WMTS (Web Map Tile Service)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="model-select">Model:</label>
+                        <select id="model-select" class="control-input">
+                            <option value="">Select a model...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="parameter-select">Parameter:</label>
+                        <select id="parameter-select" class="control-input">
+                            <option value="">Select a parameter...</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="forecast-hour-select">Forecast Hour:</label>
+                        <select id="forecast-hour-select" class="control-input">
+                            <option value="">Select forecast hour...</option>
+                        </select>
+                    </div>
+
+                    <button id="load-layer-btn" class="control-button">Load Layer</button>
+                </div>
+
+                <div class="sidebar-section">
                     <h2>Layers</h2>
                     <div id="layers-list" class="layers-list">
                         <p class="empty-state">Loading layers...</p>

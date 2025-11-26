@@ -138,33 +138,36 @@ impl Grib2Message {
         )
     }
 
-    /// Unpack the grid data values (supports simple packing only for now)
+    /// Unpack the grid data values using the external `grib` crate.
+    /// 
+    /// This method now uses the mature `grib` crate which supports:
+    /// - Template 5.0: Simple packing
+    /// - Template 5.2: Complex packing
+    /// - Template 5.3: Complex packing with spatial differencing
+    /// - Template 5.40/5.41: JPEG 2000 compression (if enabled)
+    /// - Template 5.15: PNG compression (enabled by default)
     pub fn unpack_data(&self) -> Grib2Result<Vec<f32>> {
-        match self.data_representation.packing_method {
-            0 => {
-                // Simple packing
-                let num_points = (self.grid_definition.num_points_latitude as u32)
-                    * (self.grid_definition.num_points_longitude as u32);
-                
-                let values = unpacking::unpack_simple(
-                    &self.data_section.data,
-                    num_points,
-                    self.data_representation.bits_per_value,
-                    self.data_representation.reference_value,
-                    self.data_representation.binary_scale_factor,
-                    self.data_representation.decimal_scale_factor,
-                    None, // bitmap not used for now
-                )
-                .map_err(|e| Grib2Error::UnpackingError(format!("Simple unpacking failed: {}", e)))?;
-                
-                // Convert Option<f32> to f32, using 0.0 for missing values
-                Ok(values.into_iter().map(|v| v.unwrap_or(0.0)).collect())
-            }
-            method => Err(Grib2Error::UnsupportedTemplate {
-                template_number: method as u16,
-                reason: format!("Packing method {} not yet supported", method),
-            }),
+        use std::io::Cursor;
+        
+        // Use the grib crate to parse and decode the message
+        let cursor = Cursor::new(self.raw_data.as_ref());
+        let grib_file = grib::from_reader(cursor)
+            .map_err(|e| Grib2Error::UnpackingError(format!("Failed to parse with grib crate: {}", e)))?;
+        
+        // Get the first (and should be only) submessage and decode immediately
+        for (_index, submessage) in grib_file.iter() {
+            // Create decoder and dispatch
+            let decoder = grib::Grib2SubmessageDecoder::from(submessage)
+                .map_err(|e| Grib2Error::UnpackingError(format!("Failed to create decoder: {}", e)))?;
+            
+            let values: Vec<f32> = decoder.dispatch()
+                .map_err(|e| Grib2Error::UnpackingError(format!("Failed to decode values: {}", e)))?
+                .collect();
+            
+            return Ok(values);
         }
+        
+        Err(Grib2Error::UnpackingError("No submessage found in GRIB data".to_string()))
     }
 }
 

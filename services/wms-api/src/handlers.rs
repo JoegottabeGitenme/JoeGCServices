@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, instrument};
+use tracing::{info, instrument, error};
 
 use storage::CacheKey;
 use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
@@ -116,11 +116,13 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let width = params.width.unwrap_or(256);
     let height = params.height.unwrap_or(256);
     let style = params.styles.as_deref().unwrap_or("default");
+    let bbox = params.bbox.as_deref();
+    let time = params.time.clone();
 
-    info!(layer = %layers, style = %style, width = width, height = height, "GetMap request");
+    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, time = ?time, "GetMap request");
     
-    // Try to render actual data, fall back to placeholder on error
-    match render_weather_data(&state, layers, width, height).await {
+    // Try to render actual data, return error on failure
+    match render_weather_data(&state, layers, width, height, bbox, time.as_deref()).await {
         Ok(png_data) => {
             Response::builder()
                 .status(StatusCode::OK)
@@ -129,13 +131,12 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                 .unwrap()
         }
         Err(e) => {
-            info!(error = %e, "Rendering failed, using placeholder");
-            let placeholder = generate_placeholder_image(width, height);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
-                .body(placeholder.into())
-                .unwrap()
+            error!(error = %e, "Rendering failed");
+            wms_exception(
+                "NoApplicableCode",
+                &format!("Rendering failed: {}", e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
         }
     }
 }
@@ -154,12 +155,16 @@ pub struct WmtsKvpParams {
     layer: Option<String>,
     #[serde(rename = "STYLE")]
     style: Option<String>,
+    #[serde(rename = "TILEMATRIXSET")]
+    tile_matrix_set: Option<String>,
     #[serde(rename = "TILEMATRIX")]
     tile_matrix: Option<String>,
     #[serde(rename = "TILEROW")]
     tile_row: Option<u32>,
     #[serde(rename = "TILECOL")]
     tile_col: Option<u32>,
+    #[serde(rename = "FORMAT")]
+    format: Option<String>,
     #[serde(rename = "TIME")]
     time: Option<String>,
 }
@@ -212,15 +217,21 @@ pub async fn wmts_rest_handler(
             StatusCode::BAD_REQUEST,
         );
     }
+    // URL format: {layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png
+    // Leaflet sends tiles in XYZ convention where:
+    //   z = zoom level (TileMatrix)
+    //   x = column (longitude direction, 0 at left/west)
+    //   y = row (latitude direction, 0 at top/north)
     let layer = parts[0];
     let style = parts[1];
-    let tile_matrix = parts[3];
-    let tile_row: u32 = parts[4].parse().unwrap_or(0);
+    // parts[2] = TileMatrixSet (e.g., "WebMercatorQuad")
+    let z: u32 = parts[3].parse().unwrap_or(0);
+    let x: u32 = parts[4].parse().unwrap_or(0);  // Column (X)
     let last = parts[5];
-    let (tile_col_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
-    let tile_col: u32 = tile_col_str.parse().unwrap_or(0);
-    let z: u32 = tile_matrix.parse().unwrap_or(0);
-    wmts_get_tile(state, layer, style, z, tile_col, tile_row).await
+    let (y_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
+    let y: u32 = y_str.parse().unwrap_or(0);  // Row (Y)
+    
+    wmts_get_tile(state, layer, style, z, x, y).await
 }
 
 #[instrument(skip(state))]
@@ -235,7 +246,15 @@ pub async fn xyz_tile_handler(
 
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
     let models = state.catalog.list_models().await.unwrap_or_default();
-    let xml = build_wmts_capabilities_xml(&models);
+    
+    // Get parameters for each model
+    let mut model_params = HashMap::new();
+    for model in &models {
+        let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
+        model_params.insert(model.clone(), params_list);
+    }
+    
+    let xml = build_wmts_capabilities_xml(&models, &model_params);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -252,18 +271,80 @@ async fn wmts_get_tile(
     y: u32,
 ) -> Response {
     info!(layer = %layer, style = %style, z = z, x = x, y = y, "GetTile request");
+    
+    // Get tile bounding box using Web Mercator tile matrix set
     let tms = web_mercator_tile_matrix_set();
     let coord = TileCoord::new(z, x, y);
-    if tms.tile_bbox(&coord).is_none() {
-        return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST);
+    
+    let bbox = match tms.tile_bbox(&coord) {
+        Some(bbox) => bbox,
+        None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
+    };
+    
+    // Convert Web Mercator bbox to WGS84 (lat/lon) for GRIB data
+    // GRIB data is in geographic coordinates (EPSG:4326)
+    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
+    
+    // Format bbox as [min_lon, min_lat, max_lon, max_lat]
+    let bbox_array = [
+        latlon_bbox.min_x as f32,
+        latlon_bbox.min_y as f32,
+        latlon_bbox.max_x as f32,
+        latlon_bbox.max_y as f32,
+    ];
+    
+    info!(
+        z = z,
+        x = x, 
+        y = y,
+        min_lon = bbox_array[0],
+        min_lat = bbox_array[1],
+        max_lon = bbox_array[2],
+        max_lat = bbox_array[3],
+        "Tile bbox"
+    );
+    
+    // Parse layer name (format: "model_parameter")
+    let parts: Vec<&str> = layer.split('_').collect();
+    if parts.len() < 2 {
+        return wmts_exception(
+            "InvalidParameterValue",
+            "Invalid layer format",
+            StatusCode::BAD_REQUEST,
+        );
     }
-    let placeholder = generate_placeholder_image(256, 256);
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "image/png")
-        .header(header::CACHE_CONTROL, "max-age=3600")
-        .body(placeholder.into())
-        .unwrap()
+    
+    let model = parts[0];
+    let parameter = parts[1..].join("_");
+    
+    // Render the tile with spatial subsetting
+    match crate::rendering::render_weather_data(
+        &state.storage,
+        &state.catalog,
+        model,
+        &parameter,
+        None, // forecast_hour (use default/latest)
+        256,  // tile width
+        256,  // tile height
+        Some(bbox_array),
+    )
+    .await
+    {
+        Ok(png_data) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/png")
+            .header(header::CACHE_CONTROL, "max-age=3600")
+            .body(png_data.into())
+            .unwrap(),
+        Err(e) => {
+            error!(error = %e, "WMTS tile rendering failed");
+            wmts_exception(
+                "NoApplicableCode",
+                &format!("Rendering failed: {}", e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+        }
+    }
 }
 
 // ============================================================================
@@ -292,6 +373,8 @@ async fn render_weather_data(
     layer: &str,
     width: u32,
     height: u32,
+    bbox: Option<&str>,
+    time: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     // Parse layer name (format: "model_parameter")
     let parts: Vec<&str> = layer.split('_').collect();
@@ -302,146 +385,125 @@ async fn render_weather_data(
     let model = parts[0];
     let parameter = parts[1..].join("_");
 
-    // Get latest dataset for this parameter
-    let entry = state
-        .catalog
-        .get_latest(model, &parameter)
-        .await
-        .map_err(|e| format!("Catalog query failed: {}", e))?
-        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
-
-    // Load GRIB2 file from storage
-    let grib_data = state
-        .storage
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
-
-    // Parse GRIB2 and find matching message
-    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
-    let mut message = None;
-
-    while let Some(msg) = reader
-        .next_message()
-        .map_err(|e| format!("GRIB2 parse error: {}", e))?
-    {
-        // Match by parameter and level
-        if msg.parameter() == &parameter[..] {
-            message = Some(msg);
-            break;
+    // Parse BBOX parameter (format: "minlon,minlat,maxlon,maxlat")
+    let parsed_bbox = bbox.and_then(|b| {
+        let coords: Vec<f32> = b.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        
+        if coords.len() == 4 {
+            Some([coords[0], coords[1], coords[2], coords[3]])
+        } else {
+            None
         }
-    }
+    });
 
-    let msg = message.ok_or_else(|| format!("Parameter {} not found in GRIB2", parameter))?;
+    // Parse TIME parameter (format: "H" for forecast hour)
+    let forecast_hour: Option<u32> = time.and_then(|t| t.parse().ok());
+    
+    info!(forecast_hour = ?forecast_hour, bbox = ?parsed_bbox, "Parsed WMS parameters");
 
-    // Unpack grid data
-    let grid_data = msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking failed: {}", e))?;
-
-    let (grid_height, grid_width) = msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
-
-    info!(
-        "Grid dimensions: {}x{}, data points: {}",
-        grid_width,
-        grid_height,
-        grid_data.len()
-    );
-
-    if grid_data.len() != grid_width * grid_height {
-        return Err(format!(
-            "Grid data size mismatch: {} vs {}x{}",
-            grid_data.len(),
-            grid_width,
-            grid_height
-        ));
-    }
-
-    // Find data min/max for scaling
-    let (min_val, max_val) = grid_data
-        .iter()
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &val| {
-            (min.min(val), max.max(val))
-        });
-
-    info!("Data range: {} to {}", min_val, max_val);
-    info!("Sample values: {:?}", &grid_data[0..10.min(grid_data.len())]);
-
-    // For now, render the full grid resolution
-    // TODO: Implement proper resampling to match WMS request dimensions
-    let rendered_width = width as usize;
-    let rendered_height = height as usize;
-
-    // Render based on parameter type
-    let rgba_data = if parameter.contains("TMP") || parameter.contains("TEMP") {
-        // Temperature in Kelvin, convert to Celsius for rendering
-        let celsius_data: Vec<f32> = grid_data.iter().map(|k| k - 273.15).collect();
-        let min_c = min_val - 273.15;
-        let max_c = max_val - 273.15;
-        
-        info!(
-            "Temperature range: {:.2}°C to {:.2}°C",
-            min_c, max_c
-        );
-        
-        renderer::gradient::render_temperature(&celsius_data, grid_width, grid_height, min_c, max_c)
-    } else {
-        // Generic gradient rendering
-        renderer::gradient::render_grid(
-            &grid_data,
-            grid_width,
-            grid_height,
-            min_val,
-            max_val,
-            |norm| {
-                // Generic blue-red gradient
-                let hue = (1.0 - norm) * 240.0; // Blue to red
-                let rgb = hsv_to_rgb(hue, 1.0, 1.0);
-                gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
-            },
-        )
-    };
-
-    info!(
-        "Rendered PNG from {}x{} grid, output {}x{}",
-        grid_width, grid_height, rendered_width, rendered_height
-    );
-
-    // Convert to PNG 
-    let png = renderer::png::create_png(&rgba_data, grid_width, grid_height)
-        .map_err(|e| format!("PNG encoding failed: {}", e))?;
-
-    Ok(png)
+    // Use shared rendering logic
+    crate::rendering::render_weather_data(
+        &state.storage,
+        &state.catalog,
+        model,
+        &parameter,
+        forecast_hour,
+        width,
+        height,
+        parsed_bbox,
+    )
+    .await
 }
 
-/// Convert HSV to RGB (simplified version)
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let h = h % 360.0;
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
+// ============================================================================
+// API: Forecast Times and Parameters
+// ============================================================================
 
-    let (r, g, b) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
+/// Response for available forecast times
+#[derive(Debug, Serialize)]
+pub struct ForecastTimesResponse {
+    pub model: String,
+    pub parameter: String,
+    pub reference_time: String,
+    pub forecast_hours: Vec<u32>,
+}
 
-    (
-        ((r + m) * 255.0) as u8,
-        ((g + m) * 255.0) as u8,
-        ((b + m) * 255.0) as u8,
-    )
+/// Response for available parameters
+#[derive(Debug, Serialize)]
+pub struct ParametersResponse {
+    pub model: String,
+    pub parameters: Vec<String>,
+}
+
+/// Get available forecast hours for a parameter
+#[instrument(skip(state))]
+pub async fn forecast_times_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((model, parameter)): Path<(String, String)>,
+) -> impl IntoResponse {
+    // Query all forecast hours for this model/parameter combination
+    match state.catalog.find_datasets(&storage::catalog::DatasetQuery {
+        model: Some(model.clone()),
+        parameter: Some(parameter.clone()),
+        level: None,
+        time_range: None,
+        bbox: None,
+    }).await {
+        Ok(entries) => {
+            // Collect unique forecast hours
+            let mut hours: Vec<u32> = entries.iter().map(|e| e.forecast_hour).collect();
+            hours.sort_unstable();
+            hours.dedup();
+            
+            // Get reference time from first entry
+            let reference_time = entries.first()
+                .map(|e| e.reference_time.to_rfc3339())
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            let response = ForecastTimesResponse {
+                model,
+                parameter,
+                reference_time,
+                forecast_hours: hours,
+            };
+            (StatusCode::OK, Json(response))
+        }
+        Err(_) => {
+            let response = ForecastTimesResponse {
+                model,
+                parameter,
+                reference_time: "unknown".to_string(),
+                forecast_hours: vec![],
+            };
+            (StatusCode::OK, Json(response))
+        }
+    }
+}
+
+/// Get available parameters for a model
+#[instrument(skip(state))]
+pub async fn parameters_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(model): Path<String>,
+) -> impl IntoResponse {
+    match state.catalog.list_parameters(&model).await {
+        Ok(parameters) => {
+            let response = ParametersResponse {
+                model,
+                parameters,
+            };
+            (StatusCode::OK, Json(response))
+        }
+        Err(_) => {
+            let response = ParametersResponse {
+                model,
+                parameters: vec![],
+            };
+            (StatusCode::OK, Json(response))
+        }
+    }
 }
 
 // ============================================================================
@@ -545,20 +607,121 @@ fn build_wms_capabilities_xml(
     )
 }
 
-fn build_wmts_capabilities_xml(models: &[String]) -> String {
+fn build_wmts_capabilities_xml(models: &[String], model_params: &HashMap<String, Vec<String>>) -> String {
+    let empty_params = Vec::new();
+    
+    // Build layer definitions for each model/parameter combination
     let layers: String = models
         .iter()
-        .map(|m| {
+        .flat_map(|model| {
+            let params = model_params.get(model).unwrap_or(&empty_params);
+            params.iter().map(move |param| {
+                let layer_id = format!("{}_{}", model, param);
+                let layer_title = format!("{} - {}", model.to_uppercase(), param);
+                
+                format!(
+                    r#"    <Layer>
+      <ows:Title>{}</ows:Title>
+      <ows:Identifier>{}</ows:Identifier>
+      <ows:WGS84BoundingBox>
+        <ows:LowerCorner>-180.0 -90.0</ows:LowerCorner>
+        <ows:UpperCorner>180.0 90.0</ows:UpperCorner>
+      </ows:WGS84BoundingBox>
+      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Format>image/png</Format>
+      <TileMatrixSetLink>
+        <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
+      </TileMatrixSetLink>
+      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+    </Layer>"#,
+                    layer_title, layer_id, layer_id
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    // Build TileMatrixSet for WebMercatorQuad (zoom levels 0-18)
+    let tile_matrices: String = (0..=18)
+        .map(|z| {
+            let n = 2u32.pow(z);
+            let scale = 559082264.0287178 / (n as f64);
+            let max_extent = 20037508.342789244;
+            
             format!(
-                r#"<Layer><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Layer>"#,
-                m,
-                m.to_uppercase()
+                r#"      <TileMatrix>
+        <ows:Identifier>{}</ows:Identifier>
+        <ScaleDenominator>{}</ScaleDenominator>
+        <TopLeftCorner>{} {}</TopLeftCorner>
+        <TileWidth>256</TileWidth>
+        <TileHeight>256</TileHeight>
+        <MatrixWidth>{}</MatrixWidth>
+        <MatrixHeight>{}</MatrixHeight>
+      </TileMatrix>"#,
+                z, scale, -max_extent, max_extent, n, n
             )
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .join("\n");
+    
     format!(
-        r#"<?xml version="1.0"?><Capabilities xmlns="http://www.opengis.net/wmts/1.0" xmlns:ows="http://www.opengis.net/ows/1.1"><ows:ServiceIdentification><ows:Title>Weather WMTS</ows:Title></ows:ServiceIdentification><Contents>{}</Contents></Capabilities>"#,
-        layers
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Capabilities xmlns="http://www.opengis.net/wmts/1.0"
+    xmlns:ows="http://www.opengis.net/ows/1.1"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    version="1.0.0">
+  <ows:ServiceIdentification>
+    <ows:Title>Weather WMTS Service</ows:Title>
+    <ows:Abstract>WMTS service for weather model data</ows:Abstract>
+    <ows:ServiceType>OGC WMTS</ows:ServiceType>
+    <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
+  </ows:ServiceIdentification>
+  <ows:ServiceProvider>
+    <ows:ProviderName>Weather WMS</ows:ProviderName>
+  </ows:ServiceProvider>
+  <ows:OperationsMetadata>
+    <ows:Operation name="GetCapabilities">
+      <ows:DCP>
+        <ows:HTTP>
+          <ows:Get xlink:href="http://localhost:8080/wmts?">
+            <ows:Constraint name="GetEncoding">
+              <ows:AllowedValues><ows:Value>KVP</ows:Value></ows:AllowedValues>
+            </ows:Constraint>
+          </ows:Get>
+        </ows:HTTP>
+      </ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetTile">
+      <ows:DCP>
+        <ows:HTTP>
+          <ows:Get xlink:href="http://localhost:8080/wmts?">
+            <ows:Constraint name="GetEncoding">
+              <ows:AllowedValues><ows:Value>KVP</ows:Value></ows:AllowedValues>
+            </ows:Constraint>
+          </ows:Get>
+          <ows:Get xlink:href="http://localhost:8080/wmts/rest/">
+            <ows:Constraint name="GetEncoding">
+              <ows:AllowedValues><ows:Value>RESTful</ows:Value></ows:AllowedValues>
+            </ows:Constraint>
+          </ows:Get>
+        </ows:HTTP>
+      </ows:DCP>
+    </ows:Operation>
+  </ows:OperationsMetadata>
+  <Contents>
+{}
+    <TileMatrixSet>
+      <ows:Identifier>WebMercatorQuad</ows:Identifier>
+      <ows:SupportedCRS>urn:ogc:def:crs:EPSG::3857</ows:SupportedCRS>
+      <WellKnownScaleSet>http://www.opengis.net/def/wkss/OGC/1.0/GoogleMapsCompatible</WellKnownScaleSet>
+{}
+    </TileMatrixSet>
+  </Contents>
+</Capabilities>"#,
+        layers, tile_matrices
     )
 }
 

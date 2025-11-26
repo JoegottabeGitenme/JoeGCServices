@@ -170,6 +170,30 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Find dataset by forecast hour.
+    pub async fn find_by_forecast_hour(
+        &self,
+        model: &str,
+        parameter: &str,
+        forecast_hour: u32,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND status = 'available' \
+             ORDER BY reference_time DESC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(forecast_hour as i32)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
     /// Get available time steps for a layer.
     pub async fn get_available_times(
         &self,

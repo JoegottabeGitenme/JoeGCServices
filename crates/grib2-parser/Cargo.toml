@@ -10,3 +10,4 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 nom = "7"
+grib = { workspace = true }
