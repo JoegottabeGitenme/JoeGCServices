@@ -51,31 +51,72 @@ test_getmap() {
     echo ""
 }
 
-# Test requests for different regions and zoom levels
-echo "1. Global view of temperature"
+# Test requests for different parameters and regions
+echo "=== PRESSURE (PRMSL) ==="
+echo ""
+echo "1. Global view of pressure"
+test_getmap "gfs_PRMSL" "GFS Pressure (Global)" "-180,-90,180,90" 512 256
+
+echo "2. North Atlantic region"
+test_getmap "gfs_PRMSL" "GFS Pressure (North Atlantic)" "-80,20,-20,60" 512 384
+
+echo ""
+echo "=== TEMPERATURE (TMP) ==="
+echo ""
+echo "3. Global view of temperature"
 test_getmap "gfs_TMP" "GFS Temperature (Global)" "-180,-90,180,90" 512 256
 
-echo "2. North America region"
+echo "4. North America region"
 test_getmap "gfs_TMP" "GFS Temperature (North America)" "-130,20,-60,50" 512 384
 
-echo "3. Europe region"
+echo "5. Europe region"
 test_getmap "gfs_TMP" "GFS Temperature (Europe)" "-10,35,40,70" 512 384
 
-echo "4. Tropical region"
-test_getmap "gfs_TMP" "GFS Temperature (Tropical)" "-180,-30,180,30" 512 256
+echo ""
+echo "=== U-WIND COMPONENT (UGRD) ==="
+echo ""
+echo "6. Global view of U-wind"
+test_getmap "gfs_UGRD" "GFS U-Wind (Global)" "-180,-90,180,90" 512 256
 
-echo "5. High resolution test"
+echo "7. Pacific region"
+test_getmap "gfs_UGRD" "GFS U-Wind (Pacific)" "120,-60,-80,60" 512 384
+
+echo ""
+echo "=== V-WIND COMPONENT (VGRD) ==="
+echo ""
+echo "8. Global view of V-wind"
+test_getmap "gfs_VGRD" "GFS V-Wind (Global)" "-180,-90,180,90" 512 256
+
+echo "9. Tropical region"
+test_getmap "gfs_VGRD" "GFS V-Wind (Tropical)" "-180,-30,180,30" 512 256
+
+echo ""
+echo "=== HIGH RESOLUTION TESTS ==="
+echo ""
+echo "10. Temperature - High resolution"
 test_getmap "gfs_TMP" "GFS Temperature (High Res)" "-100,25,-95,35" 1024 1024
+
+echo "11. Pressure - High resolution"
+test_getmap "gfs_PRMSL" "GFS Pressure (High Res)" "-75,35,-70,42" 1024 1024
 
 # Summary
 echo "=================================="
 echo "Test Complete!"
 echo "Generated images are in: $OUTPUT_DIR"
 echo ""
+echo "Parameters tested:"
+echo "  ✓ PRMSL - Pressure at Mean Sea Level"
+echo "  ✓ TMP   - Temperature at 2m"
+echo "  ✓ UGRD  - U-Wind Component at 10m"
+echo "  ✓ VGRD  - V-Wind Component at 10m"
+echo ""
 echo "View the images to verify:"
 echo "  - Proper color gradient rendering"
 echo "  - Data is from ingested GRIB2"
 echo "  - No placeholder gray images"
+echo "  - Different patterns for each parameter"
 echo "=================================="
 
+echo ""
+echo "Generated files:"
 ls -lh "$OUTPUT_DIR" || true
