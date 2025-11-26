@@ -1,6 +1,5 @@
 //! Object storage interface for grid data (MinIO/S3 compatible).
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use object_store::{aws::AmazonS3Builder, path::Path, ObjectStore};
 use serde::{Deserialize, Serialize};

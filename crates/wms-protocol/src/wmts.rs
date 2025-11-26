@@ -2,7 +2,7 @@
 //!
 //! Supports WMTS 1.0.0 specification with both KVP and RESTful bindings.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use wms_common::{BoundingBox, CrsCode, TileCoord, TileMatrixSet, WmsError, WmsResult};
 

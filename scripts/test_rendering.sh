@@ -91,12 +91,27 @@ echo "9. Tropical region"
 test_getmap "gfs_VGRD" "GFS V-Wind (Tropical)" "-180,-30,180,30" 512 256
 
 echo ""
+echo "=== WIND BARBS (COMPOSITE) ==="
+echo ""
+echo "10. Global wind barbs"
+test_getmap "gfs_WIND_BARBS" "GFS Wind Barbs (Global)" "-180,-90,180,90" 512 256
+
+echo "11. North Atlantic wind barbs"
+test_getmap "gfs_WIND_BARBS" "GFS Wind Barbs (North Atlantic)" "-80,20,-20,60" 512 384
+
+echo "12. North America wind barbs"
+test_getmap "gfs_WIND_BARBS" "GFS Wind Barbs (North America)" "-130,20,-60,50" 512 384
+
+echo "13. High resolution wind barbs (Caribbean region)"
+test_getmap "gfs_WIND_BARBS" "GFS Wind Barbs (High Res)" "-85,15,-60,30" 1024 1024
+
+echo ""
 echo "=== HIGH RESOLUTION TESTS ==="
 echo ""
-echo "10. Temperature - High resolution"
+echo "14. Temperature - High resolution"
 test_getmap "gfs_TMP" "GFS Temperature (High Res)" "-100,25,-95,35" 1024 1024
 
-echo "11. Pressure - High resolution"
+echo "15. Pressure - High resolution"
 test_getmap "gfs_PRMSL" "GFS Pressure (High Res)" "-75,35,-70,42" 1024 1024
 
 # Summary
@@ -105,16 +120,24 @@ echo "Test Complete!"
 echo "Generated images are in: $OUTPUT_DIR"
 echo ""
 echo "Parameters tested:"
-echo "  ✓ PRMSL - Pressure at Mean Sea Level"
-echo "  ✓ TMP   - Temperature at 2m"
-echo "  ✓ UGRD  - U-Wind Component at 10m"
-echo "  ✓ VGRD  - V-Wind Component at 10m"
+echo "  ✓ PRMSL      - Pressure at Mean Sea Level"
+echo "  ✓ TMP        - Temperature at 2m"
+echo "  ✓ UGRD       - U-Wind Component at 10m"
+echo "  ✓ VGRD       - V-Wind Component at 10m"
+echo "  ✓ WIND_BARBS - Wind Barbs (composite layer)"
 echo ""
 echo "View the images to verify:"
-echo "  - Proper color gradient rendering"
+echo "  - Proper color gradient rendering (for scalar parameters)"
+echo "  - Wind barb representation with correct direction and magnitude"
 echo "  - Data is from ingested GRIB2"
 echo "  - No placeholder gray images"
 echo "  - Different patterns for each parameter"
+echo ""
+echo "For wind barbs specifically, check:"
+echo "  - Barbs point FROM the correct direction (meteorological convention)"
+echo "  - Barb count represents wind speed correctly (50kt pennant, 10kt barb, 5kt barb)"
+echo "  - Calm winds (< 3 knots) show as circles"
+echo "  - Grid spacing is appropriate (not too crowded, not too sparse)"
 echo "=================================="
 
 echo ""

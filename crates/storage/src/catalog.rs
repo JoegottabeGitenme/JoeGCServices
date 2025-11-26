@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, FromRow, PgPool};
 use uuid::Uuid;
 
-use wms_common::{BoundingBox, LayerId, ValidTime, WmsError, WmsResult};
+use wms_common::{BoundingBox, LayerId, WmsError, WmsResult};
 
 /// Database connection pool and catalog operations.
 pub struct Catalog {

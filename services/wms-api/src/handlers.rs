@@ -386,7 +386,7 @@ async fn render_weather_data(
     crs: Option<&str>,
     time: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    // Parse layer name (format: "model_parameter")
+    // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
     let parts: Vec<&str> = layer.split('_').collect();
     if parts.len() < 2 {
         return Err("Invalid layer format".to_string());
@@ -394,6 +394,42 @@ async fn render_weather_data(
 
     let model = parts[0];
     let parameter = parts[1..].join("_");
+    
+    // Check if this is a wind barbs composite layer
+    if parameter == "WIND_BARBS" {
+        // Handle wind barbs specially - it combines UGRD and VGRD
+        let parsed_bbox = bbox.and_then(|b| {
+            let coords: Vec<f64> = b.split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            
+            if coords.len() == 4 {
+                let crs_str = crs.unwrap_or("EPSG:4326");
+                let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+                    let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
+                    let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
+                    (min_lon, min_lat, max_lon, max_lat)
+                } else {
+                    (coords[0], coords[1], coords[2], coords[3])
+                };
+                
+                Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
+            } else {
+                None
+            }
+        });
+        
+        return crate::rendering::render_wind_barbs_layer(
+            &state.storage,
+            &state.catalog,
+            model,
+            width,
+            height,
+            parsed_bbox,
+            None, // Use default barb spacing
+        )
+        .await;
+    }
 
     // Parse BBOX parameter (format depends on CRS)
     let parsed_bbox = bbox.and_then(|b| {
@@ -628,15 +664,26 @@ fn build_wms_capabilities_xml(
                 .collect::<Vec<_>>()
                 .join("");
             
-            format!(
-                r#"<Layer><Name>{}</Name><Title>{}</Title>{}</Layer>"#,
-                model,
-                model.to_uppercase(),
-                param_layers
-            )
-        })
-        .collect();
-    format!(
+             // Add composite wind barbs layer if we have both UGRD and VGRD
+             let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
+                 format!(
+                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style><Dimension name="time" units="ISO8601" default="0">0</Dimension></Layer>"#,
+                     model, model.to_uppercase()
+                 )
+             } else {
+                 String::new()
+             };
+
+             format!(
+                 r#"<Layer><Name>{}</Name><Title>{}</Title>{}{}</Layer>"#,
+                 model,
+                 model.to_uppercase(),
+                 param_layers,
+                 wind_barbs_layer
+             )
+         })
+         .collect();
+     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <WMS_Capabilities version="{}" xmlns="http://www.opengis.net/wms" xmlns:xlink="http://www.w3.org/1999/xlink">
   <Service>

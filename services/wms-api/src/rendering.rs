@@ -1,6 +1,7 @@
 //! Shared weather data rendering logic.
 
 use renderer::gradient;
+use renderer::barbs::{self, WindBarb, BarbConfig};
 use renderer::style::{StyleConfig, apply_style_gradient};
 use storage::{Catalog, ObjectStorage};
 use std::path::Path;
@@ -346,4 +347,142 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
         ((g + m) * 255.0) as u8,
         ((b + m) * 255.0) as u8,
     )
+}
+
+/// Render wind barbs combining U and V component data
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `width`: Output image width
+/// - `height`: Output image height
+/// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]
+/// - `barb_spacing`: Optional spacing between barbs in pixels (default: 50)
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_wind_barbs_layer(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    width: u32,
+    height: u32,
+    bbox: Option<[f32; 4]>,
+    barb_spacing: Option<usize>,
+) -> Result<Vec<u8>, String> {
+    // Load U component (UGRD) - latest available
+    let u_entry = catalog
+        .get_latest(model, "UGRD")
+        .await
+        .map_err(|e| format!("Failed to get UGRD: {}", e))?
+        .ok_or_else(|| "No UGRD data available".to_string())?;
+
+    // Load V component (VGRD) - latest available
+    let v_entry = catalog
+        .get_latest(model, "VGRD")
+        .await
+        .map_err(|e| format!("Failed to get VGRD: {}", e))?
+        .ok_or_else(|| "No VGRD data available".to_string())?;
+
+    // Load GRIB2 files
+    let u_grib = storage
+        .get(&u_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
+
+    let v_grib = storage
+        .get(&v_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+
+    // Parse GRIB2 messages
+    let mut u_reader = grib2_parser::Grib2Reader::new(u_grib);
+    let u_msg = u_reader
+        .next_message()
+        .map_err(|e| format!("GRIB2 parse error (U): {}", e))?
+        .ok_or_else(|| "No U-component message found".to_string())?;
+
+    let mut v_reader = grib2_parser::Grib2Reader::new(v_grib);
+    let v_msg = v_reader
+        .next_message()
+        .map_err(|e| format!("GRIB2 parse error (V): {}", e))?
+        .ok_or_else(|| "No V-component message found".to_string())?;
+
+    // Unpack grid data
+    let u_data = u_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking U failed: {}", e))?;
+
+    let v_data = v_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking V failed: {}", e))?;
+
+    let (grid_height, grid_width) = u_msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+
+    // Validate data sizes
+    if u_data.len() != grid_width * grid_height {
+        return Err(format!(
+            "U grid size mismatch: {} vs {}x{}",
+            u_data.len(),
+            grid_width,
+            grid_height
+        ));
+    }
+
+    if v_data.len() != grid_width * grid_height {
+        return Err(format!(
+            "V grid size mismatch: {} vs {}x{}",
+            v_data.len(),
+            grid_width,
+            grid_height
+        ));
+    }
+
+    // Prepare rendering parameters
+    let output_width = width as usize;
+    let output_height = height as usize;
+    let spacing = barb_spacing.unwrap_or(50);
+
+    // If bbox is specified, we need to resample to that region
+    let (u_to_render, v_to_render, render_width, render_height) = if let Some(bbox) = bbox {
+        // Resample from geographic coordinates
+        let u_resampled = resample_from_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox);
+        let v_resampled = resample_from_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox);
+        (u_resampled, v_resampled, output_width, output_height)
+    } else {
+        // Full globe or resample to output size
+        let u_resampled = if grid_width != output_width || grid_height != output_height {
+            gradient::resample_grid(&u_data, grid_width, grid_height, output_width, output_height)
+        } else {
+            u_data.clone()
+        };
+
+        let v_resampled = if grid_width != output_width || grid_height != output_height {
+            gradient::resample_grid(&v_data, grid_width, grid_height, output_width, output_height)
+        } else {
+            v_data.clone()
+        };
+
+        (u_resampled, v_resampled, output_width, output_height)
+    };
+
+    // Render wind barbs
+    let config = BarbConfig::default();
+    let barb_pixels = barbs::render_wind_barbs(
+        &u_to_render,
+        &v_to_render,
+        render_width,
+        render_height,
+        render_width,
+        render_height,
+        spacing,
+        &config,
+    );
+
+    // Encode as PNG
+    renderer::png::create_png(&barb_pixels, render_width, render_height)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
 }

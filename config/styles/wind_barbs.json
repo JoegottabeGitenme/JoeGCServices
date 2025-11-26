@@ -1,0 +1,171 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Wind Barbs Style Configuration",
+    "description": "Traditional meteorological wind barb rendering configuration for GFS wind data",
+    "author": "Weather WMS",
+    "created": "2025-11-25"
+  },
+  "styles": {
+    "default": {
+      "name": "Standard Wind Barbs",
+      "description": "Traditional meteorological wind barbs with automatic pennant and barb generation",
+      "type": "wind_barbs",
+      "units": "knots",
+      "rendering": {
+        "staff_length": 25.0,
+        "barb_length": 8.0,
+        "spacing": 50,
+        "line_width": 1.5,
+        "color": "#000000",
+        "background_color": "transparent"
+      },
+      "wind_convention": {
+        "direction_from": true,
+        "description": "Direction FROM which wind blows (0°=N, 90°=E, 180°=S, 270°=W)"
+      },
+      "barb_representation": {
+        "pennant_value": 50,
+        "long_barb_value": 10,
+        "short_barb_value": 5,
+        "calm_threshold": 2.5,
+        "calm_symbol": "circle"
+      }
+    },
+    "bold": {
+      "name": "Bold Wind Barbs",
+      "description": "Thicker lines for visibility on small screens",
+      "type": "wind_barbs",
+      "units": "knots",
+      "rendering": {
+        "staff_length": 30.0,
+        "barb_length": 10.0,
+        "spacing": 60,
+        "line_width": 2.5,
+        "color": "#1A1A1A",
+        "background_color": "transparent"
+      },
+      "wind_convention": {
+        "direction_from": true
+      },
+      "barb_representation": {
+        "pennant_value": 50,
+        "long_barb_value": 10,
+        "short_barb_value": 5,
+        "calm_threshold": 2.5,
+        "calm_symbol": "circle"
+      }
+    },
+    "colored": {
+      "name": "Colored Wind Barbs",
+      "description": "Wind barbs colored by speed category",
+      "type": "wind_barbs",
+      "units": "knots",
+      "rendering": {
+        "staff_length": 25.0,
+        "barb_length": 8.0,
+        "spacing": 50,
+        "line_width": 1.5,
+        "background_color": "transparent"
+      },
+      "wind_convention": {
+        "direction_from": true
+      },
+      "barb_representation": {
+        "pennant_value": 50,
+        "long_barb_value": 10,
+        "short_barb_value": 5,
+        "calm_threshold": 2.5,
+        "calm_symbol": "circle"
+      },
+      "color_by_speed": {
+        "interpolation": "linear",
+        "out_of_range": "clamp",
+        "stops": [
+          { "value": 0, "color": "#FFFFFF", "label": "Calm" },
+          { "value": 5, "color": "#00FF00", "label": "5 kt" },
+          { "value": 10, "color": "#00C000", "label": "10 kt" },
+          { "value": 15, "color": "#FFFF00", "label": "15 kt" },
+          { "value": 20, "color": "#FFC000", "label": "20 kt" },
+          { "value": 30, "color": "#FF8000", "label": "30 kt" },
+          { "value": 50, "color": "#FF4040", "label": "50 kt" },
+          { "value": 70, "color": "#FF0000", "label": "70 kt" },
+          { "value": 100, "color": "#C00000", "label": "100+ kt" }
+        ]
+      }
+    },
+    "dense": {
+      "name": "Dense Wind Barbs",
+      "description": "More barbs per unit area for detailed wind field visualization",
+      "type": "wind_barbs",
+      "units": "knots",
+      "rendering": {
+        "staff_length": 20.0,
+        "barb_length": 6.0,
+        "spacing": 30,
+        "line_width": 1.0,
+        "color": "#000000",
+        "background_color": "transparent"
+      },
+      "wind_convention": {
+        "direction_from": true
+      },
+      "barb_representation": {
+        "pennant_value": 50,
+        "long_barb_value": 10,
+        "short_barb_value": 5,
+        "calm_threshold": 2.5,
+        "calm_symbol": "circle"
+      }
+    },
+    "sparse": {
+      "name": "Sparse Wind Barbs",
+      "description": "Fewer barbs for less cluttered overview maps",
+      "type": "wind_barbs",
+      "units": "knots",
+      "rendering": {
+        "staff_length": 30.0,
+        "barb_length": 10.0,
+        "spacing": 100,
+        "line_width": 2.0,
+        "color": "#000000",
+        "background_color": "transparent"
+      },
+      "wind_convention": {
+        "direction_from": true
+      },
+      "barb_representation": {
+        "pennant_value": 50,
+        "long_barb_value": 10,
+        "short_barb_value": 5,
+        "calm_threshold": 2.5,
+        "calm_symbol": "circle"
+      }
+    }
+  },
+  "documentation": {
+    "wind_barb_interpretation": {
+      "staff": "Line points FROM the direction the wind is coming",
+      "pennant": "Filled triangle = 50 knots",
+      "long_barb": "Line perpendicular to staff = 10 knots",
+      "short_barb": "Half-length line perpendicular to staff = 5 knots",
+      "calm": "Circle = wind speed < 2.5 knots",
+      "example": {
+        "15_knots_from_north": "Staff pointing up with one long barb (10kt) and one short barb (5kt)",
+        "35_knots_from_northeast": "Staff pointing up-right with one pennant (50kt is too much, shows as one long + one short barb total 15kt) - actually 35kt shows as one long (10) + one long (10) + one short (5) = 25kt shown, need 1 more long",
+        "50_knots_from_south": "Staff pointing down with one pennant (50kt)"
+      }
+    },
+    "grid_spacing": {
+      "description": "Spacing parameter controls density of barbs to prevent overlapping",
+      "default_30px": "Reasonable spacing for 512x512 maps",
+      "30px": "Dense visualization, suitable for zoom level 8+",
+      "50px": "Medium density, suitable for most viewing scales",
+      "100px": "Sparse visualization, suitable for low zoom levels"
+    },
+    "color_conventions": {
+      "black": "Traditional meteorological black barbs (ISO standard)",
+      "colored_by_speed": "For modern interfaces where color adds wind speed information"
+    }
+  }
+}
