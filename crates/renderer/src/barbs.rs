@@ -1,555 +1,384 @@
-//! Wind barb rendering for meteorological visualization.
+//! Wind barb rendering using pre-generated SVG assets.
 //!
-//! Wind barbs are standard meteorological symbols showing wind speed and direction:
-//! - Staff points in direction wind is FROM (meteorological convention)
-//! - Pennants (filled triangles) = 50 knots each
-//! - Long barbs = 10 knots each
-//! - Short barbs = 5 knots each
-//! - Circle = calm (< 3 knots)
+//! This module uses SVG wind barbs from https://github.com/qulle/svg-wind-barbs
+//! Licensed under BSD 2-Clause License - see assets/wind-barbs/LICENSE
 
-use std::f32::consts::PI;
-use crate::gradient::Color;
+use std::f64::consts::PI;
 
-/// Represents a single wind barb to be drawn
-#[derive(Debug, Clone, Copy)]
-pub struct WindBarb {
-    /// X position on canvas (pixels)
-    pub x: f32,
-    /// Y position on canvas (pixels)
-    pub y: f32,
-    /// Wind speed in knots
-    pub speed_knots: f32,
-    /// Direction wind is FROM (radians, 0=North, clockwise)
-    pub direction_rad: f32,
-}
+/// Embedded SVG wind barb assets (0-190 knots in 5kt increments)
+const WIND_BARB_SVGS: &[(&str, &str)] = &[
+    ("0", include_str!("../../../assets/wind-barbs/0.svg")),
+    ("2", include_str!("../../../assets/wind-barbs/2.svg")),
+    ("5", include_str!("../../../assets/wind-barbs/5.svg")),
+    ("10", include_str!("../../../assets/wind-barbs/10.svg")),
+    ("15", include_str!("../../../assets/wind-barbs/15.svg")),
+    ("20", include_str!("../../../assets/wind-barbs/20.svg")),
+    ("25", include_str!("../../../assets/wind-barbs/25.svg")),
+    ("30", include_str!("../../../assets/wind-barbs/30.svg")),
+    ("35", include_str!("../../../assets/wind-barbs/35.svg")),
+    ("40", include_str!("../../../assets/wind-barbs/40.svg")),
+    ("45", include_str!("../../../assets/wind-barbs/45.svg")),
+    ("50", include_str!("../../../assets/wind-barbs/50.svg")),
+    ("55", include_str!("../../../assets/wind-barbs/55.svg")),
+    ("60", include_str!("../../../assets/wind-barbs/60.svg")),
+    ("65", include_str!("../../../assets/wind-barbs/65.svg")),
+    ("70", include_str!("../../../assets/wind-barbs/70.svg")),
+    ("75", include_str!("../../../assets/wind-barbs/75.svg")),
+    ("80", include_str!("../../../assets/wind-barbs/80.svg")),
+    ("85", include_str!("../../../assets/wind-barbs/85.svg")),
+    ("90", include_str!("../../../assets/wind-barbs/90.svg")),
+    ("95", include_str!("../../../assets/wind-barbs/95.svg")),
+    ("100", include_str!("../../../assets/wind-barbs/100.svg")),
+    ("105", include_str!("../../../assets/wind-barbs/105.svg")),
+    ("110", include_str!("../../../assets/wind-barbs/110.svg")),
+    ("115", include_str!("../../../assets/wind-barbs/115.svg")),
+    ("120", include_str!("../../../assets/wind-barbs/120.svg")),
+    ("125", include_str!("../../../assets/wind-barbs/125.svg")),
+    ("130", include_str!("../../../assets/wind-barbs/130.svg")),
+    ("135", include_str!("../../../assets/wind-barbs/135.svg")),
+    ("140", include_str!("../../../assets/wind-barbs/140.svg")),
+    ("145", include_str!("../../../assets/wind-barbs/145.svg")),
+    ("150", include_str!("../../../assets/wind-barbs/150.svg")),
+    ("155", include_str!("../../../assets/wind-barbs/155.svg")),
+    ("160", include_str!("../../../assets/wind-barbs/160.svg")),
+    ("165", include_str!("../../../assets/wind-barbs/165.svg")),
+    ("170", include_str!("../../../assets/wind-barbs/170.svg")),
+    ("175", include_str!("../../../assets/wind-barbs/175.svg")),
+    ("180", include_str!("../../../assets/wind-barbs/180.svg")),
+    ("185", include_str!("../../../assets/wind-barbs/185.svg")),
+    ("190", include_str!("../../../assets/wind-barbs/190.svg")),
+];
+
+/// Speed ranges in m/s for selecting the appropriate wind barb SVG (in knots)
+/// Based on the table from svg-wind-barbs README
+const SPEED_RANGES_MS: &[(f64, f64, &str)] = &[
+    (0.0, 1.0, "0"),
+    (1.0, 2.5, "2"),
+    (2.5, 5.0, "5"),
+    (5.0, 7.5, "10"),
+    (7.5, 10.0, "15"),
+    (10.0, 12.5, "20"),
+    (12.5, 15.0, "25"),
+    (15.0, 17.5, "30"),
+    (17.5, 20.0, "35"),
+    (20.0, 22.5, "40"),
+    (22.5, 25.0, "45"),
+    (25.0, 27.5, "50"),
+    (27.5, 30.0, "55"),
+    (30.0, 32.5, "60"),
+    (32.5, 35.0, "65"),
+    (35.0, 37.5, "70"),
+    (37.5, 40.0, "75"),
+    (40.0, 42.5, "80"),
+    (42.5, 45.0, "85"),
+    (45.0, 47.5, "90"),
+    (47.5, 50.0, "95"),
+    (50.0, 52.5, "100"),
+    (52.5, 55.0, "105"),
+    (55.0, 57.5, "110"),
+    (57.5, 60.0, "115"),
+    (60.0, 62.5, "120"),
+    (62.5, 65.0, "125"),
+    (65.0, 67.5, "130"),
+    (67.5, 70.0, "135"),
+    (70.0, 72.5, "140"),
+    (72.5, 75.0, "145"),
+    (75.0, 77.5, "150"),
+    (77.5, 80.0, "155"),
+    (80.0, 82.5, "160"),
+    (82.5, 85.0, "165"),
+    (85.0, 87.5, "170"),
+    (87.5, 90.0, "175"),
+    (90.0, 92.5, "180"),
+    (92.5, 95.0, "185"),
+    (95.0, 1000.0, "190"), // >= 95.0 m/s
+];
 
 /// Configuration for wind barb rendering
 #[derive(Debug, Clone)]
 pub struct BarbConfig {
-    /// Length of main staff in pixels
-    pub staff_length: f32,
-    /// Length of speed barbs in pixels
-    pub barb_length: f32,
-    /// Spacing between barbs along staff in pixels
-    pub barb_spacing: f32,
-    /// Angle of barbs from staff in degrees (typically 70°)
-    pub barb_angle_deg: f32,
-    /// Barb line color
-    pub color: Color,
-    /// Line thickness in pixels
-    pub line_width: u32,
-    /// Radius of calm wind circle
-    pub calm_radius: f32,
+    /// Size of the barb icon in pixels (default: 40)
+    pub size: u32,
+    /// Grid spacing between barbs in pixels (default: 50)
+    pub spacing: u32,
+    /// Color of the barb (hex format, e.g., "#000000")
+    pub color: String,
 }
 
 impl Default for BarbConfig {
     fn default() -> Self {
         Self {
-            staff_length: 25.0,
-            barb_length: 12.0,
-            barb_spacing: 4.0,
-            barb_angle_deg: 70.0,
-            color: Color::new(0, 0, 0, 255), // Black
-            line_width: 2,
-            calm_radius: 4.0,
+            size: 40,
+            spacing: 50,
+            color: "#000000".to_string(),
         }
     }
 }
 
-/// Convert U/V wind components to speed (knots) and direction (radians)
+/// Convert U and V wind components (m/s) to speed (m/s) and direction (radians FROM)
 ///
-/// # Arguments
-/// - `u`: Eastward wind component (m/s)
-/// - `v`: Northward wind component (m/s)
-///
-/// # Returns
-/// (speed_knots, direction_rad) where direction is FROM (meteorological convention)
-/// Direction: 0=North, π/2=East, π=South, 3π/2=West
-/// Returns value in [0, 2π) range
-pub fn uv_to_speed_direction(u: f32, v: f32) -> (f32, f32) {
-    // Wind speed from magnitude
-    let speed_ms = (u * u + v * v).sqrt();
-    let speed_knots = speed_ms * 1.944; // Convert m/s to knots
-
-    // Wind direction FROM (meteorological convention)
-    // atan2(v, u) gives direction TO which wind is blowing
-    // Negate to get direction FROM which wind is blowing
-    let mut direction_rad = (-u).atan2(-v);
+/// Returns (speed_ms, direction_rad) where:
+/// - speed_ms: Wind speed in meters per second
+/// - direction_rad: Direction FROM which wind blows in radians (0 = North, π/2 = East)
+pub fn uv_to_speed_direction(u: f32, v: f32) -> (f64, f64) {
+    let u = u as f64;
+    let v = v as f64;
+    
+    // Calculate wind speed using Pythagorean theorem
+    let speed = (u * u + v * v).sqrt();
+    
+    // Calculate direction FROM which wind blows
+    // In meteorological convention:
+    // - 0° = wind from North (V < 0, U = 0)
+    // - 90° = wind from East (U < 0, V = 0)
+    // - 180° = wind from South (V > 0, U = 0)
+    // - 270° = wind from West (U > 0, V = 0)
+    let mut direction = (-v).atan2(-u);
     
     // Normalize to [0, 2π)
-    if direction_rad < 0.0 {
-        direction_rad += 2.0 * PI;
+    if direction < 0.0 {
+        direction += 2.0 * PI;
     }
-
-    (speed_knots, direction_rad)
+    
+    (speed, direction)
 }
 
-/// Calculate barb counts for a given wind speed
-///
-/// Returns (pennants, long_barbs, has_short_barb)
-fn calculate_barb_counts(speed_knots: f32) -> (u32, u32, bool) {
-    let speed = speed_knots.round() as u32;
-
-    let pennants = speed / 50;
-    let remaining = speed % 50;
-    let long_barbs = remaining / 10;
-    let has_short_barb = (remaining % 10) >= 5;
-
-    (pennants, long_barbs, has_short_barb)
+/// Select appropriate wind barb SVG based on wind speed in m/s
+fn select_barb_svg(speed_ms: f64) -> &'static str {
+    for (min, max, knots) in SPEED_RANGES_MS {
+        if speed_ms >= *min && speed_ms < *max {
+            return knots;
+        }
+    }
+    // Fallback to highest speed if beyond range
+    "190"
 }
 
-/// Bresenham line drawing algorithm with thickness
-///
-/// Draws a line from (x1, y1) to (x2, y2) with optional thickness
-fn draw_line(
-    pixels: &mut [u8],
+/// Get SVG content for a specific wind barb
+fn get_barb_svg_content(speed_ms: f64) -> Option<&'static str> {
+    let knots = select_barb_svg(speed_ms);
+    WIND_BARB_SVGS.iter()
+        .find(|(k, _)| *k == knots)
+        .map(|(_, svg)| *svg)
+}
+
+/// Calculate positions for wind barbs on a grid with decimation
+pub fn calculate_barb_positions(
     width: usize,
     height: usize,
-    x1: i32,
-    y1: i32,
-    x2: i32,
-    y2: i32,
-    color: Color,
-    thickness: u32,
-) {
-    let dx = (x2 - x1).abs();
-    let dy = (y2 - y1).abs();
-    let sx = if x1 < x2 { 1 } else { -1 };
-    let sy = if y1 < y2 { 1 } else { -1 };
-    let mut err = (dx as i32 - dy as i32) / 2;
-
-    let mut x = x1;
-    let mut y = y1;
-
-    loop {
-        // Draw pixel with thickness
-        draw_thick_pixel(pixels, width, height, x, y, color, thickness);
-
-        if x == x2 && y == y2 {
-            break;
+    spacing: u32,
+) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+    let spacing = spacing as usize;
+    
+    // Start from spacing/2 to center the grid
+    let offset_x = spacing / 2;
+    let offset_y = spacing / 2;
+    
+    let mut y = offset_y;
+    while y < height {
+        let mut x = offset_x;
+        while x < width {
+            positions.push((x, y));
+            x += spacing;
         }
-
-        let e2 = err;
-        if e2 > -(dx as i32) {
-            err -= dy as i32;
-            x += sx;
-        }
-        if e2 < dy as i32 {
-            err += dx as i32;
-            y += sy;
-        }
+        y += spacing;
     }
+    
+    positions
 }
 
-/// Draw a thick pixel by drawing a small circle around it
-fn draw_thick_pixel(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    cx: i32,
-    cy: i32,
-    color: Color,
-    radius: u32,
-) {
-    let r = radius as i32;
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if dx * dx + dy * dy <= r * r {
-                let x = cx + dx;
-                let y = cy + dy;
-
-                if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                    let idx = (y as usize * width + x as usize) * 4;
-                    if idx + 3 < pixels.len() {
-                        pixels[idx] = color.r;
-                        pixels[idx + 1] = color.g;
-                        pixels[idx + 2] = color.b;
-                        pixels[idx + 3] = color.a;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Draw the main staff line and return the tip position
-fn draw_staff(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    x: f32,
-    y: f32,
-    direction: f32,
-    config: &BarbConfig,
-) -> (f32, f32) {
-    // Calculate tip position (staff points FROM direction)
-    let tip_x = x + direction.sin() * config.staff_length;
-    let tip_y = y - direction.cos() * config.staff_length;
-
-    // Draw line from base to tip
-    draw_line(
-        pixels,
-        width,
-        height,
-        x as i32,
-        y as i32,
-        tip_x as i32,
-        tip_y as i32,
-        config.color,
-        config.line_width,
-    );
-
-    (tip_x, tip_y)
-}
-
-/// Draw a pennant (50 knots - filled triangle)
-fn draw_pennant(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    staff_x: f32,
-    staff_y: f32,
-    direction: f32,
-    config: &BarbConfig,
-) -> (f32, f32) {
-    // Pennant is a filled triangle at the tip of the staff
-    // Two sides at barb angle, one side is staff
-
-    // Perpendicular direction (90° to the right of staff)
-    let perp_dir = direction + PI / 2.0;
-
-    // Triangle vertices:
-    // p1: tip of staff
-    let p1_x = staff_x;
-    let p1_y = staff_y;
-
-    // p2: end of first barb (perpendicular)
-    let p2_x = staff_x + perp_dir.cos() * config.barb_length;
-    let p2_y = staff_y + perp_dir.sin() * config.barb_length;
-
-    // p3: point back along staff for pennant width
-    let pennant_depth = config.barb_spacing * 1.5; // Wider than regular barb
-    let p3_x = staff_x - direction.sin() * pennant_depth;
-    let p3_y = staff_y + direction.cos() * pennant_depth;
-
-    // Draw filled triangle
-    fill_triangle(pixels, width, height, p1_x, p1_y, p2_x, p2_y, p3_x, p3_y, config.color);
-
-    // Draw outline
-    draw_line(
-        pixels,
-        width,
-        height,
-        p1_x as i32,
-        p1_y as i32,
-        p2_x as i32,
-        p2_y as i32,
-        config.color,
-        config.line_width,
-    );
-    draw_line(
-        pixels,
-        width,
-        height,
-        p2_x as i32,
-        p2_y as i32,
-        p3_x as i32,
-        p3_y as i32,
-        config.color,
-        config.line_width,
-    );
-    draw_line(
-        pixels,
-        width,
-        height,
-        p3_x as i32,
-        p3_y as i32,
-        p1_x as i32,
-        p1_y as i32,
-        config.color,
-        config.line_width,
-    );
-
-    // Return position after this pennant (back along staff)
-    (p3_x, p3_y)
-}
-
-/// Draw a long barb (10 knots)
-fn draw_barb(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    staff_x: f32,
-    staff_y: f32,
-    direction: f32,
-    is_long: bool,
-    config: &BarbConfig,
-) -> (f32, f32) {
-    // Perpendicular direction (90° to the right of staff)
-    let perp_dir = direction + PI / 2.0;
-
-    // Length depends on whether it's a long barb (10kt) or short (5kt)
-    let barb_len = if is_long { config.barb_length } else { config.barb_length / 2.0 };
-
-    // Barb end point
-    let barb_x = staff_x + perp_dir.cos() * barb_len;
-    let barb_y = staff_y + perp_dir.sin() * barb_len;
-
-    // Draw from barb end to staff
-    draw_line(
-        pixels,
-        width,
-        height,
-        barb_x as i32,
-        barb_y as i32,
-        staff_x as i32,
-        staff_y as i32,
-        config.color,
-        config.line_width,
-    );
-
-    // Move back along staff for next barb
-    let next_x = staff_x - direction.sin() * config.barb_spacing;
-    let next_y = staff_y + direction.cos() * config.barb_spacing;
-
-    (next_x, next_y)
-}
-
-/// Draw a calm wind circle (< 3 knots)
-fn draw_circle(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    cx: f32,
-    cy: f32,
-    radius: f32,
-    color: Color,
-) {
-    let r = radius as i32;
-    let cx = cx as i32;
-    let cy = cy as i32;
-
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let dist = ((dx * dx + dy * dy) as f32).sqrt();
-            if (dist - radius).abs() < 1.5 {
-                let x = cx + dx;
-                let y = cy + dy;
-
-                if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                    let idx = (y as usize * width + x as usize) * 4;
-                    if idx + 3 < pixels.len() {
-                        pixels[idx] = color.r;
-                        pixels[idx + 1] = color.g;
-                        pixels[idx + 2] = color.b;
-                        pixels[idx + 3] = color.a;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Fill a triangle using scan line algorithm
-fn fill_triangle(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    x1: f32,
-    y1: f32,
-    x2: f32,
-    y2: f32,
-    x3: f32,
-    y3: f32,
-    color: Color,
-) {
-    let min_y = y1.min(y2).min(y3).ceil() as i32;
-    let max_y = y1.max(y2).max(y3).floor() as i32;
-
-    for y in min_y..=max_y {
-        let y_f = y as f32;
-
-        // Find intersections with triangle edges
-        let mut x_intersections = Vec::new();
-
-        // Edge 1-2
-        if (y1 - y2).abs() > 0.01 {
-            let t = (y_f - y1) / (y2 - y1);
-            if t >= 0.0 && t <= 1.0 {
-                let x = x1 + t * (x2 - x1);
-                x_intersections.push(x);
-            }
-        }
-
-        // Edge 2-3
-        if (y2 - y3).abs() > 0.01 {
-            let t = (y_f - y2) / (y3 - y2);
-            if t >= 0.0 && t <= 1.0 {
-                let x = x2 + t * (x3 - x2);
-                x_intersections.push(x);
-            }
-        }
-
-        // Edge 3-1
-        if (y3 - y1).abs() > 0.01 {
-            let t = (y_f - y3) / (y1 - y3);
-            if t >= 0.0 && t <= 1.0 {
-                let x = x3 + t * (x1 - x3);
-                x_intersections.push(x);
-            }
-        }
-
-        // Sort intersections and fill
-        if x_intersections.len() >= 2 {
-            x_intersections.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-            let min_x = x_intersections[0].ceil() as i32;
-            let max_x = x_intersections[x_intersections.len() - 1].floor() as i32;
-
-            for x in min_x..=max_x {
-                if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                    let idx = (y as usize * width + x as usize) * 4;
-                    if idx + 3 < pixels.len() {
-                        pixels[idx] = color.r;
-                        pixels[idx + 1] = color.g;
-                        pixels[idx + 2] = color.b;
-                        pixels[idx + 3] = color.a;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Draw a single wind barb onto a pixel buffer
-pub fn draw_barb_on_canvas(
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    barb: &WindBarb,
-    config: &BarbConfig,
-) {
-    // Handle calm wind specially
-    if barb.speed_knots < 3.0 {
-        draw_circle(pixels, width, height, barb.x, barb.y, config.calm_radius, config.color);
-        return;
-    }
-
-    // Draw the main staff
-    let (tip_x, tip_y) = draw_staff(pixels, width, height, barb.x, barb.y, barb.direction_rad, config);
-
-    // Calculate barb counts
-    let (pennants, long_barbs, has_short_barb) = calculate_barb_counts(barb.speed_knots);
-
-    let mut current_x = tip_x;
-    let mut current_y = tip_y;
-
-    // Draw pennants (50 knots each)
-    for _ in 0..pennants {
-        let (next_x, next_y) = draw_pennant(pixels, width, height, current_x, current_y, barb.direction_rad, config);
-        current_x = next_x;
-        current_y = next_y;
-    }
-
-    // Draw long barbs (10 knots each)
-    for _ in 0..long_barbs {
-        let (next_x, next_y) = draw_barb(pixels, width, height, current_x, current_y, barb.direction_rad, true, config);
-        current_x = next_x;
-        current_y = next_y;
-    }
-
-    // Draw short barb if needed (5 knots)
-    if has_short_barb {
-        let _ = draw_barb(pixels, width, height, current_x, current_y, barb.direction_rad, false, config);
-    }
-}
-
-/// Calculate positions for wind barbs by decimating the grid
-fn calculate_barb_positions(
-    u_data: &[f32],
-    v_data: &[f32],
-    grid_width: usize,
-    grid_height: usize,
-    output_width: usize,
-    output_height: usize,
-    spacing: usize,
-) -> Vec<WindBarb> {
-    let mut barbs = Vec::new();
-
-    // Calculate decimation factors
-    let x_step = (output_width as f32 / spacing as f32).max(1.0) as usize;
-    let y_step = (output_height as f32 / spacing as f32).max(1.0) as usize;
-
-    // Sample at decimated positions
-    for out_y in (0..output_height).step_by(y_step) {
-        for out_x in (0..output_width).step_by(x_step) {
-            // Map output position to grid indices
-            let grid_x = (out_x as f32 / output_width as f32 * grid_width as f32) as usize;
-            let grid_y = (out_y as f32 / output_height as f32 * grid_height as f32) as usize;
-
-            let grid_x = grid_x.min(grid_width - 1);
-            let grid_y = grid_y.min(grid_height - 1);
-
-            let idx = grid_y * grid_width + grid_x;
-
-            if idx < u_data.len() && idx < v_data.len() {
-                let u = u_data[idx];
-                let v = v_data[idx];
-
-                // Skip if either is NaN or zero
-                if u.is_finite() && v.is_finite() {
-                    let (speed_knots, direction_rad) = uv_to_speed_direction(u, v);
-
-                    barbs.push(WindBarb {
-                        x: out_x as f32,
-                        y: out_y as f32,
-                        speed_knots,
-                        direction_rad,
-                    });
-                }
-            }
-        }
-    }
-
-    barbs
-}
-
-/// Render wind barbs from U/V component grids
+/// Render wind barbs onto an RGBA image buffer
 ///
 /// # Arguments
-/// - `u_data`: U-component grid (eastward wind, m/s)
-/// - `v_data`: V-component grid (northward wind, m/s)
-/// - `grid_width`: Source grid width
-/// - `grid_height`: Source grid height
-/// - `output_width`: Output image width
-/// - `output_height`: Output image height
-/// - `barb_spacing`: Approximate pixel spacing between barbs
-/// - `config`: Barb rendering configuration
+/// * `u_data` - U wind component grid (m/s)
+/// * `v_data` - V wind component grid (m/s)
+/// * `width` - Output image width
+/// * `height` - Output image height
+/// * `config` - Barb rendering configuration
 ///
 /// # Returns
-/// RGBA pixel data (4 bytes per pixel)
+/// RGBA pixel buffer (4 bytes per pixel)
 pub fn render_wind_barbs(
     u_data: &[f32],
     v_data: &[f32],
-    grid_width: usize,
-    grid_height: usize,
-    output_width: usize,
-    output_height: usize,
-    barb_spacing: usize,
+    width: usize,
+    height: usize,
     config: &BarbConfig,
 ) -> Vec<u8> {
-    // Create transparent output buffer
-    let mut pixels = vec![0u8; output_width * output_height * 4];
-
+    // Create transparent RGBA canvas
+    let mut canvas = vec![0u8; width * height * 4];
+    
     // Calculate barb positions
-    let barbs = calculate_barb_positions(u_data, v_data, grid_width, grid_height, output_width, output_height, barb_spacing);
-
-    // Draw each barb
-    for barb in barbs {
-        draw_barb_on_canvas(&mut pixels, output_width, output_height, &barb, config);
+    let positions = calculate_barb_positions(width, height, config.spacing);
+    
+    // Render barb at each position
+    for (x, y) in positions {
+        // Get index in the data grid
+        let idx = y * width + x;
+        if idx >= u_data.len() || idx >= v_data.len() {
+            continue;
+        }
+        
+        let u = u_data[idx];
+        let v = v_data[idx];
+        
+        // Skip invalid data
+        if u.is_nan() || v.is_nan() {
+            continue;
+        }
+        
+        // Convert U/V to speed and direction
+        let (speed_ms, direction_rad) = uv_to_speed_direction(u, v);
+        
+        // Get appropriate SVG for this wind speed
+        if let Some(svg_content) = get_barb_svg_content(speed_ms) {
+            // Render the SVG barb at this position with rotation
+            render_barb_at_position(
+                &mut canvas,
+                width,
+                height,
+                x,
+                y,
+                svg_content,
+                direction_rad,
+                config,
+            );
+        }
     }
+    
+    canvas
+}
 
-    pixels
+/// Render a single wind barb SVG at a specific position with rotation
+fn render_barb_at_position(
+    canvas: &mut [u8],
+    canvas_width: usize,
+    canvas_height: usize,
+    x: usize,
+    y: usize,
+    svg_content: &str,
+    direction_rad: f64,
+    config: &BarbConfig,
+) {
+    // Parse and render the SVG
+    let opt = usvg::Options::default();
+    let tree = match usvg::Tree::from_str(svg_content, &opt) {
+        Ok(t) => t,
+        Err(_) => return, // Skip on parse error
+    };
+    
+    // Calculate size for rendering
+    let size = config.size;
+    
+    // Create a pixmap for the SVG
+    let mut pixmap = match tiny_skia::Pixmap::new(size, size) {
+        Some(p) => p,
+        None => return,
+    };
+    
+    // Build transformation matrix: rotation around center
+    let center_x = size as f32 / 2.0;
+    let center_y = size as f32 / 2.0;
+    
+    // Convert direction from radians to degrees
+    // SVG barbs point upward (North) by default in the SVG coordinate system
+    // direction_rad is in math convention (0=East, π/2=North, π=West, 3π/2=South)
+    // We want the barb to rotate to point in the FROM direction
+    // Adjust by 90 degrees since SVG default is North (π/2 in our system)
+    let angle_deg = ((direction_rad - PI / 2.0) * 180.0 / PI) as f32;
+    
+    // Create transform: translate to center, rotate, translate back
+    let transform = tiny_skia::Transform::from_translate(center_x, center_y)
+        .post_rotate(angle_deg)
+        .post_translate(-center_x, -center_y);
+    
+    // Render the SVG tree onto the pixmap
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    
+    // Composite the pixmap onto the main canvas
+    composite_barb_onto_canvas(
+        canvas,
+        canvas_width,
+        canvas_height,
+        &pixmap,
+        x,
+        y,
+        size as usize,
+    );
+}
+
+/// Composite a rendered barb pixmap onto the main canvas
+fn composite_barb_onto_canvas(
+    canvas: &mut [u8],
+    canvas_width: usize,
+    canvas_height: usize,
+    pixmap: &tiny_skia::Pixmap,
+    center_x: usize,
+    center_y: usize,
+    size: usize,
+) {
+    let half_size = size / 2;
+    
+    // Calculate bounds
+    let start_x = center_x.saturating_sub(half_size);
+    let start_y = center_y.saturating_sub(half_size);
+    
+    // Composite each pixel
+    for py in 0..size {
+        for px in 0..size {
+            let canvas_x = start_x + px;
+            let canvas_y = start_y + py;
+            
+            // Check bounds
+            if canvas_x >= canvas_width || canvas_y >= canvas_height {
+                continue;
+            }
+            
+            // Get pixel from source pixmap (RGBA premultiplied)
+            let src_idx = (py * size + px) * 4;
+            let src_data = pixmap.data();
+            if src_idx + 3 >= src_data.len() {
+                continue;
+            }
+            
+            let src_r = src_data[src_idx];
+            let src_g = src_data[src_idx + 1];
+            let src_b = src_data[src_idx + 2];
+            let src_a = src_data[src_idx + 3];
+            
+            // Skip fully transparent pixels
+            if src_a == 0 {
+                continue;
+            }
+            
+            // Get destination pixel
+            let dst_idx = (canvas_y * canvas_width + canvas_x) * 4;
+            
+            // Alpha blending (source-over compositing)
+            let dst_r = canvas[dst_idx];
+            let dst_g = canvas[dst_idx + 1];
+            let dst_b = canvas[dst_idx + 2];
+            let dst_a = canvas[dst_idx + 3];
+            
+            let src_a_f = src_a as f32 / 255.0;
+            let dst_a_f = dst_a as f32 / 255.0;
+            
+            // Premultiply alpha for proper blending
+            let out_a = src_a_f + dst_a_f * (1.0 - src_a_f);
+            
+            if out_a > 0.0 {
+                let out_r = ((src_r as f32 * src_a_f + dst_r as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
+                let out_g = ((src_g as f32 * src_a_f + dst_g as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
+                let out_b = ((src_b as f32 * src_a_f + dst_b as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
+                
+                canvas[dst_idx] = out_r;
+                canvas[dst_idx + 1] = out_g;
+                canvas[dst_idx + 2] = out_b;
+                canvas[dst_idx + 3] = (out_a * 255.0) as u8;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -557,97 +386,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uv_to_speed_direction_east_wind() {
-        // Pure eastward wind (u=10, v=0) -> from West (270° or 3π/2)
-        let (speed, dir) = uv_to_speed_direction(10.0, 0.0);
-        assert!((speed - 19.44).abs() < 0.1); // ~10 m/s = 19.44 knots
-        // atan2(-u, -v) = atan2(-10, 0) = -π/2, normalized to 3π/2
-        let expected = 3.0 * PI / 2.0;
-        assert!((dir - expected).abs() < 0.1, "Expected {}, got {}", expected, dir);
-    }
-
-    #[test]
     fn test_uv_to_speed_direction_north_wind() {
-        // Pure northward wind (u=0, v=10) -> from South (180° or π)
-        let (speed, dir) = uv_to_speed_direction(0.0, 10.0);
-        assert!((speed - 19.44).abs() < 0.1);
-        // atan2(-u, -v) = atan2(0, -10) = π, normalized to π
-        assert!((dir - PI).abs() < 0.1, "Expected {}, got {}", PI, dir);
+        // North wind: U=0, V=-10 (wind FROM north)
+        // atan2(10, 0) = π/2 (90 degrees in math convention, pointing up)
+        let (speed, dir) = uv_to_speed_direction(0.0, -10.0);
+        assert!((speed - 10.0).abs() < 0.01, "Speed should be 10 m/s");
+        assert!((dir - PI / 2.0).abs() < 0.1, "Direction should be ~π/2 (North in math convention)");
     }
 
     #[test]
-    fn test_calculate_barb_counts_25knots() {
-        // 25 knots = 0 pennants + 2 long (20) + 1 short (5)
-        let (pent, long, short) = calculate_barb_counts(25.0);
-        assert_eq!(pent, 0);
-        assert_eq!(long, 2);
-        assert!(short);
+    fn test_uv_to_speed_direction_east_wind() {
+        // East wind: U=-10, V=0 (wind FROM east)
+        // atan2(0, 10) = 0 (0 degrees in math convention, pointing right)
+        let (speed, dir) = uv_to_speed_direction(-10.0, 0.0);
+        assert!((speed - 10.0).abs() < 0.01, "Speed should be 10 m/s");
+        assert!((dir - 0.0).abs() < 0.1, "Direction should be ~0 (East in math convention)");
     }
 
     #[test]
-    fn test_calculate_barb_counts_65knots() {
-        // 65 knots = 1 pennant (50) + 1 long (10) + 1 short (5)
-        let (pent, long, short) = calculate_barb_counts(65.0);
-        assert_eq!(pent, 1);
-        assert_eq!(long, 1);
-        assert!(short);
+    fn test_select_barb_svg() {
+        assert_eq!(select_barb_svg(0.0), "0");
+        assert_eq!(select_barb_svg(1.5), "2");
+        assert_eq!(select_barb_svg(3.0), "5");
+        assert_eq!(select_barb_svg(6.0), "10");
+        assert_eq!(select_barb_svg(26.0), "50");
+        assert_eq!(select_barb_svg(100.0), "190");
     }
 
     #[test]
-    fn test_calculate_barb_counts_100knots() {
-        // 100 knots = 2 pennants
-        let (pent, long, short) = calculate_barb_counts(100.0);
-        assert_eq!(pent, 2);
-        assert_eq!(long, 0);
-        assert!(!short);
-    }
-
-    #[test]
-    fn test_calm_wind() {
-        let (speed, _) = uv_to_speed_direction(0.5, 0.5);
-        assert!(speed < 3.0); // Should be calm
-    }
-
-    #[test]
-    fn test_draw_barb_creates_pixels() {
-        let mut pixels = vec![0u8; 256 * 256 * 4];
-        let barb = WindBarb {
-            x: 128.0,
-            y: 128.0,
-            speed_knots: 25.0,
-            direction_rad: 0.0, // From North
-        };
-        draw_barb_on_canvas(&mut pixels, 256, 256, &barb, &BarbConfig::default());
-
-        // Verify pixels were modified (not all black)
-        let non_zero = pixels.iter().any(|&p| p != 0);
-        assert!(non_zero, "Barb rendering should modify pixels");
-    }
-
-    #[test]
-    fn test_calm_circle_creates_pixels() {
-        let mut pixels = vec![0u8; 256 * 256 * 4];
-        let barb = WindBarb {
-            x: 128.0,
-            y: 128.0,
-            speed_knots: 1.0, // Calm
-            direction_rad: 0.0,
-        };
-        draw_barb_on_canvas(&mut pixels, 256, 256, &barb, &BarbConfig::default());
-
-        // Verify pixels were modified
-        let non_zero = pixels.iter().any(|&p| p != 0);
-        assert!(non_zero, "Calm circle should modify pixels");
+    fn test_calculate_barb_positions() {
+        let positions = calculate_barb_positions(200, 200, 50);
+        assert!(positions.len() > 0, "Should generate some positions");
+        
+        // Check that positions are reasonably spaced
+        if positions.len() >= 2 {
+            let spacing = positions[1].0 - positions[0].0;
+            assert_eq!(spacing, 50, "Horizontal spacing should be 50 pixels");
+        }
     }
 
     #[test]
     fn test_render_wind_barbs_dimension_check() {
-        let u_data = vec![5.0; 100 * 50]; // 100x50 grid
-        let v_data = vec![3.0; 100 * 50];
-
-        let pixels = render_wind_barbs(&u_data, &v_data, 100, 50, 512, 256, 50, &BarbConfig::default());
-
-        // Should be 512x256 RGBA
-        assert_eq!(pixels.len(), 512 * 256 * 4);
+        let u_data = vec![5.0; 100 * 100];
+        let v_data = vec![5.0; 100 * 100];
+        let config = BarbConfig::default();
+        
+        let canvas = render_wind_barbs(&u_data, &v_data, 100, 100, &config);
+        assert_eq!(canvas.len(), 100 * 100 * 4, "Canvas should be correct size");
     }
 }

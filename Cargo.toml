@@ -60,6 +60,9 @@ anyhow = "1.0"
 # Image processing (minimal deps, we'll implement PNG ourselves)
 flate2 = "1.0"  # for PNG deflate compression
 crc32fast = "1.3"  # for PNG CRC
+resvg = "0.42"  # for SVG rendering (wind barbs)
+usvg = "0.42"  # SVG parsing for resvg
+tiny-skia = "0.11"  # raster backend for resvg
 
 # GRIB2 parsing
 grib = { version = "0.13.5", default-features = false, features = ["png-unpack-with-png-crate"] }  # GRIB2 support with PNG unpacking only

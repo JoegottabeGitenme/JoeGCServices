@@ -1,7 +1,7 @@
 //! Shared weather data rendering logic.
 
 use renderer::gradient;
-use renderer::barbs::{self, WindBarb, BarbConfig};
+use renderer::barbs::{self, BarbConfig};
 use renderer::style::{StyleConfig, apply_style_gradient};
 use storage::{Catalog, ObjectStorage};
 use std::path::Path;
@@ -470,15 +470,14 @@ pub async fn render_wind_barbs_layer(
     };
 
     // Render wind barbs
-    let config = BarbConfig::default();
+    let mut config = BarbConfig::default();
+    config.spacing = spacing as u32;
+    
     let barb_pixels = barbs::render_wind_barbs(
         &u_to_render,
         &v_to_render,
         render_width,
         render_height,
-        render_width,
-        render_height,
-        spacing,
         &config,
     );
 
