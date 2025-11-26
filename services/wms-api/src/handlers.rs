@@ -117,12 +117,13 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let height = params.height.unwrap_or(256);
     let style = params.styles.as_deref().unwrap_or("default");
     let bbox = params.bbox.as_deref();
+    let crs = params.crs.as_deref();
     let time = params.time.clone();
 
-    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, time = ?time, "GetMap request");
+    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, "GetMap request");
     
     // Try to render actual data, return error on failure
-    match render_weather_data(&state, layers, width, height, bbox, time.as_deref()).await {
+    match render_weather_data(&state, layers, width, height, bbox, crs, time.as_deref()).await {
         Ok(png_data) => {
             Response::builder()
                 .status(StatusCode::OK)
@@ -368,12 +369,21 @@ pub async fn metrics_handler() -> impl IntoResponse {
 // Rendering
 // ============================================================================
 
+/// Convert Web Mercator (EPSG:3857) coordinates to WGS84 (EPSG:4326)
+fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
+    let lon = (x / 20037508.34) * 180.0;
+    let lat = (y / 20037508.34) * 180.0;
+    let lat = 180.0 / std::f64::consts::PI * (2.0 * (lat * std::f64::consts::PI / 180.0).exp().atan() - std::f64::consts::PI / 2.0);
+    (lon, lat)
+}
+
 async fn render_weather_data(
     state: &Arc<AppState>,
     layer: &str,
     width: u32,
     height: u32,
     bbox: Option<&str>,
+    crs: Option<&str>,
     time: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     // Parse layer name (format: "model_parameter")
@@ -385,14 +395,26 @@ async fn render_weather_data(
     let model = parts[0];
     let parameter = parts[1..].join("_");
 
-    // Parse BBOX parameter (format: "minlon,minlat,maxlon,maxlat")
+    // Parse BBOX parameter (format depends on CRS)
     let parsed_bbox = bbox.and_then(|b| {
-        let coords: Vec<f32> = b.split(',')
+        let coords: Vec<f64> = b.split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         
         if coords.len() == 4 {
-            Some([coords[0], coords[1], coords[2], coords[3]])
+            // Check CRS and convert if needed
+            let crs_str = crs.unwrap_or("EPSG:4326");
+            let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+                // Web Mercator - convert to WGS84
+                let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
+                let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
+                (min_lon, min_lat, max_lon, max_lat)
+            } else {
+                // Assume WGS84/EPSG:4326
+                (coords[0], coords[1], coords[2], coords[3])
+            };
+            
+            Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
         } else {
             None
         }
