@@ -20,6 +20,8 @@ const ingestLogEl = document.getElementById('ingest-log');
 // Layer Selection Elements
 const protocolSelectEl = document.getElementById('protocol-select');
 const layerSelectEl = document.getElementById('layer-select');
+const styleSelectEl = document.getElementById('style-select');
+const styleGroupEl = document.getElementById('style-group');
 const loadLayerBtnEl = document.getElementById('load-layer-btn');
 
 // Performance Tracking
@@ -38,6 +40,7 @@ const currentLayerNameEl = document.getElementById('current-layer-name');
 
 // State for layer selection
 let availableLayers = [];
+let layerStyles = {}; // Map of layer name -> array of styles
 let selectedProtocol = 'wmts';
 
 // Initialize the application
@@ -66,8 +69,31 @@ function onProtocolChange() {
 
 // Handle layer selection change
 function onLayerChange() {
-    selectedLayer = layerSelectEl.value;
-    console.log('Layer changed to:', selectedLayer);
+    const layerName = layerSelectEl.value;
+    console.log('Layer changed to:', layerName);
+    
+    if (!layerName) {
+        styleGroupEl.style.display = 'none';
+        return;
+    }
+    
+    // Load styles for this layer
+    const styles = layerStyles[layerName] || [];
+    
+    if (styles.length > 1) {
+        // Show style dropdown if layer has multiple styles
+        styleSelectEl.innerHTML = '';
+        styles.forEach(style => {
+            const option = document.createElement('option');
+            option.value = style.name;
+            option.textContent = style.title;
+            styleSelectEl.appendChild(option);
+        });
+        styleGroupEl.style.display = 'block';
+    } else {
+        // Hide style dropdown if only one style
+        styleGroupEl.style.display = 'none';
+    }
 }
 
 // Initialize Leaflet map
@@ -135,8 +161,9 @@ async function loadAvailableLayers() {
         const parser = new DOMParser();
         const xml = parser.parseFromString(text, 'text/xml');
 
-        // Extract layer names
+        // Extract layer names and styles
         const layers = [];
+        layerStyles = {}; // Reset styles map
         
         if (selectedProtocol === 'wmts') {
             // WMTS uses <ows:Identifier> for layer names
@@ -144,7 +171,21 @@ async function loadAvailableLayers() {
             layerElements.forEach(layerEl => {
                 const identifierEl = layerEl.querySelector('Identifier');
                 if (identifierEl && identifierEl.textContent) {
-                    layers.push(identifierEl.textContent);
+                    const layerName = identifierEl.textContent;
+                    layers.push(layerName);
+                    
+                    // Extract styles for this layer
+                    const styles = [];
+                    const styleElements = layerEl.querySelectorAll('Style > Identifier');
+                    styleElements.forEach(styleEl => {
+                        if (styleEl.textContent) {
+                            styles.push({
+                                name: styleEl.textContent,
+                                title: styleEl.textContent
+                            });
+                        }
+                    });
+                    layerStyles[layerName] = styles;
                 }
             });
         } else {
@@ -153,7 +194,23 @@ async function loadAvailableLayers() {
             layerElements.forEach(layerEl => {
                 const nameEl = layerEl.querySelector('Name');
                 if (nameEl && nameEl.textContent) {
-                    layers.push(nameEl.textContent);
+                    const layerName = nameEl.textContent;
+                    layers.push(layerName);
+                    
+                    // Extract styles for this layer
+                    const styles = [];
+                    const styleElements = layerEl.querySelectorAll('Style');
+                    styleElements.forEach(styleEl => {
+                        const styleName = styleEl.querySelector('Name');
+                        const styleTitle = styleEl.querySelector('Title');
+                        if (styleName && styleName.textContent) {
+                            styles.push({
+                                name: styleName.textContent,
+                                title: styleTitle ? styleTitle.textContent : styleName.textContent
+                            });
+                        }
+                    });
+                    layerStyles[layerName] = styles;
                 }
             });
         }
@@ -224,6 +281,9 @@ function loadLayerOnMap(layerName) {
         map.removeLayer(wmsLayer);
     }
 
+    // Get selected style (or default)
+    const selectedStyle = styleSelectEl.value || 'default';
+
     // Reset performance tracking
     performanceStats.currentLayer = layerName;
     performanceStats.tileTimes = [];
@@ -233,10 +293,10 @@ function loadLayerOnMap(layerName) {
     if (selectedProtocol === 'wmts') {
         // Create WMTS layer using Leaflet TileLayer with direct URL pattern
         // WMTS tile URL format: /wmts/rest/{layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png
-        const wmtsUrl = `${API_BASE}/wmts/rest/${layerName}/default/WebMercatorQuad/{z}/{x}/{y}.png`;
+        const wmtsUrl = `${API_BASE}/wmts/rest/${layerName}/${selectedStyle}/WebMercatorQuad/{z}/{x}/{y}.png`;
         
         wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `${formatLayerName(layerName)} (WMTS)`,
+            attribution: `${formatLayerName(layerName)} (WMTS - ${selectedStyle})`,
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7
@@ -247,15 +307,15 @@ function loadLayerOnMap(layerName) {
         // Create WMS layer
         wmsLayer = L.tileLayer.wms(`${API_BASE}/wms`, {
             layers: layerName,
-            styles: 'default',
+            styles: selectedStyle,
             format: 'image/png',
             transparent: true,
-            attribution: `${formatLayerName(layerName)} (WMS)`,
+            attribution: `${formatLayerName(layerName)} (WMS - ${selectedStyle})`,
             version: '1.3.0',
             opacity: 0.7
         });
         
-        console.log('Loaded WMS layer:', layerName);
+        console.log('Loaded WMS layer:', layerName, 'with style:', selectedStyle);
     }
 
     // Hook into tile load events for performance tracking
