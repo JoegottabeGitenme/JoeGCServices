@@ -277,7 +277,7 @@ fn render_barb_at_position(
         None => return,
     };
     
-    // Get SVG original size
+    // Get SVG original size (wind barb SVGs are 250x250)
     let svg_size = tree.size();
     let svg_width = svg_size.width();
     let svg_height = svg_size.height();
@@ -285,29 +285,29 @@ fn render_barb_at_position(
     // Calculate scale to fit SVG into our pixmap
     let scale = (size as f32 / svg_width).min(size as f32 / svg_height);
     
-    // Build transformation matrix: scale, then rotate around center
-    let center_x = size as f32 / 2.0;
-    let center_y = size as f32 / 2.0;
-    let svg_center_x = svg_width / 2.0;
-    let svg_center_y = svg_height / 2.0;
+    // Center of pixmap
+    let center = size as f32 / 2.0;
     
     // Convert direction from radians to degrees
-    // SVG barbs point upward (North) by default in the SVG coordinate system
+    // SVG barbs point upward (North) by default
     // direction_rad is in math convention (0=East, π/2=North, π=West, 3π/2=South)
-    // We want the barb to rotate to point in the FROM direction
-    // Adjust by 90 degrees since SVG default is North (π/2 in our system)
+    // Adjust by -90 degrees since SVG points up but our 0 is East
     let angle_deg = ((direction_rad - PI / 2.0) * 180.0 / PI) as f32;
     
-    // Create transform: scale, rotate around SVG center, then translate to pixmap center
+    // Build transform step by step:
+    // 1. Scale the SVG to fit the pixmap
+    // 2. Rotate around the center of the pixmap
+    // The key insight: resvg expects a transform that maps SVG coords to pixmap coords
+    
     let transform = tiny_skia::Transform::identity()
-        .pre_scale(scale, scale)
-        .pre_translate(-svg_center_x, -svg_center_y)
-        .pre_rotate(angle_deg)
-        .pre_translate(svg_center_x, svg_center_y)
-        .post_translate(
-            center_x - (svg_center_x * scale),
-            center_y - (svg_center_y * scale)
-        );
+        // Move origin to center of pixmap
+        .post_translate(center, center)
+        // Rotate around center
+        .post_rotate(angle_deg)
+        // Move back
+        .post_translate(-center, -center)
+        // Scale the SVG
+        .post_scale(scale, scale);
     
     // Render the SVG tree onto the pixmap
     resvg::render(&tree, transform, &mut pixmap.as_mut());
