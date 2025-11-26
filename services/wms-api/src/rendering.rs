@@ -2,7 +2,8 @@
 
 use renderer::gradient;
 use renderer::barbs::{self, BarbConfig};
-use renderer::style::{StyleConfig, apply_style_gradient};
+use renderer::contour;
+use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, ObjectStorage};
 use std::path::Path;
 use tracing::{info, debug};
@@ -350,6 +351,176 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     )
 }
 
+/// Find a specific parameter in a GRIB2 file
+///
+/// GRIB files can contain multiple parameters. This function searches
+/// through all messages to find the one matching the requested parameter.
+fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str) -> Result<grib2_parser::Grib2Message, String> {
+    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
+    
+    while let Some(msg) = reader
+        .next_message()
+        .map_err(|e| format!("GRIB2 parse error: {}", e))?
+    {
+        let msg_param = msg.parameter();
+        
+        // Look for exact match
+        if msg_param == parameter {
+            return Ok(msg);
+        }
+    }
+    
+    Err(format!("Parameter {} not found in GRIB2 file", parameter))
+}
+
+/// Render wind barbs combining U and V component data using expanded tile rendering.
+/// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `tile_coord`: Optional tile coordinate for expanded rendering
+/// - `width`: Output image width (single tile)
+/// - `height`: Output image height (single tile)
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_wind_barbs_tile(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    tile_coord: Option<wms_common::TileCoord>,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+) -> Result<Vec<u8>, String> {
+    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    
+    // Load U and V component data
+    let (u_data, v_data, grid_width, grid_height) = load_wind_components(storage, catalog, model).await?;
+    
+    // Determine if we should use expanded rendering
+    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
+        let config = ExpandedTileConfig::tiles_3x3();
+        let expanded_bbox = expanded_tile_bbox(&coord, &config);
+        
+        // Calculate actual expanded dimensions
+        let (exp_w, exp_h) = wms_common::tile::actual_expanded_dimensions(&coord, &config);
+        
+        (
+            [
+                expanded_bbox.min_x as f32,
+                expanded_bbox.min_y as f32,
+                expanded_bbox.max_x as f32,
+                expanded_bbox.max_y as f32,
+            ],
+            exp_w as usize,
+            exp_h as usize,
+            Some((coord, config)),
+        )
+    } else {
+        (bbox, width as usize, height as usize, None)
+    };
+    
+    info!(
+        render_width = render_width,
+        render_height = render_height,
+        bbox_min_lon = render_bbox[0],
+        bbox_max_lon = render_bbox[2],
+        expanded = needs_crop.is_some(),
+        "Rendering wind barbs"
+    );
+    
+    // Resample data to the render bbox
+    let u_resampled = resample_from_geographic(
+        &u_data, grid_width, grid_height,
+        render_width, render_height, render_bbox
+    );
+    let v_resampled = resample_from_geographic(
+        &v_data, grid_width, grid_height,
+        render_width, render_height, render_bbox
+    );
+    
+    // Render wind barbs with geographic alignment
+    let config = barbs::BarbConfig::default();
+    let barb_pixels = barbs::render_wind_barbs_aligned(
+        &u_resampled,
+        &v_resampled,
+        render_width,
+        render_height,
+        render_bbox,
+        &config,
+    );
+    
+    // Crop to center tile if we used expanded rendering
+    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
+        crop_center_tile(&barb_pixels, render_width as u32, &coord, &tile_config)
+    } else {
+        barb_pixels
+    };
+    
+    // Encode as PNG
+    renderer::png::create_png(&final_pixels, width as usize, height as usize)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
+}
+
+/// Load U and V wind component data from storage
+async fn load_wind_components(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize), String> {
+    // Load U component (UGRD)
+    let u_entry = catalog
+        .get_latest(model, "UGRD")
+        .await
+        .map_err(|e| format!("Failed to get UGRD: {}", e))?
+        .ok_or_else(|| "No UGRD data available".to_string())?;
+
+    // Load V component (VGRD)
+    let v_entry = catalog
+        .get_latest(model, "VGRD")
+        .await
+        .map_err(|e| format!("Failed to get VGRD: {}", e))?
+        .ok_or_else(|| "No VGRD data available".to_string())?;
+
+    // Load GRIB2 files
+    let u_grib = storage
+        .get(&u_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
+
+    let v_grib = storage
+        .get(&v_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+
+    // Parse GRIB2 messages
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
+
+    // Unpack grid data
+    let u_data = u_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking U failed: {}", e))?;
+
+    let v_data = v_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking V failed: {}", e))?;
+
+    let (grid_height, grid_width) = u_msg.grid_dims();
+    
+    info!(
+        grid_width = grid_width,
+        grid_height = grid_height,
+        "Loaded wind component data"
+    );
+
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize))
+}
+
 /// Render wind barbs combining U and V component data
 ///
 /// # Arguments
@@ -397,18 +568,10 @@ pub async fn render_wind_barbs_layer(
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
 
-    // Parse GRIB2 messages
-    let mut u_reader = grib2_parser::Grib2Reader::new(u_grib);
-    let u_msg = u_reader
-        .next_message()
-        .map_err(|e| format!("GRIB2 parse error (U): {}", e))?
-        .ok_or_else(|| "No U-component message found".to_string())?;
-
-    let mut v_reader = grib2_parser::Grib2Reader::new(v_grib);
-    let v_msg = v_reader
-        .next_message()
-        .map_err(|e| format!("GRIB2 parse error (V): {}", e))?
-        .ok_or_else(|| "No V-component message found".to_string())?;
+    // Parse GRIB2 messages - search for the correct parameter
+    // (GRIB files can contain multiple parameters)
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
 
     // Unpack grid data
     let u_data = u_msg
@@ -491,13 +654,23 @@ pub async fn render_wind_barbs_layer(
         let v_min = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
         let v_max = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MIN, f32::max);
         
+        // Check if data has variation
+        let u_range = u_max - u_min;
+        let v_range = v_max - v_min;
+        
         info!(
-            u_min = u_min,
-            u_max = u_max,
-            v_min = v_min,
-            v_max = v_max,
+            u_min = format!("{:.2}", u_min),
+            u_max = format!("{:.2}", u_max),
+            u_range = format!("{:.2}", u_range),
+            v_min = format!("{:.2}", v_min),
+            v_max = format!("{:.2}", v_max),
+            v_range = format!("{:.2}", v_range),
             "Resampled wind data range"
         );
+        
+        if u_range < 0.1 && v_range < 0.1 {
+            info!("WARNING: Wind data appears uniform across region - all barbs will point same direction");
+        }
         
         // Sample some positions to verify variation
         let positions = renderer::barbs::calculate_barb_positions(output_width, output_height, spacing as u32);
@@ -541,8 +714,7 @@ pub async fn render_wind_barbs_layer(
     };
 
     // Render wind barbs
-    let mut config = BarbConfig::default();
-    config.spacing = spacing as u32;
+    let config = BarbConfig::default();
     
     info!(
         render_width = render_width,
@@ -552,13 +724,26 @@ pub async fn render_wind_barbs_layer(
         "Rendering wind barbs"
     );
     
-    let barb_pixels = barbs::render_wind_barbs(
-        &u_to_render,
-        &v_to_render,
-        render_width,
-        render_height,
-        &config,
-    );
+    // Use geographically-aligned positioning when bbox is available
+    // This ensures barbs align across tile boundaries
+    let barb_pixels = if let Some(bbox) = bbox {
+        barbs::render_wind_barbs_aligned(
+            &u_to_render,
+            &v_to_render,
+            render_width,
+            render_height,
+            bbox,
+            &config,
+        )
+    } else {
+        barbs::render_wind_barbs(
+            &u_to_render,
+            &v_to_render,
+            render_width,
+            render_height,
+            &config,
+        )
+    };
     
     // Debug: check rendered pixels
     let non_transparent = barb_pixels.chunks(4).filter(|c| c[3] > 0).count();
@@ -570,5 +755,402 @@ pub async fn render_wind_barbs_layer(
 
     // Encode as PNG
     renderer::png::create_png(&barb_pixels, render_width, render_height)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
+}
+
+/// Query data value at a specific point for GetFeatureInfo
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `layer`: Layer name (e.g., "gfs_TMP")
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
+/// - `width`: Map width in pixels
+/// - `height`: Map height in pixels
+/// - `i`: Pixel column (0-based from left)
+/// - `j`: Pixel row (0-based from top)
+/// - `crs`: Coordinate reference system (e.g., "EPSG:4326", "EPSG:3857")
+///
+/// # Returns
+/// Vector of FeatureInfo with data values at the queried point
+pub async fn query_point_value(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    layer: &str,
+    bbox: [f64; 4],
+    width: u32,
+    height: u32,
+    i: u32,
+    j: u32,
+    crs: &str,
+) -> Result<Vec<wms_protocol::FeatureInfo>, String> {
+    use wms_protocol::{pixel_to_geographic, mercator_to_wgs84, FeatureInfo, Location};
+    
+    // Parse layer name (format: "model_parameter")
+    let parts: Vec<&str> = layer.split('_').collect();
+    if parts.len() < 2 {
+        return Err("Invalid layer format".to_string());
+    }
+    
+    let model = parts[0];
+    let parameter = parts[1..].join("_");
+    
+    // Convert pixel coordinates to geographic coordinates
+    let (lon, lat) = if crs.contains("3857") {
+        // Web Mercator - convert bbox and then pixel position
+        let [min_x, min_y, max_x, max_y] = bbox;
+        let (min_lon, min_lat) = mercator_to_wgs84(min_x, min_y);
+        let (max_lon, max_lat) = mercator_to_wgs84(max_x, max_y);
+        pixel_to_geographic(i, j, width, height, [min_lon, min_lat, max_lon, max_lat])
+    } else {
+        // Assume WGS84 (EPSG:4326)
+        pixel_to_geographic(i, j, width, height, bbox)
+    };
+    
+    info!(
+        layer = layer,
+        lon = lon,
+        lat = lat,
+        pixel_i = i,
+        pixel_j = j,
+        "GetFeatureInfo query"
+    );
+    
+    // Handle special composite layers
+    if parameter == "WIND_BARBS" {
+        return query_wind_barbs_value(storage, catalog, model, lon, lat).await;
+    }
+    
+    // Get dataset for this parameter
+    let entry = catalog
+        .get_latest(model, &parameter)
+        .await
+        .map_err(|e| format!("Catalog query failed: {}", e))?
+        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
+    
+    // Load GRIB2 file from storage
+    let grib_data = storage
+        .get(&entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    
+    // Parse GRIB2 and find parameter
+    let msg = find_parameter_in_grib(grib_data, &parameter)?;
+    
+    // Unpack grid data
+    let grid_data = msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking failed: {}", e))?;
+    
+    let (grid_height, grid_width) = msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+    
+    // Sample value at the point using bilinear interpolation
+    let value = sample_grid_value(&grid_data, grid_width, grid_height, lon, lat)?;
+    
+    // Convert value based on parameter type
+    let (display_value, display_unit, raw_unit, param_name) = convert_parameter_value(&parameter, value);
+    
+    Ok(vec![FeatureInfo {
+        layer_name: layer.to_string(),
+        parameter: param_name,
+        value: display_value,
+        unit: display_unit,
+        raw_value: value as f64,
+        raw_unit,
+        location: Location {
+            longitude: lon,
+            latitude: lat,
+        },
+        forecast_hour: Some(entry.forecast_hour),
+        reference_time: Some(entry.reference_time.to_rfc3339()),
+    }])
+}
+
+/// Query wind barbs value (combines UGRD and VGRD)
+async fn query_wind_barbs_value(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    lon: f64,
+    lat: f64,
+) -> Result<Vec<wms_protocol::FeatureInfo>, String> {
+    use wms_protocol::{FeatureInfo, Location};
+    
+    // Load U component
+    let u_entry = catalog
+        .get_latest(model, "UGRD")
+        .await
+        .map_err(|e| format!("Failed to get UGRD: {}", e))?
+        .ok_or_else(|| "No UGRD data available".to_string())?;
+    
+    // Load V component
+    let v_entry = catalog
+        .get_latest(model, "VGRD")
+        .await
+        .map_err(|e| format!("Failed to get VGRD: {}", e))?
+        .ok_or_else(|| "No VGRD data available".to_string())?;
+    
+    // Load GRIB2 files
+    let u_grib = storage.get(&u_entry.storage_path).await
+        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
+    let v_grib = storage.get(&v_entry.storage_path).await
+        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+    
+    // Parse and unpack
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
+    
+    let u_data = u_msg.unpack_data().map_err(|e| format!("Unpacking U failed: {}", e))?;
+    let v_data = v_msg.unpack_data().map_err(|e| format!("Unpacking V failed: {}", e))?;
+    
+    let (grid_height, grid_width) = u_msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+    
+    // Sample both components
+    let u = sample_grid_value(&u_data, grid_width, grid_height, lon, lat)?;
+    let v = sample_grid_value(&v_data, grid_width, grid_height, lon, lat)?;
+    
+    // Calculate speed and direction
+    let speed = (u * u + v * v).sqrt();
+    let direction_rad = v.atan2(u);
+    let direction_deg = direction_rad.to_degrees();
+    // Convert from mathematical angle to meteorological (from north, clockwise)
+    let wind_direction = (270.0 - direction_deg).rem_euclid(360.0);
+    
+    Ok(vec![
+        FeatureInfo {
+            layer_name: format!("{}_WIND_BARBS", model),
+            parameter: "Wind Speed".to_string(),
+            value: speed as f64,
+            unit: "m/s".to_string(),
+            raw_value: speed as f64,
+            raw_unit: "m/s".to_string(),
+            location: Location { longitude: lon, latitude: lat },
+            forecast_hour: Some(u_entry.forecast_hour),
+            reference_time: Some(u_entry.reference_time.to_rfc3339()),
+        },
+        FeatureInfo {
+            layer_name: format!("{}_WIND_BARBS", model),
+            parameter: "Wind Direction".to_string(),
+            value: wind_direction as f64,
+            unit: "degrees".to_string(),
+            raw_value: wind_direction as f64,
+            raw_unit: "degrees".to_string(),
+            location: Location { longitude: lon, latitude: lat },
+            forecast_hour: Some(u_entry.forecast_hour),
+            reference_time: Some(u_entry.reference_time.to_rfc3339()),
+        },
+    ])
+}
+
+/// Sample a grid value at a geographic point using bilinear interpolation
+fn sample_grid_value(
+    grid_data: &[f32],
+    grid_width: usize,
+    grid_height: usize,
+    lon: f64,
+    lat: f64,
+) -> Result<f32, String> {
+    // GRIB grid: lat 90 to -90, lon 0 to 360
+    let lon_step = 360.0 / grid_width as f64;
+    let lat_step = 180.0 / grid_height as f64;
+    
+    // Normalize longitude to 0-360
+    let norm_lon = if lon < 0.0 { lon + 360.0 } else { lon };
+    
+    // Convert to grid coordinates
+    let grid_x = norm_lon / lon_step;
+    let grid_y = (90.0 - lat) / lat_step;
+    
+    // Bounds check
+    if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 || grid_y >= grid_height as f64 {
+        return Err(format!("Point ({}, {}) outside grid bounds", lon, lat));
+    }
+    
+    // Bilinear interpolation
+    let x1 = grid_x.floor() as usize;
+    let y1 = grid_y.floor() as usize;
+    let x2 = if x1 + 1 >= grid_width { 0 } else { x1 + 1 }; // Longitude wrap-around
+    let y2 = (y1 + 1).min(grid_height - 1); // Latitude clamp
+    
+    let dx = grid_x - x1 as f64;
+    let dy = grid_y - y1 as f64;
+    
+    // Sample four surrounding grid points
+    let v11 = grid_data.get(y1 * grid_width + x1).copied().unwrap_or(0.0);
+    let v21 = grid_data.get(y1 * grid_width + x2).copied().unwrap_or(0.0);
+    let v12 = grid_data.get(y2 * grid_width + x1).copied().unwrap_or(0.0);
+    let v22 = grid_data.get(y2 * grid_width + x2).copied().unwrap_or(0.0);
+    
+    // Bilinear interpolation
+    let v1 = v11 * (1.0 - dx as f32) + v21 * dx as f32;
+    let v2 = v12 * (1.0 - dx as f32) + v22 * dx as f32;
+    let value = v1 * (1.0 - dy as f32) + v2 * dy as f32;
+    
+    Ok(value)
+}
+
+/// Convert parameter value to display format with appropriate units
+fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String, String) {
+    if parameter.contains("TMP") || parameter.contains("TEMP") {
+        // Temperature: Kelvin to Celsius
+        let celsius = value - 273.15;
+        (celsius as f64, "°C".to_string(), "K".to_string(), "Temperature".to_string())
+    } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
+        // Pressure: Pa to hPa
+        let hpa = value / 100.0;
+        (hpa as f64, "hPa".to_string(), "Pa".to_string(), "Pressure".to_string())
+    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
+        // Wind speed: m/s (no conversion)
+        (value as f64, "m/s".to_string(), "m/s".to_string(), "Wind Speed".to_string())
+    } else if parameter.contains("RH") || parameter.contains("HUMID") {
+        // Relative humidity: % (no conversion)
+        (value as f64, "%".to_string(), "%".to_string(), "Relative Humidity".to_string())
+    } else if parameter.contains("UGRD") {
+        (value as f64, "m/s".to_string(), "m/s".to_string(), "U Wind Component".to_string())
+    } else if parameter.contains("VGRD") {
+        (value as f64, "m/s".to_string(), "m/s".to_string(), "V Wind Component".to_string())
+    } else {
+        // Generic parameter
+        (value as f64, "".to_string(), "".to_string(), parameter.to_string())
+    }
+}
+
+/// Render isolines (contours) for a parameter using expanded tile rendering.
+/// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `parameter`: Parameter name (e.g., "TMP")
+/// - `tile_coord`: Optional tile coordinate for expanded rendering
+/// - `width`: Output image width (single tile)
+/// - `height`: Output image height (single tile)
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
+/// - `style_path`: Path to contour style configuration file
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_isolines_tile(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    parameter: &str,
+    tile_coord: Option<wms_common::TileCoord>,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+    style_path: &str,
+) -> Result<Vec<u8>, String> {
+    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    
+    // Load style configuration
+    let style_config = ContourStyle::from_file(style_path)
+        .map_err(|e| format!("Failed to load contour style: {}", e))?;
+    
+    // Get dataset for this parameter
+    let entry = catalog
+        .get_latest(model, parameter)
+        .await
+        .map_err(|e| format!("Catalog query failed: {}", e))?
+        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
+    
+    // Load GRIB2 file from storage
+    let grib_data = storage
+        .get(&entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    
+    // Parse GRIB2 and find parameter
+    let msg = find_parameter_in_grib(grib_data, parameter)?;
+    
+    // Unpack grid data
+    let grid_data = msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking failed: {}", e))?;
+    
+    let (grid_height, grid_width) = msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+    
+    // Find global min/max for level generation
+    let (min_val, max_val) = grid_data
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &val| {
+            (min.min(val), max.max(val))
+        });
+    
+    info!(
+        parameter = parameter,
+        min_val = min_val,
+        max_val = max_val,
+        "Loaded grid data for isolines"
+    );
+    
+    // For isolines, we don't use expanded rendering because:
+    // 1. Contours are continuous and don't need alignment across tiles like wind barbs
+    // 2. Expanded rendering at low zoom can cause the bbox to span the entire world,
+    //    leading to projection distortion when cropping in pixel space
+    // Instead, we render each tile independently
+    let (render_bbox, render_width, render_height, needs_crop) = (bbox, width as usize, height as usize, None);
+    
+    info!(
+        render_width = render_width,
+        render_height = render_height,
+        bbox_min_lon = render_bbox[0],
+        bbox_max_lon = render_bbox[2],
+        expanded = needs_crop.is_some(),
+        "Rendering isolines"
+    );
+    
+    // Resample data to the render bbox
+    let resampled_data = resample_from_geographic(
+        &grid_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+    );
+    
+    // Generate contour levels from style config
+    let levels = style_config.generate_levels(min_val, max_val);
+    
+    info!(
+        num_levels = levels.len(),
+        first_level = levels.first().copied().unwrap_or(0.0),
+        last_level = levels.last().copied().unwrap_or(0.0),
+        "Generated contour levels"
+    );
+    
+    // Build ContourConfig
+    let contour_config = contour::ContourConfig {
+        levels,
+        line_width: style_config.contour.line_width,
+        line_color: style_config.contour.line_color,
+        smoothing_passes: style_config.contour.smoothing_passes.unwrap_or(1),
+    };
+    
+    // Render contours
+    let contour_pixels = contour::render_contours(
+        &resampled_data,
+        render_width,
+        render_height,
+        &contour_config,
+    );
+    
+    // Crop to center tile if we used expanded rendering
+    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
+        crop_center_tile(&contour_pixels, render_width as u32, &coord, &tile_config)
+    } else {
+        contour_pixels
+    };
+    
+    // Encode as PNG
+    renderer::png::create_png(&final_pixels, width as usize, height as usize)
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
