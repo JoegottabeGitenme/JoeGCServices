@@ -704,7 +704,7 @@ let validationInterval = null;
 // Fetch and update validation status
 async function checkValidationStatus() {
     try {
-        const response = await fetch(`${BASE_URL}/api/validation/status`);
+        const response = await fetch(`${API_BASE}/api/validation/status`);
         if (!response.ok) {
             console.error('Failed to fetch validation status:', response.statusText);
             return;
@@ -727,7 +727,7 @@ async function runValidation() {
     button.innerHTML = '⏳ Running...';
     
     try {
-        const response = await fetch(`${BASE_URL}/api/validation/run`);
+        const response = await fetch(`${API_BASE}/api/validation/run`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
