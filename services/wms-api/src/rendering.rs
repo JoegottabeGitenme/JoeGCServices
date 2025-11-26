@@ -5,7 +5,7 @@ use renderer::barbs::{self, BarbConfig};
 use renderer::style::{StyleConfig, apply_style_gradient};
 use storage::{Catalog, ObjectStorage};
 use std::path::Path;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -485,15 +485,42 @@ pub async fn render_wind_barbs_layer(
         let u_resampled = resample_from_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox);
         let v_resampled = resample_from_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox);
         
-        // Debug: check resampled data
-        let u_non_zero = u_resampled.iter().filter(|&&v| v != 0.0 && !v.is_nan()).count();
-        let v_non_zero = v_resampled.iter().filter(|&&v| v != 0.0 && !v.is_nan()).count();
+        // Debug: check resampled data statistics
+        let u_min = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
+        let u_max = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MIN, f32::max);
+        let v_min = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
+        let v_max = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MIN, f32::max);
+        
         info!(
-            u_non_zero = u_non_zero,
-            v_non_zero = v_non_zero,
-            total = u_resampled.len(),
-            "Resampled wind data stats"
+            u_min = u_min,
+            u_max = u_max,
+            v_min = v_min,
+            v_max = v_max,
+            "Resampled wind data range"
         );
+        
+        // Sample some positions to verify variation
+        let positions = renderer::barbs::calculate_barb_positions(output_width, output_height, spacing as u32);
+        if positions.len() >= 4 {
+            for (i, (x, y)) in positions.iter().take(4).enumerate() {
+                let idx = y * output_width + x;
+                if idx < u_resampled.len() {
+                    let u = u_resampled[idx];
+                    let v = v_resampled[idx];
+                    let (speed, dir) = renderer::barbs::uv_to_speed_direction(u, v);
+                    debug!(
+                        pos = i,
+                        x = x,
+                        y = y,
+                        u = u,
+                        v = v,
+                        speed = speed,
+                        dir_deg = dir.to_degrees(),
+                        "Barb position sample"
+                    );
+                }
+            }
+        }
         
         (u_resampled, v_resampled, output_width, output_height)
     } else {
