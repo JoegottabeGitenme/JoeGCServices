@@ -89,3 +89,8 @@ compile_commands.json
 /test_renders/
 /renders/
 /samples/
+
+# Test data (GRIB2 files can be large)
+/testdata/*.grib2
+/testdata/*.grb
+/testdata/*.grb2
