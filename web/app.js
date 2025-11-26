@@ -42,6 +42,8 @@ const currentLayerNameEl = document.getElementById('current-layer-name');
 let availableLayers = [];
 let layerStyles = {}; // Map of layer name -> array of styles
 let selectedProtocol = 'wmts';
+let selectedStyle = 'default';
+let queryEnabled = true;
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
@@ -50,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAvailableLayers();
     initIngestionStatus();
     setupEventListeners();
+    setupMapClickHandler();
 });
 
 // Setup event listeners for protocol and layer selection
@@ -57,6 +60,15 @@ function setupEventListeners() {
     protocolSelectEl.addEventListener('change', onProtocolChange);
     layerSelectEl.addEventListener('change', onLayerChange);
     loadLayerBtnEl.addEventListener('click', onLoadLayer);
+    
+    // Query toggle
+    const queryToggle = document.getElementById('enable-query');
+    if (queryToggle) {
+        queryToggle.addEventListener('change', (e) => {
+            queryEnabled = e.target.checked;
+            updateQueryHint();
+        });
+    }
 }
 
 // Handle protocol selection change
@@ -281,8 +293,9 @@ function loadLayerOnMap(layerName) {
         map.removeLayer(wmsLayer);
     }
 
-    // Get selected style (or default)
-    const selectedStyle = styleSelectEl.value || 'default';
+    // Store current layer and style
+    selectedLayer = layerName;
+    selectedStyle = styleSelectEl.value || 'default';
 
     // Reset performance tracking
     performanceStats.currentLayer = layerName;
@@ -343,6 +356,14 @@ function loadLayerOnMap(layerName) {
     // Update current layer display
     currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
     updatePerformanceDisplay();
+    updateQueryHint();
+}
+
+function updateQueryHint() {
+    const hint = document.getElementById('query-hint');
+    if (hint) {
+        hint.style.display = (selectedLayer && queryEnabled) ? 'block' : 'none';
+    }
 }
 
 
@@ -530,3 +551,322 @@ function updatePerformanceDisplay() {
 setInterval(() => {
     checkServiceStatus();
 }, 30000);
+
+// ============================================================================
+// GetFeatureInfo - Click-to-Query
+// ============================================================================
+
+function setupMapClickHandler() {
+    map.on('click', onMapClick);
+}
+
+async function onMapClick(e) {
+    if (!queryEnabled || !selectedLayer) {
+        return;
+    }
+    
+    // Show loading indicator
+    const loadingPopup = L.popup()
+        .setLatLng(e.latlng)
+        .setContent('<div class="feature-info-loading">Querying data...</div>')
+        .openOn(map);
+    
+    try {
+        const featureInfo = await queryFeatureInfo(e.latlng);
+        
+        if (featureInfo && featureInfo.features && featureInfo.features.length > 0) {
+            showFeatureInfoPopup(e.latlng, featureInfo);
+        } else {
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent('<div class="feature-info">No data available at this location</div>')
+                .openOn(map);
+        }
+    } catch (error) {
+        console.error('GetFeatureInfo failed:', error);
+        L.popup()
+            .setLatLng(e.latlng)
+            .setContent(`<div class="feature-info-error">Query failed: ${error.message}</div>`)
+            .openOn(map);
+    }
+}
+
+async function queryFeatureInfo(latlng) {
+    const bounds = map.getBounds();
+    const size = map.getSize();
+    const point = map.latLngToContainerPoint(latlng);
+    
+    // Build GetFeatureInfo URL
+    const url = buildGetFeatureInfoUrl(
+        selectedLayer,
+        bounds,
+        size.x,
+        size.y,
+        Math.round(point.x),
+        Math.round(point.y)
+    );
+    
+    console.log('GetFeatureInfo URL:', url);
+    
+    const response = await fetch(url, { mode: 'cors' });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+}
+
+function buildGetFeatureInfoUrl(layer, bounds, width, height, x, y) {
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    
+    // Determine CRS based on protocol
+    const crs = selectedProtocol === 'wmts' ? 'EPSG:3857' : 'EPSG:4326';
+    
+    // Convert bounds to bbox string based on CRS
+    let bbox;
+    if (crs === 'EPSG:3857') {
+        // Convert lat/lng to Web Mercator
+        const swMerc = latLngToWebMercator(sw.lat, sw.lng);
+        const neMerc = latLngToWebMercator(ne.lat, ne.lng);
+        bbox = `${swMerc.x},${swMerc.y},${neMerc.x},${neMerc.y}`;
+    } else {
+        bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+    }
+    
+    const params = new URLSearchParams({
+        SERVICE: 'WMS',
+        REQUEST: 'GetFeatureInfo',
+        VERSION: '1.3.0',
+        LAYERS: layer,
+        QUERY_LAYERS: layer,
+        STYLES: selectedStyle || 'default',
+        CRS: crs,
+        BBOX: bbox,
+        WIDTH: width.toString(),
+        HEIGHT: height.toString(),
+        I: x.toString(),
+        J: y.toString(),
+        INFO_FORMAT: 'application/json'
+    });
+    
+    return `${API_BASE}/wms?${params.toString()}`;
+}
+
+function showFeatureInfoPopup(latlng, featureInfo) {
+    let content = '<div class="feature-info-popup">';
+    
+    featureInfo.features.forEach(feature => {
+        content += `<div class="feature-item">`;
+        content += `<h4>${formatLayerName(feature.layer_name)}</h4>`;
+        content += `<table>`;
+        content += `<tr><td>Parameter:</td><td class="value">${feature.parameter}</td></tr>`;
+        content += `<tr><td>Value:</td><td class="value">${feature.value.toFixed(2)} ${feature.unit}</td></tr>`;
+        content += `<tr><td>Location:</td><td class="value">${feature.location.latitude.toFixed(3)}°, ${feature.location.longitude.toFixed(3)}°</td></tr>`;
+        
+        if (feature.forecast_hour !== undefined) {
+            content += `<tr><td>Forecast:</td><td class="value">+${feature.forecast_hour} hours</td></tr>`;
+        }
+        
+        content += `</table>`;
+        content += `</div>`;
+    });
+    
+    content += '</div>';
+    
+    L.popup({ maxWidth: 300 })
+        .setLatLng(latlng)
+        .setContent(content)
+        .openOn(map);
+}
+
+// Convert lat/lng to Web Mercator coordinates (EPSG:3857)
+function latLngToWebMercator(lat, lng) {
+    const x = lng * 20037508.34 / 180.0;
+    const y = Math.log(Math.tan((90 + lat) * Math.PI / 360.0)) / (Math.PI / 180.0);
+    const yMerc = y * 20037508.34 / 180.0;
+    return { x: x, y: yMerc };
+}
+
+// Helper function to get text content from XML element
+function getElementText(element, tagName) {
+    const el = element.querySelector(tagName);
+    return el ? el.textContent : null;
+}
+
+// ============================================================================
+// Validation Status Functions
+// ============================================================================
+
+let validationInterval = null;
+
+// Fetch and update validation status
+async function checkValidationStatus() {
+    try {
+        const response = await fetch(`${BASE_URL}/api/validation/status`);
+        if (!response.ok) {
+            console.error('Failed to fetch validation status:', response.statusText);
+            return;
+        }
+        
+        const data = await response.json();
+        updateValidationUI(data);
+    } catch (error) {
+        console.error('Error fetching validation status:', error);
+    }
+}
+
+// Run validation manually
+async function runValidation() {
+    const button = document.getElementById('run-validation-btn');
+    const originalText = button.innerHTML;
+    
+    // Disable button and show loading state
+    button.disabled = true;
+    button.innerHTML = '⏳ Running...';
+    
+    try {
+        const response = await fetch(`${BASE_URL}/api/validation/run`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        updateValidationUI(data);
+    } catch (error) {
+        console.error('Error running validation:', error);
+        alert(`Failed to run validation: ${error.message}`);
+    } finally {
+        // Re-enable button
+        button.disabled = false;
+        button.innerHTML = originalText;
+    }
+}
+
+// Update validation UI with results
+function updateValidationUI(data) {
+    // Update WMS status
+    updateServiceStatus('wms', data.wms);
+    updateChecks('wms', data.wms.checks);
+    
+    // Update WMTS status
+    updateServiceStatus('wmts', data.wmts);
+    updateChecks('wmts', data.wmts.checks);
+    
+    // Update timestamp
+    const timestamp = new Date(data.timestamp);
+    const now = new Date();
+    const diffMs = now - timestamp;
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    let timeAgo;
+    if (diffMins < 1) {
+        timeAgo = 'Just now';
+    } else if (diffMins === 1) {
+        timeAgo = '1 minute ago';
+    } else if (diffMins < 60) {
+        timeAgo = `${diffMins} minutes ago`;
+    } else {
+        const diffHours = Math.floor(diffMins / 60);
+        timeAgo = diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
+    }
+    
+    const lastChecked = document.getElementById('validation-last-checked');
+    if (lastChecked) {
+        lastChecked.textContent = `Last checked: ${timeAgo}`;
+    }
+}
+
+// Update service status badge
+function updateServiceStatus(service, serviceData) {
+    const badge = document.getElementById(`${service}-validation-badge`);
+    if (!badge) return;
+    
+    const dot = badge.querySelector('.status-dot');
+    const text = badge.querySelector('.status-text');
+    
+    // Remove all status classes
+    badge.classList.remove('status-compliant', 'status-non-compliant', 'status-partial', 'status-checking');
+    
+    if (serviceData.status === 'compliant') {
+        badge.classList.add('status-compliant');
+        dot.style.backgroundColor = '#22c55e';
+        text.textContent = 'Compliant';
+    } else if (serviceData.status === 'non-compliant') {
+        badge.classList.add('status-non-compliant');
+        dot.style.backgroundColor = '#ef4444';
+        text.textContent = 'Non-Compliant';
+    } else {
+        badge.classList.add('status-partial');
+        dot.style.backgroundColor = '#f59e0b';
+        text.textContent = 'Partial';
+    }
+}
+
+// Update individual checks
+function updateChecks(service, checks) {
+    const container = document.getElementById(`${service}-checks`);
+    if (!container) return;
+    
+    const checkItems = container.querySelectorAll('.check-item');
+    const checkNames = ['capabilities', 'getmap', 'getfeatureinfo', 'exceptions', 'crs_support'];
+    const wmtsCheckNames = ['capabilities', 'gettile_rest', 'gettile_kvp', 'tilematrixset'];
+    
+    const names = service === 'wms' ? checkNames : wmtsCheckNames;
+    
+    names.forEach((name, index) => {
+        const check = checks[name];
+        if (!check || index >= checkItems.length) return;
+        
+        const item = checkItems[index];
+        const icon = item.querySelector('.check-icon');
+        
+        if (check.status === 'pass') {
+            icon.textContent = '✓';
+            icon.style.color = '#22c55e';
+            item.title = check.message;
+        } else if (check.status === 'fail') {
+            icon.textContent = '✗';
+            icon.style.color = '#ef4444';
+            item.title = check.message;
+        } else {
+            icon.textContent = '⊘';
+            icon.style.color = '#94a3b8';
+            item.title = check.message;
+        }
+    });
+}
+
+// Start auto-refresh for validation status
+function startValidationAutoRefresh() {
+    // Check immediately
+    checkValidationStatus();
+    
+    // Then check every 5 minutes
+    validationInterval = setInterval(checkValidationStatus, 5 * 60 * 1000);
+}
+
+// Stop auto-refresh
+function stopValidationAutoRefresh() {
+    if (validationInterval) {
+        clearInterval(validationInterval);
+        validationInterval = null;
+    }
+}
+
+// Add event listener for manual validation button
+document.addEventListener('DOMContentLoaded', () => {
+    const runButton = document.getElementById('run-validation-btn');
+    if (runButton) {
+        runButton.addEventListener('click', runValidation);
+    }
+    
+    // Start auto-refresh
+    startValidationAutoRefresh();
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', () => {
+    stopValidationAutoRefresh();
+});

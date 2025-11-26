@@ -74,6 +74,81 @@
                     </div>
                 </div>
 
+                <!-- OGC Compliance Section -->
+                <div class="sidebar-section validation-section">
+                    <h2>OGC Compliance</h2>
+                    <div id="validation-status" class="validation-status">
+                        <div class="validation-service">
+                            <div class="service-header">
+                                <span class="service-name">WMS 1.3.0</span>
+                                <div class="service-badge" id="wms-validation-badge">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </div>
+                            <div class="validation-checks" id="wms-checks">
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">GetCapabilities</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">GetMap</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">GetFeatureInfo</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">Exceptions</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">CRS Support</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="validation-service">
+                            <div class="service-header">
+                                <span class="service-name">WMTS 1.0.0</span>
+                                <div class="service-badge" id="wmts-validation-badge">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </div>
+                            <div class="validation-checks" id="wmts-checks">
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">GetCapabilities</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">REST Tiles</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">KVP Tiles</span>
+                                </div>
+                                <div class="check-item">
+                                    <span class="check-icon">⏳</span>
+                                    <span class="check-name">TileMatrixSet</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="validation-footer">
+                            <div class="last-checked" id="validation-last-checked">
+                                Last checked: Never
+                            </div>
+                            <button id="run-validation-btn" class="validation-button">
+                                🔄 Run Validation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="sidebar-section">
                     <h2>Layer Selection</h2>
                     <div class="control-group">
@@ -99,6 +174,17 @@
                     </div>
 
                     <button id="load-layer-btn" class="control-button">Load Layer</button>
+
+                    <div class="control-group" style="margin-top: 1rem;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="enable-query" checked>
+                            <span>Enable click-to-query</span>
+                        </label>
+                    </div>
+
+                    <div id="query-hint" class="query-hint" style="display: none;">
+                        💡 Click on the map to query data values
+                    </div>
                 </div>
 
                 <div class="sidebar-section performance-section">
