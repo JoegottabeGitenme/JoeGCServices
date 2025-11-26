@@ -277,9 +277,19 @@ fn render_barb_at_position(
         None => return,
     };
     
-    // Build transformation matrix: rotation around center
+    // Get SVG original size
+    let svg_size = tree.size();
+    let svg_width = svg_size.width();
+    let svg_height = svg_size.height();
+    
+    // Calculate scale to fit SVG into our pixmap
+    let scale = (size as f32 / svg_width).min(size as f32 / svg_height);
+    
+    // Build transformation matrix: scale, then rotate around center
     let center_x = size as f32 / 2.0;
     let center_y = size as f32 / 2.0;
+    let svg_center_x = svg_width / 2.0;
+    let svg_center_y = svg_height / 2.0;
     
     // Convert direction from radians to degrees
     // SVG barbs point upward (North) by default in the SVG coordinate system
@@ -288,10 +298,16 @@ fn render_barb_at_position(
     // Adjust by 90 degrees since SVG default is North (π/2 in our system)
     let angle_deg = ((direction_rad - PI / 2.0) * 180.0 / PI) as f32;
     
-    // Create transform: translate to center, rotate, translate back
-    let transform = tiny_skia::Transform::from_translate(center_x, center_y)
-        .post_rotate(angle_deg)
-        .post_translate(-center_x, -center_y);
+    // Create transform: scale, rotate around SVG center, then translate to pixmap center
+    let transform = tiny_skia::Transform::identity()
+        .pre_scale(scale, scale)
+        .pre_translate(-svg_center_x, -svg_center_y)
+        .pre_rotate(angle_deg)
+        .pre_translate(svg_center_x, svg_center_y)
+        .post_translate(
+            center_x - (svg_center_x * scale),
+            center_y - (svg_center_y * scale)
+        );
     
     // Render the SVG tree onto the pixmap
     resvg::render(&tree, transform, &mut pixmap.as_mut());
