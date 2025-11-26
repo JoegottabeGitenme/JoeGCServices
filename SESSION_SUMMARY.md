@@ -1,5 +1,19 @@
 # Weather WMS Session Summary - 2025-11-25
 
+## Latest Update: Simplified Web Viewer UI
+
+### ✅ 4. Simplified Layer Selection Interface
+- **Problem**: Web viewer had confusing 3-dropdown workflow (Model → Parameter → Forecast Hour)
+- **Solution**: Replaced with single Protocol → Layer → Load workflow
+- **Changes**:
+  - Removed model/parameter/forecast hour dropdowns
+  - Added single `layer-select` dropdown populated from GetCapabilities
+  - Created `loadAvailableLayers()` to parse WMS/WMTS capabilities
+  - Updated `formatLayerName()` for friendly display (e.g., "GFS - Pressure (MSL)")
+  - Added protocol switching support (reloads layers when protocol changes)
+- **Result**: Cleaner, more intuitive UI that works directly with WMS/WMTS layer names
+- **Commit**: `26049bf` - "Simplify web viewer to single layer selector"
+
 ## What We Accomplished
 
 ### ✅ 1. GRIB2 PNG Decompression Integration
@@ -108,6 +122,17 @@ cargo run --package renderer --example test_grib_rendering
 ✅ Pressure maps rendering correctly (762 colors)  
 ✅ Auto-rebuild on code changes  
 ✅ Full pipeline tested (GRIB → PNG)  
+✅ WMTS tile alignment fixed (no more seams)  
+✅ WMS CRS conversion working (EPSG:3857 + EPSG:4326)  
+✅ Enhanced GetCapabilities with styles and TIME dimension  
+✅ Simplified web viewer UI (single layer selector)  
+
+## Recent Commits
+
+1. `26049bf` - Simplify web viewer to single layer selector
+2. `6b13c57` - Enhance WMS/WMTS capabilities with styles and TIME dimension
+3. `759ee2f` - Fix WMS CRS conversion for EPSG:3857 (Web Mercator)
+4. `e9ea5cf` - Implement WMTS support with spatial subsetting and fix tile alignment
 
 ## Next Steps
 
@@ -116,6 +141,7 @@ cargo run --package renderer --example test_grib_rendering
 3. Fix level type descriptions (currently shows "Level type 0")
 4. Handle multi-message GRIB files in Docker workflow
 5. Add CI/CD tests comparing our parser vs wgrib2
+6. Test web viewer with actual browser (currently only tested API endpoints)
 
 ## Performance
 

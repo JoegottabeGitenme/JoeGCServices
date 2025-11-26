@@ -10,8 +10,6 @@ let ingestionStatusInterval = null;
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
 const wmtsStatusEl = document.getElementById('wmts-status');
-const layersListEl = document.getElementById('layers-list');
-const layerDetailsEl = document.getElementById('layer-details');
 const ingesterServiceStatusEl = document.getElementById('ingester-service-status');
 const lastIngestTimeEl = document.getElementById('last-ingest-time');
 const datasetCountEl = document.getElementById('dataset-count');
@@ -46,7 +44,6 @@ let selectedProtocol = 'wmts';
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     checkServiceStatus();
-    loadCapabilities();
     loadAvailableLayers();
     initIngestionStatus();
     setupEventListeners();
@@ -140,13 +137,26 @@ async function loadAvailableLayers() {
 
         // Extract layer names
         const layers = [];
-        const layerElements = xml.querySelectorAll('Layer > Name');
-        layerElements.forEach(el => {
-            const name = el.textContent;
-            if (name) {
-                layers.push(name);
-            }
-        });
+        
+        if (selectedProtocol === 'wmts') {
+            // WMTS uses <ows:Identifier> for layer names
+            const layerElements = xml.querySelectorAll('Contents > Layer');
+            layerElements.forEach(layerEl => {
+                const identifierEl = layerEl.querySelector('Identifier');
+                if (identifierEl && identifierEl.textContent) {
+                    layers.push(identifierEl.textContent);
+                }
+            });
+        } else {
+            // WMS uses <Name> for queryable layers
+            const layerElements = xml.querySelectorAll('Layer[queryable="1"]');
+            layerElements.forEach(layerEl => {
+                const nameEl = layerEl.querySelector('Name');
+                if (nameEl && nameEl.textContent) {
+                    layers.push(nameEl.textContent);
+                }
+            });
+        }
 
         availableLayers = layers.sort();
         
@@ -205,86 +215,7 @@ function formatLayerName(layerName) {
     return layerName;
 }
 
-// Load WMS/WMTS capabilities
-async function loadCapabilities() {
-    try {
-        const response = await fetch(
-            `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`,
-            { mode: 'cors' }
-        );
-        const text = await response.text();
-        const parser = new DOMParser();
-        const xml = parser.parseFromString(text, 'text/xml');
 
-        // Parse capabilities
-        const layers = parseCapabilities(xml);
-        displayLayers(layers);
-    } catch (error) {
-        console.error('Failed to load capabilities:', error);
-        layersListEl.innerHTML = '<p class="empty-state">Failed to load layers</p>';
-    }
-}
-
-// Parse WMS capabilities XML
-function parseCapabilities(xml) {
-    const layers = [];
-    const layerElements = xml.querySelectorAll('Layer');
-
-    layerElements.forEach((layerEl, index) => {
-        const name = getElementText(layerEl, 'Name');
-        const title = getElementText(layerEl, 'Title');
-        const abstract = getElementText(layerEl, 'Abstract');
-
-        // Parse dimensions (like TIME)
-        const dimensions = [];
-        const dimensionElements = layerEl.querySelectorAll('Dimension');
-        dimensionElements.forEach(dimEl => {
-            const name = dimEl.getAttribute('name');
-            const value = dimEl.textContent;
-            if (name && value) {
-                dimensions.push({
-                    name: name.toUpperCase(),
-                    value: value,
-                    default: dimEl.getAttribute('default') || ''
-                });
-            }
-        });
-
-        // Parse extent
-        const extent = [];
-        const extentElements = layerEl.querySelectorAll('Extent');
-        extentElements.forEach(extEl => {
-            const name = extEl.getAttribute('name');
-            const value = extEl.textContent;
-            if (name && value) {
-                extent.push({
-                    name: name.toUpperCase(),
-                    value: value
-                });
-            }
-        });
-
-        // Only add layers that have a name
-        if (name) {
-            layers.push({
-                name: name,
-                title: title || name,
-                abstract: abstract || 'No description available',
-                dimensions: dimensions,
-                extent: extent,
-                queryable: layerEl.getAttribute('queryable') === '1'
-            });
-        }
-    });
-
-    return layers;
-}
-
-// Get text content from XML element
-function getElementText(parent, tagName) {
-    const element = parent.querySelector(tagName);
-    return element ? element.textContent : '';
-}
 
 // Load a specific layer on the map
 function loadLayerOnMap(layerName) {
@@ -354,193 +285,7 @@ function loadLayerOnMap(layerName) {
     updatePerformanceDisplay();
 }
 
-// Display layers in sidebar
-function displayLayers(layers) {
-    if (layers.length === 0) {
-        layersListEl.innerHTML = '<p class="empty-state">No layers available</p>';
-        return;
-    }
 
-    layersListEl.innerHTML = layers.map((layer, index) => `
-        <div class="layer-item" data-index="${index}" onclick="selectLayer(${index}, this)">
-            <span class="layer-name">${escapeHtml(layer.title)}</span>
-            <span class="layer-title">${escapeHtml(layer.name)}</span>
-        </div>
-    `).join('');
-
-    // Auto-select first layer
-    if (layers.length > 0) {
-        selectLayer(0, layersListEl.querySelector('.layer-item'));
-    }
-}
-
-// Select a layer and show details
-function selectLayer(index, element) {
-    // Update active state
-    document.querySelectorAll('.layer-item').forEach(el => {
-        el.classList.remove('active');
-    });
-    element.classList.add('active');
-
-    // Load capabilities again to get full data
-    fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`, { mode: 'cors' })
-        .then(r => r.text())
-        .then(text => {
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, 'text/xml');
-            const layers = parseCapabilities(xml);
-            
-            if (layers[index]) {
-                selectedLayer = layers[index];
-                displayLayerDetails(layers[index]);
-                addWmsLayerToMap(layers[index]);
-            }
-        })
-        .catch(error => console.error('Failed to load layer details:', error));
-}
-
-// Display layer details in sidebar
-function displayLayerDetails(layer) {
-    let html = `
-        <div class="detail-row">
-            <div class="detail-label">Name</div>
-            <div class="detail-value">${escapeHtml(layer.name)}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Title</div>
-            <div class="detail-value">${escapeHtml(layer.title)}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Description</div>
-            <div class="detail-value">${escapeHtml(layer.abstract)}</div>
-        </div>
-    `;
-
-    if (layer.dimensions.length > 0) {
-        html += `
-            <div class="detail-row">
-                <div class="detail-label">Dimensions</div>
-                <div class="dimensions-list">
-                    ${layer.dimensions.map(dim => `
-                        <div class="dimension-item">
-                            <strong>${escapeHtml(dim.name)}:</strong> ${escapeHtml(dim.value.substring(0, 100))}${dim.value.length > 100 ? '...' : ''}
-                            ${dim.default ? `<br><small>Default: ${escapeHtml(dim.default)}</small>` : ''}
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    if (layer.extent.length > 0) {
-        html += `
-            <div class="detail-row">
-                <div class="detail-label">Extent</div>
-                <div class="dimensions-list">
-                    ${layer.extent.map(ext => `
-                        <div class="dimension-item">
-                            <strong>${escapeHtml(ext.name)}:</strong> ${escapeHtml(ext.value.substring(0, 100))}${ext.value.length > 100 ? '...' : ''}
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    html += `
-        <div class="detail-row">
-            <div class="detail-label">Queryable</div>
-            <div class="detail-value">${layer.queryable ? 'Yes' : 'No'}</div>
-        </div>
-    `;
-
-    layerDetailsEl.innerHTML = html;
-}
-
-// Add WMS layer to map
-function addWmsLayerToMap(layer) {
-    // Reset performance tracking for new layer
-    performanceStats.currentLayer = layer.name;
-    performanceStats.tileTimes = [];
-    performanceStats.tilesLoaded = 0;
-    updatePerformanceDisplay();
-
-    // Remove existing WMS layer
-    if (wmsLayer) {
-        map.removeLayer(wmsLayer);
-    }
-
-    if (selectedProtocol === 'wmts') {
-        // Create WMTS layer using Leaflet TileLayer with direct URL pattern
-        const wmtsUrl = `${API_BASE}/wmts/rest/${layer.name}/default/WebMercatorQuad/{z}/{x}/{y}.png`;
-        
-        wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `Layer: ${layer.title} (WMTS)`,
-            maxZoom: 18,
-            tileSize: 256,
-            opacity: 0.7
-        });
-        
-        console.log('Loaded WMTS layer:', wmtsUrl);
-    } else {
-        // Create WMS layer
-        const wmsUrl = `${API_BASE}/wms`;
-        const params = {
-            'SERVICE': 'WMS',
-            'VERSION': '1.3.0',
-            'REQUEST': 'GetMap',
-            'LAYERS': layer.name,
-            'STYLES': '',
-            'FORMAT': 'image/png',
-            'BBOX': '{bbox}',
-            'WIDTH': '{width}',
-            'HEIGHT': '{height}',
-            'CRS': 'EPSG:4326',
-            'TRANSPARENT': 'true'
-        };
-
-        // Add TIME dimension if available
-        if (layer.dimensions.some(d => d.name === 'TIME') && layer.dimensions[0].default) {
-            params['TIME'] = layer.dimensions[0].default;
-        }
-
-        wmsLayer = L.tileLayer.wms(wmsUrl, {
-            layers: layer.name,
-            format: 'image/png',
-            transparent: true,
-            attribution: `Layer: ${layer.title} (WMS)`,
-            opacity: 0.7
-        });
-    }
-
-    // Hook into tile load events for performance tracking
-    wmsLayer.on('loading', function() {
-        performanceStats.layerStartTime = Date.now();
-    });
-    
-    wmsLayer.on('load', function() {
-        if (performanceStats.layerStartTime) {
-            const loadTime = Date.now() - performanceStats.layerStartTime;
-            trackTileLoadTime(loadTime);
-        }
-    });
-    
-    wmsLayer.on('tileerror', function() {
-        if (performanceStats.layerStartTime) {
-            const loadTime = Date.now() - performanceStats.layerStartTime;
-            trackTileLoadTime(loadTime);
-        }
-    });
-
-    wmsLayer.addTo(map);
-}
-
-// Utility function to escape HTML
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // Initialize ingestion status monitoring
 function initIngestionStatus() {
