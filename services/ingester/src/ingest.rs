@@ -217,28 +217,161 @@ impl IngestionPipeline {
         self.storage.put(&storage_path, data.clone()).await?;
         info!(size = file_size, "Stored raw file");
 
-        // Parse and extract parameters
-        for param_config in &model_config.parameters {
+        // Check if this is GOES data (NetCDF) or GRIB2
+        let is_goes = model_config.source.is_goes();
+
+        if is_goes {
+            // Process GOES NetCDF file
             if let Err(e) = self
-                .extract_parameter(
+                .extract_goes_parameter(
                     model_id,
                     date,
                     cycle,
-                    fhr,
-                    &data,
-                    param_config,
+                    file,
                     &storage_path,
                     file_size,
                 )
                 .await
             {
                 warn!(
-                    parameter = %param_config.name,
                     error = %e,
-                    "Parameter extraction failed"
+                    "GOES parameter extraction failed"
                 );
             }
+        } else {
+            // Parse and extract parameters from GRIB2
+            for param_config in &model_config.parameters {
+                if let Err(e) = self
+                    .extract_parameter(
+                        model_id,
+                        date,
+                        cycle,
+                        fhr,
+                        &data,
+                        param_config,
+                        &storage_path,
+                        file_size,
+                    )
+                    .await
+                {
+                    warn!(
+                        parameter = %param_config.name,
+                        error = %e,
+                        "Parameter extraction failed"
+                    );
+                }
+            }
         }
+
+        Ok(())
+    }
+
+    /// Extract parameter from GOES NetCDF file.
+    /// 
+    /// GOES files are self-describing - the filename contains the band and timestamp info.
+    /// Format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
+    #[instrument(skip(self), fields(path = %file.path))]
+    async fn extract_goes_parameter(
+        &self,
+        model_id: &str,
+        date: &str,
+        cycle: u32,
+        file: &RemoteFile,
+        storage_path: &str,
+        file_size: u64,
+    ) -> Result<()> {
+        // Parse filename to extract band and time info
+        let filename = file.path.split('/').last().unwrap_or(&file.path);
+        
+        // Extract band number from filename (e.g., "C02" from "...M6C02_G16...")
+        let band = filename
+            .find("M6C")
+            .or_else(|| filename.find("M3C"))
+            .and_then(|pos| {
+                let band_str = &filename[pos + 3..pos + 5];
+                band_str.parse::<u8>().ok()
+            })
+            .unwrap_or(0);
+
+        // Extract satellite ID (G16 or G18)
+        let satellite = if filename.contains("_G16_") {
+            "G16"
+        } else if filename.contains("_G18_") {
+            "G18"
+        } else {
+            "GOES"
+        };
+
+        // Extract observation time from filename (format: s20250500001170)
+        // Time is in format: YYYYDDDHHMMSSt (year, day-of-year, hour, min, sec, tenths)
+        let observation_time = filename
+            .find("_s")
+            .and_then(|pos| {
+                let time_str = &filename[pos + 2..pos + 15];
+                // Parse YYYYDDDHHMMSS
+                let year: i32 = time_str[0..4].parse().ok()?;
+                let doy: u32 = time_str[4..7].parse().ok()?;
+                let hour: u32 = time_str[7..9].parse().ok()?;
+                let min: u32 = time_str[9..11].parse().ok()?;
+                let sec: u32 = time_str[11..13].parse().ok()?;
+                
+                // Convert to DateTime
+                let date = chrono::NaiveDate::from_yo_opt(year, doy)?;
+                let time = chrono::NaiveTime::from_hms_opt(hour, min, sec)?;
+                Some(chrono::Utc.from_utc_datetime(&date.and_time(time)))
+            })
+            .unwrap_or_else(|| {
+                // Fallback: use date and cycle
+                let date = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")
+                    .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                let time = chrono::NaiveTime::from_hms_opt(cycle, 0, 0).unwrap();
+                chrono::Utc.from_utc_datetime(&date.and_time(time))
+            });
+
+        // Determine parameter name based on band
+        let (parameter, level) = match band {
+            1 => ("CMI_C01", "visible_blue"),       // 0.47µm Blue
+            2 => ("CMI_C02", "visible_red"),        // 0.64µm Red (most common visible)
+            3 => ("CMI_C03", "visible_veggie"),     // 0.86µm Vegetation
+            4 => ("CMI_C04", "cirrus"),             // 1.37µm Cirrus
+            5 => ("CMI_C05", "snow_ice"),           // 1.6µm Snow/Ice
+            6 => ("CMI_C06", "cloud_particle"),     // 2.2µm Cloud Particle Size
+            7 => ("CMI_C07", "shortwave_ir"),       // 3.9µm Shortwave Window
+            8 => ("CMI_C08", "upper_vapor"),        // 6.2µm Upper-Level Water Vapor
+            9 => ("CMI_C09", "mid_vapor"),          // 6.9µm Mid-Level Water Vapor
+            10 => ("CMI_C10", "low_vapor"),         // 7.3µm Lower-Level Water Vapor
+            11 => ("CMI_C11", "cloud_phase"),       // 8.4µm Cloud-Top Phase
+            12 => ("CMI_C12", "ozone"),             // 9.6µm Ozone
+            13 => ("CMI_C13", "clean_ir"),          // 10.3µm "Clean" Longwave IR
+            14 => ("CMI_C14", "ir"),                // 11.2µm Longwave IR
+            15 => ("CMI_C15", "dirty_ir"),          // 12.3µm "Dirty" Longwave IR
+            16 => ("CMI_C16", "co2"),               // 13.3µm CO2
+            _ => ("CMI", "unknown"),
+        };
+
+        info!(
+            band = band,
+            satellite = satellite,
+            parameter = parameter,
+            observation_time = %observation_time,
+            "Processing GOES file"
+        );
+
+        // Create catalog entry
+        // For GOES, forecast_hour is 0 (observational data)
+        let entry = CatalogEntry {
+            model: model_id.to_string(),
+            parameter: parameter.to_string(),
+            level: level.to_string(),
+            reference_time: observation_time,
+            forecast_hour: 0, // Observational data
+            bbox: get_model_bbox(model_id),
+            storage_path: storage_path.to_string(),
+            file_size,
+        };
+
+        self.catalog.register_dataset(&entry).await?;
+        info!(parameter = parameter, band = band, "Registered GOES parameter in catalog");
 
         Ok(())
     }
@@ -330,6 +463,10 @@ fn get_model_bbox(model_id: &str) -> BoundingBox {
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
         "hrrr" => BoundingBox::new(-134.1, 21.1, -60.9, 52.6),
         "nam" => BoundingBox::new(-152.9, 12.2, -49.4, 57.3),
+        // GOES-16 CONUS bounds (approximate)
+        "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
+        // GOES-18 CONUS bounds (approximate)  
+        "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
         _ => BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
     }
 }

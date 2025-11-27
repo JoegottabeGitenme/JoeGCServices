@@ -258,6 +258,17 @@ where
             let idx = y * width + x;
             if idx < data.len() {
                 let value = data[idx];
+                
+                // Handle NaN as transparent (for data outside geographic bounds)
+                if value.is_nan() {
+                    let pixel_idx = idx * 4;
+                    pixels[pixel_idx] = 0;     // R
+                    pixels[pixel_idx + 1] = 0; // G
+                    pixels[pixel_idx + 2] = 0; // B
+                    pixels[pixel_idx + 3] = 0; // A (transparent)
+                    continue;
+                }
+                
                 let normalized = (value - min_val) / range;
                 let normalized = normalized.max(0.0).min(1.0);
                 

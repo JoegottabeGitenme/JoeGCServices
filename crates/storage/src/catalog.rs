@@ -380,6 +380,53 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Get dataset from latest run with earliest forecast hour.
+    /// This is the preferred default: most recent model run, but showing analysis/F00.
+    pub async fn get_latest_run_earliest_forecast(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get dataset from latest run with earliest forecast hour at a specific level.
+    pub async fn get_latest_run_earliest_forecast_at_level(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
+             ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
     /// Get available runs and forecast hours for all layers of a model.
     /// Returns (runs, forecast_hours) where runs are ISO8601 strings and forecast_hours are integers.
     pub async fn get_model_dimensions(&self, model: &str) -> WmsResult<(Vec<String>, Vec<i32>)> {
@@ -411,6 +458,26 @@ impl Catalog {
             .collect();
 
         Ok((run_strings, forecast_hours))
+    }
+    
+    /// Get the geographic bounding box for a model
+    /// Returns the union of all dataset bounding boxes for the model
+    pub async fn get_model_bbox(&self, model: &str) -> WmsResult<BoundingBox> {
+        let result = sqlx::query_as::<_, (f64, f64, f64, f64)>(
+            "SELECT \
+                MIN(bbox_min_x) as min_x, \
+                MIN(bbox_min_y) as min_y, \
+                MAX(bbox_max_x) as max_x, \
+                MAX(bbox_max_y) as max_y \
+             FROM datasets \
+             WHERE model = $1 AND status = 'available'",
+        )
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+        
+        Ok(BoundingBox::new(result.0, result.1, result.2, result.3))
     }
 }
 

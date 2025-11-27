@@ -10,6 +10,7 @@
 #   ./start.sh              # Start with docker-compose and ingest test data (fast)
 #   ./start.sh --compose    # Start with docker-compose (same as above)
 #   ./start.sh --rebuild    # Force rebuild of Docker images
+#   ./start.sh --clear-cache # Clear Redis tile cache (after rendering changes)
 #   ./start.sh --kubernetes # Full Kubernetes setup with minikube
 #   ./start.sh --k8s        # Same as --kubernetes
 #   ./start.sh --stop       # Stop docker-compose
@@ -20,7 +21,9 @@
 # On startup, the system will:
 #   1. Start all Docker containers (PostgreSQL, Redis, MinIO, WMS API, Dashboard)
 #   2. Wait for services to be ready
-#   3. Ingest test GRIB2 data (254MB GFS sample)
+#   3. Ingest test GRIB2 data:
+#      - GFS: Global forecast data (254MB, F00-F24)
+#      - HRRR: High-res CONUS data (809MB, F00-F12) if available
 #   4. Verify ingestion with test renders
 #   5. Display dashboard at http://localhost:8000
 #
@@ -236,7 +239,9 @@ show_compose_access_info() {
      echo ""
      echo "Everything is automatically configured, tested, and ready to use!"
      echo "  ✓ Services running"
-     echo "  ✓ Test data ingested (254MB GFS sample)"
+     echo "  ✓ Test data ingested:"
+     echo "    - GFS: Global forecast (F00-F24)"
+     echo "    - HRRR: CONUS high-res (F00-F12, if available)"
      echo "  ✓ Datasets registered in catalog"
      echo "  ✓ Sample images generated"
      echo ""
@@ -334,6 +339,30 @@ run_test_rendering() {
         echo "  Verify the images contain colored temperature data, not gray placeholders"
     else
         log_warn "Test rendering had issues, but services are still running"
+    fi
+}
+
+clear_tile_cache() {
+    log_info "Clearing Redis tile cache..."
+    
+    cd "$PROJECT_ROOT"
+    
+    # Check if Redis is running
+    if ! docker-compose ps redis 2>/dev/null | grep -q "Up"; then
+        log_warn "Redis is not running. Start services first."
+        return 1
+    fi
+    
+    # Flush all cached tiles
+    if docker-compose exec -T redis redis-cli FLUSHALL &>/dev/null; then
+        log_success "Redis tile cache cleared!"
+        
+        # Get cache stats after clearing
+        local key_count=$(docker-compose exec -T redis redis-cli DBSIZE 2>/dev/null | tr -d '\r')
+        log_info "Cache keys remaining: ${key_count:-0}"
+    else
+        log_error "Failed to clear Redis cache"
+        return 1
     fi
 }
 
@@ -599,6 +628,10 @@ main() {
             # Clean minikube
             clean_k8s
             ;;
+        --clear-cache)
+            check_compose_prerequisites
+            clear_tile_cache
+            ;;
         --status)
             if minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
                 show_k8s_status
@@ -613,6 +646,7 @@ main() {
             echo "  (none)         Start with docker-compose (RECOMMENDED - fast)"
             echo "  --compose      Start with docker-compose"
             echo "  --rebuild      Force rebuild of Docker images (use after code changes)"
+            echo "  --clear-cache  Clear Redis tile cache (useful after rendering changes)"
             echo "  --kubernetes   Full Kubernetes setup with minikube (slower)"
             echo "  --k8s          Same as --kubernetes"
             echo "  --stop         Stop docker-compose or minikube"

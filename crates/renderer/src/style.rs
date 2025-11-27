@@ -188,6 +188,16 @@ pub fn apply_style_gradient(
             break;
         }
         
+        // Handle NaN as transparent (for data outside geographic bounds)
+        if value.is_nan() {
+            let pixel_offset = idx * 4;
+            pixels[pixel_offset] = 0;     // R
+            pixels[pixel_offset + 1] = 0; // G
+            pixels[pixel_offset + 2] = 0; // B
+            pixels[pixel_offset + 3] = 0; // A (transparent)
+            continue;
+        }
+        
         // Normalize value to 0-1 range
         let range = max_val - min_val;
         let normalized = if range.abs() < 0.001 {

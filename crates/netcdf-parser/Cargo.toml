@@ -7,3 +7,13 @@ edition.workspace = true
 wms-common = { path = "../wms-common" }
 bytes = { workspace = true }
 thiserror = { workspace = true }
+chrono = { workspace = true }
+
+# Note: The netcdf crate requires the HDF5 system library.
+# For now, we'll implement a simpler parser that uses ncdump for metadata
+# and direct binary reading for data extraction.
+# 
+# To enable full NetCDF support, install libhdf5-dev:
+#   apt-get install libhdf5-dev libnetcdf-dev
+# Then uncomment:
+# netcdf = "0.9"

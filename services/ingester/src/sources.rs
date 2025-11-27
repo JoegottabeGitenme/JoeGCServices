@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use tracing::{debug, info, instrument, warn};
@@ -213,6 +213,116 @@ impl DataSourceFetcher for NomadsDataSource {
     }
 }
 
+/// GOES satellite data source fetcher (NetCDF on AWS).
+pub struct GoesDataSource {
+    client: Client,
+    bucket: String,
+    product: String,
+    bands: Vec<u8>,
+}
+
+impl GoesDataSource {
+    pub fn new(bucket: String, product: String, bands: Vec<u8>) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self {
+            client,
+            bucket,
+            product,
+            bands,
+        }
+    }
+
+    fn build_s3_url(&self, path: &str) -> String {
+        format!("https://{}.s3.amazonaws.com/{}", self.bucket, path)
+    }
+}
+
+#[async_trait]
+impl DataSourceFetcher for GoesDataSource {
+    #[instrument(skip(self), fields(bucket = %self.bucket, product = %self.product))]
+    async fn list_files(&self, date: &str, cycle: u32) -> Result<Vec<RemoteFile>> {
+        // GOES uses year/day_of_year/hour structure
+        // Convert date (YYYYMMDD) to year/doy
+        let parsed = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")
+            .map_err(|e| anyhow!("Invalid date format: {}", e))?;
+        let year = parsed.year();
+        let doy = parsed.ordinal();
+
+        let prefix = format!("{}/{}/{:03}/{:02}/", self.product, year, doy, cycle);
+
+        // Use S3 list API via HTTP
+        let list_url = format!(
+            "https://{}.s3.amazonaws.com/?list-type=2&prefix={}",
+            self.bucket, prefix
+        );
+
+        debug!(url = %list_url, "Listing GOES S3 bucket");
+
+        let response = self.client.get(&list_url).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("S3 list failed: {}", response.status()));
+        }
+
+        let body = response.text().await?;
+
+        // Parse XML and filter by bands
+        let mut files = Vec::new();
+        for key_match in body.split("<Key>").skip(1) {
+            if let Some(end) = key_match.find("</Key>") {
+                let key = &key_match[..end];
+                
+                // Filter by band - GOES files have pattern like "...C{band:02}_G16..."
+                let should_include = self.bands.iter().any(|&band| {
+                    let pattern = format!("C{:02}_", band);
+                    key.contains(&pattern)
+                });
+
+                if should_include && key.ends_with(".nc") {
+                    files.push(RemoteFile {
+                        path: key.to_string(),
+                        size: None,
+                        last_modified: None,
+                    });
+                }
+            }
+        }
+
+        info!(count = files.len(), prefix = %prefix, "Listed GOES files");
+        Ok(files)
+    }
+
+    #[instrument(skip(self), fields(path = %file.path))]
+    async fn fetch_file(&self, file: &RemoteFile) -> Result<Bytes> {
+        let url = self.build_s3_url(&file.path);
+
+        debug!(url = %url, "Downloading GOES file");
+
+        let response = self.client.get(&url).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Download failed: {}", response.status()));
+        }
+
+        let bytes = response.bytes().await?;
+        info!(size = bytes.len(), path = %file.path, "Downloaded GOES file");
+
+        Ok(bytes)
+    }
+
+    async fn file_exists(&self, file: &RemoteFile) -> Result<bool> {
+        let url = self.build_s3_url(&file.path);
+
+        let response = self.client.head(&url).send().await?;
+
+        Ok(response.status().is_success())
+    }
+}
+
 /// Create appropriate fetcher for a data source config.
 pub fn create_fetcher(
     source: &DataSource,
@@ -240,6 +350,15 @@ pub fn create_fetcher(
             // TODO: Implement THREDDS fetcher
             unimplemented!("THREDDS data source not yet implemented")
         }
+        DataSource::GoesAws {
+            bucket,
+            product,
+            bands,
+        } => Box::new(GoesDataSource::new(
+            bucket.clone(),
+            product.clone(),
+            bands.clone(),
+        )),
     }
 }
 

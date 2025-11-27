@@ -89,6 +89,8 @@ async fn main() -> Result<()> {
         .route("/api/validation/run", get(handlers::validation_run_handler))
         // Storage stats API
         .route("/api/storage/stats", get(handlers::storage_stats_handler))
+        // Container/pod resource stats API
+        .route("/api/container/stats", get(handlers::container_stats_handler))
         // Application metrics API
         .route("/api/metrics", get(handlers::api_metrics_handler))
         // Layer extensions

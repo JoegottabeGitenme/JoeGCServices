@@ -103,6 +103,7 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
     let mut model_params = HashMap::new();
     let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
     let mut param_levels: HashMap<String, Vec<String>> = HashMap::new();  // model_param -> levels
+    let mut model_bboxes = HashMap::new();
     
     for model in &models {
         let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
@@ -119,9 +120,14 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         // Get RUN and FORECAST dimensions
         let dimensions = state.catalog.get_model_dimensions(model).await.unwrap_or_default();
         model_dimensions.insert(model.clone(), dimensions);
+        
+        // Get bounding box for the model
+        if let Ok(bbox) = state.catalog.get_model_bbox(model).await {
+            model_bboxes.insert(model.clone(), bbox);
+        }
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels);
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -371,6 +377,8 @@ pub struct WmtsKvpParams {
     format: Option<String>,
     #[serde(rename = "TIME")]
     time: Option<String>,
+    #[serde(rename = "ELEVATION")]
+    elevation: Option<String>,
 }
 
 #[instrument(skip(state))]
@@ -398,7 +406,12 @@ pub async fn wmts_kvp_handler(
             let tile_row = params.tile_row.unwrap_or(0);
             let tile_col = params.tile_col.unwrap_or(0);
             let z: u32 = tile_matrix.parse().unwrap_or(0);
-            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, None, None).await
+            
+            // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
+            let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
+            let elevation = params.elevation.clone();
+            
+            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, forecast_hour, observation_time, elevation.as_deref()).await
         }
         _ => wmts_exception(
             "MissingParameterValue",
@@ -447,11 +460,11 @@ pub async fn wmts_rest_handler(
     let (y_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
     let y: u32 = y_str.parse().unwrap_or(0);  // Row (Y)
     
-    // Parse TIME parameter as forecast hour
-    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
+    let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
     let elevation = params.elevation.clone();
     
-    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, elevation.as_deref()).await
+    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, observation_time, elevation.as_deref()).await
 }
 
 #[instrument(skip(state))]
@@ -463,11 +476,41 @@ pub async fn xyz_tile_handler(
     let (y_str, _) = y.rsplit_once('.').unwrap_or((&y, "png"));
     let y_val: u32 = y_str.parse().unwrap_or(0);
     
-    // Parse TIME parameter as forecast hour
-    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
+    let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
     let elevation = params.elevation.clone();
     
-    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, elevation.as_deref()).await
+    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, observation_time, elevation.as_deref()).await
+}
+
+/// Parse TIME parameter supporting both forecast hour (integer) and ISO8601 observation time
+fn parse_time_parameter(time: Option<&str>) -> (Option<u32>, Option<chrono::DateTime<chrono::Utc>>) {
+    time.map(|t| {
+        tracing::debug!("Parsing TIME parameter: '{}'", t);
+        // First try to parse as integer (forecast hour)
+        if let Ok(hour) = t.parse::<u32>() {
+            tracing::debug!("Parsed as forecast hour: {}", hour);
+            (Some(hour), None)
+        } else {
+            // Try to parse as ISO8601 datetime for observation layers
+            // Use NaiveDateTime parsing since the format doesn't include timezone offset
+            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%SZ") {
+                let utc_dt = dt.and_utc();
+                tracing::debug!("Parsed as ISO8601 observation time (NaiveDateTime): {:?}", utc_dt);
+                (None, Some(utc_dt))
+            } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.fZ") {
+                let utc_dt = dt.and_utc();
+                tracing::debug!("Parsed as ISO8601 observation time (NaiveDateTime with frac): {:?}", utc_dt);
+                (None, Some(utc_dt))
+            } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
+                tracing::debug!("Parsed as RFC3339 observation time: {:?}", dt);
+                (None, Some(dt.with_timezone(&chrono::Utc)))
+            } else {
+                tracing::warn!("Could not parse TIME parameter: '{}' - tried NaiveDateTime and RFC3339", t);
+                (None, None)
+            }
+        }
+    }).unwrap_or((None, None))
 }
 
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
@@ -502,6 +545,7 @@ async fn wmts_get_tile(
     x: u32,
     y: u32,
     forecast_hour: Option<u32>,
+    observation_time: Option<chrono::DateTime<chrono::Utc>>,
     elevation: Option<&str>,
 ) -> Response {
     use crate::metrics::Timer;
@@ -510,10 +554,11 @@ async fn wmts_get_tile(
     state.metrics.record_wmts_request();
     let timer = Timer::start();
     
-    info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, elevation = ?elevation, "GetTile request");
+    info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, observation_time = ?observation_time, elevation = ?elevation, "GetTile request");
     
     // Build cache key for this tile, including time and elevation for uniqueness
-    let time_key = forecast_hour.map(|h| format!("t{}", h));
+    let time_key = forecast_hour.map(|h| format!("t{}", h))
+        .or_else(|| observation_time.map(|t| format!("obs{}", t.timestamp())));
     let elevation_key = elevation.map(|e| e.replace(' ', "_"));
     let dimension_suffix = match (&time_key, &elevation_key) {
         (Some(t), Some(e)) => Some(format!("{}_{}", t, e)),
@@ -637,12 +682,14 @@ async fn wmts_get_tile(
         .await
     } else {
         // Render the tile with spatial subsetting and optional time/level
-        crate::rendering::render_weather_data_with_level(
+        // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
+        crate::rendering::render_weather_data_with_time(
             &state.storage,
             &state.catalog,
             model,
             &parameter,
             forecast_hour,
+            observation_time,
             elevation,
             256,  // tile width
             256,  // tile height
@@ -769,6 +816,164 @@ pub async fn storage_stats_handler(
     }
 }
 
+/// Container/pod resource stats endpoint
+/// Reads from /proc to get memory and CPU info, also checks cgroup limits
+pub async fn container_stats_handler() -> impl IntoResponse {
+    let stats = read_container_stats();
+    Json(stats)
+}
+
+/// Read container resource statistics from /proc and cgroup filesystems
+fn read_container_stats() -> serde_json::Value {
+    // Memory stats from /proc/meminfo
+    let (mem_total, mem_available, mem_used) = read_proc_meminfo();
+    
+    // CPU stats
+    let cpu_count = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(1);
+    
+    // Load average from /proc/loadavg
+    let load_avg = read_load_average();
+    
+    // Cgroup memory limits (for containerized environments)
+    let (cgroup_limit, cgroup_usage) = read_cgroup_memory();
+    
+    // Process stats from /proc/self
+    let (proc_rss, proc_vms) = read_proc_self_status();
+    
+    // Determine if we're in a container
+    let in_container = std::path::Path::new("/.dockerenv").exists() 
+        || std::env::var("KUBERNETES_SERVICE_HOST").is_ok();
+    
+    // Calculate effective memory limit and usage
+    let effective_limit = if cgroup_limit > 0 { cgroup_limit } else { mem_total };
+    let effective_used = if cgroup_usage > 0 { cgroup_usage } else { mem_used };
+    let memory_percent = if effective_limit > 0 {
+        (effective_used as f64 / effective_limit as f64 * 100.0).round()
+    } else {
+        0.0
+    };
+    
+    serde_json::json!({
+        "container": {
+            "in_container": in_container,
+            "hostname": std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
+        },
+        "memory": {
+            "total_bytes": effective_limit,
+            "used_bytes": effective_used,
+            "available_bytes": if effective_limit > effective_used { effective_limit - effective_used } else { 0 },
+            "percent_used": memory_percent,
+            "cgroup_limit_bytes": cgroup_limit,
+            "cgroup_usage_bytes": cgroup_usage,
+            "host_total_bytes": mem_total,
+            "host_available_bytes": mem_available,
+        },
+        "process": {
+            "rss_bytes": proc_rss,
+            "vms_bytes": proc_vms,
+        },
+        "cpu": {
+            "count": cpu_count,
+            "load_1m": load_avg.0,
+            "load_5m": load_avg.1,
+            "load_15m": load_avg.2,
+        }
+    })
+}
+
+/// Read memory info from /proc/meminfo
+fn read_proc_meminfo() -> (u64, u64, u64) {
+    let content = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let mut total: u64 = 0;
+    let mut available: u64 = 0;
+    
+    for line in content.lines() {
+        if line.starts_with("MemTotal:") {
+            total = parse_kb_value(line) * 1024;
+        } else if line.starts_with("MemAvailable:") {
+            available = parse_kb_value(line) * 1024;
+        }
+    }
+    
+    let used = if total > available { total - available } else { 0 };
+    (total, available, used)
+}
+
+/// Parse a value in KB from /proc/meminfo format
+fn parse_kb_value(line: &str) -> u64 {
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Read load average from /proc/loadavg
+fn read_load_average() -> (f64, f64, f64) {
+    let content = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    let parts: Vec<&str> = content.split_whitespace().collect();
+    
+    let load_1 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let load_5 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let load_15 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    
+    (load_1, load_5, load_15)
+}
+
+/// Read cgroup memory limits (works for cgroup v1 and v2)
+fn read_cgroup_memory() -> (u64, u64) {
+    // Try cgroup v2 first
+    if let Ok(limit) = std::fs::read_to_string("/sys/fs/cgroup/memory.max") {
+        let limit = limit.trim();
+        let limit_bytes = if limit == "max" {
+            0 // No limit
+        } else {
+            limit.parse().unwrap_or(0)
+        };
+        
+        let usage = std::fs::read_to_string("/sys/fs/cgroup/memory.current")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        
+        return (limit_bytes, usage);
+    }
+    
+    // Try cgroup v1
+    if let Ok(limit) = std::fs::read_to_string("/sys/fs/cgroup/memory/memory.limit_in_bytes") {
+        let limit_bytes: u64 = limit.trim().parse().unwrap_or(0);
+        // Check for "unlimited" (very large value)
+        let limit_bytes = if limit_bytes > 1 << 62 { 0 } else { limit_bytes };
+        
+        let usage = std::fs::read_to_string("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        
+        return (limit_bytes, usage);
+    }
+    
+    (0, 0)
+}
+
+/// Read process memory from /proc/self/status
+fn read_proc_self_status() -> (u64, u64) {
+    let content = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let mut rss: u64 = 0;
+    let mut vms: u64 = 0;
+    
+    for line in content.lines() {
+        if line.starts_with("VmRSS:") {
+            rss = parse_kb_value(line) * 1024;
+        } else if line.starts_with("VmSize:") {
+            vms = parse_kb_value(line) * 1024;
+        }
+    }
+    
+    (rss, vms)
+}
+
 // ============================================================================
 // Rendering
 // ============================================================================
@@ -801,18 +1006,8 @@ async fn render_weather_data(
     let model = parts[0];
     let parameter = parts[1..].join("_");
     
-    // Parse TIME parameter early (supports both forecast hour like "3" and ISO8601 datetime)
-    let forecast_hour: Option<u32> = time.and_then(|t| {
-        // First try to parse as integer (forecast hour)
-        if let Ok(hour) = t.parse::<u32>() {
-            Some(hour)
-        } else {
-            // Try to parse as ISO8601 datetime and find matching dataset
-            // For now, we'll just support forecast hour format
-            // ISO8601 support would require querying catalog for nearest time
-            None
-        }
-    });
+    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
+    let (forecast_hour, observation_time) = parse_time_parameter(time);
     
     // ELEVATION parameter is the level string (e.g., "500 mb", "2 m above ground")
     let level = elevation.map(|s| s.to_string());
@@ -879,7 +1074,7 @@ async fn render_weather_data(
         }
     });
     
-    info!(forecast_hour = ?forecast_hour, level = ?level, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
+    info!(forecast_hour = ?forecast_hour, observation_time = ?observation_time, level = ?level, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
 
     // Check if isolines style is requested
     // Check if CRS is Web Mercator - use Mercator projection for resampling
@@ -913,13 +1108,14 @@ async fn render_weather_data(
         .await;
     }
 
-    // Use shared rendering logic with Mercator projection support and level
-    crate::rendering::render_weather_data_with_level(
+    // Use shared rendering logic with support for observation time
+    crate::rendering::render_weather_data_with_time(
         &state.storage,
         &state.catalog,
         model,
         &parameter,
         forecast_hour,
+        observation_time,
         level.as_deref(),
         width,
         height,
@@ -1097,10 +1293,40 @@ fn get_parameter_name(param: &str) -> String {
         "APCP" => "Accumulated Precipitation".to_string(),
         "TCDC" => "Total Cloud Cover".to_string(),
         "GUST" => "Wind Gust Speed".to_string(),
+        "HGT" => "Geopotential Height".to_string(),
         // GRIB2 Product 1 (Meteorological) parameters
         "P1_22" => "Cloud Mixing Ratio".to_string(),
         "P1_23" => "Ice Mixing Ratio".to_string(),
         "P1_24" => "Rain Mixing Ratio".to_string(),
+        // MRMS parameters
+        "REFL" => "Radar Reflectivity".to_string(),
+        "PRECIP_RATE" => "Precipitation Rate".to_string(),
+        "QPE" => "Quantitative Precipitation Estimate".to_string(),
+        "QPE_01H" => "1-Hour Precipitation".to_string(),
+        "QPE_03H" => "3-Hour Precipitation".to_string(),
+        "QPE_06H" => "6-Hour Precipitation".to_string(),
+        "QPE_24H" => "24-Hour Precipitation".to_string(),
+        // GOES parameters (ABI bands)
+        "VIS" => "Visible Imagery".to_string(),
+        "IR" => "Infrared Imagery".to_string(),
+        "WV" => "Water Vapor".to_string(),
+        "CMI" => "Cloud and Moisture Imagery".to_string(),
+        "CMI_C01" => "Visible Blue (0.47µm)".to_string(),
+        "CMI_C02" => "Visible Red (0.64µm)".to_string(),
+        "CMI_C03" => "Vegetation (0.86µm)".to_string(),
+        "CMI_C04" => "Cirrus (1.37µm)".to_string(),
+        "CMI_C05" => "Snow/Ice (1.6µm)".to_string(),
+        "CMI_C06" => "Cloud Particle (2.2µm)".to_string(),
+        "CMI_C07" => "Shortwave IR (3.9µm)".to_string(),
+        "CMI_C08" => "Upper Water Vapor (6.2µm)".to_string(),
+        "CMI_C09" => "Mid Water Vapor (6.9µm)".to_string(),
+        "CMI_C10" => "Lower Water Vapor (7.3µm)".to_string(),
+        "CMI_C11" => "Cloud Phase (8.4µm)".to_string(),
+        "CMI_C12" => "Ozone (9.6µm)".to_string(),
+        "CMI_C13" => "Clean IR (10.3µm)".to_string(),
+        "CMI_C14" => "IR Longwave (11.2µm)".to_string(),
+        "CMI_C15" => "Dirty IR (12.3µm)".to_string(),
+        "CMI_C16" => "CO2 (13.3µm)".to_string(),
         // Default: return the code itself
         _ => param.to_string(),
     }
@@ -1112,6 +1338,7 @@ fn build_wms_capabilities_xml(
     model_params: &HashMap<String, Vec<String>>,
     model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
     param_levels: &HashMap<String, Vec<String>>,
+    model_bboxes: &HashMap<String, wms_common::BoundingBox>,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
@@ -1123,17 +1350,50 @@ fn build_wms_capabilities_xml(
             let params = model_params.get(model).unwrap_or(&empty_params);
             let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
             
-            // Build base dimension elements (RUN and FORECAST)
-            let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
-            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
-            let forecast_values = if forecasts.is_empty() { "0".to_string() } else { forecasts.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",") };
-            // Default to latest (highest) forecast hour to match get_latest() behavior
-            let forecast_default = forecasts.last().unwrap_or(&0);
+            // Get bbox for this model, default to global if not found
+            let bbox = model_bboxes.get(model).cloned().unwrap_or_else(|| {
+                wms_common::BoundingBox::new(0.0, -90.0, 360.0, 90.0)
+            });
             
-            let base_dimensions = format!(
-                r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
-                run_default, run_values, forecast_default, forecast_values
-            );
+            // Normalize longitude to -180/180 for WMS
+            // For global data (0-360), convert to -180/180
+            let (west, east) = if bbox.min_x == 0.0 && bbox.max_x == 360.0 {
+                (-180.0, 180.0)
+            } else {
+                // For regional data, convert >180 to negative
+                let w = if bbox.min_x > 180.0 { bbox.min_x - 360.0 } else { bbox.min_x };
+                let e = if bbox.max_x > 180.0 { bbox.max_x - 360.0 } else { bbox.max_x };
+                (w, e)
+            };
+            let south = bbox.min_y;
+            let north = bbox.max_y;
+            
+            // Check if this is an observational model (MRMS, GOES, etc.)
+            // Observational data has forecast_hour=0 and uses TIME dimension instead of RUN/FORECAST
+            let is_observational = model == "mrms" || model == "goes" || model == "goes16" || model == "goes18";
+            
+            // Build base dimension elements
+            let base_dimensions = if is_observational {
+                // For observational data: single TIME dimension with available observation times
+                // The runs list contains the observation times (stored as reference_time with forecast_hour=0)
+                let time_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
+                let time_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+                format!(
+                    r#"<Dimension name="TIME" units="ISO8601" default="{}">{}</Dimension>"#,
+                    time_default, time_values
+                )
+            } else {
+                // For forecast models: RUN (model initialization time) and FORECAST (hours ahead)
+                let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
+                let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+                let forecast_values = if forecasts.is_empty() { "0".to_string() } else { forecasts.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",") };
+                // Default to earliest (0th) forecast hour from the latest run
+                let forecast_default = forecasts.first().unwrap_or(&0);
+                format!(
+                    r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
+                    run_default, run_values, forecast_default, forecast_values
+                )
+            };
             
             let param_layers = params
                 .iter()
@@ -1171,15 +1431,24 @@ fn build_wms_capabilities_xml(
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style>"
                     } else if p.contains("PRES") || p.contains("PRMSL") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style>"
-                    } else if p.contains("RH") || p.contains("HUMID") || p.contains("PRECIP") {
+                    } else if p.contains("RH") || p.contains("HUMID") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>humidity</Name><Title>Humidity</Title></Style>"
+                    } else if p.contains("REFL") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>reflectivity</Name><Title>Radar Reflectivity</Title></Style>"
+                    } else if p.contains("PRECIP_RATE") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precip_rate</Name><Title>Precipitation Rate</Title></Style>"
+                    } else if p.contains("QPE") || p.contains("PRECIP") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style>"
                     } else {
                         "<Style><Name>default</Name><Title>Default</Title></Style>"
                     };
                     
                     format!(
-                        r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/>{}{}</Layer>"#,
-                        model, p, model.to_uppercase(), get_parameter_name(p), styles, all_dimensions
+                        r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/>{}{}</Layer>"#,
+                        model, p, model.to_uppercase(), get_parameter_name(p),
+                        west, east, south, north,
+                        west, south, east, north,
+                        styles, all_dimensions
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1208,8 +1477,11 @@ fn build_wms_capabilities_xml(
              
              let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
                  format!(
-                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}{}</Layer>"#,
-                     model, model.to_uppercase(), base_dimensions, wind_elevation_dim
+                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}{}</Layer>"#,
+                     model, model.to_uppercase(),
+                     west, east, south, north,
+                     west, south, east, north,
+                     base_dimensions, wind_elevation_dim
                  )
              } else {
                  String::new()

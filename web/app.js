@@ -2,16 +2,28 @@
 
 const API_BASE = 'http://localhost:8080';
 const REDIS_URL = 'http://localhost:8080/api/ingestion'; // Placeholder - would need API endpoint
+
+// External service URLs - can be customized for different environments
+const EXTERNAL_URLS = {
+    minio: 'http://localhost:9001',
+    // Standard K8s dashboard URL when using kubectl proxy
+    k8sDashboard: 'http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/',
+    // Alternative: Direct NodePort or LoadBalancer URL
+    // k8sDashboard: 'https://localhost:30443',
+};
 let map;
 let wmsLayer = null;
 let selectedLayer = null;
 let ingestionStatusInterval = null;
-let currentForecastHour = 24; // Default to latest (hour 24)
+let currentForecastHour = 0; // Default to analysis/earliest (hour 0)
 let currentRun = 'latest'; // Default to latest run
 let currentElevation = ''; // Default to surface/empty
 let availableRuns = [];
 let availableForecastHours = [0, 3, 6, 12, 24];
 let availableElevations = []; // Available levels for current layer
+let availableObservationTimes = []; // For TIME-only layers (GOES, MRMS)
+let currentObservationTime = null; // Selected observation time
+let layerTimeMode = 'forecast'; // 'forecast' (RUN+FORECAST) or 'observation' (TIME only)
 let playbackInterval = null;
 let isPlaying = false;
 
@@ -61,6 +73,7 @@ const metricUptimeEl = document.getElementById('metric-uptime');
 // State for layer selection
 let availableLayers = [];
 let layerStyles = {}; // Map of layer name -> array of styles
+let layerBounds = {}; // Map of layer name -> {west, south, east, north}
 let selectedProtocol = 'wmts';
 let selectedStyle = 'default';
 let queryEnabled = true;
@@ -99,6 +112,7 @@ function setupTimeControls() {
     const timeSlider = document.getElementById('time-slider');
     const runSelect = document.getElementById('run-select');
     const elevationSelect = document.getElementById('elevation-select');
+    const obsTimeSelect = document.getElementById('observation-time-select');
     
     if (timeSlider) {
         timeSlider.addEventListener('input', (e) => {
@@ -127,6 +141,11 @@ function setupTimeControls() {
             console.log('Elevation changed to:', currentElevation);
             updateLayerTime();
         });
+    }
+    
+    // Observation time selector (for GOES, MRMS)
+    if (obsTimeSelect) {
+        obsTimeSelect.addEventListener('change', onObservationTimeChange);
     }
 }
 
@@ -232,9 +251,10 @@ async function loadAvailableLayers() {
         const parser = new DOMParser();
         const xml = parser.parseFromString(text, 'text/xml');
 
-        // Extract layer names and styles
+        // Extract layer names, styles, and bounds
         const layers = [];
         layerStyles = {}; // Reset styles map
+        layerBounds = {}; // Reset bounds map
         
         if (selectedProtocol === 'wmts') {
             // WMTS uses <ows:Identifier> for layer names
@@ -257,6 +277,18 @@ async function loadAvailableLayers() {
                         }
                     });
                     layerStyles[layerName] = styles;
+                    
+                    // Extract bounding box for WMTS (use WGS84BoundingBox)
+                    const bboxEl = layerEl.querySelector('WGS84BoundingBox');
+                    if (bboxEl) {
+                        const lowerCorner = bboxEl.querySelector('LowerCorner');
+                        const upperCorner = bboxEl.querySelector('UpperCorner');
+                        if (lowerCorner && upperCorner) {
+                            const [west, south] = lowerCorner.textContent.split(' ').map(Number);
+                            const [east, north] = upperCorner.textContent.split(' ').map(Number);
+                            layerBounds[layerName] = { west, south, east, north };
+                        }
+                    }
                 }
             });
         } else {
@@ -282,6 +314,16 @@ async function loadAvailableLayers() {
                         }
                     });
                     layerStyles[layerName] = styles;
+                    
+                    // Extract bounding box for WMS
+                    const bboxEl = layerEl.querySelector('EX_GeographicBoundingBox');
+                    if (bboxEl) {
+                        const west = parseFloat(bboxEl.querySelector('westBoundLongitude')?.textContent || '-180');
+                        const east = parseFloat(bboxEl.querySelector('eastBoundLongitude')?.textContent || '180');
+                        const south = parseFloat(bboxEl.querySelector('southBoundLatitude')?.textContent || '-90');
+                        const north = parseFloat(bboxEl.querySelector('northBoundLatitude')?.textContent || '90');
+                        layerBounds[layerName] = { west, south, east, north };
+                    }
                 }
             });
         }
@@ -347,8 +389,6 @@ function formatLayerName(layerName) {
     return layerName;
 }
 
-
-
 // Load a specific layer on the map
 function loadLayerOnMap(layerName) {
     // Remove existing layer and cleanup event listeners
@@ -366,6 +406,13 @@ function loadLayerOnMap(layerName) {
     performanceStats.tileTimes = [];
     performanceStats.tilesLoaded = 0;
     performanceStats.layerStartTime = null;
+
+    // Reset time mode to forecast (default) before loading
+    // This prevents stale observation times from being used for forecast layers
+    // The correct mode will be set by fetchAvailableTimes() after loading
+    layerTimeMode = 'forecast';
+    currentObservationTime = null;
+    currentForecastHour = 0;
 
     if (selectedProtocol === 'wmts') {
         // Create WMTS layer using Leaflet TileLayer with direct URL pattern
@@ -413,7 +460,9 @@ function loadLayerOnMap(layerName) {
     currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
     updatePerformanceDisplay();
     updateQueryHint();
-    updateTimeControlsVisibility();
+    
+    // Fetch available times and update time controls (this detects observation vs forecast mode)
+    fetchAvailableTimes();
 }
 
 // Create a WMS image overlay that covers the current viewport
@@ -446,24 +495,39 @@ function createWmsImageOverlay(layerName, style) {
     return overlay;
 }
 
-// Build WMTS tile URL with optional time/elevation query parameters
+// Build WMTS tile URL with optional time/elevation dimensions
 function buildWmtsTileUrl(layerName, style) {
-    // Base URL pattern for WMTS REST tiles
-    let url = `${API_BASE}/wmts/rest/${layerName}/${style}/WebMercatorQuad/{z}/{x}/{y}.png`;
+    // Use WMTS KVP format which properly supports TIME and ELEVATION dimensions
+    const params = [
+        'SERVICE=WMTS',
+        'REQUEST=GetTile',
+        `LAYER=${layerName}`,
+        `STYLE=${style}`,
+        'TILEMATRIXSET=WebMercatorQuad',
+        'TILEMATRIX={z}',
+        'TILEROW={y}',
+        'TILECOL={x}',
+        'FORMAT=image/png'
+    ];
     
-    // Add dimension query parameters if set
-    const params = [];
-    if (currentForecastHour !== undefined && currentForecastHour !== null) {
-        params.push(`time=${currentForecastHour}`);
+    // Add TIME parameter based on layer mode
+    if (layerTimeMode === 'observation') {
+        // Observation layers use ISO8601 timestamp
+        if (currentObservationTime) {
+            params.push(`TIME=${encodeURIComponent(currentObservationTime)}`);
+        }
+    } else {
+        // Forecast layers use forecast hour
+        if (currentForecastHour !== undefined && currentForecastHour !== null) {
+            params.push(`TIME=${currentForecastHour}`);
+        }
     }
+    
     if (currentElevation) {
-        params.push(`elevation=${encodeURIComponent(currentElevation)}`);
+        params.push(`ELEVATION=${encodeURIComponent(currentElevation)}`);
     }
     
-    if (params.length > 0) {
-        url += '?' + params.join('&');
-    }
-    
+    const url = `${API_BASE}/wmts?${params.join('&')}`;
     console.log('WMTS tile URL template:', url);
     return url;
 }
@@ -496,6 +560,16 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
     const bbox = `${mercWest},${mercSouth},${mercEast},${mercNorth}`;
     console.log('WMS BBOX (EPSG:3857):', { west, south, east, north, mercWest, mercSouth, mercEast, mercNorth });
     
+    // Determine TIME parameter based on layer mode
+    let timeValue;
+    if (layerTimeMode === 'observation') {
+        // Observation layers use ISO8601 timestamp
+        timeValue = currentObservationTime || '';
+    } else {
+        // Forecast layers use forecast hour
+        timeValue = currentForecastHour.toString();
+    }
+    
     const params = new URLSearchParams({
         SERVICE: 'WMS',
         VERSION: '1.3.0',
@@ -508,7 +582,7 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
         HEIGHT: size.y,
         FORMAT: 'image/png',
         TRANSPARENT: 'true',
-        TIME: currentForecastHour.toString()
+        TIME: timeValue
     });
     
     // Add elevation if set
@@ -559,12 +633,15 @@ function updateQueryHint() {
 function initIngestionStatus() {
     checkIngestionStatus();
     fetchBackendMetrics();
+    fetchContainerStats();
     // Refresh ingestion status every 10 seconds
     ingestionStatusInterval = setInterval(() => {
         checkIngestionStatus();
     }, 10000);
     // Refresh backend metrics every 2 seconds
     setInterval(fetchBackendMetrics, 2000);
+    // Refresh container stats every 5 seconds
+    setInterval(fetchContainerStats, 5000);
 }
 
 // Check ingestion status from catalog database
@@ -750,6 +827,97 @@ function formatUptime(seconds) {
     return `${hours}h ${mins}m`;
 }
 
+// Fetch container/pod resource stats
+async function fetchContainerStats() {
+    try {
+        const response = await fetch(`${API_BASE}/api/container/stats`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        updateContainerStatsUI(data);
+    } catch (error) {
+        console.error('Error fetching container stats:', error);
+    }
+}
+
+// Update container stats UI
+function updateContainerStatsUI(data) {
+    const { container, memory, process, cpu } = data;
+    
+    // Memory stats
+    const memUsedEl = document.getElementById('container-mem-used');
+    const memLimitEl = document.getElementById('container-mem-limit');
+    const memPercentEl = document.getElementById('container-mem-percent');
+    const memBarEl = document.getElementById('container-mem-bar');
+    
+    if (memUsedEl) memUsedEl.textContent = formatBytes(memory.used_bytes);
+    if (memLimitEl) {
+        if (memory.cgroup_limit_bytes > 0) {
+            memLimitEl.textContent = formatBytes(memory.cgroup_limit_bytes);
+        } else {
+            memLimitEl.textContent = formatBytes(memory.host_total_bytes) + ' (host)';
+        }
+    }
+    if (memPercentEl) {
+        memPercentEl.textContent = memory.percent_used.toFixed(1) + '%';
+        // Color code based on usage
+        memPercentEl.className = 'metric-value ' + getMemoryUsageClass(memory.percent_used);
+    }
+    if (memBarEl) {
+        memBarEl.style.width = Math.min(memory.percent_used, 100) + '%';
+        memBarEl.className = 'memory-bar ' + getMemoryUsageClass(memory.percent_used);
+    }
+    
+    // Process stats
+    const procRssEl = document.getElementById('container-proc-rss');
+    const procVmsEl = document.getElementById('container-proc-vms');
+    
+    if (procRssEl) procRssEl.textContent = formatBytes(process.rss_bytes);
+    if (procVmsEl) procVmsEl.textContent = formatBytes(process.vms_bytes);
+    
+    // CPU stats
+    const cpuCountEl = document.getElementById('container-cpu-count');
+    const load1mEl = document.getElementById('container-load-1m');
+    const load5mEl = document.getElementById('container-load-5m');
+    
+    if (cpuCountEl) cpuCountEl.textContent = cpu.count;
+    if (load1mEl) {
+        load1mEl.textContent = cpu.load_1m.toFixed(2);
+        load1mEl.className = 'metric-value ' + getLoadClass(cpu.load_1m, cpu.count);
+    }
+    if (load5mEl) {
+        load5mEl.textContent = cpu.load_5m.toFixed(2);
+        load5mEl.className = 'metric-value ' + getLoadClass(cpu.load_5m, cpu.count);
+    }
+    
+    // Container info
+    const containerTypeEl = document.getElementById('container-type');
+    const hostnameEl = document.getElementById('container-hostname');
+    
+    if (containerTypeEl) {
+        containerTypeEl.textContent = container.in_container ? 'Yes' : 'No (bare metal)';
+    }
+    if (hostnameEl) {
+        hostnameEl.textContent = container.hostname;
+        hostnameEl.title = container.hostname;
+    }
+}
+
+// Get CSS class based on memory usage percentage
+function getMemoryUsageClass(percent) {
+    if (percent < 60) return 'good';
+    if (percent < 80) return 'warning';
+    return 'bad';
+}
+
+// Get CSS class based on CPU load relative to core count
+function getLoadClass(load, cores) {
+    const ratio = load / cores;
+    if (ratio < 0.7) return 'good';
+    if (ratio < 1.0) return 'warning';
+    return 'bad';
+}
+
 // ============================================================================
 // Performance Tracking
 // ============================================================================
@@ -906,6 +1074,14 @@ function buildGetFeatureInfoUrl(layer, bounds, width, height, x, y) {
         bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
     }
     
+    // Determine TIME parameter based on layer mode
+    let timeValue;
+    if (layerTimeMode === 'observation') {
+        timeValue = currentObservationTime || '';
+    } else {
+        timeValue = currentForecastHour.toString();
+    }
+    
     const params = new URLSearchParams({
         SERVICE: 'WMS',
         REQUEST: 'GetFeatureInfo',
@@ -920,7 +1096,7 @@ function buildGetFeatureInfoUrl(layer, bounds, width, height, x, y) {
         I: x.toString(),
         J: y.toString(),
         INFO_FORMAT: 'application/json',
-        TIME: currentForecastHour.toString()
+        TIME: timeValue
     });
     
     // Add elevation if set
@@ -1160,31 +1336,53 @@ window.addEventListener('beforeunload', () => {
 
 // Update time display
 function updateTimeDisplay() {
-    const timeDisplay = document.getElementById('current-time-display');
-    const validTimeDisplay = document.getElementById('valid-time-display');
-    
-    if (timeDisplay) {
-        // Format as F+000, F+003, etc. (standard meteorological notation)
-        const formatted = `F+${String(currentForecastHour).padStart(3, '0')}`;
-        timeDisplay.textContent = formatted;
-        timeDisplay.style.opacity = '1';
-    }
-    
-    // Calculate and display valid time (run + forecast hour)
-    if (validTimeDisplay) {
-        const runTime = currentRun === 'latest' ? 
-            (availableRuns.length > 0 ? availableRuns[0] : null) : 
-            currentRun;
+    if (layerTimeMode === 'observation') {
+        // Observation mode display
+        const obsTimeDisplay = document.getElementById('current-obs-time-display');
+        const obsCountDisplay = document.getElementById('obs-time-count');
         
-        if (runTime) {
-            const runDate = new Date(runTime);
-            const validDate = new Date(runDate.getTime() + currentForecastHour * 60 * 60 * 1000);
+        if (obsTimeDisplay) {
+            if (currentObservationTime) {
+                // Format ISO8601 timestamp for display
+                const date = new Date(currentObservationTime);
+                const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+                obsTimeDisplay.textContent = formatted;
+            } else {
+                obsTimeDisplay.textContent = '--';
+            }
+        }
+        
+        if (obsCountDisplay) {
+            obsCountDisplay.textContent = `${availableObservationTimes.length} times`;
+        }
+    } else {
+        // Forecast mode display
+        const timeDisplay = document.getElementById('current-time-display');
+        const validTimeDisplay = document.getElementById('valid-time-display');
+        
+        if (timeDisplay) {
+            // Format as F+000, F+003, etc. (standard meteorological notation)
+            const formatted = `F+${String(currentForecastHour).padStart(3, '0')}`;
+            timeDisplay.textContent = formatted;
+            timeDisplay.style.opacity = '1';
+        }
+        
+        // Calculate and display valid time (run + forecast hour)
+        if (validTimeDisplay) {
+            const runTime = currentRun === 'latest' ? 
+                (availableRuns.length > 0 ? availableRuns[0] : null) : 
+                currentRun;
             
-            // Format as: "2025-11-27 20:50Z"
-            const formatted = validDate.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
-            validTimeDisplay.textContent = formatted;
-        } else {
-            validTimeDisplay.textContent = '--';
+            if (runTime) {
+                const runDate = new Date(runTime);
+                const validDate = new Date(runDate.getTime() + currentForecastHour * 60 * 60 * 1000);
+                
+                // Format as: "2025-11-27 20:50Z"
+                const formatted = validDate.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
+                validTimeDisplay.textContent = formatted;
+            } else {
+                validTimeDisplay.textContent = '--';
+            }
         }
     }
 }
@@ -1219,27 +1417,42 @@ function updateLayerTime() {
     
     // Update displays
     updateTimeDisplay();
-    console.log('Layer updated with TIME:', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
+    
+    // Log appropriate time info based on mode
+    if (layerTimeMode === 'observation') {
+        console.log('Layer updated with TIME (observation):', currentObservationTime, 'ELEVATION:', currentElevation || 'default');
+    } else {
+        console.log('Layer updated with TIME (forecast):', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
+    }
 }
 
 
 
-// Show/hide time controls based on protocol
-async function updateTimeControlsVisibility() {
+// Show/hide time controls based on protocol and layer time mode
+function updateTimeControlsVisibility() {
     const timeControlSection = document.getElementById('time-control-section');
-    const protocolNote = document.getElementById('time-protocol-note');
+    const forecastControls = document.getElementById('forecast-controls');
+    const observationControls = document.getElementById('observation-controls');
+    const sectionTitle = document.getElementById('time-section-title');
     
     if (timeControlSection) {
         // Show time controls when a layer is selected
         if (selectedLayer) {
             timeControlSection.style.display = 'block';
             
-            // WMTS now supports time/elevation via query parameters - hide warning
-            if (protocolNote) {
-                protocolNote.style.display = 'none';
+            // Toggle between forecast and observation controls based on layer type
+            if (layerTimeMode === 'observation') {
+                // Observation mode (GOES, MRMS)
+                if (forecastControls) forecastControls.style.display = 'none';
+                if (observationControls) observationControls.style.display = 'block';
+                if (sectionTitle) sectionTitle.textContent = 'Observation Time';
+            } else {
+                // Forecast mode (GFS, HRRR)
+                if (forecastControls) forecastControls.style.display = 'block';
+                if (observationControls) observationControls.style.display = 'none';
+                if (sectionTitle) sectionTitle.textContent = 'Model Run & Forecast';
             }
             
-            await fetchAvailableTimes();
             updateTimeDisplay();
         } else {
             timeControlSection.style.display = 'none';
@@ -1256,8 +1469,10 @@ async function fetchAvailableTimes() {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'text/xml');
         
-        // Reset elevations
+        // Reset state
         availableElevations = [];
+        availableObservationTimes = [];
+        layerTimeMode = 'forecast'; // Default to forecast mode
         
         // Find the current layer
         const layers = doc.getElementsByTagName('Layer');
@@ -1266,29 +1481,60 @@ async function fetchAvailableTimes() {
             if (nameEl && nameEl.textContent === selectedLayer) {
                 // Get dimensions
                 const dimensions = layer.getElementsByTagName('Dimension');
+                let hasTimeDimension = false;
+                let hasRunDimension = false;
+                
                 for (let dim of dimensions) {
-                    if (dim.getAttribute('name') === 'RUN') {
+                    const dimName = dim.getAttribute('name');
+                    
+                    if (dimName === 'TIME') {
+                        // Observational data - single TIME dimension with ISO8601 timestamps
+                        hasTimeDimension = true;
+                        const timeText = dim.textContent.trim();
+                        availableObservationTimes = timeText.split(',').filter(t => t && t !== 'latest');
+                        // Set default to latest observation time
+                        currentObservationTime = availableObservationTimes.length > 0 
+                            ? availableObservationTimes[0] 
+                            : null;
+                        console.log('Layer has TIME dimension (observation mode):', availableObservationTimes.length, 'times');
+                    }
+                    if (dimName === 'RUN') {
+                        hasRunDimension = true;
                         const runsText = dim.textContent.trim();
                         availableRuns = runsText.split(',');
                         updateRunSelector();
                     }
-                    if (dim.getAttribute('name') === 'FORECAST') {
+                    if (dimName === 'FORECAST') {
                         const forecastText = dim.textContent.trim();
                         availableForecastHours = forecastText.split(',').map(h => parseInt(h));
                         updateForecastSlider();
                     }
-                    if (dim.getAttribute('name') === 'ELEVATION') {
+                    if (dimName === 'ELEVATION') {
                         const elevationText = dim.textContent.trim();
                         availableElevations = elevationText.split(',');
                         updateElevationSelector();
                     }
                 }
+                
+                // Determine layer time mode
+                if (hasTimeDimension && !hasRunDimension) {
+                    layerTimeMode = 'observation';
+                    updateObservationTimeSelector();
+                } else {
+                    layerTimeMode = 'forecast';
+                }
+                
+                console.log('Layer time mode:', layerTimeMode);
                 break;
             }
         }
         
-        // Hide elevation selector if no elevations available
+        // Update UI visibility based on time mode
+        updateTimeControlsVisibility();
         updateElevationVisibility();
+        
+        // Reload the layer with the correct time parameters now that we know the time mode
+        updateLayerTime();
         
     } catch (error) {
         console.error('Failed to fetch available times:', error);
@@ -1403,4 +1649,67 @@ function updateElevationVisibility() {
         elevationGroup.style.display = 'none';
         currentElevation = ''; // Reset to default
     }
+}
+
+// Update observation time selector dropdown
+function updateObservationTimeSelector() {
+    const obsTimeSelect = document.getElementById('observation-time-select');
+    if (!obsTimeSelect) return;
+    
+    obsTimeSelect.innerHTML = '';
+    
+    if (availableObservationTimes.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No times available';
+        obsTimeSelect.appendChild(option);
+        return;
+    }
+    
+    // Sort times descending (most recent first)
+    const sortedTimes = [...availableObservationTimes].sort((a, b) => {
+        return new Date(b) - new Date(a);
+    });
+    
+    sortedTimes.forEach((time, index) => {
+        const option = document.createElement('option');
+        option.value = time;
+        
+        // Format for display: "2025-11-27 14:30:00Z (Latest)"
+        const date = new Date(time);
+        const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+        const label = index === 0 ? ' (Latest)' : '';
+        option.textContent = formatted + label;
+        
+        obsTimeSelect.appendChild(option);
+    });
+    
+    // Select the first (latest) time by default
+    if (sortedTimes.length > 0 && !currentObservationTime) {
+        currentObservationTime = sortedTimes[0];
+    }
+    
+    // Set the current selection
+    if (currentObservationTime) {
+        obsTimeSelect.value = currentObservationTime;
+    }
+    
+    console.log('Observation time selector updated:', availableObservationTimes.length, 'times, current:', currentObservationTime);
+}
+
+// Handle observation time selection change
+function onObservationTimeChange(e) {
+    currentObservationTime = e.target.value;
+    console.log('Observation time changed to:', currentObservationTime);
+    updateTimeDisplay();
+    updateLayerTime();
+}
+
+// Stop any active playback animation
+function stopPlayback() {
+    if (playbackInterval) {
+        clearInterval(playbackInterval);
+        playbackInterval = null;
+    }
+    isPlaying = false;
 }

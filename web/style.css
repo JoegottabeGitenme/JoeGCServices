@@ -691,6 +691,42 @@ html, body {
     color: #f87171;
 }
 
+/* Container Stats Memory Bar */
+.memory-bar-container {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+}
+
+.memory-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.memory-bar.good {
+    background: linear-gradient(90deg, #22c55e, #4ade80);
+}
+
+.memory-bar.warning {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.memory-bar.bad {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+/* Container Stats Section */
+.container-stats-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.container-stats .metrics-group {
+    margin-bottom: 0.75rem;
+}
+
 /* Model Selection Controls */
 .control-group {
     margin-bottom: 1rem;
@@ -1219,4 +1255,43 @@ html, body {
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+}
+
+/* Observation Time Controls (GOES, MRMS) */
+.observation-info {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.75rem;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.obs-time-display,
+.obs-count {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.obs-time-label,
+.obs-count-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.obs-time-value {
+    font-size: 0.9rem;
+    color: white;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.obs-count-value {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
 }

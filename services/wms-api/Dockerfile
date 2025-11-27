@@ -1,5 +1,5 @@
-# Build stage
-FROM rust:latest AS builder
+# Build stage - use latest rust with bookworm base for glibc compatibility
+FROM rust:bookworm AS builder
 
 WORKDIR /app
 
@@ -11,13 +11,14 @@ COPY services ./services
 # Build the service
 RUN cargo build --release --package wms-api
 
-# Runtime stage
+# Runtime stage - same base as builder
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     curl \
+    netcdf-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/wms-api /usr/local/bin/wms-api

@@ -1,6 +1,7 @@
 //! Ingester configuration.
 
 use anyhow::Result;
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -132,6 +133,72 @@ impl IngesterConfig {
             },
         );
 
+        // GOES-16 (GOES-East) satellite imagery
+        models.insert(
+            "goes16".to_string(),
+            ModelConfig {
+                name: "GOES-16".to_string(),
+                source: DataSource::GoesAws {
+                    bucket: "noaa-goes16".to_string(),
+                    product: "ABI-L2-CMIPC".to_string(),
+                    bands: vec![1, 2, 13], // Visible blue, red visible, clean IR
+                },
+                parameters: vec![
+                    ParameterConfig {
+                        name: "visible".to_string(),
+                        grib_filter: GribFilter {
+                            level: "toa".to_string(),
+                            parameter: "CMI_C02".to_string(), // 0.64µm red visible
+                        },
+                    },
+                    ParameterConfig {
+                        name: "ir".to_string(),
+                        grib_filter: GribFilter {
+                            level: "toa".to_string(),
+                            parameter: "CMI_C13".to_string(), // 10.3µm clean IR
+                        },
+                    },
+                ],
+                cycles: (0..24).collect(), // Hourly
+                forecast_hours: vec![1, 2, 13], // Reused as band numbers
+                resolution: "1km".to_string(),
+                poll_interval_secs: 300, // 5 minutes - GOES updates every 5-15 min
+            },
+        );
+
+        // GOES-18 (GOES-West) satellite imagery
+        models.insert(
+            "goes18".to_string(),
+            ModelConfig {
+                name: "GOES-18".to_string(),
+                source: DataSource::GoesAws {
+                    bucket: "noaa-goes18".to_string(),
+                    product: "ABI-L2-CMIPC".to_string(),
+                    bands: vec![1, 2, 13],
+                },
+                parameters: vec![
+                    ParameterConfig {
+                        name: "visible".to_string(),
+                        grib_filter: GribFilter {
+                            level: "toa".to_string(),
+                            parameter: "CMI_C02".to_string(),
+                        },
+                    },
+                    ParameterConfig {
+                        name: "ir".to_string(),
+                        grib_filter: GribFilter {
+                            level: "toa".to_string(),
+                            parameter: "CMI_C13".to_string(),
+                        },
+                    },
+                ],
+                cycles: (0..24).collect(),
+                forecast_hours: vec![1, 2, 13],
+                resolution: "1km".to_string(),
+                poll_interval_secs: 300,
+            },
+        );
+
         Ok(Self {
             storage,
             database_url,
@@ -187,6 +254,16 @@ pub enum DataSource {
 
     /// THREDDS Data Server
     Thredds { catalog_url: String },
+
+    /// GOES satellite data on AWS (NetCDF format)
+    GoesAws {
+        /// S3 bucket name (e.g., "noaa-goes16", "noaa-goes18")
+        bucket: String,
+        /// Product type (e.g., "ABI-L2-CMIPC" for CONUS CMI)
+        product: String,
+        /// Bands to ingest (e.g., [1, 2, 13] for visible, red visible, clean IR)
+        bands: Vec<u8>,
+    },
 }
 
 /// Configuration for a parameter to extract.
@@ -225,6 +302,22 @@ impl DataSource {
                 // THREDDS uses catalog navigation
                 String::new()
             }
+            DataSource::GoesAws { product, .. } => {
+                // GOES uses year/day_of_year/hour structure
+                // date format is YYYYMMDD, convert to year/doy
+                if date.len() >= 8 {
+                    let year = &date[0..4];
+                    // Calculate day of year from date
+                    if let Ok(parsed) = chrono::NaiveDate::parse_from_str(date, "%Y%m%d") {
+                        let doy = parsed.ordinal();
+                        format!("{}/{}/{:03}/{:02}", product, year, doy, cycle)
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            }
         }
     }
 
@@ -237,6 +330,16 @@ impl DataSource {
                 _ => format!("{}.t{:02}z.f{:03}.grib2", model, cycle, fhr),
             },
             DataSource::Thredds { .. } => String::new(),
+            DataSource::GoesAws { .. } => {
+                // GOES files match pattern: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}
+                // fhr is reused as band number for GOES
+                format!("C{:02}", fhr)
+            }
         }
+    }
+
+    /// Check if this is a GOES data source
+    pub fn is_goes(&self) -> bool {
+        matches!(self, DataSource::GoesAws { .. })
     }
 }
