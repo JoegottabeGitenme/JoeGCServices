@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # OGC TEAM Engine - WMS 1.3.0 Conformance Testing
+  # =============================================================================
+  teamengine:
+    image: ogccite/teamengine-production:latest
+    container_name: teamengine
+    ports:
+      - "8081:8080"
+    volumes:
+      # Persist test results and user sessions
+      - ./results/te_base:/usr/local/tomcat/te_base/users
+      # Mount config files
+      - ./config:/opt/config:ro
+    environment:
+      - JAVA_OPTS=-Xmx1024m -Xms512m
+    networks:
+      - wms-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/teamengine/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # =============================================================================
+  # Test Runner - Automated test execution via standalone JAR
+  # =============================================================================
+  test-runner:
+    image: eclipse-temurin:11-jdk
+    container_name: wms-test-runner
+    volumes:
+      - ./config:/opt/config:ro
+      - ./results:/opt/results
+      - ./scripts:/opt/scripts:ro
+    working_dir: /opt
+    environment:
+      # Set your WMS server URL here (or override via .env file)
+      - WMS_CAPABILITIES_URL=${WMS_CAPABILITIES_URL:-http://host.docker.internal:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0}
+      - ETS_VERSION=${ETS_VERSION:-1.32}
+    networks:
+      - wms-test-network
+    entrypoint: ["/bin/bash", "/opt/scripts/run-tests.sh"]
+    profiles:
+      - test  # Only runs when explicitly called
+
+networks:
+  wms-test-network:
+    driver: bridge

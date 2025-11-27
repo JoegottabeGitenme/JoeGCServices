@@ -1,0 +1,41 @@
+{
+  "name": "reflectivity",
+  "title": "Radar Reflectivity",
+  "description": "Standard NOAA radar reflectivity color scale (dBZ)",
+  "type": "gradient",
+  "units": "dBZ",
+  "range": {
+    "min": -10,
+    "max": 75
+  },
+  "colors": [
+    {"value": -10, "color": [0, 0, 0, 0]},
+    {"value": 5, "color": [100, 100, 100]},
+    {"value": 10, "color": [75, 75, 75]},
+    {"value": 15, "color": [0, 236, 236]},
+    {"value": 20, "color": [1, 160, 246]},
+    {"value": 25, "color": [0, 0, 246]},
+    {"value": 30, "color": [0, 255, 0]},
+    {"value": 35, "color": [0, 200, 0]},
+    {"value": 40, "color": [0, 144, 0]},
+    {"value": 45, "color": [255, 255, 0]},
+    {"value": 50, "color": [231, 192, 0]},
+    {"value": 55, "color": [255, 144, 0]},
+    {"value": 60, "color": [255, 0, 0]},
+    {"value": 65, "color": [214, 0, 0]},
+    {"value": 70, "color": [192, 0, 0]},
+    {"value": 75, "color": [255, 0, 255]}
+  ],
+  "legend": {
+    "labels": [
+      "-10",
+      "10",
+      "20",
+      "30",
+      "40",
+      "50",
+      "60",
+      "70 dBZ"
+    ]
+  }
+}

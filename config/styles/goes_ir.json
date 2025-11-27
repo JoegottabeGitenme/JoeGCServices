@@ -1,0 +1,43 @@
+{
+  "name": "goes_ir",
+  "title": "GOES Infrared",
+  "description": "Enhanced infrared colormap for GOES IR bands (brightness temperature)",
+  "type": "gradient",
+  "units": "K",
+  "range": {
+    "min": 180,
+    "max": 330
+  },
+  "colors": [
+    {"value": 180, "color": [0, 0, 0]},
+    {"value": 195, "color": [80, 0, 80]},
+    {"value": 205, "color": [128, 0, 255]},
+    {"value": 213, "color": [0, 0, 255]},
+    {"value": 220, "color": [0, 128, 255]},
+    {"value": 228, "color": [0, 255, 255]},
+    {"value": 235, "color": [0, 255, 128]},
+    {"value": 243, "color": [0, 255, 0]},
+    {"value": 250, "color": [255, 255, 0]},
+    {"value": 258, "color": [255, 200, 0]},
+    {"value": 265, "color": [255, 150, 0]},
+    {"value": 273, "color": [255, 100, 0]},
+    {"value": 283, "color": [255, 50, 0]},
+    {"value": 293, "color": [255, 0, 0]},
+    {"value": 303, "color": [200, 0, 0]},
+    {"value": 313, "color": [150, 0, 0]},
+    {"value": 323, "color": [100, 50, 50]},
+    {"value": 330, "color": [80, 80, 80]}
+  ],
+  "legend": {
+    "labels": [
+      "-93C (180K)",
+      "-60C (213K)",
+      "-40C (233K)",
+      "-20C (253K)",
+      "0C (273K)",
+      "20C (293K)",
+      "40C (313K)",
+      "57C (330K)"
+    ]
+  }
+}

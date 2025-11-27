@@ -1,0 +1,16 @@
+{
+  "name": "temperature_isolines",
+  "title": "Temperature Isolines",
+  "description": "Temperature contour lines at 5°C intervals",
+  "type": "contour",
+  "units": "K",
+  "contour": {
+    "interval": 5.0,
+    "unit_conversion": -273.15,
+    "min_value": 233.15,
+    "max_value": 313.15,
+    "line_width": 2.0,
+    "line_color": [0, 0, 0, 255],
+    "smoothing_passes": 1
+  }
+}
