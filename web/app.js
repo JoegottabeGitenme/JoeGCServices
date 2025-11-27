@@ -6,12 +6,19 @@ let map;
 let wmsLayer = null;
 let selectedLayer = null;
 let ingestionStatusInterval = null;
+let currentForecastHour = 24; // Default to latest (hour 24)
+let currentRun = 'latest'; // Default to latest run
+let currentElevation = ''; // Default to surface/empty
+let availableRuns = [];
+let availableForecastHours = [0, 3, 6, 12, 24];
+let availableElevations = []; // Available levels for current layer
+let playbackInterval = null;
+let isPlaying = false;
 
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
 const wmtsStatusEl = document.getElementById('wmts-status');
 const ingesterServiceStatusEl = document.getElementById('ingester-service-status');
-const lastIngestTimeEl = document.getElementById('last-ingest-time');
 const datasetCountEl = document.getElementById('dataset-count');
 const modelsListEl = document.getElementById('models-list');
 const storageSizeEl = document.getElementById('storage-size');
@@ -37,6 +44,19 @@ const avgTileTimeEl = document.getElementById('avg-tile-time');
 const tilesLoadedCountEl = document.getElementById('tiles-loaded-count');
 const slowestTileTimeEl = document.getElementById('slowest-tile-time');
 const currentLayerNameEl = document.getElementById('current-layer-name');
+
+// Backend Metrics Elements
+const metricWmsRequestsEl = document.getElementById('metric-wms-requests');
+const metricWmtsRequestsEl = document.getElementById('metric-wmts-requests');
+const metricRendersEl = document.getElementById('metric-renders');
+const metricRenderAvgEl = document.getElementById('metric-render-avg');
+const metricRenderLastEl = document.getElementById('metric-render-last');
+const metricCacheStatusEl = document.getElementById('metric-cache-status');
+const metricCacheKeysEl = document.getElementById('metric-cache-keys');
+const metricCacheMemoryEl = document.getElementById('metric-cache-memory');
+const metricMemoryEl = document.getElementById('metric-memory');
+const metricThreadsEl = document.getElementById('metric-threads');
+const metricUptimeEl = document.getElementById('metric-uptime');
 
 // State for layer selection
 let availableLayers = [];
@@ -67,6 +87,45 @@ function setupEventListeners() {
         queryToggle.addEventListener('change', (e) => {
             queryEnabled = e.target.checked;
             updateQueryHint();
+        });
+    }
+    
+    // Time control listeners
+    setupTimeControls();
+}
+
+// Setup time control event listeners
+function setupTimeControls() {
+    const timeSlider = document.getElementById('time-slider');
+    const runSelect = document.getElementById('run-select');
+    const elevationSelect = document.getElementById('elevation-select');
+    
+    if (timeSlider) {
+        timeSlider.addEventListener('input', (e) => {
+            // Slider value is an index into availableForecastHours array
+            const index = parseInt(e.target.value);
+            if (index >= 0 && index < availableForecastHours.length) {
+                currentForecastHour = availableForecastHours[index];
+                console.log('Forecast hour changed to:', currentForecastHour, '(index:', index, ')');
+                updateTimeDisplay();
+                updateLayerTime();
+            }
+        });
+    }
+    
+    if (runSelect) {
+        runSelect.addEventListener('change', (e) => {
+            currentRun = e.target.value;
+            console.log('Model run changed to:', currentRun);
+            updateLayerTime();
+        });
+    }
+    
+    if (elevationSelect) {
+        elevationSelect.addEventListener('change', (e) => {
+            currentElevation = e.target.value;
+            console.log('Elevation changed to:', currentElevation);
+            updateLayerTime();
         });
     }
 }
@@ -261,12 +320,16 @@ function onLoadLayer() {
 function formatLayerName(layerName) {
     const names = {
         'TMP': 'Temperature',
-        'PRMSL': 'Pressure (MSL)',
+        'PRMSL': 'Mean Sea Level Pressure',
         'WIND': 'Wind Speed',
         'UGRD': 'U-Wind Component',
         'VGRD': 'V-Wind Component',
         'RH': 'Relative Humidity',
-        'GUST': 'Wind Gust'
+        'GUST': 'Wind Gust',
+        'P1_22': 'Cloud Mixing Ratio',
+        'P1_23': 'Ice Mixing Ratio',
+        'P1_24': 'Rain Mixing Ratio',
+        'WIND_BARBS': 'Wind Barbs'
     };
     
     // Extract parameter from layer name (e.g., "gfs_PRMSL" -> "PRMSL")
@@ -288,9 +351,10 @@ function formatLayerName(layerName) {
 
 // Load a specific layer on the map
 function loadLayerOnMap(layerName) {
-    // Remove existing WMS layer
+    // Remove existing layer and cleanup event listeners
     if (wmsLayer) {
         map.removeLayer(wmsLayer);
+        map.off('moveend', onMapMoveEnd); // Remove moveend listener from previous WMS layer
     }
 
     // Store current layer and style
@@ -305,8 +369,8 @@ function loadLayerOnMap(layerName) {
 
     if (selectedProtocol === 'wmts') {
         // Create WMTS layer using Leaflet TileLayer with direct URL pattern
-        // WMTS tile URL format: /wmts/rest/{layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png
-        const wmtsUrl = `${API_BASE}/wmts/rest/${layerName}/${selectedStyle}/WebMercatorQuad/{z}/{x}/{y}.png`;
+        // WMTS tile URL format: /wmts/rest/{layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png?time=N&elevation=...
+        const wmtsUrl = buildWmtsTileUrl(layerName, selectedStyle);
         
         wmsLayer = L.tileLayer(wmtsUrl, {
             attribution: `${formatLayerName(layerName)} (WMTS - ${selectedStyle})`,
@@ -315,48 +379,171 @@ function loadLayerOnMap(layerName) {
             opacity: 0.7
         });
         
-        console.log('Loaded WMTS layer:', wmtsUrl);
-    } else {
-        // Create WMS layer
-        wmsLayer = L.tileLayer.wms(`${API_BASE}/wms`, {
-            layers: layerName,
-            styles: selectedStyle,
-            format: 'image/png',
-            transparent: true,
-            attribution: `${formatLayerName(layerName)} (WMS - ${selectedStyle})`,
-            version: '1.3.0',
-            opacity: 0.7
+        // Hook into tile load events for performance tracking
+        wmsLayer.on('loading', function() {
+            performanceStats.layerStartTime = Date.now();
         });
         
-        console.log('Loaded WMS layer:', layerName, 'with style:', selectedStyle);
+        wmsLayer.on('load', function() {
+            if (performanceStats.layerStartTime) {
+                const loadTime = Date.now() - performanceStats.layerStartTime;
+                trackTileLoadTime(loadTime);
+            }
+        });
+        
+        wmsLayer.on('tileerror', function(e) {
+            console.error('Tile load error:', e);
+        });
+        
+        wmsLayer.addTo(map);
+        console.log('Loaded WMTS layer:', wmtsUrl);
+    } else {
+        // Create WMS layer using a single GetMap request for the entire viewport
+        // This uses L.imageOverlay which we update on map move
+        wmsLayer = createWmsImageOverlay(layerName, selectedStyle);
+        wmsLayer.addTo(map);
+        
+        // Update the overlay when map moves
+        map.on('moveend', onMapMoveEnd);
+        
+        console.log('Loaded WMS layer (single GetMap):', layerName, 'with style:', selectedStyle, 'time:', currentForecastHour);
     }
-
-    // Hook into tile load events for performance tracking
-    wmsLayer.on('loading', function() {
-        performanceStats.layerStartTime = Date.now();
-    });
-    
-    wmsLayer.on('load', function() {
-        if (performanceStats.layerStartTime) {
-            const loadTime = Date.now() - performanceStats.layerStartTime;
-            trackTileLoadTime(loadTime);
-        }
-    });
-    
-    wmsLayer.on('tileerror', function(e) {
-        console.error('Tile load error:', e);
-        if (performanceStats.layerStartTime) {
-            const loadTime = Date.now() - performanceStats.layerStartTime;
-            trackTileLoadTime(loadTime);
-        }
-    });
-
-    wmsLayer.addTo(map);
 
     // Update current layer display
     currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
     updatePerformanceDisplay();
     updateQueryHint();
+    updateTimeControlsVisibility();
+}
+
+// Create a WMS image overlay that covers the current viewport
+function createWmsImageOverlay(layerName, style) {
+    const bounds = map.getBounds();
+    const size = map.getSize();
+    const url = buildWmsGetMapUrl(layerName, style, bounds, size);
+    
+    performanceStats.layerStartTime = Date.now();
+    
+    const overlay = L.imageOverlay(url, bounds, {
+        opacity: 0.7,
+        interactive: false,
+        attribution: `${formatLayerName(layerName)} (WMS - ${style})`
+    });
+    
+    // Track when image loads
+    overlay.on('load', function() {
+        if (performanceStats.layerStartTime) {
+            const loadTime = Date.now() - performanceStats.layerStartTime;
+            trackTileLoadTime(loadTime);
+            console.log(`WMS GetMap loaded in ${loadTime}ms`);
+        }
+    });
+    
+    overlay.on('error', function(e) {
+        console.error('WMS GetMap error:', e);
+    });
+    
+    return overlay;
+}
+
+// Build WMTS tile URL with optional time/elevation query parameters
+function buildWmtsTileUrl(layerName, style) {
+    // Base URL pattern for WMTS REST tiles
+    let url = `${API_BASE}/wmts/rest/${layerName}/${style}/WebMercatorQuad/{z}/{x}/{y}.png`;
+    
+    // Add dimension query parameters if set
+    const params = [];
+    if (currentForecastHour !== undefined && currentForecastHour !== null) {
+        params.push(`time=${currentForecastHour}`);
+    }
+    if (currentElevation) {
+        params.push(`elevation=${encodeURIComponent(currentElevation)}`);
+    }
+    
+    if (params.length > 0) {
+        url += '?' + params.join('&');
+    }
+    
+    console.log('WMTS tile URL template:', url);
+    return url;
+}
+
+// Build WMS GetMap URL for current viewport
+function buildWmsGetMapUrl(layerName, style, bounds, size) {
+    // Clamp longitude values to -180 to 180 range to handle Leaflet's world wrapping
+    let west = bounds.getWest();
+    let east = bounds.getEast();
+    let south = bounds.getSouth();
+    let north = bounds.getNorth();
+    
+    // Normalize longitudes to -180 to 180
+    while (west < -180) west += 360;
+    while (west > 180) west -= 360;
+    while (east < -180) east += 360;
+    while (east > 180) east -= 360;
+    
+    // Clamp latitudes to valid Web Mercator range
+    south = Math.max(-85.051129, Math.min(85.051129, south));
+    north = Math.max(-85.051129, Math.min(85.051129, north));
+    
+    // Convert lat/lon to Web Mercator coordinates for proper projection
+    // Leaflet displays in Web Mercator, so we need to request in EPSG:3857
+    const mercSouth = latToMercatorY(south);
+    const mercNorth = latToMercatorY(north);
+    const mercWest = lonToMercatorX(west);
+    const mercEast = lonToMercatorX(east);
+    
+    const bbox = `${mercWest},${mercSouth},${mercEast},${mercNorth}`;
+    console.log('WMS BBOX (EPSG:3857):', { west, south, east, north, mercWest, mercSouth, mercEast, mercNorth });
+    
+    const params = new URLSearchParams({
+        SERVICE: 'WMS',
+        VERSION: '1.3.0',
+        REQUEST: 'GetMap',
+        LAYERS: layerName,
+        STYLES: style || '',
+        CRS: 'EPSG:3857',  // Use Web Mercator to match Leaflet's display projection
+        BBOX: bbox,
+        WIDTH: size.x,
+        HEIGHT: size.y,
+        FORMAT: 'image/png',
+        TRANSPARENT: 'true',
+        TIME: currentForecastHour.toString()
+    });
+    
+    // Add elevation if set
+    if (currentElevation) {
+        params.set('ELEVATION', currentElevation);
+    }
+    
+    const url = `${API_BASE}/wms?${params.toString()}`;
+    console.log('WMS GetMap URL:', url);
+    return url;
+}
+
+// Convert latitude to Web Mercator Y coordinate
+function latToMercatorY(lat) {
+    const R = 6378137; // Earth radius in meters (WGS84)
+    const latRad = lat * Math.PI / 180;
+    return R * Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+}
+
+// Convert longitude to Web Mercator X coordinate
+function lonToMercatorX(lon) {
+    const R = 6378137; // Earth radius in meters (WGS84)
+    return R * lon * Math.PI / 180;
+}
+
+// Handle map move end - update the WMS overlay
+function onMapMoveEnd() {
+    if (selectedProtocol !== 'wms' || !selectedLayer || !wmsLayer) {
+        return;
+    }
+    
+    // Remove old overlay and create new one
+    map.removeLayer(wmsLayer);
+    wmsLayer = createWmsImageOverlay(selectedLayer, selectedStyle);
+    wmsLayer.addTo(map);
 }
 
 function updateQueryHint() {
@@ -371,10 +558,13 @@ function updateQueryHint() {
 // Initialize ingestion status monitoring
 function initIngestionStatus() {
     checkIngestionStatus();
+    fetchBackendMetrics();
     // Refresh ingestion status every 10 seconds
     ingestionStatusInterval = setInterval(() => {
         checkIngestionStatus();
     }, 10000);
+    // Refresh backend metrics every 2 seconds
+    setInterval(fetchBackendMetrics, 2000);
 }
 
 // Check ingestion status from catalog database
@@ -410,12 +600,13 @@ async function updateIngestionMetrics() {
         const layers = xml.querySelectorAll('Layer[queryable="1"]');
         const datasetCount = layers.length;
         
-        // Extract unique models from layer names
+        // Extract unique models from layer names (format: "gfs_TMP" -> "gfs")
         const models = new Set();
         layers.forEach(layer => {
             const name = getElementText(layer, 'Name');
             if (name) {
-                const model = name.split(':')[0];
+                // Split on underscore and take the first part as model name
+                const model = name.split('_')[0];
                 if (model) models.add(model);
             }
         });
@@ -425,15 +616,8 @@ async function updateIngestionMetrics() {
         datasetCountEl.textContent = datasetCount;
         modelsListEl.textContent = Array.from(models).join(', ') || 'None';
         
-        // Update timestamp
-        const now = new Date();
-        lastIngestTimeEl.textContent = now.toLocaleTimeString();
-        
-        // Simulate storage size (would come from actual API in production)
-        if (datasetCount > 0) {
-            const estimatedSize = (datasetCount * 100).toFixed(0);
-            storageSizeEl.textContent = formatBytes(estimatedSize);
-        }
+        // Fetch actual storage stats from API
+        fetchStorageStats();
         
         // Add log entry
         addLogEntry(`Found ${datasetCount} datasets, models: ${Array.from(models).join(', ')}`, 'success');
@@ -477,6 +661,93 @@ function formatBytes(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// Fetch storage stats from MinIO via API
+async function fetchStorageStats() {
+    try {
+        const response = await fetch(`${API_BASE}/api/storage/stats`);
+        if (response.ok) {
+            const stats = await response.json();
+            storageSizeEl.textContent = `${formatBytes(stats.total_size)} (${stats.object_count} files)`;
+        }
+    } catch (error) {
+        console.error('Error fetching storage stats:', error);
+        storageSizeEl.textContent = 'N/A';
+    }
+}
+
+// Fetch backend metrics from API
+async function fetchBackendMetrics() {
+    try {
+        const response = await fetch(`${API_BASE}/api/metrics`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const { metrics, system } = data;
+        
+        // Update request counts
+        if (metricWmsRequestsEl) metricWmsRequestsEl.textContent = metrics.wms_requests;
+        if (metricWmtsRequestsEl) metricWmtsRequestsEl.textContent = metrics.wmts_requests;
+        
+        // Update render stats
+        if (metricRendersEl) {
+            const errors = metrics.render_errors > 0 ? ` (${metrics.render_errors} err)` : '';
+            metricRendersEl.textContent = metrics.renders_total + errors;
+        }
+        if (metricRenderAvgEl) {
+            const avgMs = metrics.render_avg_ms.toFixed(0);
+            metricRenderAvgEl.textContent = `${avgMs}ms`;
+            metricRenderAvgEl.className = 'metric-value ' + getSpeedClass(metrics.render_avg_ms);
+        }
+        if (metricRenderLastEl) {
+            const lastMs = metrics.render_last_ms.toFixed(0);
+            metricRenderLastEl.textContent = `${lastMs}ms`;
+            metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms);
+        }
+        
+        // Update Redis cache stats
+        const cache = data.cache;
+        if (metricCacheStatusEl) {
+            metricCacheStatusEl.textContent = cache.connected ? 'Connected' : 'Disconnected';
+            metricCacheStatusEl.className = 'metric-value ' + (cache.connected ? 'good' : 'bad');
+        }
+        if (metricCacheKeysEl) {
+            metricCacheKeysEl.textContent = cache.key_count;
+        }
+        if (metricCacheMemoryEl) {
+            metricCacheMemoryEl.textContent = formatBytes(cache.memory_used);
+        }
+        
+        // Update system stats
+        if (metricMemoryEl) {
+            metricMemoryEl.textContent = formatBytes(system.memory_used_bytes);
+        }
+        if (metricThreadsEl) {
+            metricThreadsEl.textContent = system.num_threads;
+        }
+        if (metricUptimeEl) {
+            metricUptimeEl.textContent = formatUptime(metrics.uptime_secs);
+        }
+    } catch (error) {
+        console.error('Error fetching backend metrics:', error);
+    }
+}
+
+// Get CSS class based on render speed
+function getSpeedClass(ms) {
+    if (ms < 200) return 'good';
+    if (ms < 1000) return 'warning';
+    return 'bad';
+}
+
+// Format uptime in human-readable format
+function formatUptime(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
 }
 
 // ============================================================================
@@ -648,8 +919,14 @@ function buildGetFeatureInfoUrl(layer, bounds, width, height, x, y) {
         HEIGHT: height.toString(),
         I: x.toString(),
         J: y.toString(),
-        INFO_FORMAT: 'application/json'
+        INFO_FORMAT: 'application/json',
+        TIME: currentForecastHour.toString()
     });
+    
+    // Add elevation if set
+    if (currentElevation) {
+        params.set('ELEVATION', currentElevation);
+    }
     
     return `${API_BASE}/wms?${params.toString()}`;
 }
@@ -664,6 +941,11 @@ function showFeatureInfoPopup(latlng, featureInfo) {
         content += `<tr><td>Parameter:</td><td class="value">${feature.parameter}</td></tr>`;
         content += `<tr><td>Value:</td><td class="value">${feature.value.toFixed(2)} ${feature.unit}</td></tr>`;
         content += `<tr><td>Location:</td><td class="value">${feature.location.latitude.toFixed(3)}°, ${feature.location.longitude.toFixed(3)}°</td></tr>`;
+        
+        // Show level/elevation if available
+        if (feature.level) {
+            content += `<tr><td>Level:</td><td class="value">${feature.level}</td></tr>`;
+        }
         
         if (feature.forecast_hour !== undefined) {
             content += `<tr><td>Forecast:</td><td class="value">+${feature.forecast_hour} hours</td></tr>`;
@@ -869,4 +1151,256 @@ document.addEventListener('DOMContentLoaded', () => {
 // Clean up on page unload
 window.addEventListener('beforeunload', () => {
     stopValidationAutoRefresh();
+    stopPlayback();
 });
+
+// ============================================================================
+// Time Control Functions
+// ============================================================================
+
+// Update time display
+function updateTimeDisplay() {
+    const timeDisplay = document.getElementById('current-time-display');
+    const validTimeDisplay = document.getElementById('valid-time-display');
+    
+    if (timeDisplay) {
+        // Format as F+000, F+003, etc. (standard meteorological notation)
+        const formatted = `F+${String(currentForecastHour).padStart(3, '0')}`;
+        timeDisplay.textContent = formatted;
+        timeDisplay.style.opacity = '1';
+    }
+    
+    // Calculate and display valid time (run + forecast hour)
+    if (validTimeDisplay) {
+        const runTime = currentRun === 'latest' ? 
+            (availableRuns.length > 0 ? availableRuns[0] : null) : 
+            currentRun;
+        
+        if (runTime) {
+            const runDate = new Date(runTime);
+            const validDate = new Date(runDate.getTime() + currentForecastHour * 60 * 60 * 1000);
+            
+            // Format as: "2025-11-27 20:50Z"
+            const formatted = validDate.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
+            validTimeDisplay.textContent = formatted;
+        } else {
+            validTimeDisplay.textContent = '--';
+        }
+    }
+}
+
+// Update layer with new time/elevation (without refetching capabilities)
+function updateLayerTime() {
+    if (!selectedLayer || !wmsLayer) {
+        return;
+    }
+    
+    // Remove existing layer
+    if (wmsLayer) {
+        map.removeLayer(wmsLayer);
+        map.off('moveend', onMapMoveEnd);
+    }
+    
+    // Recreate the layer with current time/elevation settings
+    if (selectedProtocol === 'wmts') {
+        const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
+        wmsLayer = L.tileLayer(wmtsUrl, {
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+            maxZoom: 18,
+            tileSize: 256,
+            opacity: 0.7
+        });
+        wmsLayer.addTo(map);
+    } else {
+        wmsLayer = createWmsImageOverlay(selectedLayer, selectedStyle);
+        wmsLayer.addTo(map);
+        map.on('moveend', onMapMoveEnd);
+    }
+    
+    // Update displays
+    updateTimeDisplay();
+    console.log('Layer updated with TIME:', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
+}
+
+
+
+// Show/hide time controls based on protocol
+async function updateTimeControlsVisibility() {
+    const timeControlSection = document.getElementById('time-control-section');
+    const protocolNote = document.getElementById('time-protocol-note');
+    
+    if (timeControlSection) {
+        // Show time controls when a layer is selected
+        if (selectedLayer) {
+            timeControlSection.style.display = 'block';
+            
+            // WMTS now supports time/elevation via query parameters - hide warning
+            if (protocolNote) {
+                protocolNote.style.display = 'none';
+            }
+            
+            await fetchAvailableTimes();
+            updateTimeDisplay();
+        } else {
+            timeControlSection.style.display = 'none';
+            stopPlayback();
+        }
+    }
+}
+
+// Fetch available runs, forecast hours, and elevations from capabilities
+async function fetchAvailableTimes() {
+    try {
+        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`);
+        const xml = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xml, 'text/xml');
+        
+        // Reset elevations
+        availableElevations = [];
+        
+        // Find the current layer
+        const layers = doc.getElementsByTagName('Layer');
+        for (let layer of layers) {
+            const nameEl = layer.getElementsByTagName('Name')[0];
+            if (nameEl && nameEl.textContent === selectedLayer) {
+                // Get dimensions
+                const dimensions = layer.getElementsByTagName('Dimension');
+                for (let dim of dimensions) {
+                    if (dim.getAttribute('name') === 'RUN') {
+                        const runsText = dim.textContent.trim();
+                        availableRuns = runsText.split(',');
+                        updateRunSelector();
+                    }
+                    if (dim.getAttribute('name') === 'FORECAST') {
+                        const forecastText = dim.textContent.trim();
+                        availableForecastHours = forecastText.split(',').map(h => parseInt(h));
+                        updateForecastSlider();
+                    }
+                    if (dim.getAttribute('name') === 'ELEVATION') {
+                        const elevationText = dim.textContent.trim();
+                        availableElevations = elevationText.split(',');
+                        updateElevationSelector();
+                    }
+                }
+                break;
+            }
+        }
+        
+        // Hide elevation selector if no elevations available
+        updateElevationVisibility();
+        
+    } catch (error) {
+        console.error('Failed to fetch available times:', error);
+    }
+}
+
+// Update run selector dropdown
+function updateRunSelector() {
+    const runSelect = document.getElementById('run-select');
+    if (!runSelect) return;
+    
+    runSelect.innerHTML = '<option value="latest">Latest Available Run</option>';
+    
+    availableRuns.forEach((run, index) => {
+        const option = document.createElement('option');
+        option.value = run;
+        const date = new Date(run);
+        
+        // Format as: "2025-11-26 20:50Z" (meteorological standard)
+        const formatted = date.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
+        
+        // Add label for latest run
+        const label = index === 0 ? ' (Latest)' : '';
+        option.textContent = formatted + label;
+        runSelect.appendChild(option);
+    });
+}
+
+// Update forecast hour slider
+// Uses index-based slider for non-uniform forecast hour intervals
+function updateForecastSlider() {
+    const timeSlider = document.getElementById('time-slider');
+    if (!timeSlider || availableForecastHours.length === 0) return;
+    
+    // Sort forecast hours
+    availableForecastHours.sort((a, b) => a - b);
+    
+    // Use index-based slider (0 to length-1) for non-uniform intervals
+    timeSlider.min = 0;
+    timeSlider.max = availableForecastHours.length - 1;
+    timeSlider.step = 1;
+    
+    // Find index of current forecast hour, or default to last (latest)
+    let currentIndex = availableForecastHours.indexOf(currentForecastHour);
+    if (currentIndex === -1) {
+        // Current hour not available, default to latest
+        currentIndex = availableForecastHours.length - 1;
+        currentForecastHour = availableForecastHours[currentIndex];
+    }
+    
+    timeSlider.value = currentIndex;
+    
+    updateTimeDisplay();
+    updateSliderLabels();
+}
+
+// Update slider labels to match available hours
+function updateSliderLabels() {
+    const labelsContainer = document.querySelector('.slider-labels');
+    if (!labelsContainer) return;
+    
+    labelsContainer.innerHTML = '';
+    
+    // Show 5 evenly distributed labels in F+NNN format
+    const numLabels = Math.min(5, availableForecastHours.length);
+    const step = Math.floor(availableForecastHours.length / (numLabels - 1));
+    
+    for (let i = 0; i < numLabels; i++) {
+        const idx = i === numLabels - 1 ? availableForecastHours.length - 1 : i * step;
+        const hour = availableForecastHours[idx];
+        const label = document.createElement('span');
+        label.textContent = `F+${String(hour).padStart(3, '0')}`;
+        labelsContainer.appendChild(label);
+    }
+}
+
+// Update elevation selector dropdown
+function updateElevationSelector() {
+    const elevationSelect = document.getElementById('elevation-select');
+    if (!elevationSelect) return;
+    
+    // Clear and rebuild options
+    elevationSelect.innerHTML = '<option value="">Surface / Default</option>';
+    
+    availableElevations.forEach(level => {
+        const option = document.createElement('option');
+        option.value = level;
+        option.textContent = level;
+        elevationSelect.appendChild(option);
+    });
+    
+    // Restore current selection if still available, otherwise reset
+    if (currentElevation && availableElevations.includes(currentElevation)) {
+        elevationSelect.value = currentElevation;
+    } else {
+        currentElevation = '';
+        elevationSelect.value = '';
+    }
+    
+    console.log('Elevation selector updated:', availableElevations.length, 'levels, current:', currentElevation || 'default');
+}
+
+// Show/hide elevation selector based on available levels
+function updateElevationVisibility() {
+    const elevationGroup = document.getElementById('elevation-group');
+    if (!elevationGroup) return;
+    
+    // Show only if there are multiple elevations available
+    if (availableElevations.length > 1) {
+        elevationGroup.style.display = 'block';
+    } else {
+        elevationGroup.style.display = 'none';
+        currentElevation = ''; // Reset to default
+    }
+}

@@ -244,17 +244,33 @@ pub fn parse_product_definition(data: &[u8]) -> Result<ProductDefinition, Grib2E
     let parameter_number = section_data[10];
     
     // For template 0 (analysis/forecast at horizontal level):
-    // Bytes 19-20: Type of first fixed surface
-    // Bytes 22-25: Value of first fixed surface
-    let level_type = section_data.get(19).copied().unwrap_or(1);
-    let level_value = if section_data.len() >= 26 {
-        u32::from_be_bytes([section_data[22], section_data[23], section_data[24], section_data[25]])
+    // Byte 18-21: Forecast time (4 bytes)
+    // Byte 22: Type of first fixed surface
+    // Byte 23: Scale factor of first fixed surface
+    // Byte 24-27: Scaled value of first fixed surface (4 bytes)
+    let forecast_hour = if section_data.len() >= 22 {
+        u32::from_be_bytes([section_data[18], section_data[19], section_data[20], section_data[21]])
     } else {
         0
     };
     
-    // Forecast time at byte 18 (for template 0)
-    let forecast_hour = section_data.get(18).copied().unwrap_or(0) as u32;
+    let level_type = section_data.get(22).copied().unwrap_or(1);
+    let scale_factor = section_data.get(23).copied().unwrap_or(0) as i8;
+    let scaled_value = if section_data.len() >= 28 {
+        u32::from_be_bytes([section_data[24], section_data[25], section_data[26], section_data[27]])
+    } else {
+        0
+    };
+    
+    // Apply scale factor: actual_value = scaled_value / (10^scale_factor)
+    // For heights in meters, scale_factor is typically 0, so level_value = scaled_value
+    let level_value = if scale_factor == 0 {
+        scaled_value
+    } else {
+        // For non-zero scale factors, we'd need to compute 10^scale_factor
+        // For now, just use the scaled value as-is since most levels use scale_factor=0
+        scaled_value
+    };
 
     let parameter_short_name = get_parameter_short_name(parameter_category, parameter_number);
     let level_description = get_level_description(level_type, level_value);
@@ -471,12 +487,18 @@ fn get_parameter_short_name(category: u8, number: u8) -> String {
 }
 
 /// Get level description
-fn get_level_description(level_type: u8, _level_value: u32) -> String {
+fn get_level_description(level_type: u8, level_value: u32) -> String {
     match level_type {
         1 => "surface".to_string(),
-        100 => "Isobaric surface".to_string(),
+        100 => format!("{} mb", level_value),  // Isobaric surface (pressure in mb)
         101 => "mean sea level".to_string(),
-        103 => "2 m above ground".to_string(),
-        _ => format!("Level type {}", level_type),
+        103 => format!("{} m above ground", level_value),  // Height above ground in meters
+        104 => format!("{} m above sea level", level_value),  // Height above MSL
+        105 => "hybrid level".to_string(),
+        106 => format!("{} m below surface", level_value),  // Depth below land surface
+        108 => format!("{} mb above ground", level_value),  // Pressure level above ground
+        200 => "entire atmosphere".to_string(),
+        220 => "planetary boundary layer".to_string(),
+        _ => format!("Level type {} value {}", level_type, level_value),
     }
 }

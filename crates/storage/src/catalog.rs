@@ -269,6 +269,149 @@ impl Catalog {
 
         Ok(result.rows_affected())
     }
+
+    /// Get available model run times (reference_time) for a model/parameter.
+    pub async fn get_available_runs(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<DateTime<Utc>>> {
+        let rows = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT reference_time FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY reference_time DESC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get available forecast hours for a model/parameter.
+    pub async fn get_available_forecast_hours(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<i32>> {
+        let rows = sqlx::query_scalar::<_, i32>(
+            "SELECT DISTINCT forecast_hour FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY forecast_hour ASC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get available levels for a model/parameter.
+    pub async fn get_available_levels(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT level FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY level ASC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Find dataset by forecast hour and level.
+    pub async fn find_by_forecast_hour_and_level(
+        &self,
+        model: &str,
+        parameter: &str,
+        forecast_hour: u32,
+        level: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND level = $4 AND status = 'available' \
+             ORDER BY reference_time DESC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(forecast_hour as i32)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get the most recent dataset for a layer at a specific level.
+    pub async fn get_latest_at_level(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
+             ORDER BY valid_time DESC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get available runs and forecast hours for all layers of a model.
+    /// Returns (runs, forecast_hours) where runs are ISO8601 strings and forecast_hours are integers.
+    pub async fn get_model_dimensions(&self, model: &str) -> WmsResult<(Vec<String>, Vec<i32>)> {
+        // Get distinct reference times, truncated to nearest minute to group similar ingestion times
+        let runs = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT DATE_TRUNC('minute', reference_time) as ref_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY ref_time DESC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        let forecast_hours = sqlx::query_scalar::<_, i32>(
+            "SELECT DISTINCT forecast_hour FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY forecast_hour ASC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Format runs as ISO8601 strings
+        let run_strings: Vec<String> = runs
+            .into_iter()
+            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .collect();
+
+        Ok((run_strings, forecast_hours))
+    }
 }
 
 /// A catalog entry representing an ingested dataset.

@@ -32,7 +32,7 @@ pub async fn render_weather_data(
     height: u32,
     bbox: Option<[f32; 4]>,
 ) -> Result<Vec<u8>, String> {
-    render_weather_data_with_style(storage, catalog, model, parameter, forecast_hour, width, height, bbox, None).await
+    render_weather_data_with_style(storage, catalog, model, parameter, forecast_hour, width, height, bbox, None, false).await
 }
 
 /// Render weather data with optional style configuration.
@@ -47,6 +47,7 @@ pub async fn render_weather_data(
 /// - `height`: Output image height
 /// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]; if None, renders full globe
 /// - `style_name`: Optional style name to apply from configuration
+/// - `use_mercator`: Use Web Mercator projection for resampling
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -60,22 +61,77 @@ pub async fn render_weather_data_with_style(
     height: u32,
     bbox: Option<[f32; 4]>,
     style_name: Option<&str>,
+    use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    // Get dataset for this parameter
-    let entry = if let Some(hour) = forecast_hour {
-        // Find dataset with matching forecast hour
-        catalog
-            .find_by_forecast_hour(model, parameter, hour)
-            .await
-            .map_err(|e| format!("Catalog query failed: {}", e))?
-            .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
-    } else {
-        // Get latest dataset
-        catalog
-            .get_latest(model, parameter)
-            .await
-            .map_err(|e| format!("Catalog query failed: {}", e))?
-            .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+    render_weather_data_with_level(
+        storage, catalog, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
+    ).await
+}
+
+/// Render weather data with optional style configuration and level.
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name
+/// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
+/// - `forecast_hour`: Optional forecast hour; if None, uses latest
+/// - `level`: Optional level/elevation (e.g., "500 mb", "2 m above ground")
+/// - `width`: Output image width
+/// - `height`: Output image height
+/// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]; if None, renders full globe
+/// - `style_name`: Optional style name to apply from configuration
+/// - `use_mercator`: Use Web Mercator projection for resampling
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_weather_data_with_level(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    parameter: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+    width: u32,
+    height: u32,
+    bbox: Option<[f32; 4]>,
+    style_name: Option<&str>,
+    use_mercator: bool,
+) -> Result<Vec<u8>, String> {
+    // Get dataset for this parameter, optionally at a specific level
+    let entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            // Find dataset with matching forecast hour and level
+            catalog
+                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+        }
+        (Some(hour), None) => {
+            // Find dataset with matching forecast hour (any level - defaults to first available)
+            catalog
+                .find_by_forecast_hour(model, parameter, hour)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+        }
+        (None, Some(lev)) => {
+            // Get latest dataset at specific level
+            catalog
+                .get_latest_at_level(model, parameter, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+        }
+        (None, None) => {
+            // Get latest dataset (any level)
+            catalog
+                .get_latest(model, parameter)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+        }
     };
 
     // Load GRIB2 file from storage
@@ -84,38 +140,17 @@ pub async fn render_weather_data_with_style(
         .await
         .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
 
-    // Parse GRIB2 and find matching message
-    // Strategy: Look for exact match first, then substring match
-    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
-    let mut exact_match = None;
-    let mut substring_matches = Vec::new();
-
-    while let Some(msg) = reader
-        .next_message()
-        .map_err(|e| format!("GRIB2 parse error: {}", e))?
-    {
-        let msg_param = msg.parameter();
-        
-        // Look for exact match
-        if msg_param == parameter {
-            exact_match = Some(msg);
-            break; // Exact match takes priority
-        }
-        
-        // Look for substring matches
-        if msg_param.contains(parameter) || parameter.contains(msg_param) {
-            substring_matches.push(msg);
-        }
-    }
-
-    let msg = if let Some(msg) = exact_match {
-        msg
-    } else if !substring_matches.is_empty() {
-        // Use the first substring match
-        substring_matches.into_iter().next().unwrap()
-    } else {
-        return Err(format!("Parameter {} not found in GRIB2", parameter));
-    };
+    // Parse GRIB2 and find matching message by parameter AND level
+    // The catalog entry contains the level (e.g., "2 m above ground") which we use
+    // to find the correct message in multi-level GRIB files
+    info!(
+        parameter = parameter,
+        level = %entry.level,
+        storage_path = %entry.storage_path,
+        "Searching for GRIB message"
+    );
+    
+    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
 
     // Unpack grid data
     let grid_data = msg
@@ -150,13 +185,15 @@ pub async fn render_weather_data_with_style(
     
     let resampled_data = if let Some(bbox) = bbox {
         // Resample directly from global grid using bbox
-        resample_from_geographic(
+        // Use Mercator projection when rendering for Web Mercator display
+        resample_grid_for_bbox(
             &grid_data,
             grid_width,
             grid_height,
             rendered_width,
             rendered_height,
             bbox,
+            use_mercator,
         )
     } else {
         // No bbox - resample entire global grid
@@ -259,7 +296,10 @@ fn render_by_parameter(
 }
 
 /// Resample from global geographic grid to a specific bbox and output size
+/// Resample from global geographic grid to a specific bbox and output size
 /// This ensures consistent sampling across tile boundaries
+/// 
+/// For Web Mercator output, use `resample_for_mercator` instead.
 fn resample_from_geographic(
     global_data: &[f32],
     global_width: usize,
@@ -323,6 +363,106 @@ fn resample_from_geographic(
     output
 }
 
+/// Resample from global geographic grid for Web Mercator (EPSG:3857) output
+/// 
+/// In Web Mercator, the Y axis has non-linear latitude spacing. This function
+/// accounts for that by converting pixel Y positions to Mercator Y, then to latitude.
+fn resample_for_mercator(
+    global_data: &[f32],
+    global_width: usize,
+    global_height: usize,
+    output_width: usize,
+    output_height: usize,
+    bbox: [f32; 4],  // [min_lon, min_lat, max_lon, max_lat] in WGS84
+) -> Vec<f32> {
+    let [min_lon, min_lat, max_lon, max_lat] = bbox;
+    
+    // Convert lat bounds to Mercator Y coordinates
+    let min_merc_y = lat_to_mercator_y(min_lat as f64);
+    let max_merc_y = lat_to_mercator_y(max_lat as f64);
+    
+    // GRIB grid: lat 90 to -90, lon 0 to 360
+    let lon_step = 360.0 / global_width as f32;
+    let lat_step = 180.0 / global_height as f32;
+    
+    let mut output = vec![0.0f32; output_width * output_height];
+    
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate position in output image (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+            
+            // Longitude is linear
+            let lon = min_lon + x_ratio * (max_lon - min_lon);
+            
+            // Y position is in Mercator space, need to convert to latitude
+            // y_ratio 0 = top = max_merc_y, y_ratio 1 = bottom = min_merc_y
+            let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
+            let lat = mercator_y_to_lat(merc_y) as f32;
+            
+            // Normalize longitude to 0-360
+            let norm_lon = if lon < 0.0 { lon + 360.0 } else { lon };
+            
+            // Convert to global grid coordinates
+            let grid_x = norm_lon / lon_step;
+            let grid_y = (90.0 - lat) / lat_step;
+            
+            // Bilinear interpolation
+            let x1 = grid_x.floor() as usize;
+            let y1 = grid_y.floor() as usize;
+            let x2 = if x1 + 1 >= global_width { 0 } else { x1 + 1 };
+            let y2 = (y1 + 1).min(global_height - 1);
+            
+            let dx = grid_x - x1 as f32;
+            let dy = grid_y - y1 as f32;
+            
+            let v11 = global_data.get(y1 * global_width + x1).copied().unwrap_or(0.0);
+            let v21 = global_data.get(y1 * global_width + x2).copied().unwrap_or(0.0);
+            let v12 = global_data.get(y2 * global_width + x1).copied().unwrap_or(0.0);
+            let v22 = global_data.get(y2 * global_width + x2).copied().unwrap_or(0.0);
+            
+            let v1 = v11 * (1.0 - dx) + v21 * dx;
+            let v2 = v12 * (1.0 - dx) + v22 * dx;
+            let value = v1 * (1.0 - dy) + v2 * dy;
+            
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+    
+    output
+}
+
+/// Convert latitude to Web Mercator Y coordinate
+fn lat_to_mercator_y(lat: f64) -> f64 {
+    let lat_rad = lat.to_radians();
+    let y = ((std::f64::consts::PI / 4.0) + (lat_rad / 2.0)).tan().ln();
+    y * 6378137.0  // Earth radius in meters
+}
+
+/// Convert Web Mercator Y coordinate to latitude
+fn mercator_y_to_lat(y: f64) -> f64 {
+    let y_normalized = y / 6378137.0;  // Normalize by Earth radius
+    (2.0 * y_normalized.exp().atan() - std::f64::consts::PI / 2.0).to_degrees()
+}
+
+/// Resample grid data for a given bbox, optionally using Mercator projection
+fn resample_grid_for_bbox(
+    global_data: &[f32],
+    global_width: usize,
+    global_height: usize,
+    output_width: usize,
+    output_height: usize,
+    bbox: [f32; 4],
+    use_mercator: bool,
+) -> Vec<f32> {
+    if use_mercator {
+        resample_for_mercator(global_data, global_width, global_height, output_width, output_height, bbox)
+    } else {
+        resample_from_geographic(global_data, global_width, global_height, output_width, output_height, bbox)
+    }
+}
+
 /// Convert HSV to RGB (simplified version)
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     let h = h % 360.0;
@@ -351,12 +491,14 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     )
 }
 
-/// Find a specific parameter in a GRIB2 file
+/// Find a specific parameter in a GRIB2 file, optionally matching by level
 ///
-/// GRIB files can contain multiple parameters. This function searches
-/// through all messages to find the one matching the requested parameter.
-fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str) -> Result<grib2_parser::Grib2Message, String> {
+/// GRIB files can contain multiple parameters at different levels. This function searches
+/// through all messages to find the one matching the requested parameter and level.
+/// If level is None, returns the first matching parameter.
+fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str, level: Option<&str>) -> Result<grib2_parser::Grib2Message, String> {
     let mut reader = grib2_parser::Grib2Reader::new(grib_data);
+    let mut first_param_match: Option<grib2_parser::Grib2Message> = None;
     
     while let Some(msg) = reader
         .next_message()
@@ -364,10 +506,44 @@ fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str) -> Result<gr
     {
         let msg_param = msg.parameter();
         
-        // Look for exact match
+        // Check parameter match
         if msg_param == parameter {
-            return Ok(msg);
+            // If level is specified, check it matches
+            if let Some(target_level) = level {
+                let msg_level = msg.product_definition.level_description.as_str();
+                if msg_level == target_level {
+                    info!(
+                        param = parameter,
+                        level = msg_level,
+                        "Found exact parameter+level match in GRIB"
+                    );
+                    return Ok(msg);
+                }
+                // Save first parameter match as fallback
+                if first_param_match.is_none() {
+                    info!(
+                        param = parameter,
+                        found_level = msg_level,
+                        wanted_level = target_level,
+                        "First param match (wrong level), saving as fallback"
+                    );
+                    first_param_match = Some(msg);
+                }
+            } else {
+                // No level specified, return first parameter match
+                return Ok(msg);
+            }
         }
+    }
+    
+    // Return first parameter match if no exact level match found
+    if let Some(msg) = first_param_match {
+        info!(
+            param = parameter,
+            requested_level = level,
+            "No exact level match, using first parameter match"
+        );
+        return Ok(msg);
     }
     
     Err(format!("Parameter {} not found in GRIB2 file", parameter))
@@ -395,11 +571,12 @@ pub async fn render_wind_barbs_tile(
     width: u32,
     height: u32,
     bbox: [f32; 4],
+    forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
     // Load U and V component data
-    let (u_data, v_data, grid_width, grid_height) = load_wind_components(storage, catalog, model).await?;
+    let (u_data, v_data, grid_width, grid_height) = load_wind_components(storage, catalog, model, forecast_hour).await?;
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -466,25 +643,177 @@ pub async fn render_wind_barbs_tile(
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
 
-/// Load U and V wind component data from storage
-async fn load_wind_components(
+/// Render wind barbs combining U and V component data with optional level/elevation.
+/// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
+///
+/// # Arguments
+/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `tile_coord`: Optional tile coordinate for expanded rendering
+/// - `width`: Output image width (single tile)
+/// - `height`: Output image height (single tile)
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
+/// - `forecast_hour`: Optional forecast hour; if None, uses latest
+/// - `level`: Optional vertical level/elevation (e.g., "500 mb", "10 m above ground")
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_wind_barbs_tile_with_level(
     storage: &ObjectStorage,
     catalog: &Catalog,
     model: &str,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize), String> {
-    // Load U component (UGRD)
-    let u_entry = catalog
-        .get_latest(model, "UGRD")
-        .await
-        .map_err(|e| format!("Failed to get UGRD: {}", e))?
-        .ok_or_else(|| "No UGRD data available".to_string())?;
+    tile_coord: Option<wms_common::TileCoord>,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    
+    // Load U and V component data with level support
+    let (u_data, v_data, grid_width, grid_height) = load_wind_components_with_level(
+        storage, catalog, model, forecast_hour, level
+    ).await?;
+    
+    // Determine if we should use expanded rendering
+    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
+        let config = ExpandedTileConfig::tiles_3x3();
+        let expanded_bbox = expanded_tile_bbox(&coord, &config);
+        
+        // Calculate actual expanded dimensions
+        let (exp_w, exp_h) = wms_common::tile::actual_expanded_dimensions(&coord, &config);
+        
+        (
+            [
+                expanded_bbox.min_x as f32,
+                expanded_bbox.min_y as f32,
+                expanded_bbox.max_x as f32,
+                expanded_bbox.max_y as f32,
+            ],
+            exp_w as usize,
+            exp_h as usize,
+            Some((coord, config)),
+        )
+    } else {
+        (bbox, width as usize, height as usize, None)
+    };
+    
+    info!(
+        render_width = render_width,
+        render_height = render_height,
+        bbox_min_lon = render_bbox[0],
+        bbox_max_lon = render_bbox[2],
+        expanded = needs_crop.is_some(),
+        level = ?level,
+        "Rendering wind barbs with level"
+    );
+    
+    // Resample data to the render bbox
+    let u_resampled = resample_from_geographic(
+        &u_data, grid_width, grid_height,
+        render_width, render_height, render_bbox
+    );
+    let v_resampled = resample_from_geographic(
+        &v_data, grid_width, grid_height,
+        render_width, render_height, render_bbox
+    );
+    
+    // Render wind barbs with geographic alignment
+    let config = barbs::BarbConfig::default();
+    let barb_pixels = barbs::render_wind_barbs_aligned(
+        &u_resampled,
+        &v_resampled,
+        render_width,
+        render_height,
+        render_bbox,
+        &config,
+    );
+    
+    // Crop to center tile if we used expanded rendering
+    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
+        crop_center_tile(&barb_pixels, render_width as u32, &coord, &tile_config)
+    } else {
+        barb_pixels
+    };
+    
+    // Encode as PNG
+    renderer::png::create_png(&final_pixels, width as usize, height as usize)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
+}
 
-    // Load V component (VGRD)
-    let v_entry = catalog
-        .get_latest(model, "VGRD")
-        .await
-        .map_err(|e| format!("Failed to get VGRD: {}", e))?
-        .ok_or_else(|| "No VGRD data available".to_string())?;
+/// Load U and V wind component data from storage with optional level
+async fn load_wind_components_with_level(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize), String> {
+    // Load U component (UGRD) with level support
+    let u_entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, "UGRD", hour, lev)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available for hour {} level {}", hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, "UGRD", hour)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, "UGRD", lev)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available at level {}", lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, "UGRD")
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| "No UGRD data available".to_string())?
+        }
+    };
+
+    // Load V component (VGRD) with level support
+    let v_entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, "VGRD", hour, lev)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available for hour {} level {}", hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, "VGRD", hour)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, "VGRD", lev)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available at level {}", lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, "VGRD")
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| "No VGRD data available".to_string())?
+        }
+    };
 
     // Load GRIB2 files
     let u_grib = storage
@@ -497,9 +826,9 @@ async fn load_wind_components(
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
 
-    // Parse GRIB2 messages
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
+    // Parse GRIB2 messages - use level from catalog entry to find correct message
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
 
     // Unpack grid data
     let u_data = u_msg
@@ -515,6 +844,82 @@ async fn load_wind_components(
     info!(
         grid_width = grid_width,
         grid_height = grid_height,
+        u_level = %u_entry.level,
+        v_level = %v_entry.level,
+        "Loaded wind component data with level"
+    );
+
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize))
+}
+
+/// Load U and V wind component data from storage
+async fn load_wind_components(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    forecast_hour: Option<u32>,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize), String> {
+    // Load U component (UGRD)
+    let u_entry = if let Some(hour) = forecast_hour {
+        catalog
+            .find_by_forecast_hour(model, "UGRD", hour)
+            .await
+            .map_err(|e| format!("Failed to get UGRD: {}", e))?
+            .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
+    } else {
+        catalog
+            .get_latest(model, "UGRD")
+            .await
+            .map_err(|e| format!("Failed to get UGRD: {}", e))?
+            .ok_or_else(|| "No UGRD data available".to_string())?
+    };
+
+    // Load V component (VGRD)
+    let v_entry = if let Some(hour) = forecast_hour {
+        catalog
+            .find_by_forecast_hour(model, "VGRD", hour)
+            .await
+            .map_err(|e| format!("Failed to get VGRD: {}", e))?
+            .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
+    } else {
+        catalog
+            .get_latest(model, "VGRD")
+            .await
+            .map_err(|e| format!("Failed to get VGRD: {}", e))?
+            .ok_or_else(|| "No VGRD data available".to_string())?
+    };
+
+    // Load GRIB2 files
+    let u_grib = storage
+        .get(&u_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
+
+    let v_grib = storage
+        .get(&v_entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+
+    // Parse GRIB2 messages - use level from catalog entry to find correct message
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
+
+    // Unpack grid data
+    let u_data = u_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking U failed: {}", e))?;
+
+    let v_data = v_msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking V failed: {}", e))?;
+
+    let (grid_height, grid_width) = u_msg.grid_dims();
+    
+    info!(
+        grid_width = grid_width,
+        grid_height = grid_height,
+        u_level = %u_entry.level,
+        v_level = %v_entry.level,
         "Loaded wind component data"
     );
 
@@ -542,20 +947,37 @@ pub async fn render_wind_barbs_layer(
     height: u32,
     bbox: Option<[f32; 4]>,
     barb_spacing: Option<usize>,
+    forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    // Load U component (UGRD) - latest available
-    let u_entry = catalog
-        .get_latest(model, "UGRD")
-        .await
-        .map_err(|e| format!("Failed to get UGRD: {}", e))?
-        .ok_or_else(|| "No UGRD data available".to_string())?;
+    // Load U component (UGRD)
+    let u_entry = if let Some(hour) = forecast_hour {
+        catalog
+            .find_by_forecast_hour(model, "UGRD", hour)
+            .await
+            .map_err(|e| format!("Failed to get UGRD: {}", e))?
+            .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
+    } else {
+        catalog
+            .get_latest(model, "UGRD")
+            .await
+            .map_err(|e| format!("Failed to get UGRD: {}", e))?
+            .ok_or_else(|| "No UGRD data available".to_string())?
+    };
 
-    // Load V component (VGRD) - latest available
-    let v_entry = catalog
-        .get_latest(model, "VGRD")
-        .await
-        .map_err(|e| format!("Failed to get VGRD: {}", e))?
-        .ok_or_else(|| "No VGRD data available".to_string())?;
+    // Load V component (VGRD)
+    let v_entry = if let Some(hour) = forecast_hour {
+        catalog
+            .find_by_forecast_hour(model, "VGRD", hour)
+            .await
+            .map_err(|e| format!("Failed to get VGRD: {}", e))?
+            .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
+    } else {
+        catalog
+            .get_latest(model, "VGRD")
+            .await
+            .map_err(|e| format!("Failed to get VGRD: {}", e))?
+            .ok_or_else(|| "No VGRD data available".to_string())?
+    };
 
     // Load GRIB2 files
     let u_grib = storage
@@ -568,10 +990,9 @@ pub async fn render_wind_barbs_layer(
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
 
-    // Parse GRIB2 messages - search for the correct parameter
-    // (GRIB files can contain multiple parameters)
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
+    // Parse GRIB2 messages - use level from catalog entry to find correct message
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
 
     // Unpack grid data
     let u_data = u_msg
@@ -770,6 +1191,8 @@ pub async fn render_wind_barbs_layer(
 /// - `i`: Pixel column (0-based from left)
 /// - `j`: Pixel row (0-based from top)
 /// - `crs`: Coordinate reference system (e.g., "EPSG:4326", "EPSG:3857")
+/// - `forecast_hour`: Optional forecast hour; if None, uses latest
+/// - `level`: Optional vertical level/elevation (e.g., "500 mb", "2 m above ground")
 ///
 /// # Returns
 /// Vector of FeatureInfo with data values at the queried point
@@ -783,6 +1206,8 @@ pub async fn query_point_value(
     i: u32,
     j: u32,
     crs: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
 ) -> Result<Vec<wms_protocol::FeatureInfo>, String> {
     use wms_protocol::{pixel_to_geographic, mercator_to_wgs84, FeatureInfo, Location};
     
@@ -813,20 +1238,46 @@ pub async fn query_point_value(
         lat = lat,
         pixel_i = i,
         pixel_j = j,
+        level = ?level,
         "GetFeatureInfo query"
     );
     
     // Handle special composite layers
     if parameter == "WIND_BARBS" {
-        return query_wind_barbs_value(storage, catalog, model, lon, lat).await;
+        return query_wind_barbs_value(storage, catalog, model, lon, lat, forecast_hour, level).await;
     }
     
-    // Get dataset for this parameter
-    let entry = catalog
-        .get_latest(model, &parameter)
-        .await
-        .map_err(|e| format!("Catalog query failed: {}", e))?
-        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
+    // Get dataset for this parameter, optionally at a specific level
+    let entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, &parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, &parameter, hour)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, &parameter, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, &parameter)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+        }
+    };
     
     // Load GRIB2 file from storage
     let grib_data = storage
@@ -834,8 +1285,8 @@ pub async fn query_point_value(
         .await
         .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
     
-    // Parse GRIB2 and find parameter
-    let msg = find_parameter_in_grib(grib_data, &parameter)?;
+    // Parse GRIB2 and find parameter with matching level
+    let msg = find_parameter_in_grib(grib_data, &parameter, Some(&entry.level))?;
     
     // Unpack grid data
     let grid_data = msg
@@ -865,6 +1316,7 @@ pub async fn query_point_value(
         },
         forecast_hour: Some(entry.forecast_hour),
         reference_time: Some(entry.reference_time.to_rfc3339()),
+        level: Some(entry.level.clone()),
     }])
 }
 
@@ -875,22 +1327,74 @@ async fn query_wind_barbs_value(
     model: &str,
     lon: f64,
     lat: f64,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
 ) -> Result<Vec<wms_protocol::FeatureInfo>, String> {
     use wms_protocol::{FeatureInfo, Location};
     
-    // Load U component
-    let u_entry = catalog
-        .get_latest(model, "UGRD")
-        .await
-        .map_err(|e| format!("Failed to get UGRD: {}", e))?
-        .ok_or_else(|| "No UGRD data available".to_string())?;
+    // Load U component, optionally at a specific level
+    let u_entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, "UGRD", hour, lev)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available for hour {} level {}", hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, "UGRD", hour)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, "UGRD", lev)
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| format!("No UGRD data available at level {}", lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, "UGRD")
+                .await
+                .map_err(|e| format!("Failed to get UGRD: {}", e))?
+                .ok_or_else(|| "No UGRD data available".to_string())?
+        }
+    };
     
-    // Load V component
-    let v_entry = catalog
-        .get_latest(model, "VGRD")
-        .await
-        .map_err(|e| format!("Failed to get VGRD: {}", e))?
-        .ok_or_else(|| "No VGRD data available".to_string())?;
+    // Load V component, optionally at a specific level
+    let v_entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, "VGRD", hour, lev)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available for hour {} level {}", hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, "VGRD", hour)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, "VGRD", lev)
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| format!("No VGRD data available at level {}", lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, "VGRD")
+                .await
+                .map_err(|e| format!("Failed to get VGRD: {}", e))?
+                .ok_or_else(|| "No VGRD data available".to_string())?
+        }
+    };
     
     // Load GRIB2 files
     let u_grib = storage.get(&u_entry.storage_path).await
@@ -898,9 +1402,9 @@ async fn query_wind_barbs_value(
     let v_grib = storage.get(&v_entry.storage_path).await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
     
-    // Parse and unpack
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD")?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD")?;
+    // Parse and unpack - use level from catalog entry
+    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
+    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
     
     let u_data = u_msg.unpack_data().map_err(|e| format!("Unpacking U failed: {}", e))?;
     let v_data = v_msg.unpack_data().map_err(|e| format!("Unpacking V failed: {}", e))?;
@@ -931,6 +1435,7 @@ async fn query_wind_barbs_value(
             location: Location { longitude: lon, latitude: lat },
             forecast_hour: Some(u_entry.forecast_hour),
             reference_time: Some(u_entry.reference_time.to_rfc3339()),
+            level: Some(u_entry.level.clone()),
         },
         FeatureInfo {
             layer_name: format!("{}_WIND_BARBS", model),
@@ -942,6 +1447,7 @@ async fn query_wind_barbs_value(
             location: Location { longitude: lon, latitude: lat },
             forecast_hour: Some(u_entry.forecast_hour),
             reference_time: Some(u_entry.reference_time.to_rfc3339()),
+            level: Some(u_entry.level.clone()),
         },
     ])
 }
@@ -1045,6 +1551,29 @@ pub async fn render_isolines_tile(
     height: u32,
     bbox: [f32; 4],
     style_path: &str,
+    forecast_hour: Option<u32>,
+    use_mercator: bool,
+) -> Result<Vec<u8>, String> {
+    render_isolines_tile_with_level(
+        storage, catalog, model, parameter, tile_coord, width, height, bbox,
+        style_path, forecast_hour, None, use_mercator
+    ).await
+}
+
+/// Render isolines (contour lines) for a single tile with optional level.
+pub async fn render_isolines_tile_with_level(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    model: &str,
+    parameter: &str,
+    tile_coord: Option<wms_common::TileCoord>,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+    style_path: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+    use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
@@ -1052,12 +1581,37 @@ pub async fn render_isolines_tile(
     let style_config = ContourStyle::from_file(style_path)
         .map_err(|e| format!("Failed to load contour style: {}", e))?;
     
-    // Get dataset for this parameter
-    let entry = catalog
-        .get_latest(model, parameter)
-        .await
-        .map_err(|e| format!("Catalog query failed: {}", e))?
-        .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?;
+    // Get dataset for this parameter, optionally at a specific level
+    let entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, parameter, hour)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_at_level(model, parameter, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest(model, parameter)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+        }
+    };
     
     // Load GRIB2 file from storage
     let grib_data = storage
@@ -1065,8 +1619,8 @@ pub async fn render_isolines_tile(
         .await
         .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
     
-    // Parse GRIB2 and find parameter
-    let msg = find_parameter_in_grib(grib_data, parameter)?;
+    // Parse GRIB2 and find parameter with matching level
+    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
     
     // Unpack grid data
     let grid_data = msg
@@ -1108,13 +1662,15 @@ pub async fn render_isolines_tile(
     );
     
     // Resample data to the render bbox
-    let resampled_data = resample_from_geographic(
+    // Use Mercator projection when rendering for Web Mercator display
+    let resampled_data = resample_grid_for_bbox(
         &grid_data,
         grid_width,
         grid_height,
         render_width,
         render_height,
         render_bbox,
+        use_mercator,
     );
     
     // Generate contour levels from style config

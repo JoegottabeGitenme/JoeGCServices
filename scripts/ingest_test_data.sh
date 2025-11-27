@@ -75,16 +75,44 @@ SQL
 
 log_success "Cleared previous data"
 
-# Run the ingester with test file
+# Run the ingester with test files
 echo ""
-log_info "Running ingester with test data: testdata/gfs_sample.grib2"
+log_info "Running ingester with test data..."
 echo ""
 
-DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
-REDIS_URL="redis://localhost:6379" \
-S3_ENDPOINT="http://localhost:9000" \
-timeout 120 cargo run --release --package ingester -- \
-    --test-file "testdata/gfs_sample.grib2" 2>&1 | tail -30
+# Find all gfs_f*.grib2 files
+TEST_FILES=$(ls testdata/gfs_f*.grib2 2>/dev/null | sort)
+
+if [ -z "$TEST_FILES" ]; then
+    log_warn "No gfs_f*.grib2 files found, falling back to gfs_sample.grib2"
+    TEST_FILES="testdata/gfs_sample.grib2"
+fi
+
+FILE_COUNT=$(echo "$TEST_FILES" | wc -l | tr -d ' ')
+CURRENT=0
+
+for TEST_FILE in $TEST_FILES; do
+    CURRENT=$((CURRENT + 1))
+    
+    # Extract forecast hour from filename (e.g., gfs_f003.grib2 -> 3)
+    FORECAST_HOUR=$(basename "$TEST_FILE" | sed 's/gfs_f\([0-9]*\).grib2/\1/' | sed 's/^0*//')
+    
+    # If extraction failed, default to 0
+    if [ -z "$FORECAST_HOUR" ] || [ "$FORECAST_HOUR" = "$TEST_FILE" ]; then
+        FORECAST_HOUR=0
+    fi
+    
+    log_info "[$CURRENT/$FILE_COUNT] Ingesting $TEST_FILE (forecast hour: ${FORECAST_HOUR})"
+    
+    DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
+    REDIS_URL="redis://localhost:6379" \
+    S3_ENDPOINT="http://localhost:9000" \
+    timeout 120 cargo run --release --package ingester -- \
+        --test-file "$TEST_FILE" \
+        --forecast-hour "$FORECAST_HOUR" 2>&1 | tail -10
+    
+    echo ""
+done
 
 echo ""
 

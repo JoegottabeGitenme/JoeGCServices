@@ -108,8 +108,8 @@ pub struct BarbConfig {
 impl Default for BarbConfig {
     fn default() -> Self {
         Self {
-            size: 40,
-            spacing: 50,
+            size: 108,
+            spacing: 30,
             color: "#000000".to_string(),
         }
     }
@@ -188,6 +188,61 @@ pub fn calculate_barb_positions(
     positions
 }
 
+/// Calculate positions for wind barbs based on global geographic grid
+/// This ensures barbs align across tile boundaries
+/// 
+/// # Arguments
+/// * `width` - Tile width in pixels
+/// * `height` - Tile height in pixels  
+/// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat]
+/// * `spacing_degrees` - Spacing between barbs in degrees
+///
+/// # Returns
+/// Vector of (pixel_x, pixel_y) positions within the tile
+pub fn calculate_barb_positions_geographic(
+    width: usize,
+    height: usize,
+    bbox: [f32; 4],
+    spacing_degrees: f32,
+) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+    
+    let [min_lon, min_lat, max_lon, max_lat] = bbox;
+    let lon_range = max_lon - min_lon;
+    let lat_range = max_lat - min_lat;
+    
+    // Calculate the first barb position that aligns to the global grid
+    // Round down to nearest multiple of spacing_degrees
+    let first_lon = (min_lon / spacing_degrees).floor() * spacing_degrees;
+    let first_lat = (min_lat / spacing_degrees).floor() * spacing_degrees;
+    
+    // Iterate through global grid positions that fall within this tile
+    // Use inclusive min bounds and exclusive max bounds to prevent
+    // duplicate barbs at tile boundaries (each barb belongs to one tile only)
+    let mut lat = first_lat;
+    while lat < max_lat + spacing_degrees {
+        let mut lon = first_lon;
+        while lon < max_lon + spacing_degrees {
+            // Check if this position is within the tile bbox
+            // Inclusive on min side, exclusive on max side to avoid duplicates
+            if lon >= min_lon && lon < max_lon && lat >= min_lat && lat < max_lat {
+                // Convert geographic position to pixel position
+                let x = ((lon - min_lon) / lon_range * width as f32) as usize;
+                let y = ((max_lat - lat) / lat_range * height as f32) as usize; // Y is inverted
+                
+                // Ensure within bounds
+                if x < width && y < height {
+                    positions.push((x, y));
+                }
+            }
+            lon += spacing_degrees;
+        }
+        lat += spacing_degrees;
+    }
+    
+    positions
+}
+
 /// Render wind barbs onto an RGBA image buffer
 ///
 /// # Arguments
@@ -211,6 +266,80 @@ pub fn render_wind_barbs(
     
     // Calculate barb positions
     let positions = calculate_barb_positions(width, height, config.spacing);
+    
+    // Render barb at each position
+    for (x, y) in positions {
+        // Get index in the data grid
+        let idx = y * width + x;
+        if idx >= u_data.len() || idx >= v_data.len() {
+            continue;
+        }
+        
+        let u = u_data[idx];
+        let v = v_data[idx];
+        
+        // Skip invalid data
+        if u.is_nan() || v.is_nan() {
+            continue;
+        }
+        
+        // Convert U/V to speed and direction
+        let (speed_ms, direction_rad) = uv_to_speed_direction(u, v);
+        
+        // Get appropriate SVG for this wind speed
+        if let Some(svg_content) = get_barb_svg_content(speed_ms) {
+            // Render the SVG barb at this position with rotation
+            render_barb_at_position(
+                &mut canvas,
+                width,
+                height,
+                x,
+                y,
+                svg_content,
+                direction_rad,
+                config,
+            );
+        }
+    }
+    
+    canvas
+}
+
+/// Render wind barbs with geographic alignment for seamless tile boundaries
+///
+/// # Arguments
+/// * `u_data` - U wind component grid (m/s), resampled to tile dimensions
+/// * `v_data` - V wind component grid (m/s), resampled to tile dimensions
+/// * `width` - Output image width
+/// * `height` - Output image height
+/// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat]
+/// * `config` - Barb rendering configuration
+///
+/// # Returns
+/// RGBA pixel buffer (4 bytes per pixel)
+pub fn render_wind_barbs_aligned(
+    u_data: &[f32],
+    v_data: &[f32],
+    width: usize,
+    height: usize,
+    bbox: [f32; 4],
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Create transparent RGBA canvas
+    let mut canvas = vec![0u8; width * height * 4];
+    
+    // For geographic alignment, we want consistent spacing in degrees
+    // that results in reasonable pixel spacing on screen.
+    // Calculate degrees per pixel and multiply by desired pixel spacing
+    let lon_range = bbox[2] - bbox[0];
+    let degrees_per_pixel = lon_range / width as f32;
+    
+    // Use the configured spacing (in pixels) to determine degree spacing
+    // This gives us consistent density based on config
+    let spacing_degrees = degrees_per_pixel * config.spacing as f32;
+    
+    // Calculate barb positions using global geographic grid
+    let positions = calculate_barb_positions_geographic(width, height, bbox, spacing_degrees);
     
     // Render barb at each position
     for (x, y) in positions {

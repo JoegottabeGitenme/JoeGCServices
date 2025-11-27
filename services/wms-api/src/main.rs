@@ -3,6 +3,7 @@
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
 mod handlers;
+pub mod metrics;
 mod rendering;
 mod state;
 mod validation;
@@ -86,6 +87,10 @@ async fn main() -> Result<()> {
         // Validation API
         .route("/api/validation/status", get(handlers::validation_status_handler))
         .route("/api/validation/run", get(handlers::validation_run_handler))
+        // Storage stats API
+        .route("/api/storage/stats", get(handlers::storage_stats_handler))
+        // Application metrics API
+        .route("/api/metrics", get(handlers::api_metrics_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())

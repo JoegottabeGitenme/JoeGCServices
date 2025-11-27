@@ -163,7 +163,7 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
     // Check 2: GetMap
     let getmap = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_TMP&STYLES=default&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
+        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_PRMSL&STYLES=default&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
         base_url
     )).await {
         Ok(resp) => {
@@ -180,7 +180,7 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
     // Check 3: GetFeatureInfo
     let getfeatureinfo = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.3.0&LAYERS=gfs_TMP&QUERY_LAYERS=gfs_TMP&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json",
+        "{}?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.3.0&LAYERS=gfs_PRMSL&QUERY_LAYERS=gfs_PRMSL&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json",
         base_url
     )).await {
         Ok(resp) => {
@@ -222,7 +222,7 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
     // Check 5: CRS support (EPSG:3857)
     let crs_support = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_TMP&STYLES=default&CRS=EPSG:3857&BBOX=-20037508,-20037508,20037508,20037508&WIDTH=256&HEIGHT=256&FORMAT=image/png",
+        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_PRMSL&STYLES=default&CRS=EPSG:3857&BBOX=-20037508,-20037508,20037508,20037508&WIDTH=256&HEIGHT=256&FORMAT=image/png",
         base_url
     )).await {
         Ok(resp) => {
@@ -288,7 +288,7 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
     };
 
     // Check 2: GetTile REST
-    let gettile_rest = match reqwest::get(format!("{}/rest/gfs_TMP/default/WebMercatorQuad/2/1/1.png", base_url)).await {
+    let gettile_rest = match reqwest::get(format!("{}/rest/gfs_PRMSL/default/WebMercatorQuad/2/1/1.png", base_url)).await {
         Ok(resp) => {
             if resp.status().is_success() {
                 CheckResult::pass("REST tiles working")
@@ -301,7 +301,7 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
 
     // Check 3: GetTile KVP
     let gettile_kvp = match reqwest::get(format!(
-        "{}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=gfs_TMP&STYLE=default&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=2&TILEROW=1&TILECOL=1",
+        "{}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=gfs_PRMSL&STYLE=default&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=2&TILEROW=1&TILECOL=1",
         base_url
     )).await {
         Ok(resp) => {

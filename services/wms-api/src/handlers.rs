@@ -9,12 +9,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, instrument, error};
+use tracing::{info, instrument, error, debug};
 
 use storage::CacheKey;
 use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
-use bytes::Bytes;
-use renderer::gradient;
 
 use crate::state::AppState;
 
@@ -46,6 +44,8 @@ pub struct WmsParams {
     format: Option<String>,
     #[serde(rename = "TIME", alias = "time")]
     time: Option<String>,
+    #[serde(rename = "ELEVATION", alias = "elevation")]
+    elevation: Option<String>,
     #[serde(rename = "TRANSPARENT", alias = "transparent")]
     transparent: Option<String>,
     // GetFeatureInfo parameters
@@ -102,8 +102,18 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
     // Get parameters and dimensions for each model
     let mut model_params = HashMap::new();
     let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
+    let mut param_levels: HashMap<String, Vec<String>> = HashMap::new();  // model_param -> levels
+    
     for model in &models {
         let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
+        
+        // Get levels for each parameter
+        for param in &params_list {
+            let levels = state.catalog.get_available_levels(model, param).await.unwrap_or_default();
+            let key = format!("{}_{}", model, param);
+            param_levels.insert(key, levels);
+        }
+        
         model_params.insert(model.clone(), params_list);
         
         // Get RUN and FORECAST dimensions
@@ -111,7 +121,7 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions);
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -121,6 +131,11 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
 }
 
 async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
+    use crate::metrics::Timer;
+    
+    // Record WMS request
+    state.metrics.record_wms_request();
+    
     let layers = match &params.layers {
         Some(l) => l,
         None => {
@@ -137,12 +152,17 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let bbox = params.bbox.as_deref();
     let crs = params.crs.as_deref();
     let time = params.time.clone();
+    let elevation = params.elevation.clone();
 
-    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, "GetMap request");
+    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, elevation = ?elevation, "GetMap request");
+    
+    // Time the rendering
+    let timer = Timer::start();
     
     // Try to render actual data, return error on failure
-    match render_weather_data(&state, layers, style, width, height, bbox, crs, time.as_deref()).await {
+    match render_weather_data(&state, layers, style, width, height, bbox, crs, time.as_deref(), elevation.as_deref()).await {
         Ok(png_data) => {
+            state.metrics.record_render(timer.elapsed_us(), true).await;
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/png")
@@ -151,6 +171,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                 .unwrap()
         }
         Err(e) => {
+            state.metrics.record_render(timer.elapsed_us(), false).await;
             error!(error = %e, "Rendering failed");
             wms_exception(
                 "NoApplicableCode",
@@ -239,6 +260,12 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         }
     };
     
+    // Parse TIME parameter (forecast hour)
+    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    
+    // Parse ELEVATION parameter (level string, e.g., "500 mb", "2 m above ground")
+    let elevation = params.elevation.clone();
+    
     info!(
         query_layers = %query_layers,
         bbox = ?bbox_array,
@@ -248,6 +275,8 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         j = j,
         crs = crs,
         info_format = ?info_format,
+        forecast_hour = ?forecast_hour,
+        elevation = ?elevation,
         "GetFeatureInfo request"
     );
     
@@ -266,6 +295,8 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             i,
             j,
             crs,
+            forecast_hour,
+            elevation.as_deref(),
         )
         .await
         {
@@ -367,7 +398,7 @@ pub async fn wmts_kvp_handler(
             let tile_row = params.tile_row.unwrap_or(0);
             let tile_col = params.tile_col.unwrap_or(0);
             let z: u32 = tile_matrix.parse().unwrap_or(0);
-            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row).await
+            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, None, None).await
         }
         _ => wmts_exception(
             "MissingParameterValue",
@@ -377,10 +408,22 @@ pub async fn wmts_kvp_handler(
     }
 }
 
+/// Query parameters for WMTS RESTful tile requests (dimensions)
+#[derive(Debug, Deserialize, Default)]
+pub struct WmtsDimensionParams {
+    /// TIME dimension - forecast hour (e.g., "3", "6", "12") or ISO8601 datetime
+    #[serde(rename = "time", alias = "TIME")]
+    pub time: Option<String>,
+    /// ELEVATION dimension - vertical level (e.g., "500 mb", "2 m above ground")
+    #[serde(rename = "elevation", alias = "ELEVATION")]
+    pub elevation: Option<String>,
+}
+
 #[instrument(skip(state))]
 pub async fn wmts_rest_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(path): Path<String>,
+    Query(params): Query<WmtsDimensionParams>,
 ) -> Response {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if parts.len() < 6 {
@@ -404,17 +447,27 @@ pub async fn wmts_rest_handler(
     let (y_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
     let y: u32 = y_str.parse().unwrap_or(0);  // Row (Y)
     
-    wmts_get_tile(state, layer, style, z, x, y).await
+    // Parse TIME parameter as forecast hour
+    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    let elevation = params.elevation.clone();
+    
+    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, elevation.as_deref()).await
 }
 
 #[instrument(skip(state))]
 pub async fn xyz_tile_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((layer, style, z, x, y)): Path<(String, String, u32, u32, String)>,
+    Query(params): Query<WmtsDimensionParams>,
 ) -> Response {
     let (y_str, _) = y.rsplit_once('.').unwrap_or((&y, "png"));
     let y_val: u32 = y_str.parse().unwrap_or(0);
-    wmts_get_tile(state, &layer, &style, z, x, y_val).await
+    
+    // Parse TIME parameter as forecast hour
+    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    let elevation = params.elevation.clone();
+    
+    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, elevation.as_deref()).await
 }
 
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
@@ -448,8 +501,55 @@ async fn wmts_get_tile(
     z: u32,
     x: u32,
     y: u32,
+    forecast_hour: Option<u32>,
+    elevation: Option<&str>,
 ) -> Response {
-    info!(layer = %layer, style = %style, z = z, x = x, y = y, "GetTile request");
+    use crate::metrics::Timer;
+    
+    // Record WMTS request
+    state.metrics.record_wmts_request();
+    let timer = Timer::start();
+    
+    info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, elevation = ?elevation, "GetTile request");
+    
+    // Build cache key for this tile, including time and elevation for uniqueness
+    let time_key = forecast_hour.map(|h| format!("t{}", h));
+    let elevation_key = elevation.map(|e| e.replace(' ', "_"));
+    let dimension_suffix = match (&time_key, &elevation_key) {
+        (Some(t), Some(e)) => Some(format!("{}_{}", t, e)),
+        (Some(t), None) => Some(t.clone()),
+        (None, Some(e)) => Some(e.clone()),
+        (None, None) => None,
+    };
+    
+    let cache_key = CacheKey::new(
+        layer,
+        style,
+        CrsCode::Epsg3857,  // WMTS always uses Web Mercator
+        BoundingBox::new(x as f64, y as f64, z as f64, 0.0),  // Use tile coords for key
+        256,
+        256,
+        dimension_suffix,
+        "png",
+    );
+    
+    // Check Redis cache first
+    {
+        let mut cache = state.cache.lock().await;
+        if let Ok(Some(cached_data)) = cache.get(&cache_key).await {
+            state.metrics.record_cache_hit().await;
+            info!(layer = %layer, z = z, x = x, y = y, "Cache hit");
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CACHE_CONTROL, "max-age=3600")
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .header("X-Cache", "HIT")
+                .body(cached_data.to_vec().into())
+                .unwrap();
+        }
+        state.metrics.record_cache_miss().await;
+    }
     
     // Get tile bounding box using Web Mercator tile matrix set
     let tms = web_mercator_tile_matrix_set();
@@ -498,7 +598,7 @@ async fn wmts_get_tile(
     
     // Check if this is a wind barbs composite layer
     let result = if parameter == "WIND_BARBS" {
-        crate::rendering::render_wind_barbs_tile(
+        crate::rendering::render_wind_barbs_tile_with_level(
             &state.storage,
             &state.catalog,
             model,
@@ -506,6 +606,8 @@ async fn wmts_get_tile(
             256,  // tile width
             256,  // tile height
             bbox_array,
+            forecast_hour,
+            elevation,
         )
         .await
     } else if style == "isolines" {
@@ -518,7 +620,7 @@ async fn wmts_get_tile(
             format!("{}/temperature_isolines.json", style_config_dir)
         };
         
-        crate::rendering::render_isolines_tile(
+        crate::rendering::render_isolines_tile_with_level(
             &state.storage,
             &state.catalog,
             model,
@@ -528,33 +630,62 @@ async fn wmts_get_tile(
             256,  // tile height
             bbox_array,
             &style_file,
+            forecast_hour,
+            elevation,
+            true,  // WMTS tiles are always in Web Mercator
         )
         .await
     } else {
-        // Render the tile with spatial subsetting
-        crate::rendering::render_weather_data(
+        // Render the tile with spatial subsetting and optional time/level
+        crate::rendering::render_weather_data_with_level(
             &state.storage,
             &state.catalog,
             model,
             &parameter,
-            None, // forecast_hour (use default/latest)
+            forecast_hour,
+            elevation,
             256,  // tile width
             256,  // tile height
             Some(bbox_array),
+            None,  // style_name
+            true,  // use_mercator for WMTS
         )
         .await
     };
     
     match result
     {
-        Ok(png_data) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "image/png")
-            .header(header::CACHE_CONTROL, "max-age=3600")
-            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-            .body(png_data.into())
-            .unwrap(),
+        Ok(png_data) => {
+            state.metrics.record_render(timer.elapsed_us(), true).await;
+            
+            // Store in Redis cache (async, don't wait)
+            let cache_data = png_data.clone();
+            let state_clone = state.clone();
+            let cache_key_clone = cache_key.clone();
+            tokio::spawn(async move {
+                let mut cache = state_clone.cache.lock().await;
+                if let Err(e) = cache.set(&cache_key_clone, &cache_data, None).await {
+                    error!(error = %e, "Failed to cache tile");
+                }
+            });
+            
+            // Prefetch neighboring tiles in background (Google tile strategy)
+            // Only prefetch at zoom levels 3-12 to avoid excessive requests
+            if z >= 3 && z <= 12 {
+                spawn_tile_prefetch(state.clone(), layer.to_string(), style.to_string(), coord);
+            }
+            
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CACHE_CONTROL, "max-age=3600")
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .header("X-Cache", "MISS")
+                .body(png_data.into())
+                .unwrap()
+        }
         Err(e) => {
+            state.metrics.record_render(timer.elapsed_us(), false).await;
             error!(error = %e, "WMTS tile rendering failed");
             wmts_exception(
                 "NoApplicableCode",
@@ -582,6 +713,62 @@ pub async fn metrics_handler() -> impl IntoResponse {
     (StatusCode::OK, "# metrics\n")
 }
 
+/// JSON metrics endpoint for the web UI
+pub async fn api_metrics_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    let snapshot = state.metrics.snapshot().await;
+    let system = crate::metrics::SystemStats::read();
+    
+    // Get Redis cache stats
+    let cache_stats = {
+        let mut cache = state.cache.lock().await;
+        match cache.stats().await {
+            Ok(stats) => serde_json::json!({
+                "connected": true,
+                "key_count": stats.key_count,
+                "memory_used": stats.memory_used
+            }),
+            Err(_) => serde_json::json!({
+                "connected": false,
+                "key_count": 0,
+                "memory_used": 0
+            })
+        }
+    };
+    
+    // Combine metrics, system, and cache stats
+    let combined = serde_json::json!({
+        "metrics": snapshot,
+        "system": system,
+        "cache": cache_stats
+    });
+    
+    Json(combined)
+}
+
+/// Storage stats endpoint - returns MinIO bucket statistics
+pub async fn storage_stats_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.storage.stats().await {
+        Ok(stats) => {
+            let json = serde_json::json!({
+                "total_size": stats.total_size,
+                "object_count": stats.object_count,
+                "bucket": stats.bucket
+            });
+            (StatusCode::OK, Json(json))
+        }
+        Err(e) => {
+            let json = serde_json::json!({
+                "error": e.to_string()
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json))
+        }
+    }
+}
+
 // ============================================================================
 // Rendering
 // ============================================================================
@@ -603,6 +790,7 @@ async fn render_weather_data(
     bbox: Option<&str>,
     crs: Option<&str>,
     time: Option<&str>,
+    elevation: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
     let parts: Vec<&str> = layer.split('_').collect();
@@ -612,6 +800,22 @@ async fn render_weather_data(
 
     let model = parts[0];
     let parameter = parts[1..].join("_");
+    
+    // Parse TIME parameter early (supports both forecast hour like "3" and ISO8601 datetime)
+    let forecast_hour: Option<u32> = time.and_then(|t| {
+        // First try to parse as integer (forecast hour)
+        if let Ok(hour) = t.parse::<u32>() {
+            Some(hour)
+        } else {
+            // Try to parse as ISO8601 datetime and find matching dataset
+            // For now, we'll just support forecast hour format
+            // ISO8601 support would require querying catalog for nearest time
+            None
+        }
+    });
+    
+    // ELEVATION parameter is the level string (e.g., "500 mb", "2 m above ground")
+    let level = elevation.map(|s| s.to_string());
     
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
@@ -645,6 +849,7 @@ async fn render_weather_data(
             height,
             parsed_bbox,
             None, // Use default barb spacing
+            forecast_hour,
         )
         .await;
     }
@@ -673,13 +878,14 @@ async fn render_weather_data(
             None
         }
     });
-
-    // Parse TIME parameter (format: "H" for forecast hour)
-    let forecast_hour: Option<u32> = time.and_then(|t| t.parse().ok());
     
-    info!(forecast_hour = ?forecast_hour, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
+    info!(forecast_hour = ?forecast_hour, level = ?level, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
 
     // Check if isolines style is requested
+    // Check if CRS is Web Mercator - use Mercator projection for resampling
+    let crs_str = crs.unwrap_or("EPSG:4326");
+    let use_mercator = crs_str.contains("3857");
+    
     if style == "isolines" {
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
@@ -690,7 +896,7 @@ async fn render_weather_data(
         };
         
         // For WMS, we don't have tile coordinates, so pass None
-        return crate::rendering::render_isolines_tile(
+        return crate::rendering::render_isolines_tile_with_level(
             &state.storage,
             &state.catalog,
             model,
@@ -700,20 +906,26 @@ async fn render_weather_data(
             height,
             parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
             &style_file,
+            forecast_hour,
+            level.as_deref(),
+            use_mercator,
         )
         .await;
     }
 
-    // Use shared rendering logic
-    crate::rendering::render_weather_data(
+    // Use shared rendering logic with Mercator projection support and level
+    crate::rendering::render_weather_data_with_level(
         &state.storage,
         &state.catalog,
         model,
         &parameter,
         forecast_hour,
+        level.as_deref(),
         width,
         height,
         parsed_bbox,
+        Some(style),
+        use_mercator,
     )
     .await
 }
@@ -873,14 +1085,37 @@ fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
         .unwrap()
 }
 
+/// Get human-readable name for a GRIB parameter code
+fn get_parameter_name(param: &str) -> String {
+    match param {
+        "PRMSL" => "Mean Sea Level Pressure".to_string(),
+        "TMP" => "Temperature".to_string(),
+        "RH" => "Relative Humidity".to_string(),
+        "UGRD" => "U-Component Wind".to_string(),
+        "VGRD" => "V-Component Wind".to_string(),
+        "WIND_BARBS" => "Wind Barbs".to_string(),
+        "APCP" => "Accumulated Precipitation".to_string(),
+        "TCDC" => "Total Cloud Cover".to_string(),
+        "GUST" => "Wind Gust Speed".to_string(),
+        // GRIB2 Product 1 (Meteorological) parameters
+        "P1_22" => "Cloud Mixing Ratio".to_string(),
+        "P1_23" => "Ice Mixing Ratio".to_string(),
+        "P1_24" => "Rain Mixing Ratio".to_string(),
+        // Default: return the code itself
+        _ => param.to_string(),
+    }
+}
+
 fn build_wms_capabilities_xml(
     version: &str,
     models: &[String],
     model_params: &HashMap<String, Vec<String>>,
     model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
+    param_levels: &HashMap<String, Vec<String>>,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
+    let empty_levels = Vec::new();
     
     let layers: String = models
         .iter()
@@ -888,13 +1123,14 @@ fn build_wms_capabilities_xml(
             let params = model_params.get(model).unwrap_or(&empty_params);
             let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
             
-            // Build dimension elements
+            // Build base dimension elements (RUN and FORECAST)
             let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
             let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
             let forecast_values = if forecasts.is_empty() { "0".to_string() } else { forecasts.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",") };
-            let forecast_default = forecasts.first().unwrap_or(&0);
+            // Default to latest (highest) forecast hour to match get_latest() behavior
+            let forecast_default = forecasts.last().unwrap_or(&0);
             
-            let dimensions = format!(
+            let base_dimensions = format!(
                 r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
                 run_default, run_values, forecast_default, forecast_values
             );
@@ -902,7 +1138,33 @@ fn build_wms_capabilities_xml(
             let param_layers = params
                 .iter()
                 .map(|p| {
-                    // Add styles and dimensions to each layer
+                    // Get levels for this parameter
+                    let key = format!("{}_{}", model, p);
+                    let levels = param_levels.get(&key).unwrap_or(&empty_levels);
+                    
+                    // Build ELEVATION dimension if there are multiple levels
+                    let elevation_dim = if levels.len() > 1 {
+                        // Sort levels for display (pressure levels should be sorted numerically)
+                        let mut sorted_levels = levels.clone();
+                        sorted_levels.sort_by(|a, b| {
+                            // Try to parse as pressure level for proper sorting
+                            let a_val = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                            let b_val = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                            b_val.cmp(&a_val)  // Descending (1000 mb first)
+                        });
+                        let level_values = sorted_levels.join(",");
+                        let default_level = sorted_levels.first().map(|s| s.as_str()).unwrap_or("");
+                        format!(
+                            r#"<Dimension name="ELEVATION" units="" default="{}">{}</Dimension>"#,
+                            default_level, level_values
+                        )
+                    } else {
+                        String::new()
+                    };
+                    
+                    let all_dimensions = format!("{}{}", base_dimensions, elevation_dim);
+                    
+                    // Add styles to each layer
                     let styles = if p.contains("TMP") || p.contains("TEMP") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style>"
                     } else if p.contains("WIND") || p.contains("GUST") {
@@ -917,17 +1179,37 @@ fn build_wms_capabilities_xml(
                     
                     format!(
                         r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/>{}{}</Layer>"#,
-                        model, p, model.to_uppercase(), p, styles, dimensions
+                        model, p, model.to_uppercase(), get_parameter_name(p), styles, all_dimensions
                     )
                 })
                 .collect::<Vec<_>>()
                 .join("");
             
              // Add composite wind barbs layer if we have both UGRD and VGRD
+             // Get UGRD levels for wind barbs (same as VGRD)
+             let ugrd_key = format!("{}_UGRD", model);
+             let wind_levels = param_levels.get(&ugrd_key).unwrap_or(&empty_levels);
+             let wind_elevation_dim = if wind_levels.len() > 1 {
+                 let mut sorted_levels = wind_levels.clone();
+                 sorted_levels.sort_by(|a, b| {
+                     let a_val = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                     let b_val = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                     b_val.cmp(&a_val)
+                 });
+                 let level_values = sorted_levels.join(",");
+                 let default_level = sorted_levels.first().map(|s| s.as_str()).unwrap_or("");
+                 format!(
+                     r#"<Dimension name="ELEVATION" units="" default="{}">{}</Dimension>"#,
+                     default_level, level_values
+                 )
+             } else {
+                 String::new()
+             };
+             
              let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
                  format!(
-                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}</Layer>"#,
-                     model, model.to_uppercase(), dimensions
+                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>-180</westBoundLongitude><eastBoundLongitude>180</eastBoundLongitude><southBoundLatitude>-90</southBoundLatitude><northBoundLatitude>90</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="-180" miny="-90" maxx="180" maxy="90"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}{}</Layer>"#,
+                     model, model.to_uppercase(), base_dimensions, wind_elevation_dim
                  )
              } else {
                  String::new()
@@ -1009,15 +1291,9 @@ fn build_wmts_capabilities_xml(
         .iter()
         .flat_map(|model| {
             let params = model_params.get(model).unwrap_or(&empty_params);
-            let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+            let (_runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
             
-            // Build dimension values
-            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
-            let run_values: Vec<String> = if runs.is_empty() { 
-                vec!["latest".to_string()] 
-            } else { 
-                runs.clone() 
-            };
+            // Build dimension values for time (forecast hour)
             let forecast_default = forecasts.first().unwrap_or(&0);
             let forecast_values: Vec<i32> = if forecasts.is_empty() { 
                 vec![0] 
@@ -1077,11 +1353,8 @@ fn build_wmts_capabilities_xml(
       </Style>"#
                 };
                 
-                // Build dimension elements for RUN and FORECAST
-                let run_values_xml: String = run_values.iter()
-                    .map(|v| format!("        <Value>{}</Value>", v))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                // Build dimension elements for time (forecast hour)
+                // Using "time" as dimension identifier to match query parameter
                 let forecast_values_xml: String = forecast_values.iter()
                     .map(|v| format!("        <Value>{}</Value>", v))
                     .collect::<Vec<_>>()
@@ -1101,19 +1374,14 @@ fn build_wmts_capabilities_xml(
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <Dimension>
-        <ows:Identifier>RUN</ows:Identifier>
-        <Default>{}</Default>
-{}
-      </Dimension>
-      <Dimension>
-        <ows:Identifier>FORECAST</ows:Identifier>
+        <ows:Identifier>time</ows:Identifier>
+        <ows:UOM>hours</ows:UOM>
         <Default>{}</Default>
 {}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                     layer_title, layer_id, styles, 
-                    run_default, run_values_xml,
                     forecast_default, forecast_values_xml,
                     layer_id
                 )
@@ -1132,15 +1400,6 @@ fn build_wmts_capabilities_xml(
             let layer_id = format!("{}_WIND_BARBS", model);
             let layer_title = format!("{} - Wind Barbs", model.to_uppercase());
             
-            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
-            let run_values_xml: String = if runs.is_empty() {
-                "        <Value>latest</Value>".to_string()
-            } else {
-                runs.iter()
-                    .map(|v| format!("        <Value>{}</Value>", v))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
             let forecast_default = forecasts.first().unwrap_or(&0);
             let forecast_values_xml: String = if forecasts.is_empty() {
                 "        <Value>0</Value>".to_string()
@@ -1168,19 +1427,14 @@ fn build_wmts_capabilities_xml(
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <Dimension>
-        <ows:Identifier>RUN</ows:Identifier>
-        <Default>{}</Default>
-{}
-      </Dimension>
-      <Dimension>
-        <ows:Identifier>FORECAST</ows:Identifier>
+        <ows:Identifier>time</ows:Identifier>
+        <ows:UOM>hours</ows:UOM>
         <Default>{}</Default>
 {}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                 layer_title, layer_id, 
-                run_default, run_values_xml,
                 forecast_default, forecast_values_xml,
                 layer_id
             );
@@ -1348,3 +1602,170 @@ pub async fn validation_run_handler(
     
     Ok(Json(status))
 }
+
+// ============================================================================
+// Tile Prefetching
+// ============================================================================
+
+/// Get the 8 neighboring tiles around a center tile (Google tile strategy).
+/// Returns tiles at the same zoom level that surround the requested tile.
+fn get_neighboring_tiles(center: &TileCoord) -> Vec<TileCoord> {
+    let z = center.z;
+    let max_tile = 2u32.pow(z) - 1;
+    
+    let mut neighbors = Vec::with_capacity(8);
+    
+    // All 8 directions: N, NE, E, SE, S, SW, W, NW
+    let offsets: [(i32, i32); 8] = [
+        (0, -1),   // N
+        (1, -1),   // NE
+        (1, 0),    // E
+        (1, 1),    // SE
+        (0, 1),    // S
+        (-1, 1),   // SW
+        (-1, 0),   // W
+        (-1, -1),  // NW
+    ];
+    
+    for (dx, dy) in offsets {
+        let new_x = center.x as i32 + dx;
+        let new_y = center.y as i32 + dy;
+        
+        // Only include valid tile coordinates
+        if new_x >= 0 && new_x <= max_tile as i32 && new_y >= 0 && new_y <= max_tile as i32 {
+            neighbors.push(TileCoord::new(z, new_x as u32, new_y as u32));
+        }
+    }
+    
+    neighbors
+}
+
+/// Spawn background tasks to prefetch neighboring tiles.
+/// This improves perceived performance when panning the map.
+fn spawn_tile_prefetch(
+    state: Arc<AppState>,
+    layer: String,
+    style: String,
+    center: TileCoord,
+) {
+    let neighbors = get_neighboring_tiles(&center);
+    
+    for neighbor in neighbors {
+        let state = state.clone();
+        let layer = layer.clone();
+        let style = style.clone();
+        
+        tokio::spawn(async move {
+            prefetch_single_tile(state, &layer, &style, neighbor).await;
+        });
+    }
+}
+
+/// Prefetch a single tile if not already cached.
+async fn prefetch_single_tile(
+    state: Arc<AppState>,
+    layer: &str,
+    style: &str,
+    coord: TileCoord,
+) {
+    // Build cache key
+    let cache_key = CacheKey::new(
+        layer,
+        style,
+        CrsCode::Epsg3857,
+        BoundingBox::new(coord.x as f64, coord.y as f64, coord.z as f64, 0.0),
+        256,
+        256,
+        None,
+        "png",
+    );
+    
+    // Check if already cached
+    {
+        let mut cache = state.cache.lock().await;
+        if let Ok(Some(_)) = cache.get(&cache_key).await {
+            debug!(z = coord.z, x = coord.x, y = coord.y, "Prefetch: already cached");
+            return;
+        }
+    }
+    
+    debug!(layer = %layer, z = coord.z, x = coord.x, y = coord.y, "Prefetching tile");
+    
+    // Get tile bounding box
+    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
+    let bbox_array = [
+        latlon_bbox.min_x as f32,
+        latlon_bbox.min_y as f32,
+        latlon_bbox.max_x as f32,
+        latlon_bbox.max_y as f32,
+    ];
+    
+    // Parse layer name
+    let parts: Vec<&str> = layer.split('_').collect();
+    if parts.len() < 2 {
+        return;
+    }
+    
+    let model = parts[0];
+    let parameter = parts[1..].join("_");
+    
+    // Render the tile
+    let result = if parameter == "WIND_BARBS" {
+        crate::rendering::render_wind_barbs_tile(
+            &state.storage,
+            &state.catalog,
+            model,
+            Some(coord),
+            256,
+            256,
+            bbox_array,
+            None,
+        )
+        .await
+    } else if style == "isolines" {
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature_isolines.json", style_config_dir)
+        } else {
+            format!("{}/temperature_isolines.json", style_config_dir)
+        };
+        
+        crate::rendering::render_isolines_tile(
+            &state.storage,
+            &state.catalog,
+            model,
+            &parameter,
+            Some(coord),
+            256,
+            256,
+            bbox_array,
+            &style_file,
+            None,
+            true,
+        )
+        .await
+    } else {
+        crate::rendering::render_weather_data(
+            &state.storage,
+            &state.catalog,
+            model,
+            &parameter,
+            None,
+            256,
+            256,
+            Some(bbox_array),
+        )
+        .await
+    };
+    
+    // Cache the result if successful
+    if let Ok(png_data) = result {
+        let mut cache = state.cache.lock().await;
+        if let Err(e) = cache.set(&cache_key, &png_data, None).await {
+            debug!(error = %e, "Failed to cache prefetched tile");
+        } else {
+            debug!(z = coord.z, x = coord.x, y = coord.y, "Prefetched and cached tile");
+        }
+    }
+}
+

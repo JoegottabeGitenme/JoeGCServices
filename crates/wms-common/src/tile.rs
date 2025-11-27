@@ -264,6 +264,163 @@ pub fn xyz_to_tms(coord: &TileCoord) -> (u32, u32, u32) {
     (coord.z, coord.x, n - 1 - coord.y)
 }
 
+/// Configuration for expanded tile rendering.
+/// Used to render a larger area and crop to get seamless tile boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpandedTileConfig {
+    /// Number of tiles to expand in each direction (1 = 3x3 grid, 2 = 5x5 grid)
+    pub expansion: u32,
+    /// Tile size in pixels
+    pub tile_size: u32,
+}
+
+impl Default for ExpandedTileConfig {
+    fn default() -> Self {
+        Self {
+            expansion: 1,  // 3x3 grid
+            tile_size: 256,
+        }
+    }
+}
+
+impl ExpandedTileConfig {
+    /// Create config for 3x3 tile rendering
+    pub fn tiles_3x3() -> Self {
+        Self { expansion: 1, tile_size: 256 }
+    }
+    
+    /// Get the total size of the expanded render area in pixels
+    pub fn expanded_size(&self) -> u32 {
+        self.tile_size * (2 * self.expansion + 1)
+    }
+    
+    /// Get the pixel offset where the center tile starts
+    pub fn center_offset(&self) -> u32 {
+        self.tile_size * self.expansion
+    }
+}
+
+/// Calculate the expanded bounding box for rendering a tile with its neighbors.
+/// This allows rendering features that cross tile boundaries correctly.
+///
+/// # Arguments
+/// * `coord` - The center tile coordinate
+/// * `config` - Expansion configuration
+///
+/// # Returns
+/// The expanded bounding box in WGS84 coordinates (lat/lon)
+pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> BoundingBox {
+    let n = 2u32.pow(coord.z) as f64;
+    let expansion = config.expansion;
+    
+    // Calculate expanded tile range, clamping to valid tile indices
+    let x_min = coord.x.saturating_sub(expansion);
+    let x_max = (coord.x + expansion + 1).min(2u32.pow(coord.z));
+    let y_min = coord.y.saturating_sub(expansion);
+    let y_max = (coord.y + expansion + 1).min(2u32.pow(coord.z));
+    
+    // Convert to lat/lon bounds
+    let lon_min = x_min as f64 / n * 360.0 - 180.0;
+    let lon_max = x_max as f64 / n * 360.0 - 180.0;
+    
+    let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * y_min as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+    let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * y_max as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+    
+    BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
+}
+
+/// Calculate the crop region within an expanded render to extract the center tile.
+///
+/// # Arguments
+/// * `coord` - The center tile coordinate  
+/// * `config` - Expansion configuration
+///
+/// # Returns
+/// (x_offset, y_offset, width, height) - The crop region in pixels
+pub fn center_tile_crop_region(coord: &TileCoord, config: &ExpandedTileConfig) -> (u32, u32, u32, u32) {
+    let expansion = config.expansion;
+    let tile_size = config.tile_size;
+    let n = 2u32.pow(coord.z);
+    
+    // Calculate actual expansion used (may be less at edges)
+    let actual_x_before = coord.x.min(expansion);
+    let actual_y_before = coord.y.min(expansion);
+    
+    // The center tile starts after the tiles before it
+    let x_offset = actual_x_before * tile_size;
+    let y_offset = actual_y_before * tile_size;
+    
+    (x_offset, y_offset, tile_size, tile_size)
+}
+
+/// Get the actual expanded dimensions when near tile grid edges.
+///
+/// # Arguments
+/// * `coord` - The center tile coordinate
+/// * `config` - Expansion configuration
+///
+/// # Returns
+/// (width, height) in pixels of the expanded render area
+pub fn actual_expanded_dimensions(coord: &TileCoord, config: &ExpandedTileConfig) -> (u32, u32) {
+    let expansion = config.expansion;
+    let tile_size = config.tile_size;
+    let n = 2u32.pow(coord.z);
+    
+    // Calculate how many tiles we can actually expand to
+    let tiles_left = coord.x.min(expansion);
+    let tiles_right = (n - 1 - coord.x).min(expansion);
+    let tiles_up = coord.y.min(expansion);
+    let tiles_down = (n - 1 - coord.y).min(expansion);
+    
+    let width = (1 + tiles_left + tiles_right) * tile_size;
+    let height = (1 + tiles_up + tiles_down) * tile_size;
+    
+    (width, height)
+}
+
+/// Crop the center tile from an expanded RGBA pixel buffer.
+///
+/// # Arguments
+/// * `expanded_pixels` - The full expanded render (RGBA, 4 bytes per pixel)
+/// * `expanded_width` - Width of the expanded render
+/// * `coord` - The center tile coordinate
+/// * `config` - Expansion configuration
+///
+/// # Returns
+/// The cropped center tile pixels (RGBA)
+pub fn crop_center_tile(
+    expanded_pixels: &[u8],
+    expanded_width: u32,
+    coord: &TileCoord,
+    config: &ExpandedTileConfig,
+) -> Vec<u8> {
+    let (x_offset, y_offset, width, height) = center_tile_crop_region(coord, config);
+    let tile_size = config.tile_size as usize;
+    
+    let mut result = vec![0u8; tile_size * tile_size * 4];
+    
+    for row in 0..tile_size {
+        let src_y = y_offset as usize + row;
+        let src_start = (src_y * expanded_width as usize + x_offset as usize) * 4;
+        let src_end = src_start + tile_size * 4;
+        
+        let dst_start = row * tile_size * 4;
+        let dst_end = dst_start + tile_size * 4;
+        
+        if src_end <= expanded_pixels.len() {
+            result[dst_start..dst_end].copy_from_slice(&expanded_pixels[src_start..src_end]);
+        }
+    }
+    
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,4 +7,5 @@ edition.workspace = true
 wms-common = { path = "../wms-common" }
 quick-xml = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -22,9 +22,15 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /app/target/release/wms-api /usr/local/bin/wms-api
 
+# Copy config files
+COPY config /app/config
+
 # Create non-root user
-RUN useradd -m -u 1000 appuser
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
 USER appuser
+
+WORKDIR /app
 
 EXPOSE 8080
 

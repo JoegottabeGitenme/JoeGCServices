@@ -2,15 +2,19 @@
 
 use anyhow::Result;
 use std::env;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use storage::{Catalog, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache};
+use crate::metrics::MetricsCollector;
 
 /// Shared application state.
 pub struct AppState {
     pub catalog: Catalog,
-    pub cache: TileCache,
+    pub cache: Mutex<TileCache>,
     pub queue: JobQueue,
     pub storage: ObjectStorage,
+    pub metrics: Arc<MetricsCollector>,
 }
 
 impl AppState {
@@ -35,12 +39,14 @@ impl AppState {
         let cache = TileCache::connect(&redis_url).await?;
         let queue = JobQueue::connect(&redis_url).await?;
         let storage = ObjectStorage::new(&storage_config)?;
+        let metrics = Arc::new(MetricsCollector::new());
 
         Ok(Self {
             catalog,
-            cache,
+            cache: Mutex::new(cache),
             queue,
             storage,
+            metrics,
         })
     }
 }

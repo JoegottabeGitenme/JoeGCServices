@@ -161,6 +161,41 @@ impl ObjectStorage {
 
         Ok(())
     }
+
+    /// Get storage statistics (total size and object count).
+    pub async fn stats(&self) -> WmsResult<StorageStats> {
+        use futures::TryStreamExt;
+
+        let mut total_size: u64 = 0;
+        let mut object_count: u64 = 0;
+
+        let mut stream = self.store.list(None);
+        while let Some(meta) = stream
+            .try_next()
+            .await
+            .map_err(|e| WmsError::StorageError(format!("List failed: {}", e)))?
+        {
+            total_size += meta.size as u64;
+            object_count += 1;
+        }
+
+        Ok(StorageStats {
+            total_size,
+            object_count,
+            bucket: self.bucket.clone(),
+        })
+    }
+}
+
+/// Storage statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    /// Total size in bytes
+    pub total_size: u64,
+    /// Number of objects
+    pub object_count: u64,
+    /// Bucket name
+    pub bucket: String,
 }
 
 /// Path builder for consistent storage layout.

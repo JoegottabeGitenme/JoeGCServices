@@ -82,6 +82,79 @@ pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
+/// Contour style configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContourStyle {
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub style_type: String,
+    pub units: Option<String>,
+    pub contour: ContourOptions,
+}
+
+/// Contour rendering options
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContourOptions {
+    pub levels: Option<Vec<f32>>,
+    pub interval: Option<f32>,
+    pub unit_conversion: Option<f32>,
+    pub min_value: Option<f32>,
+    pub max_value: Option<f32>,
+    pub line_width: f32,
+    pub line_color: [u8; 4],
+    pub smoothing_passes: Option<u32>,
+}
+
+impl ContourStyle {
+    /// Load contour style from JSON file
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+    
+    /// Generate contour levels from the configuration
+    pub fn generate_levels(&self, data_min: f32, data_max: f32) -> Vec<f32> {
+        use crate::contour::generate_contour_levels;
+        
+        // If levels are explicitly specified, use them
+        if let Some(ref levels) = self.contour.levels {
+            return levels.clone();
+        }
+        
+        // Otherwise generate from interval
+        if let Some(interval) = self.contour.interval {
+            let min = self.contour.min_value.unwrap_or(data_min);
+            let max = self.contour.max_value.unwrap_or(data_max);
+            
+            // Apply unit conversion if specified (e.g., Kelvin to Celsius)
+            let min_converted = if let Some(conversion) = self.contour.unit_conversion {
+                min + conversion
+            } else {
+                min
+            };
+            let max_converted = if let Some(conversion) = self.contour.unit_conversion {
+                max + conversion
+            } else {
+                max
+            };
+            
+            // Generate levels in converted units
+            let levels = generate_contour_levels(min_converted, max_converted, interval);
+            
+            // Convert back to original units
+            if let Some(conversion) = self.contour.unit_conversion {
+                levels.into_iter().map(|l| l - conversion).collect()
+            } else {
+                levels
+            }
+        } else {
+            vec![]
+        }
+    }
+}
+
 /// Apply style-based color mapping to data
 pub fn apply_style_gradient(
     data: &[f32],

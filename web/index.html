@@ -17,43 +17,145 @@
         <header class="header">
             <div class="header-content">
                 <h1>🗺️ Weather WMS Dashboard</h1>
-                <div class="status-indicators">
-                    <div class="status-item">
-                        <span class="status-label">WMS:</span>
-                        <div class="status-badge" id="wms-status">
-                            <span class="status-dot"></span>
-                            <span class="status-text">Checking...</span>
+                <div class="header-right">
+                    <div class="status-indicators">
+                        <div class="status-item">
+                            <span class="status-label">WMS:</span>
+                            <div class="status-badge" id="wms-status">
+                                <span class="status-dot"></span>
+                                <span class="status-text">Checking...</span>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">WMTS:</span>
+                            <div class="status-badge" id="wmts-status">
+                                <span class="status-dot"></span>
+                                <span class="status-text">Checking...</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="status-item">
-                        <span class="status-label">WMTS:</span>
-                        <div class="status-badge" id="wmts-status">
-                            <span class="status-dot"></span>
-                            <span class="status-text">Checking...</span>
-                        </div>
+                    <div class="external-links">
+                        <a href="http://localhost:9001" target="_blank" class="external-link" title="Open MinIO Console">
+                            <span class="link-icon">🗄️</span>
+                            <span class="link-text">MinIO Console</span>
+                        </a>
                     </div>
                 </div>
             </div>
         </header>
 
         <div class="main-content">
-            <!-- Sidebar -->
-            <aside class="sidebar">
-                <!-- Ingestion Status Section -->
-                <div class="sidebar-section ingestion-status-section">
-                    <h2>Ingestion Status</h2>
-                    <div id="ingestion-status" class="ingestion-status">
-                        <div class="status-box">
-                            <div class="status-row">
-                                <span class="label">Service:</span>
-                                <div class="status-badge" id="ingester-service-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">Unknown</span>
+            <!-- Left Sidebar - Layer Controls -->
+            <aside class="sidebar sidebar-left">
+                <div class="sidebar-section">
+                    <h2>Layer Selection</h2>
+                    <div class="control-group">
+                        <label for="protocol-select">Protocol:</label>
+                        <select id="protocol-select" class="control-input">
+                            <option value="wms">WMS (Web Map Service)</option>
+                            <option value="wmts" selected>WMTS (Web Map Tile Service)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="layer-select">Layer:</label>
+                        <select id="layer-select" class="control-input">
+                            <option value="">Select a layer...</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group" id="style-group" style="display: none;">
+                        <label for="style-select">Style:</label>
+                        <select id="style-select" class="control-input">
+                            <option value="default">Default</option>
+                        </select>
+                    </div>
+
+                    <button id="load-layer-btn" class="control-button">Load Layer</button>
+
+                    <div class="control-group" style="margin-top: 1rem;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="enable-query" checked>
+                            <span>Enable click-to-query</span>
+                        </label>
+                    </div>
+
+                    <div id="query-hint" class="query-hint" style="display: none;">
+                        💡 Click on the map to query data values
+                    </div>
+                </div>
+
+                <!-- Model Run & Forecast Controls -->
+                <div class="sidebar-section time-control-section" id="time-control-section" style="display: none;">
+                    <h2>Model Run & Forecast</h2>
+                    <div class="protocol-note" id="time-protocol-note" style="display: none; padding: 0.5rem; background: rgba(255,255,255,0.2); border-radius: 4px; font-size: 0.85rem; color: rgba(255,255,255,0.9); margin-bottom: 0.75rem;">
+                        ⚠️ Forecast hour controls only work with WMS protocol
+                    </div>
+                    <div class="time-controls">
+                        <!-- Model Run Selector -->
+                        <div class="control-group">
+                            <label for="run-select">Model Run (Initialization):</label>
+                            <select id="run-select" class="control-input">
+                                <option value="latest">Latest Available</option>
+                            </select>
+                            <div class="help-text">Choose when the model was initialized</div>
+                        </div>
+                        
+                        <!-- Forecast Hour Controls -->
+                        <div class="forecast-section">
+                            <div class="section-header">
+                                <span class="section-label">Forecast Hour</span>
+                                <span class="forecast-value" id="current-time-display">F+024</span>
+                            </div>
+                            <div class="slider-container">
+                                <input type="range" id="time-slider" class="time-slider" min="0" max="24" step="3" value="24">
+                                <div class="slider-labels">
+                                    <span>F+000</span>
+                                    <span>F+006</span>
+                                    <span>F+012</span>
+                                    <span>F+018</span>
+                                    <span>F+024</span>
                                 </div>
                             </div>
+                            <div class="valid-time-display">
+                                <span class="valid-time-label">Valid Time:</span>
+                                <span class="valid-time-value" id="valid-time-display">--</span>
+                            </div>
+                            <div class="help-text">Hours into the future from model run</div>
+                        </div>
+                        
+                        <!-- Elevation/Level Selector -->
+                        <div class="control-group" id="elevation-group" style="display: none;">
+                            <label for="elevation-select">Vertical Level:</label>
+                            <select id="elevation-select" class="control-input">
+                                <option value="">Surface / Default</option>
+                            </select>
+                            <div class="help-text">Pressure level or height above ground</div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- Map -->
+            <main class="map-container">
+                <div id="map"></div>
+            </main>
+
+            <!-- Right Sidebar - Status & Validation -->
+            <aside class="sidebar sidebar-right">
+                <!-- Ingestion Status Section -->
+                <div class="sidebar-section ingestion-status-section">
+                    <h2>Data Status</h2>
+                    <div id="ingestion-status" class="ingestion-status">
+                        <div class="status-box compact">
                             <div class="status-row">
-                                <span class="label">Last Run:</span>
-                                <span class="value" id="last-ingest-time">Never</span>
+                                <span class="label">Service:</span>
+                                <div class="status-badge mini" id="ingester-service-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">--</span>
+                                </div>
                             </div>
                             <div class="status-row">
                                 <span class="label">Datasets:</span>
@@ -65,11 +167,98 @@
                             </div>
                             <div class="status-row">
                                 <span class="label">Storage:</span>
-                                <span class="value" id="storage-size">0 B</span>
+                                <span class="value" id="storage-size">--</span>
                             </div>
                         </div>
-                        <div class="ingest-log" id="ingest-log">
-                            <div class="log-entry">Waiting for ingestion data...</div>
+                    </div>
+                </div>
+
+                <!-- Performance Stats -->
+                <div class="sidebar-section performance-section">
+                    <h2>Performance</h2>
+                    <div id="performance-stats" class="performance-stats compact">
+                        <div class="stat-row">
+                            <span class="stat-label">Last:</span>
+                            <span class="stat-value" id="last-tile-time">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Avg:</span>
+                            <span class="stat-value" id="avg-tile-time">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Tiles:</span>
+                            <span class="stat-value" id="tiles-loaded-count">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Slowest:</span>
+                            <span class="stat-value" id="slowest-tile-time">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Layer:</span>
+                            <span class="stat-value truncate" id="current-layer-name">None</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backend Metrics Section -->
+                <div class="sidebar-section backend-metrics-section">
+                    <h2>Backend Metrics</h2>
+                    <div id="backend-metrics" class="backend-metrics">
+                        <div class="metrics-group">
+                            <div class="metrics-group-title">Requests</div>
+                            <div class="metric-row">
+                                <span class="metric-label">WMS:</span>
+                                <span class="metric-value" id="metric-wms-requests">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">WMTS:</span>
+                                <span class="metric-value" id="metric-wmts-requests">0</span>
+                            </div>
+                        </div>
+                        <div class="metrics-group">
+                            <div class="metrics-group-title">Rendering</div>
+                            <div class="metric-row">
+                                <span class="metric-label">Total:</span>
+                                <span class="metric-value" id="metric-renders">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Avg:</span>
+                                <span class="metric-value" id="metric-render-avg">--</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Last:</span>
+                                <span class="metric-value" id="metric-render-last">--</span>
+                            </div>
+                        </div>
+                        <div class="metrics-group">
+                            <div class="metrics-group-title">Cache (Redis)</div>
+                            <div class="metric-row">
+                                <span class="metric-label">Status:</span>
+                                <span class="metric-value" id="metric-cache-status">--</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Keys:</span>
+                                <span class="metric-value" id="metric-cache-keys">--</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Memory:</span>
+                                <span class="metric-value" id="metric-cache-memory">--</span>
+                            </div>
+                        </div>
+                        <div class="metrics-group">
+                            <div class="metrics-group-title">System</div>
+                            <div class="metric-row">
+                                <span class="metric-label">Memory:</span>
+                                <span class="metric-value" id="metric-memory">--</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Threads:</span>
+                                <span class="metric-value" id="metric-threads">--</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Uptime:</span>
+                                <span class="metric-value" id="metric-uptime">--</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -143,81 +332,20 @@
                                 Last checked: Never
                             </div>
                             <button id="run-validation-btn" class="validation-button">
-                                🔄 Run Validation
+                                Run Validation
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="sidebar-section">
-                    <h2>Layer Selection</h2>
-                    <div class="control-group">
-                        <label for="protocol-select">Protocol:</label>
-                        <select id="protocol-select" class="control-input">
-                            <option value="wms">WMS (Web Map Service)</option>
-                            <option value="wmts" selected>WMTS (Web Map Tile Service)</option>
-                        </select>
-                    </div>
-
-                    <div class="control-group">
-                        <label for="layer-select">Layer:</label>
-                        <select id="layer-select" class="control-input">
-                            <option value="">Select a layer...</option>
-                        </select>
-                    </div>
-
-                    <div class="control-group" id="style-group" style="display: none;">
-                        <label for="style-select">Style:</label>
-                        <select id="style-select" class="control-input">
-                            <option value="default">Default</option>
-                        </select>
-                    </div>
-
-                    <button id="load-layer-btn" class="control-button">Load Layer</button>
-
-                    <div class="control-group" style="margin-top: 1rem;">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="enable-query" checked>
-                            <span>Enable click-to-query</span>
-                        </label>
-                    </div>
-
-                    <div id="query-hint" class="query-hint" style="display: none;">
-                        💡 Click on the map to query data values
-                    </div>
-                </div>
-
-                <div class="sidebar-section performance-section">
-                    <h2>Performance Stats</h2>
-                    <div id="performance-stats" class="performance-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Last Tile:</span>
-                            <span class="stat-value" id="last-tile-time">-</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Avg Tile:</span>
-                            <span class="stat-value" id="avg-tile-time">-</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Tiles Loaded:</span>
-                            <span class="stat-value" id="tiles-loaded-count">0</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Slowest:</span>
-                            <span class="stat-value" id="slowest-tile-time">-</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Current Layer:</span>
-                            <span class="stat-value" id="current-layer-name">None</span>
-                        </div>
+                <!-- Ingestion Log (collapsible) -->
+                <div class="sidebar-section log-section">
+                    <h2>Ingestion Log</h2>
+                    <div class="ingest-log" id="ingest-log">
+                        <div class="log-entry">Waiting for ingestion data...</div>
                     </div>
                 </div>
             </aside>
-
-            <!-- Map -->
-            <main class="map-container">
-                <div id="map"></div>
-            </main>
         </div>
 
         <!-- Footer -->

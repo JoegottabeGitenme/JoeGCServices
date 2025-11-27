@@ -10,8 +10,14 @@ pub mod getfeatureinfo;
 pub mod getmap;
 pub mod wmts;
 
+// Re-export GetFeatureInfo types
+pub use getfeatureinfo::{
+    FeatureInfo, FeatureInfoResponse, GetFeatureInfoRequest, InfoFormat, Location,
+    mercator_to_wgs84, pixel_to_geographic,
+};
+
 pub use wmts::{
-    wmts_exception, GetCapabilitiesRequest, GetFeatureInfoRequest, GetTileRequest,
+    wmts_exception, GetCapabilitiesRequest, GetTileRequest,
     WmtsCapabilitiesBuilder, WmtsDimensionInfo, WmtsKvpParams, WmtsLayerInfo, WmtsRequest,
     WmtsRestPath, WmtsStyleInfo,
 };
