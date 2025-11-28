@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
                     bbox: None,
                 },
                 seed: None,
+                time_selection: None,
             };
             
             // Run the load test

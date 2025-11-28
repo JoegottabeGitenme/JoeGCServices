@@ -7,6 +7,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY services ./services
+COPY validation ./validation
 
 # Build the service
 RUN cargo build --release --package wms-api

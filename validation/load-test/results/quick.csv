@@ -1,0 +1,17 @@
+timestamp,config,duration,requests,rps,p50,p90,p99,cache_hit_rate
+Loading scenario: /home/joe/workspace/weather-wms/validation/load-test/scenarios/quick.yaml
+✓ Configuration loaded successfully
+  Name: quick
+  Description: Quick smoke test (10 seconds, 1 concurrent request)
+  Duration: 10s
+  Concurrency: 1
+  Layers: 1
+
+Starting load test: quick
+  Warmup: 0s
+  Test duration: 10s
+  Concurrency: 1
+
+
+timestamp,config,duration,requests,rps,p50,p90,p99,cache_hit_rate
+2025-11-28T04:18:50.202771702+00:00,quick,9.998867664,81033,8104.2,0.1,0.1,0.2,100.0

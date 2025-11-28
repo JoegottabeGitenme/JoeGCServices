@@ -5,7 +5,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use storage::{Catalog, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache};
+use storage::{Catalog, GribCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache};
 use crate::metrics::MetricsCollector;
 
 /// Shared application state.
@@ -13,7 +13,8 @@ pub struct AppState {
     pub catalog: Catalog,
     pub cache: Mutex<TileCache>,
     pub queue: JobQueue,
-    pub storage: ObjectStorage,
+    pub storage: Arc<ObjectStorage>,
+    pub grib_cache: GribCache,
     pub metrics: Arc<MetricsCollector>,
 }
 
@@ -24,6 +25,18 @@ impl AppState {
         });
 
         let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
+        
+        // Parse connection pool sizes from environment
+        let db_pool_size = env::var("DATABASE_POOL_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(20); // Increased from 10 to 20 default
+
+        // Parse GRIB cache size from environment
+        let grib_cache_size = env::var("GRIB_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(500); // Default: 500 entries (~2.5GB RAM)
 
         let storage_config = ObjectStorageConfig {
             endpoint: env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://minio:9000".to_string()),
@@ -35,17 +48,21 @@ impl AppState {
             allow_http: true,
         };
 
-        let catalog = Catalog::connect(&database_url).await?;
+        let catalog = Catalog::connect_with_pool_size(&database_url, db_pool_size).await?;
         let cache = TileCache::connect(&redis_url).await?;
         let queue = JobQueue::connect(&redis_url).await?;
-        let storage = ObjectStorage::new(&storage_config)?;
+        let storage = Arc::new(ObjectStorage::new(&storage_config)?);
         let metrics = Arc::new(MetricsCollector::new());
+        
+        // Create GRIB cache with shared storage reference
+        let grib_cache = GribCache::new(grib_cache_size, storage.clone());
 
         Ok(Self {
             catalog,
             cache: Mutex::new(cache),
             queue,
             storage,
+            grib_cache,
             metrics,
         })
     }

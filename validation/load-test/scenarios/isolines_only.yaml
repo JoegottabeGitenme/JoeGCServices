@@ -1,0 +1,25 @@
+name: isolines_only
+description: Test isoline/contour rendering performance
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 20
+warmup_secs: 5
+layers:
+  - name: gfs_TMP
+    style: isolines
+    weight: 1.0
+  - name: gfs_PRMSL
+    style: isolines
+    weight: 1.0
+  - name: hrrr_TMP
+    style: isolines
+    weight: 1.0
+tile_selection:
+  type: random
+  zoom_range: [5, 6]
+  bbox:
+    min_lon: -100.0
+    min_lat: 30.0
+    max_lon: -80.0
+    max_lat: 45.0
+seed: 333

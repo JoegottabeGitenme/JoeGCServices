@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use std::collections::HashMap;
 
 /// Metrics collector for the WMS API.
 #[derive(Debug)]
@@ -26,8 +27,44 @@ pub struct MetricsCollector {
     render_times: RwLock<TimingStats>,
     minio_times: RwLock<TimingStats>,
     
+    /// Per-layer-type timing stats
+    layer_type_times: RwLock<HashMap<LayerType, TimingStats>>,
+    
+    /// Detailed pipeline timing stats
+    grib_load_times: RwLock<TimingStats>,
+    grib_parse_times: RwLock<TimingStats>,
+    resample_times: RwLock<TimingStats>,
+    png_encode_times: RwLock<TimingStats>,
+    cache_lookup_times: RwLock<TimingStats>,
+    
     /// Start time for uptime calculation
     start_time: Instant,
+}
+
+/// Layer rendering type classification
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LayerType {
+    Gradient,
+    WindBarbs,
+    Isolines,
+}
+
+impl LayerType {
+    /// Classify layer type based on layer name and style
+    pub fn from_layer_and_style(layer: &str, style: &str) -> Self {
+        // Isolines style takes priority
+        if style == "isolines" {
+            return LayerType::Isolines;
+        }
+        
+        // Wind barb layers
+        if layer.contains("WIND_BARBS") || style == "wind_barbs" {
+            return LayerType::WindBarbs;
+        }
+        
+        // Everything else is gradient (temperature, pressure, satellite, radar, etc.)
+        LayerType::Gradient
+    }
 }
 
 #[derive(Debug, Default)]
@@ -86,6 +123,12 @@ impl MetricsCollector {
             render_errors: AtomicU64::new(0),
             render_times: RwLock::new(TimingStats::default()),
             minio_times: RwLock::new(TimingStats::default()),
+            layer_type_times: RwLock::new(HashMap::new()),
+            grib_load_times: RwLock::new(TimingStats::default()),
+            grib_parse_times: RwLock::new(TimingStats::default()),
+            resample_times: RwLock::new(TimingStats::default()),
+            png_encode_times: RwLock::new(TimingStats::default()),
+            cache_lookup_times: RwLock::new(TimingStats::default()),
             start_time: Instant::now(),
         }
     }
@@ -139,10 +182,73 @@ impl MetricsCollector {
         times.record(duration_us);
     }
     
+    /// Record a render operation with layer type classification
+    pub async fn record_render_with_type(&self, duration_us: u64, success: bool, layer_type: LayerType) {
+        // Record general render stats
+        self.record_render(duration_us, success).await;
+        
+        // Record layer-type specific stats
+        if success {
+            let mut layer_times = self.layer_type_times.write().await;
+            layer_times.entry(layer_type).or_insert_with(TimingStats::default).record(duration_us);
+            
+            // Record to metrics crate with label
+            let type_label = match layer_type {
+                LayerType::Gradient => "gradient",
+                LayerType::WindBarbs => "wind_barbs",
+                LayerType::Isolines => "isolines",
+            };
+            histogram!("render_duration_by_type_ms", "layer_type" => type_label)
+                .record(duration_us as f64 / 1000.0);
+            counter!("renders_by_type_total", "layer_type" => type_label).increment(1);
+        }
+    }
+    
+    /// Record GRIB file load time (from MinIO/cache)
+    pub async fn record_grib_load(&self, duration_us: u64) {
+        let mut times = self.grib_load_times.write().await;
+        times.record(duration_us);
+        histogram!("grib_load_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record GRIB parsing time (decompression + parsing)
+    pub async fn record_grib_parse(&self, duration_us: u64) {
+        let mut times = self.grib_parse_times.write().await;
+        times.record(duration_us);
+        histogram!("grib_parse_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record grid resampling time (projection + interpolation)
+    pub async fn record_resample(&self, duration_us: u64) {
+        let mut times = self.resample_times.write().await;
+        times.record(duration_us);
+        histogram!("resample_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record PNG encoding time
+    pub async fn record_png_encode(&self, duration_us: u64) {
+        let mut times = self.png_encode_times.write().await;
+        times.record(duration_us);
+        histogram!("png_encode_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record cache lookup time
+    pub async fn record_cache_lookup(&self, duration_us: u64) {
+        let mut times = self.cache_lookup_times.write().await;
+        times.record(duration_us);
+        histogram!("cache_lookup_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
     /// Get current metrics snapshot
     pub async fn snapshot(&self) -> MetricsSnapshot {
         let render_times = self.render_times.read().await;
         let minio_times = self.minio_times.read().await;
+        let layer_times = self.layer_type_times.read().await;
+        let grib_load_times = self.grib_load_times.read().await;
+        let grib_parse_times = self.grib_parse_times.read().await;
+        let resample_times = self.resample_times.read().await;
+        let png_encode_times = self.png_encode_times.read().await;
+        let cache_lookup_times = self.cache_lookup_times.read().await;
         
         let cache_hits = self.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.cache_misses.load(Ordering::Relaxed);
@@ -152,6 +258,18 @@ impl MetricsCollector {
         } else {
             0.0
         };
+        
+        // Build per-layer-type stats
+        let mut layer_type_stats = HashMap::new();
+        for (layer_type, stats) in layer_times.iter() {
+            layer_type_stats.insert(*layer_type, LayerTypeStats {
+                count: stats.count,
+                avg_ms: stats.avg_ms(),
+                min_ms: stats.min_ms(),
+                max_ms: stats.max_ms(),
+                last_ms: stats.last_ms(),
+            });
+        }
         
         MetricsSnapshot {
             uptime_secs: self.start_time.elapsed().as_secs(),
@@ -174,6 +292,29 @@ impl MetricsCollector {
             render_last_ms: render_times.last_ms(),
             render_min_ms: render_times.min_ms(),
             render_max_ms: render_times.max_ms(),
+            
+            layer_type_stats,
+            
+            // Pipeline metrics
+            grib_load_avg_ms: grib_load_times.avg_ms(),
+            grib_load_last_ms: grib_load_times.last_ms(),
+            grib_load_count: grib_load_times.count,
+            
+            grib_parse_avg_ms: grib_parse_times.avg_ms(),
+            grib_parse_last_ms: grib_parse_times.last_ms(),
+            grib_parse_count: grib_parse_times.count,
+            
+            resample_avg_ms: resample_times.avg_ms(),
+            resample_last_ms: resample_times.last_ms(),
+            resample_count: resample_times.count,
+            
+            png_encode_avg_ms: png_encode_times.avg_ms(),
+            png_encode_last_ms: png_encode_times.last_ms(),
+            png_encode_count: png_encode_times.count,
+            
+            cache_lookup_avg_ms: cache_lookup_times.avg_ms(),
+            cache_lookup_last_ms: cache_lookup_times.last_ms(),
+            cache_lookup_count: cache_lookup_times.count,
         }
     }
     
@@ -190,6 +331,12 @@ impl MetricsCollector {
         
         *self.render_times.write().await = TimingStats::default();
         *self.minio_times.write().await = TimingStats::default();
+        self.layer_type_times.write().await.clear();
+        *self.grib_load_times.write().await = TimingStats::default();
+        *self.grib_parse_times.write().await = TimingStats::default();
+        *self.resample_times.write().await = TimingStats::default();
+        *self.png_encode_times.write().await = TimingStats::default();
+        *self.cache_lookup_times.write().await = TimingStats::default();
     }
 }
 
@@ -226,6 +373,40 @@ pub struct MetricsSnapshot {
     pub render_last_ms: f64,
     pub render_min_ms: f64,
     pub render_max_ms: f64,
+    
+    // Per-layer-type stats
+    pub layer_type_stats: HashMap<LayerType, LayerTypeStats>,
+    
+    // Pipeline timing breakdown
+    pub grib_load_avg_ms: f64,
+    pub grib_load_last_ms: f64,
+    pub grib_load_count: u64,
+    
+    pub grib_parse_avg_ms: f64,
+    pub grib_parse_last_ms: f64,
+    pub grib_parse_count: u64,
+    
+    pub resample_avg_ms: f64,
+    pub resample_last_ms: f64,
+    pub resample_count: u64,
+    
+    pub png_encode_avg_ms: f64,
+    pub png_encode_last_ms: f64,
+    pub png_encode_count: u64,
+    
+    pub cache_lookup_avg_ms: f64,
+    pub cache_lookup_last_ms: f64,
+    pub cache_lookup_count: u64,
+}
+
+/// Per-layer-type performance statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerTypeStats {
+    pub count: u64,
+    pub avg_ms: f64,
+    pub min_ms: f64,
+    pub max_ms: f64,
+    pub last_ms: f64,
 }
 
 /// Timer guard for measuring operation duration.

@@ -21,6 +21,7 @@ COPY crates/storage/Cargo.toml /app/crates/storage/
 COPY services/ingester/Cargo.toml /app/services/ingester/
 COPY services/renderer-worker/Cargo.toml /app/services/renderer-worker/
 COPY services/wms-api/Cargo.toml /app/services/wms-api/
+COPY validation/load-test/Cargo.toml /app/validation/load-test/
 
 # Create dummy lib.rs files
 RUN mkdir -p /app/crates/wms-common/src && echo "pub fn dummy() {}" > /app/crates/wms-common/src/lib.rs
@@ -33,6 +34,7 @@ RUN mkdir -p /app/crates/storage/src && echo "pub fn dummy() {}" > /app/crates/s
 RUN mkdir -p /app/services/ingester/src && echo "fn main() {}" > /app/services/ingester/src/main.rs
 RUN mkdir -p /app/services/renderer-worker/src && echo "fn main() {}" > /app/services/renderer-worker/src/main.rs
 RUN mkdir -p /app/services/wms-api/src && echo "fn main() {}" > /app/services/wms-api/src/main.rs
+RUN mkdir -p /app/validation/load-test/src && echo "fn main() {}" > /app/validation/load-test/src/main.rs
 
 # Build dependencies only
 WORKDIR /app
@@ -41,6 +43,7 @@ RUN cargo build --release --package ingester 2>/dev/null || true
 # Now copy actual source code
 COPY crates /app/crates
 COPY services /app/services
+COPY validation /app/validation
 
 # Touch all source files to invalidate cache
 RUN find /app -name "*.rs" -exec touch {} \;

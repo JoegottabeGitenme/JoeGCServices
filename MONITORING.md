@@ -1,265 +1,138 @@
-# Monitoring & Debugging Guide
+# Monitoring Setup
 
-Since the Kubernetes dashboard may have network issues in some environments, use kubectl commands for monitoring.
+## Overview
 
-## Quick Status Checks
+The WMS API now exposes detailed performance metrics via Prometheus, visualized in Grafana dashboards.
 
-```bash
-# Overall cluster status
-kubectl cluster-info
+## Quick Access
 
-# Node status
-kubectl get nodes
+- **Grafana Dashboard**: http://localhost:3000/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now
+  - Username: `admin`
+  - Password: `admin`
+- **Prometheus**: http://localhost:9090
+- **Prometheus Metrics**: http://localhost:8080/metrics
+- **JSON Metrics API**: http://localhost:8080/api/metrics
 
-# All resources in namespace
-kubectl get all -n weather-wms
+## Available Metrics
 
-# Just pods
-kubectl get pods -n weather-wms
+### Request Metrics
+- `wms_requests_total` - Total WMS requests
+- `wmts_requests_total` - Total WMTS requests
+- `cache_hits_total` - Cache hits
+- `cache_misses_total` - Cache misses
+- `renders_total` - Total render operations
 
-# Detailed pod info
-kubectl get pods -n weather-wms -o wide
+### Pipeline Stage Metrics (Histograms)
+All metrics include percentiles (p50, p90, p95, p99, max):
 
-# Resource usage (if metrics-server is enabled)
-kubectl top nodes
-kubectl top pods -n weather-wms
-```
+- `grib_load_duration_ms` - Time to load GRIB file from storage
+- `grib_parse_duration_ms` - Time to parse and decompress GRIB2
+- `resample_duration_ms` - Time for grid resampling
+- `png_encode_duration_ms` - Time for PNG encoding
+- `render_duration_ms` - Total render time
 
-## Watching in Real-Time
+### Layer Type Metrics
+- `render_duration_by_type_ms{layer_type="gradient"}` - Gradient layer renders
+- `render_duration_by_type_ms{layer_type="wind_barbs"}` - Wind barb renders
+- `render_duration_by_type_ms{layer_type="isolines"}` - Isoline renders
 
-```bash
-# Watch pods as they change
-kubectl get pods -n weather-wms -w
+## Dashboard Panels
 
-# Watch deployments rolling out
-kubectl get deployment -n weather-wms -w
+The Grafana dashboard includes:
 
-# Watch events (useful for troubleshooting)
-kubectl get events -n weather-wms -w
-```
+1. **Requests per Second** - WMS and WMTS request rates
+2. **Cache Hit Rate** - Percentage of requests served from cache
+3. **Pipeline Stage Latencies** - p50 latency for each stage:
+   - GRIB Load
+   - GRIB Parse
+   - Resample
+   - PNG Encode
+4. **Total Render Latency** - p50/p90/p99/max percentiles
+5. **Render Count** - Total renders since startup
+6. **Avg Render Time** - p50 latency
+7. **Cache Hits** - Total cache hits
+8. **Cache Misses** - Total cache misses
 
-## Viewing Logs
+## Querying Prometheus Directly
 
-```bash
-# View pod logs
-kubectl logs -n weather-wms <pod-name>
-
-# Follow logs (like tail -f)
-kubectl logs -n weather-wms <pod-name> -f
-
-# View logs from all pods of a deployment
-kubectl logs -n weather-wms -l app=wms-api -f
-
-# View previous logs (from a crashed pod)
-kubectl logs -n weather-wms <pod-name> --previous
-
-# View last 50 lines with timestamps
-kubectl logs -n weather-wms <pod-name> --tail=50 --timestamps
-```
-
-## Debugging Pods
+Example queries:
 
 ```bash
-# Get detailed pod information
-kubectl describe pod -n weather-wms <pod-name>
+# Current request rate (per second)
+curl -s "http://localhost:9090/api/v1/query?query=rate(wms_requests_total[1m])"
 
-# Execute command in a pod
-kubectl exec -it -n weather-wms <pod-name> -- bash
+# p99 render latency
+curl -s "http://localhost:9090/api/v1/query?query=render_duration_ms{quantile=\"0.99\"}"
 
-# Copy files from/to pod
-kubectl cp -n weather-wms <pod-name>:/path/in/pod ./local/path
-kubectl cp ./local/path -n weather-wms <pod-name>:/path/in/pod
+# Cache hit rate
+curl -s "http://localhost:9090/api/v1/query?query=rate(cache_hits_total[1m])/(rate(cache_hits_total[1m])+rate(cache_misses_total[1m]))*100"
 
-# Port-forward to a pod
-kubectl port-forward -n weather-wms <pod-name> 8080:8080
+# Pipeline breakdown percentages
+curl -s "http://localhost:9090/api/v1/query?query=grib_load_duration_ms_sum/render_duration_ms_sum*100"
 ```
 
-## Service Access
+## JSON Metrics API
+
+For application dashboards, use the JSON endpoint:
 
 ```bash
-# List all services
-kubectl get svc -n weather-wms
-
-# Get service details
-kubectl describe svc -n weather-wms <service-name>
-
-# Port-forward to a service
-kubectl port-forward -n weather-wms svc/<service-name> 8080:8080
-
-# Get service endpoints
-kubectl get endpoints -n weather-wms <service-name>
+curl -s http://localhost:8080/api/metrics | jq
 ```
 
-## Troubleshooting Common Issues
+Returns:
+```json
+{
+  "metrics": {
+    "grib_load_avg_ms": 1.44,
+    "grib_parse_avg_ms": 0.99,
+    "resample_avg_ms": 0.29,
+    "png_encode_avg_ms": 0.58,
+    "render_avg_ms": 3.13,
+    "cache_hit_rate": 100.0,
+    ...
+  }
+}
+```
 
-### Pod Stuck in Pending
+## Starting/Stopping
 
 ```bash
-# Check for errors
-kubectl describe pod -n weather-wms <pod-name>
+# Start monitoring stack
+docker-compose up -d prometheus grafana
 
-# Usually means:
-# - Not enough resources (check node capacity)
-# - Image pull issues (check Events section)
-# - PVC not bound
+# Stop monitoring stack
+docker-compose stop prometheus grafana
+
+# View logs
+docker-compose logs -f prometheus
+docker-compose logs -f grafana
 ```
 
-### ImagePullBackOff
+## Adding Custom Dashboards
 
-```bash
-# Check what image is failing
-kubectl describe pod -n weather-wms <pod-name> | grep Image
+1. Create JSON dashboard in `deploy/grafana/provisioning/dashboards/`
+2. Restart Grafana: `docker-compose restart grafana`
+3. Access at: http://localhost:3000
 
-# Manually pull and load image into minikube
-docker pull <image-name>
-minikube -p weather-wms image load <image-name>
-```
+## Profiling Results
 
-### Pod CrashLoopBackOff
+Current pipeline breakdown (from baseline tests):
 
-```bash
-# Check logs
-kubectl logs -n weather-wms <pod-name>
+| Stage       | Time   | % Total |
+|-------------|--------|---------|
+| GRIB Load   | 415ms  | 65%     | ← Primary bottleneck
+| GRIB Parse  | 221ms  | 35%     | ← Secondary bottleneck
+| Resample    | 1ms    | <1%     |
+| PNG Encode  | 0.1ms  | <1%     |
 
-# Check previous logs
-kubectl logs -n weather-wms <pod-name> --previous
+**Optimization Target**: GRIB load/parse takes 99% of render time. Implementing GRIB message caching will significantly improve cache-miss performance.
 
-# Get more details
-kubectl describe pod -n weather-wms <pod-name>
-```
+## Alerting (Future)
 
-### Network Issues
+Prometheus can be configured to send alerts via:
+- Email
+- Slack
+- PagerDuty
+- Webhook
 
-```bash
-# Check DNS from within a pod
-kubectl exec -it -n weather-wms <pod-name> -- nslookup kubernetes.default
-
-# Check pod networking
-kubectl get networkpolicy -n weather-wms
-
-# View cluster DNS
-kubectl get svc -n kube-system | grep dns
-```
-
-## Environment Inspection
-
-```bash
-# View pod environment variables
-kubectl exec -n weather-wms <pod-name> -- env
-
-# View pod limits and requests
-kubectl get pod -n weather-wms <pod-name> -o yaml | grep -A 10 "resources:"
-
-# View pod mounts
-kubectl get pod -n weather-wms <pod-name> -o yaml | grep -A 10 "volumeMounts:"
-```
-
-## Useful One-Liners
-
-```bash
-# Get all pod IPs
-kubectl get pods -n weather-wms -o wide | awk '{print $6}' | tail -n +2
-
-# Delete all pods (forces restart)
-kubectl delete pods --all -n weather-wms
-
-# Restart a deployment
-kubectl rollout restart deployment/<deployment-name> -n weather-wms
-
-# Watch deployment rollout
-kubectl rollout status deployment/<deployment-name> -n weather-wms -w
-
-# Scale a deployment
-kubectl scale deployment/<deployment-name> -n weather-wms --replicas=3
-
-# Get all resources consuming most resources
-kubectl top pods -n weather-wms --sort-by=memory
-kubectl top pods -n weather-wms --sort-by=cpu
-```
-
-## Accessing Services
-
-```bash
-# Port forward to PostgreSQL
-kubectl port-forward -n weather-wms svc/postgresql 5432:5432
-psql -h localhost -U weatherwms -d weatherwms
-
-# Port forward to Redis
-kubectl port-forward -n weather-wms svc/redis-master 6379:6379
-redis-cli -h localhost
-
-# Port forward to MinIO
-kubectl port-forward -n weather-wms svc/minio 9000:9000
-# Then use S3 client pointing to http://localhost:9000
-
-# Port forward to WMS API
-kubectl port-forward -n weather-wms svc/wms-api 8080:8080
-curl http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities
-```
-
-## Viewing Configuration
-
-```bash
-# View ConfigMaps
-kubectl get cm -n weather-wms
-kubectl get cm -n weather-wms <name> -o yaml
-
-# View Secrets (masked)
-kubectl get secrets -n weather-wms
-kubectl get secret -n weather-wms <name> -o yaml
-
-# Decode a secret value
-kubectl get secret -n weather-wms <name> -o jsonpath='{.data.password}' | base64 -d
-```
-
-## Helm Management
-
-```bash
-# List releases
-helm list -n weather-wms
-
-# Get release status
-helm status wms -n weather-wms
-
-# Get release values
-helm get values wms -n weather-wms
-
-# Get full manifest
-helm get manifest wms -n weather-wms
-
-# Upgrade release
-helm upgrade wms ./deploy/helm/weather-wms -n weather-wms
-
-# Rollback release
-helm rollback wms 1 -n weather-wms
-```
-
-## Metrics & Performance
-
-```bash
-# Get node metrics (requires metrics-server)
-kubectl top nodes
-
-# Get pod metrics
-kubectl top pods -n weather-wms
-
-# Get pod metrics with timestamps
-kubectl top pods -n weather-wms --containers
-
-# Most resource-hungry pods
-kubectl top pods -n weather-wms --sort-by=cpu
-kubectl top pods -n weather-wms --sort-by=memory
-```
-
-## YAML Export & Backup
-
-```bash
-# Export current state
-kubectl get all -n weather-wms -o yaml > weather-wms-backup.yaml
-
-# Export just deployments
-kubectl get deployments -n weather-wms -o yaml > deployments-backup.yaml
-
-# Restore from backup
-kubectl apply -f weather-wms-backup.yaml
-```
+Example alert rules can be added to `deploy/prometheus/alerts.yml`.

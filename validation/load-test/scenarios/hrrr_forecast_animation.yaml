@@ -1,0 +1,66 @@
+name: hrrr_forecast_animation
+description: |
+  HRRR forecast animation test - animating through forecast hours.
+  Tests temporal caching with forecast data where we have multiple
+  valid times from the same model run (reference time).
+  
+  Scenario: User watches a single forecast play forward in time.
+  Uses 11Z model run, animating through f00, f01, f02 (+0h, +1h, +2h).
+  
+  HRRR characteristics:
+  - Resolution: 3 km (higher than GOES, lower than MRMS)
+  - Update: Hourly model cycles
+  - Forecast: 18-hour range (48h for main cycles)
+  - File size: ~130-145 MB (much larger than MRMS/GOES)
+  - Coverage: CONUS
+
+base_url: http://localhost:8080
+duration_secs: 90
+concurrency: 10
+warmup_secs: 10
+seed: 55555
+
+layers:
+  - name: hrrr_TMP
+    style: temperature
+    weight: 1.0
+  - name: hrrr_WIND
+    style: wind
+    weight: 0.8
+
+tile_selection:
+  type: random
+  # HRRR 3km resolution - good for zoom 4-10
+  zoom_range: [4, 9]
+  bbox:
+    # CONUS coverage
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+
+# Sequential through valid times from 11Z cycle
+# This simulates watching a forecast animation play forward
+time_selection:
+  type: sequential
+  times:
+    - "2025-11-28T11:00:00Z"  # 11Z +0h (analysis/nowcast)
+    - "2025-11-28T12:00:00Z"  # 11Z +1h
+    - "2025-11-28T13:00:00Z"  # 11Z +2h
+
+# Expected behavior:
+# - 3 different valid times from same model run
+# - Each valid time = different GRIB file (~135 MB each)
+# - Cache pressure: 3 files × 135 MB = ~405 MB
+# - Workers cycle through f00 → f01 → f02 → f00 → ...
+#
+# Cache analysis:
+# - First pass: 3 GRIB cache misses (loading all forecast hours)
+# - Subsequent passes: High cache hit rate
+# - File size much larger than MRMS (135 MB vs 400 KB)
+# - Tests cache with forecast model data
+#
+# Real-world use case:
+# - Weather briefing: "Here's what the next 3 hours look like"
+# - Forecast animation in weather apps
+# - Nowcast to short-term forecast visualization

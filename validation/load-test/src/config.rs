@@ -19,6 +19,8 @@ pub struct TestConfig {
     pub seed: Option<u64>,  // Optional RNG seed for reproducible tests
     pub layers: Vec<LayerConfig>,
     pub tile_selection: TileSelection,
+    #[serde(default)]
+    pub time_selection: Option<TimeSelection>,
 }
 
 /// Layer configuration for testing.
@@ -63,6 +65,22 @@ pub struct BBox {
     pub min_lat: f64,
     pub max_lon: f64,
     pub max_lat: f64,
+}
+
+/// How to select time dimension for temporal testing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TimeSelection {
+    /// Cycle through a list of specific times sequentially
+    Sequential {
+        times: Vec<String>,  // ISO 8601 timestamps
+    },
+    /// Randomly select from a list of times
+    Random {
+        times: Vec<String>,  // ISO 8601 timestamps
+    },
+    /// No time parameter (default behavior)
+    None,
 }
 
 impl TestConfig {

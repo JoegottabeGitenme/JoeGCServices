@@ -13,10 +13,15 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Create a new catalog connection from database URL.
+    /// Create a new catalog connection from database URL with default pool size.
     pub async fn connect(database_url: &str) -> WmsResult<Self> {
+        Self::connect_with_pool_size(database_url, 10).await
+    }
+
+    /// Create a new catalog connection from database URL with custom pool size.
+    pub async fn connect_with_pool_size(database_url: &str, max_connections: u32) -> WmsResult<Self> {
         let pool = PgPoolOptions::new()
-            .max_connections(10)
+            .max_connections(max_connections)
             .connect(database_url)
             .await
             .map_err(|e| WmsError::DatabaseError(format!("Connection failed: {}", e)))?;

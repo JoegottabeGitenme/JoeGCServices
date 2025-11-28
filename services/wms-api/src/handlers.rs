@@ -686,6 +686,7 @@ async fn wmts_get_tile(
         crate::rendering::render_weather_data_with_time(
             &state.storage,
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             forecast_hour,
@@ -703,7 +704,9 @@ async fn wmts_get_tile(
     match result
     {
         Ok(png_data) => {
-            state.metrics.record_render(timer.elapsed_us(), true).await;
+            // Classify layer type and record metrics
+            let layer_type = crate::metrics::LayerType::from_layer_and_style(&layer, &style);
+            state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
             
             // Store in Redis cache (async, don't wait)
             let cache_data = png_data.clone();
@@ -756,8 +759,16 @@ pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> impl I
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Not ready"),
     }
 }
-pub async fn metrics_handler() -> impl IntoResponse {
-    (StatusCode::OK, "# metrics\n")
+/// Prometheus metrics endpoint
+pub async fn metrics_handler(
+    Extension(prometheus): Extension<metrics_exporter_prometheus::PrometheusHandle>,
+) -> impl IntoResponse {
+    let metrics = prometheus.render();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics
+    )
 }
 
 /// JSON metrics endpoint for the web UI
@@ -1112,6 +1123,7 @@ async fn render_weather_data(
     crate::rendering::render_weather_data_with_time(
         &state.storage,
         &state.catalog,
+        &state.metrics,
         model,
         &parameter,
         forecast_hour,
@@ -2020,6 +2032,7 @@ async fn prefetch_single_tile(
         crate::rendering::render_weather_data(
             &state.storage,
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             None,

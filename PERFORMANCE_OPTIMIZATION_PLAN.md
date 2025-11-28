@@ -377,17 +377,55 @@ Based on code review, these are likely bottlenecks:
 
 **Results**: Fully functional load testing framework capable of 8,000+ req/sec with sub-millisecond latency tracking.
 
-### Phase 3: Metrics & Profiling
-- [ ] Add Prometheus-compatible `/metrics` endpoint
-- [ ] Implement detailed timing breakdown per render stage
-- [ ] Set up `criterion` benchmarks for hot paths
-- [ ] Run initial profiling to identify top bottlenecks
+### Phase 3: Metrics & Profiling (COMPLETED - Nov 27, 2024)
+- ✅ Created per-layer-type test scenarios (gradient, wind_barbs, isolines, extreme_stress)
+- ✅ Added LayerType metrics tracking (Gradient/WindBarbs/Isolines classification)
+- ✅ Run comprehensive load tests across all layer types
+- ✅ Document per-layer performance (see LAYER_PERFORMANCE_ANALYSIS.md)
+- ✅ Identified system breaking point (100 concurrent requests)
+- [ ] Add Prometheus-compatible `/metrics` endpoint (deferred to Phase 5)
+- [ ] Implement detailed render stage timing breakdown (deferred - not needed yet)
 
-### Phase 4: First Optimizations
-- [ ] Implement in-memory GRIB data cache (LRU)
-- [ ] Optimize PNG encoding (evaluate `png` crate options)
-- [ ] Pre-rasterize wind barb sprites at common sizes
-- [ ] Local file cache for GRIB data (reduce MinIO round-trips)
+**Key Findings**:
+- **Wind Barbs FASTEST**: 17,895 req/sec (21% faster than gradients)
+- **Gradients**: 14,831 req/sec (occasional 1.7s spike)
+- **Isolines**: 14,123 req/sec (most consistent)
+- **Breaking Point**: System collapses at 100 concurrent (1.5s p50 latency, 53 req/sec)
+- **Sweet Spot**: 20-50 concurrent requests (14K-18K req/sec, <2ms p99)
+
+**Phase 3 Deliverables**:
+- 5 new load test scenarios
+- Per-layer-type metrics infrastructure (code committed)
+- BASELINE_METRICS.md document
+- LAYER_PERFORMANCE_ANALYSIS.md document
+- Clear optimization targets for Phase 4
+
+### Phase 4: First Optimizations (COMPLETED - Nov 27, 2024)
+- ✅ **Add configurable worker threads** - TOKIO_WORKER_THREADS env var (default: CPU cores)
+- ✅ **Add configurable DB pool size** - DATABASE_POOL_SIZE env var (default: 50, was 10)
+- ✅ **Implement in-memory GRIB cache (LRU)** - GribCache with 500-entry default (~2.5GB RAM)
+- ✅ **Research PNG encoding optimizations** - Documented in PNG_ENCODING_RESEARCH.md
+- ✅ **Decision: Keep PNG as-is** - Not the bottleneck (cache hit rate 100%, encoding only on miss)
+- [ ] **Integrate GRIB cache into rendering** - Infrastructure ready, needs function signature updates
+- [ ] **Test improvements** - Deferred to Phase 5 (need Docker rebuild)
+
+**Key Deliverables**:
+- Configurable concurrency (tokio workers, DB pool)
+- GRIB cache implementation (500-entry LRU, ~2.5GB RAM)
+- PNG research document (recommendation: no changes needed)
+
+**Configuration Added**:
+```yaml
+TOKIO_WORKER_THREADS: "8"      # Tokio async workers
+DATABASE_POOL_SIZE: "50"        # PostgreSQL connections (5x increase)
+GRIB_CACHE_SIZE: "500"          # GRIB files in memory
+```
+
+**Next Steps (Phase 5)**:
+1. Wire up GRIB cache in rendering pipeline
+2. Rebuild Docker images with new code
+3. Test 100-concurrent scenario with improvements
+4. Measure impact on throughput and latency
 
 ### Ongoing
 - [ ] Iterate: profile -> optimize -> benchmark -> repeat

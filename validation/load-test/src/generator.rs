@@ -1,6 +1,6 @@
 //! Tile request URL generation.
 
-use crate::config::{BBox, TestConfig, TileSelection};
+use crate::config::{BBox, TestConfig, TileSelection, TimeSelection};
 use rand::prelude::*;
 use std::f64::consts::PI;
 
@@ -10,6 +10,7 @@ pub struct TileGenerator {
     rng: StdRng,
     _layer_weights: Vec<f64>,
     layer_cumulative: Vec<f64>,
+    time_index: usize,  // For sequential time selection
 }
 
 impl TileGenerator {
@@ -44,6 +45,7 @@ impl TileGenerator {
             rng,
             _layer_weights: weights,
             layer_cumulative: cumulative,
+            time_index: 0,
         }
     }
 
@@ -55,8 +57,11 @@ impl TileGenerator {
         // Generate tile coordinates
         let (z, x, y) = self.generate_tile_coords();
         
+        // Select time (if temporal testing enabled)
+        let time = self.select_time();
+        
         // Build WMTS URL
-        self.build_wmts_url(layer_idx, z, x, y)
+        self.build_wmts_url(layer_idx, z, x, y, time.as_deref())
     }
 
     /// Select a layer index based on configured weights.
@@ -130,12 +135,34 @@ impl TileGenerator {
         }
     }
 
+    /// Select a time value based on configured time selection strategy.
+    fn select_time(&mut self) -> Option<String> {
+        match &self.config.time_selection {
+            Some(TimeSelection::Sequential { times }) => {
+                if times.is_empty() {
+                    return None;
+                }
+                let time = times[self.time_index % times.len()].clone();
+                self.time_index += 1;
+                Some(time)
+            }
+            Some(TimeSelection::Random { times }) => {
+                if times.is_empty() {
+                    return None;
+                }
+                let idx = self.rng.gen_range(0..times.len());
+                Some(times[idx].clone())
+            }
+            Some(TimeSelection::None) | None => None,
+        }
+    }
+
     /// Build a WMTS GetTile URL.
-    fn build_wmts_url(&self, layer_idx: usize, z: u32, x: u32, y: u32) -> String {
+    fn build_wmts_url(&self, layer_idx: usize, z: u32, x: u32, y: u32, time: Option<&str>) -> String {
         let layer = &self.config.layers[layer_idx];
         let style = layer.style.as_deref().unwrap_or("default");
         
-        format!(
+        let mut url = format!(
             "{}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER={}&STYLE={}&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX={}&TILEROW={}&TILECOL={}",
             self.config.base_url,
             layer.name,
@@ -143,7 +170,14 @@ impl TileGenerator {
             z,
             y,
             x
-        )
+        );
+        
+        // Add TIME parameter if provided
+        if let Some(t) = time {
+            url.push_str(&format!("&TIME={}", t));
+        }
+        
+        url
     }
 
     /// Convert lat/lon to tile coordinates at a given zoom level.

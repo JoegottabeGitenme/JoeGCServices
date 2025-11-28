@@ -15,6 +15,7 @@ use std::{env, net::SocketAddr, sync::Arc};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+use metrics_exporter_prometheus::PrometheusHandle;
 
 use state::AppState;
 
@@ -29,14 +30,41 @@ struct Args {
     /// Log level
     #[arg(long, default_value = "info")]
     log_level: String,
+
+    /// Number of tokio worker threads (default: number of CPU cores)
+    #[arg(long)]
+    worker_threads: Option<usize>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Load environment variables from .env file
     dotenvy::dotenv().ok();
     
     let args = Args::parse();
+
+    // Build tokio runtime with configurable worker threads
+    let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
+    runtime_builder.enable_all();
+    
+    if let Some(threads) = args.worker_threads {
+        info!("Configuring tokio runtime with {} worker threads", threads);
+        runtime_builder.worker_threads(threads);
+    } else {
+        // Use environment variable if CLI arg not provided
+        if let Ok(threads_str) = env::var("TOKIO_WORKER_THREADS") {
+            if let Ok(threads) = threads_str.parse::<usize>() {
+                info!("Configuring tokio runtime with {} worker threads (from env)", threads);
+                runtime_builder.worker_threads(threads);
+            }
+        }
+    }
+    
+    let runtime = runtime_builder.build()?;
+    runtime.block_on(async_main(args))?;
+    Ok(())
+}
+
+async fn async_main(args: Args) -> Result<()> {
 
     // Initialize tracing
     let level = match args.log_level.to_lowercase().as_str() {
@@ -54,6 +82,12 @@ async fn main() -> Result<()> {
 
     tracing::subscriber::set_global_default(subscriber)?;
 
+    // Initialize Prometheus metrics exporter
+    let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .expect("Failed to install Prometheus recorder");
+    
+    info!("Prometheus metrics exporter initialized");
     info!("Starting WMS/WMTS API server");
 
     // Initialize application state
@@ -95,6 +129,7 @@ async fn main() -> Result<()> {
         .route("/api/metrics", get(handlers::api_metrics_handler))
         // Layer extensions
         .layer(Extension(state))
+        .layer(Extension(prometheus_handle))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive());

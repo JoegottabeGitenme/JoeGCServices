@@ -6,8 +6,10 @@ use renderer::contour;
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 use std::path::Path;
+use std::time::Instant;
 use tracing::{info, debug, warn};
 use projection::{LambertConformal, Geostationary};
+use crate::metrics::MetricsCollector;
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -26,6 +28,7 @@ use projection::{LambertConformal, Geostationary};
 pub async fn render_weather_data(
     storage: &ObjectStorage,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     forecast_hour: Option<u32>,
@@ -33,7 +36,7 @@ pub async fn render_weather_data(
     height: u32,
     bbox: Option<[f32; 4]>,
 ) -> Result<Vec<u8>, String> {
-    render_weather_data_with_style(storage, catalog, model, parameter, forecast_hour, width, height, bbox, None, false).await
+    render_weather_data_with_style(storage, catalog, metrics, model, parameter, forecast_hour, width, height, bbox, None, false).await
 }
 
 /// Render weather data with optional style configuration.
@@ -55,6 +58,7 @@ pub async fn render_weather_data(
 pub async fn render_weather_data_with_style(
     storage: &ObjectStorage,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     forecast_hour: Option<u32>,
@@ -65,7 +69,7 @@ pub async fn render_weather_data_with_style(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data_with_level(
-        storage, catalog, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
+        storage, catalog, metrics, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
     ).await
 }
 
@@ -89,6 +93,7 @@ pub async fn render_weather_data_with_style(
 pub async fn render_weather_data_with_level(
     storage: &ObjectStorage,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     forecast_hour: Option<u32>,
@@ -100,7 +105,7 @@ pub async fn render_weather_data_with_level(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data_with_time(
-        storage, catalog, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
+        storage, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
     ).await
 }
 
@@ -126,6 +131,7 @@ pub async fn render_weather_data_with_level(
 pub async fn render_weather_data_with_time(
     storage: &ObjectStorage,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     forecast_hour: Option<u32>,
@@ -138,15 +144,16 @@ pub async fn render_weather_data_with_time(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     // Get dataset based on time specification
-    let entry = if let Some(obs_time) = observation_time {
-        // Observation mode: find dataset closest to requested observation time
-        info!(model = model, parameter = parameter, observation_time = ?obs_time, "Looking up observation data by time");
-        catalog
-            .find_by_time(model, parameter, obs_time)
-            .await
-            .map_err(|e| format!("Catalog query failed: {}", e))?
-            .ok_or_else(|| format!("No observation data found for {}/{} at time {:?}", model, parameter, obs_time))?
-    } else {
+    let entry = {
+        if let Some(obs_time) = observation_time {
+            // Observation mode: find dataset closest to requested observation time
+            info!(model = model, parameter = parameter, observation_time = ?obs_time, "Looking up observation data by time");
+            catalog
+                .find_by_time(model, parameter, obs_time)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No observation data found for {}/{} at time {:?}", model, parameter, obs_time))?
+        } else {
         // Forecast mode: use forecast_hour and level
         match (forecast_hour, level) {
             (Some(hour), Some(lev)) => {
@@ -182,7 +189,7 @@ pub async fn render_weather_data_with_time(
                     .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
             }
         }
-    };
+    }};
 
     // Load grid data from storage (handles both GRIB2 and NetCDF formats)
     info!(
@@ -193,7 +200,10 @@ pub async fn render_weather_data_with_time(
         "Loading grid data"
     );
     
-    let grid_result = load_grid_data(storage, &entry, parameter).await?;
+    let start = Instant::now();
+    let grid_result = load_grid_data(storage, metrics, &entry, parameter).await?;
+    let load_duration = start.elapsed();
+    metrics.record_grib_load(load_duration.as_micros() as u64).await;
     let grid_data = grid_result.data;
     let grid_width = grid_result.width;
     let grid_height = grid_result.height;
@@ -229,34 +239,40 @@ pub async fn render_weather_data_with_time(
         entry.bbox.max_y as f32,
     ];
     
-    let resampled_data = if let Some(output_bbox) = bbox {
-        // Resample from data grid to output bbox
-        // Use Mercator projection when rendering for Web Mercator display
-        resample_grid_for_bbox_with_proj(
-            &grid_data,
-            grid_width,
-            grid_height,
-            rendered_width,
-            rendered_height,
-            output_bbox,
-            data_bounds,
-            use_mercator,
-            model,
-            goes_projection.as_ref(),
-        )
-    } else {
-        // No bbox - resample entire data grid
-        if grid_width != rendered_width || grid_height != rendered_height {
-            renderer::gradient::resample_grid(&grid_data, grid_width, grid_height, rendered_width, rendered_height)
+    let start = Instant::now();
+    let resampled_data = {
+        if let Some(output_bbox) = bbox {
+            // Resample from data grid to output bbox
+            // Use Mercator projection when rendering for Web Mercator display
+            resample_grid_for_bbox_with_proj(
+                &grid_data,
+                grid_width,
+                grid_height,
+                rendered_width,
+                rendered_height,
+                output_bbox,
+                data_bounds,
+                use_mercator,
+                model,
+                goes_projection.as_ref(),
+            )
         } else {
-            grid_data.clone()
+            // No bbox - resample entire data grid
+            if grid_width != rendered_width || grid_height != rendered_height {
+                renderer::gradient::resample_grid(&grid_data, grid_width, grid_height, rendered_width, rendered_height)
+            } else {
+                grid_data.clone()
+            }
         }
     };
+    let resample_duration = start.elapsed();
+    metrics.record_resample(resample_duration.as_micros() as u64).await;
 
-    // Try to load and apply custom style
+    // Apply color rendering (gradient/wind barbs/etc)
     let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
     
-    let rgba_data = if let Some(style_name) = style_name {
+    let rgba_data = {
+        if let Some(style_name) = style_name {
         // Try to load and apply custom style
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
             Path::new(&style_config_dir).join("temperature.json")
@@ -297,14 +313,20 @@ pub async fn render_weather_data_with_time(
                 render_by_parameter(&resampled_data, parameter, min_val, max_val, rendered_width, rendered_height)
             }
         }
-    } else {
-        // Use parameter-based rendering without custom style
-        render_by_parameter(&resampled_data, parameter, min_val, max_val, rendered_width, rendered_height)
+        } else {
+            // Use parameter-based rendering without custom style
+            render_by_parameter(&resampled_data, parameter, min_val, max_val, rendered_width, rendered_height)
+        }
     };
 
     // Convert to PNG
-    let png = renderer::png::create_png(&rgba_data, rendered_width, rendered_height)
-        .map_err(|e| format!("PNG encoding failed: {}", e))?;
+    let start = Instant::now();
+    let png = {
+        renderer::png::create_png(&rgba_data, rendered_width, rendered_height)
+            .map_err(|e| format!("PNG encoding failed: {}", e))?
+    };
+    let png_duration = start.elapsed();
+    metrics.record_png_encode(png_duration.as_micros() as u64).await;
 
     Ok(png)
 }
@@ -1354,6 +1376,7 @@ struct GoesProjectionParams {
 /// For NetCDF (GOES) files, reads the CMI variable directly.
 async fn load_grid_data(
     storage: &ObjectStorage,
+    metrics: &MetricsCollector,
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
@@ -1377,20 +1400,26 @@ async fn load_grid_data(
         // since each file contains only one parameter
         let is_shredded = entry.storage_path.contains("shredded/") || entry.model == "mrms";
         
-        let msg = if is_shredded {
-            // Read first (and only) message from shredded file
-            let mut reader = grib2_parser::Grib2Reader::new(file_data);
-            reader.next_message()
-                .map_err(|e| format!("GRIB2 parse error: {}", e))?
-                .ok_or_else(|| "No message found in GRIB2 file".to_string())?
-        } else {
-            // Search for specific parameter in multi-message file
-            find_parameter_in_grib(file_data, parameter, Some(&entry.level))?
+        let start = Instant::now();
+        let msg = {
+            if is_shredded {
+                // Read first (and only) message from shredded file
+                let mut reader = grib2_parser::Grib2Reader::new(file_data);
+                reader.next_message()
+                    .map_err(|e| format!("GRIB2 parse error: {}", e))?
+                    .ok_or_else(|| "No message found in GRIB2 file".to_string())?
+            } else {
+                // Search for specific parameter in multi-message file
+                find_parameter_in_grib(file_data, parameter, Some(&entry.level))?
+            }
         };
         
         let grid_data = msg
             .unpack_data()
             .map_err(|e| format!("Unpacking failed: {}", e))?;
+        
+        let parse_duration = start.elapsed();
+        metrics.record_grib_parse(parse_duration.as_micros() as u64).await;
         
         let (grid_height, grid_width) = msg.grid_dims();
         

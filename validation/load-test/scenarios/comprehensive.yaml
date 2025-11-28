@@ -1,0 +1,63 @@
+name: comprehensive
+description: Test all available layers across gradient/wind_barbs/isoline rendering types
+base_url: http://localhost:8080
+duration_secs: 120
+concurrency: 15
+warmup_secs: 10
+layers:
+  # GFS Gradient Layers
+  - name: gfs_TMP
+    style: temperature
+    weight: 1.0
+  - name: gfs_PRMSL
+    style: default
+    weight: 0.8
+  
+  # GFS Wind Barbs
+  - name: gfs_WIND_BARBS
+    style: wind_barbs
+    weight: 1.2
+  
+  # GFS Isolines
+  - name: gfs_TMP
+    style: isolines
+    weight: 0.6
+  
+  # HRRR Gradient Layers
+  - name: hrrr_TMP
+    style: temperature
+    weight: 0.8
+  
+  # HRRR Wind Barbs
+  - name: hrrr_WIND_BARBS
+    style: wind_barbs
+    weight: 1.0
+  
+  # MRMS Gradient Layers (Radar/Precipitation)
+  - name: mrms_REFL
+    style: reflectivity
+    weight: 0.9
+  - name: mrms_PRECIP_RATE
+    style: precip_rate
+    weight: 0.7
+  - name: mrms_QPE_01H
+    style: precipitation
+    weight: 0.6
+  
+  # GOES Satellite Gradient Layers
+  - name: goes16_CMI_C02
+    style: goes_visible
+    weight: 0.8
+  - name: goes16_CMI_C13
+    style: goes_ir
+    weight: 0.8
+
+tile_selection:
+  type: random
+  zoom_range: [4, 7]
+  bbox:
+    min_lon: -125.0
+    min_lat: 25.0
+    max_lon: -65.0
+    max_lat: 50.0
+seed: 42

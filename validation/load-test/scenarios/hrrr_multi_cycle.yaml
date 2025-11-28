@@ -1,0 +1,56 @@
+name: hrrr_multi_cycle
+description: |
+  HRRR multi-cycle temporal test - comparing multiple model runs.
+  Tests temporal caching across different reference times (model cycles).
+  
+  Scenario: User compares how different model runs forecasted the same time,
+  or reviews model consistency across cycles.
+  
+  Uses 3 model cycles (09Z, 10Z, 11Z) with their analysis times (+0h).
+  This tests cache behavior with multiple reference times.
+
+base_url: http://localhost:8080
+duration_secs: 120
+concurrency: 15
+warmup_secs: 10
+seed: 66666
+
+layers:
+  - name: hrrr_TMP
+    style: temperature
+    weight: 1.0
+
+tile_selection:
+  type: random
+  zoom_range: [5, 8]
+  bbox:
+    # Central US
+    min_lon: -110.0
+    min_lat: 30.0
+    max_lon: -85.0
+    max_lat: 45.0
+
+# Sequential through different model cycles (reference times)
+# All at analysis time (+0h) to isolate cycle comparison
+time_selection:
+  type: sequential
+  times:
+    - "2025-11-28T09:00:00Z"  # 09Z analysis
+    - "2025-11-28T10:00:00Z"  # 10Z analysis  
+    - "2025-11-28T11:00:00Z"  # 11Z analysis
+
+# Expected behavior:
+# - 3 different model cycles (reference times)
+# - Each cycle = different GRIB file (~130 MB each)
+# - Cache pressure: 3 files × 130 MB = ~390 MB
+# - Workers cycle through 09Z → 10Z → 11Z → 09Z → ...
+#
+# Cache analysis:
+# - Tests reference time lookup in cache
+# - Different from forecast hour cycling
+# - Each model run has independent data
+#
+# Real-world use case:
+# - Model comparison: "Did the 10Z run predict this better than 09Z?"
+# - Model verification: Checking consistency across runs
+# - Nowcast updates: Latest vs previous analysis
