@@ -23,6 +23,8 @@ pub struct GribCache {
     storage: Arc<ObjectStorage>,
     /// Cache statistics
     stats: Arc<Mutex<CacheStats>>,
+    /// Cache capacity (stored separately for easy access)
+    capacity: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -62,6 +64,7 @@ impl GribCache {
             cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
             storage,
             stats: Arc::new(Mutex::new(CacheStats::default())),
+            capacity,
         }
     }
 
@@ -140,10 +143,7 @@ impl GribCache {
 
     /// Get cache capacity.
     pub fn capacity(&self) -> usize {
-        // This is safe because we know cache is initialized with NonZeroUsize
-        // We need to access it without locking, so we'll just return the configured capacity
-        // In practice, you'd store this separately or accept the lock overhead
-        100 // TODO: Store capacity separately
+        self.capacity
     }
 }
 

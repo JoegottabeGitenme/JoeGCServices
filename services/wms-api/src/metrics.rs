@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
+use storage::TileMemoryCacheStats;
 
 /// Metrics collector for the WMS API.
 #[derive(Debug)]
@@ -145,16 +146,78 @@ impl MetricsCollector {
         counter!("wmts_requests_total").increment(1);
     }
     
-    /// Record a cache hit
+    /// Record a cache hit (L2 Redis cache)
     pub async fn record_cache_hit(&self) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
         counter!("cache_hits_total").increment(1);
     }
     
-    /// Record a cache miss
+    /// Record a cache miss (L2 Redis cache)
     pub async fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         counter!("cache_misses_total").increment(1);
+    }
+    
+    /// Record L1 cache hit
+    pub fn record_l1_cache_hit(&self) {
+        counter!("tile_memory_cache_hits_total").increment(1);
+    }
+    
+    /// Record L1 cache miss
+    pub fn record_l1_cache_miss(&self) {
+        counter!("tile_memory_cache_misses_total").increment(1);
+    }
+    
+    /// Update L1 cache statistics from TileMemoryCache
+    pub fn record_tile_memory_cache_stats(&self, stats: &TileMemoryCacheStats) {
+        let hits = stats.hits.load(Ordering::Relaxed);
+        let misses = stats.misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        let hit_rate = if total > 0 {
+            (hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        gauge!("tile_memory_cache_hits_total").set(hits as f64);
+        gauge!("tile_memory_cache_misses_total").set(misses as f64);
+        gauge!("tile_memory_cache_hit_rate_percent").set(hit_rate);
+        gauge!("tile_memory_cache_evictions_total").set(stats.evictions.load(Ordering::Relaxed) as f64);
+        gauge!("tile_memory_cache_expired_total").set(stats.expired.load(Ordering::Relaxed) as f64);
+        gauge!("tile_memory_cache_size_bytes").set(stats.size_bytes.load(Ordering::Relaxed) as f64);
+    }
+    
+    /// Record container resource statistics
+    pub fn record_container_stats(
+        &self,
+        memory_used_bytes: u64,
+        memory_total_bytes: u64,
+        memory_percent: f64,
+        process_rss_bytes: u64,
+        cpu_load_1m: f64,
+        cpu_load_5m: f64,
+        cpu_load_15m: f64,
+        cpu_count: usize,
+    ) {
+        // Memory metrics
+        gauge!("container_memory_used_bytes").set(memory_used_bytes as f64);
+        gauge!("container_memory_total_bytes").set(memory_total_bytes as f64);
+        gauge!("container_memory_percent").set(memory_percent);
+        gauge!("process_rss_bytes").set(process_rss_bytes as f64);
+        
+        // CPU metrics
+        gauge!("container_cpu_load_1m").set(cpu_load_1m);
+        gauge!("container_cpu_load_5m").set(cpu_load_5m);
+        gauge!("container_cpu_load_15m").set(cpu_load_15m);
+        gauge!("container_cpu_count").set(cpu_count as f64);
+        
+        // CPU load percentage (load / cpu_count * 100)
+        let cpu_load_percent = if cpu_count > 0 {
+            (cpu_load_1m / cpu_count as f64) * 100.0
+        } else {
+            0.0
+        };
+        gauge!("container_cpu_load_percent").set(cpu_load_percent);
     }
     
     /// Record a MinIO read operation
@@ -237,6 +300,25 @@ impl MetricsCollector {
         let mut times = self.cache_lookup_times.write().await;
         times.record(duration_us);
         histogram!("cache_lookup_duration_ms").record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record GRIB cache statistics
+    pub fn record_grib_cache_stats(&self, hits: u64, misses: u64, evictions: u64, size: usize, capacity: usize) {
+        // Record GRIB cache hit rate
+        let total = hits + misses;
+        let hit_rate = if total > 0 {
+            (hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        gauge!("grib_cache_hit_rate_percent").set(hit_rate);
+        gauge!("grib_cache_hits_total").set(hits as f64);
+        gauge!("grib_cache_misses_total").set(misses as f64);
+        gauge!("grib_cache_evictions_total").set(evictions as f64);
+        gauge!("grib_cache_size").set(size as f64);
+        gauge!("grib_cache_capacity").set(capacity as f64);
+        gauge!("grib_cache_utilization_percent").set((size as f64 / capacity as f64) * 100.0);
     }
     
     /// Get current metrics snapshot

@@ -292,7 +292,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     
     for layer in layers {
         match crate::rendering::query_point_value(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             layer,
             bbox_array,
@@ -574,22 +574,59 @@ async fn wmts_get_tile(
         BoundingBox::new(x as f64, y as f64, z as f64, 0.0),  // Use tile coords for key
         256,
         256,
-        dimension_suffix,
+        dimension_suffix.clone(),
         "png",
     );
     
-    // Check Redis cache first
+    // Build string key for L1 cache
+    let cache_key_str = format!(
+        "{}:{}:EPSG:3857:{}_{}_{}:{}",
+        layer,
+        style,
+        z,
+        x,
+        y,
+        dimension_suffix.as_deref().unwrap_or("current")
+    );
+    
+    // Check L1 in-memory cache first (fastest) - if enabled
+    if state.optimization_config.l1_cache_enabled {
+        if let Some(tile_data) = state.tile_memory_cache.get(&cache_key_str).await {
+            state.metrics.record_l1_cache_hit();
+            debug!(layer = %layer, z = z, x = x, y = y, "L1 cache hit");
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CACHE_CONTROL, "max-age=300")  // 5 min for L1 cached tiles
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .header("X-Cache", "L1-HIT")
+                .body(tile_data.to_vec().into())
+                .unwrap();
+        }
+        
+        // L1 cache miss - record it
+        state.metrics.record_l1_cache_miss();
+    }
+    
+    // Check L2 Redis cache
     {
         let mut cache = state.cache.lock().await;
         if let Ok(Some(cached_data)) = cache.get(&cache_key).await {
             state.metrics.record_cache_hit().await;
-            info!(layer = %layer, z = z, x = x, y = y, "Cache hit");
+            info!(layer = %layer, z = z, x = x, y = y, "L2 cache hit");
+            
+            // Promote to L1 cache for future requests (if enabled)
+            if state.optimization_config.l1_cache_enabled {
+                let data_bytes = bytes::Bytes::from(cached_data.to_vec());
+                state.tile_memory_cache.set(&cache_key_str, data_bytes.clone(), None).await;
+            }
+            
             return Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/png")
                 .header(header::CACHE_CONTROL, "max-age=3600")
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                .header("X-Cache", "HIT")
+                .header("X-Cache", "L2-HIT")
                 .body(cached_data.to_vec().into())
                 .unwrap();
         }
@@ -644,7 +681,7 @@ async fn wmts_get_tile(
     // Check if this is a wind barbs composite layer
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -666,7 +703,7 @@ async fn wmts_get_tile(
         };
         
         crate::rendering::render_isolines_tile_with_level(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             &parameter,
@@ -684,7 +721,7 @@ async fn wmts_get_tile(
         // Render the tile with spatial subsetting and optional time/level
         // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
         crate::rendering::render_weather_data_with_time(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             &state.metrics,
             model,
@@ -708,21 +745,35 @@ async fn wmts_get_tile(
             let layer_type = crate::metrics::LayerType::from_layer_and_style(&layer, &style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
             
-            // Store in Redis cache (async, don't wait)
+            // Store in L1 cache immediately (synchronous - it's in-memory) - if enabled
+            if state.optimization_config.l1_cache_enabled {
+                let png_bytes = bytes::Bytes::from(png_data.clone());
+                state.tile_memory_cache.set(&cache_key_str, png_bytes, None).await;
+            }
+            
+            // Store in L2 Redis cache (async, don't wait)
             let cache_data = png_data.clone();
             let state_clone = state.clone();
             let cache_key_clone = cache_key.clone();
             tokio::spawn(async move {
                 let mut cache = state_clone.cache.lock().await;
                 if let Err(e) = cache.set(&cache_key_clone, &cache_data, None).await {
-                    error!(error = %e, "Failed to cache tile");
+                    error!(error = %e, "Failed to cache tile in Redis");
                 }
             });
             
-            // Prefetch neighboring tiles in background (Google tile strategy)
-            // Only prefetch at zoom levels 3-12 to avoid excessive requests
-            if z >= 3 && z <= 12 {
-                spawn_tile_prefetch(state.clone(), layer.to_string(), style.to_string(), coord);
+            // Prefetch neighboring tiles in background (Google tile strategy) - if enabled
+            if state.optimization_config.prefetch_enabled 
+               && z >= state.optimization_config.prefetch_min_zoom 
+               && z <= state.optimization_config.prefetch_max_zoom 
+            {
+                spawn_tile_prefetch(
+                    state.clone(),
+                    layer.to_string(),
+                    style.to_string(),
+                    coord,
+                    state.prefetch_rings,
+                );
             }
             
             Response::builder()
@@ -761,8 +812,49 @@ pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> impl I
 }
 /// Prometheus metrics endpoint
 pub async fn metrics_handler(
+    Extension(state): Extension<Arc<AppState>>,
     Extension(prometheus): Extension<metrics_exporter_prometheus::PrometheusHandle>,
 ) -> impl IntoResponse {
+    // Update GRIB cache metrics before rendering
+    let grib_stats = state.grib_cache.stats().await;
+    let grib_size = state.grib_cache.len().await;
+    let grib_capacity = state.grib_cache.capacity();
+    
+    state.metrics.record_grib_cache_stats(
+        grib_stats.hits,
+        grib_stats.misses,
+        grib_stats.evictions,
+        grib_size,
+        grib_capacity,
+    );
+    
+    // Update L1 tile memory cache metrics
+    let l1_stats = state.tile_memory_cache.stats();
+    state.metrics.record_tile_memory_cache_stats(&l1_stats);
+    
+    // Update container resource metrics
+    let container_stats = read_container_stats();
+    if let Some(memory_used) = container_stats["memory"]["used_bytes"].as_u64() {
+        let memory_total = container_stats["memory"]["total_bytes"].as_u64().unwrap_or(0);
+        let memory_percent = container_stats["memory"]["percent_used"].as_f64().unwrap_or(0.0);
+        let process_rss = container_stats["process"]["rss_bytes"].as_u64().unwrap_or(0);
+        let cpu_load_1m = container_stats["cpu"]["load_1m"].as_f64().unwrap_or(0.0);
+        let cpu_load_5m = container_stats["cpu"]["load_5m"].as_f64().unwrap_or(0.0);
+        let cpu_load_15m = container_stats["cpu"]["load_15m"].as_f64().unwrap_or(0.0);
+        let cpu_count = container_stats["cpu"]["count"].as_u64().unwrap_or(1) as usize;
+        
+        state.metrics.record_container_stats(
+            memory_used,
+            memory_total,
+            memory_percent,
+            process_rss,
+            cpu_load_1m,
+            cpu_load_5m,
+            cpu_load_15m,
+            cpu_count,
+        );
+    }
+    
     let metrics = prometheus.render();
     (
         StatusCode::OK,
@@ -778,8 +870,19 @@ pub async fn api_metrics_handler(
     let snapshot = state.metrics.snapshot().await;
     let system = crate::metrics::SystemStats::read();
     
-    // Get Redis cache stats
-    let cache_stats = {
+    // Get L1 tile memory cache stats
+    let l1_stats = state.tile_memory_cache.stats();
+    let l1_cache_stats = serde_json::json!({
+        "hits": l1_stats.hits.load(std::sync::atomic::Ordering::Relaxed),
+        "misses": l1_stats.misses.load(std::sync::atomic::Ordering::Relaxed),
+        "hit_rate": l1_stats.hit_rate(),
+        "evictions": l1_stats.evictions.load(std::sync::atomic::Ordering::Relaxed),
+        "expired": l1_stats.expired.load(std::sync::atomic::Ordering::Relaxed),
+        "size_bytes": l1_stats.size_bytes.load(std::sync::atomic::Ordering::Relaxed),
+    });
+    
+    // Get Redis cache stats (L2)
+    let l2_cache_stats = {
         let mut cache = state.cache.lock().await;
         match cache.stats().await {
             Ok(stats) => serde_json::json!({
@@ -799,7 +902,8 @@ pub async fn api_metrics_handler(
     let combined = serde_json::json!({
         "metrics": snapshot,
         "system": system,
-        "cache": cache_stats
+        "l1_cache": l1_cache_stats,
+        "l2_cache": l2_cache_stats
     });
     
     Json(combined)
@@ -1048,7 +1152,7 @@ async fn render_weather_data(
         });
         
         return crate::rendering::render_wind_barbs_layer(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             width,
@@ -1103,7 +1207,7 @@ async fn render_weather_data(
         
         // For WMS, we don't have tile coordinates, so pass None
         return crate::rendering::render_isolines_tile_with_level(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             &parameter,
@@ -1121,7 +1225,7 @@ async fn render_weather_data(
 
     // Use shared rendering logic with support for observation time
     crate::rendering::render_weather_data_with_time(
-        &state.storage,
+        &state.grib_cache,
         &state.catalog,
         &state.metrics,
         model,
@@ -1398,11 +1502,20 @@ fn build_wms_capabilities_xml(
                 // For forecast models: RUN (model initialization time) and FORECAST (hours ahead)
                 let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
                 let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
-                let forecast_values = if forecasts.is_empty() { "0".to_string() } else { forecasts.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",") };
+                // Convert forecast hours to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
+                let forecast_values = if forecasts.is_empty() { 
+                    "PT0H".to_string() 
+                } else { 
+                    forecasts.iter()
+                        .map(|h| format!("PT{}H", h))
+                        .collect::<Vec<_>>()
+                        .join(",") 
+                };
                 // Default to earliest (0th) forecast hour from the latest run
-                let forecast_default = forecasts.first().unwrap_or(&0);
+                let forecast_default_hour = forecasts.first().unwrap_or(&0);
+                let forecast_default = format!("PT{}H", forecast_default_hour);
                 format!(
-                    r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
+                    r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="ISO8601" default="{}">{}</Dimension>"#,
                     run_default, run_values, forecast_default, forecast_values
                 )
             };
@@ -1639,10 +1752,12 @@ fn build_wmts_capabilities_xml(
                 
                 // Build dimension elements for time (forecast hour)
                 // Using "time" as dimension identifier to match query parameter
+                // Convert to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
                 let forecast_values_xml: String = forecast_values.iter()
-                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .map(|v| format!("        <Value>PT{}H</Value>", v))
                     .collect::<Vec<_>>()
                     .join("\n");
+                let forecast_default_iso = format!("PT{}H", forecast_default);
                 
                 format!(
                     r#"    <Layer>
@@ -1659,14 +1774,14 @@ fn build_wmts_capabilities_xml(
       </TileMatrixSetLink>
       <Dimension>
         <ows:Identifier>time</ows:Identifier>
-        <ows:UOM>hours</ows:UOM>
+        <ows:UOM>ISO8601</ows:UOM>
         <Default>{}</Default>
 {}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                     layer_title, layer_id, styles, 
-                    forecast_default, forecast_values_xml,
+                    forecast_default_iso, forecast_values_xml,
                     layer_id
                 )
             })
@@ -1685,14 +1800,16 @@ fn build_wmts_capabilities_xml(
             let layer_title = format!("{} - Wind Barbs", model.to_uppercase());
             
             let forecast_default = forecasts.first().unwrap_or(&0);
+            // Convert to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
             let forecast_values_xml: String = if forecasts.is_empty() {
-                "        <Value>0</Value>".to_string()
+                "        <Value>PT0H</Value>".to_string()
             } else {
                 forecasts.iter()
-                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .map(|v| format!("        <Value>PT{}H</Value>", v))
                     .collect::<Vec<_>>()
                     .join("\n")
             };
+            let forecast_default_iso = format!("PT{}H", forecast_default);
             
             let wind_barbs_layer = format!(
                 r#"    <Layer>
@@ -1712,14 +1829,14 @@ fn build_wmts_capabilities_xml(
       </TileMatrixSetLink>
       <Dimension>
         <ows:Identifier>time</ows:Identifier>
-        <ows:UOM>hours</ows:UOM>
+        <ows:UOM>ISO8601</ows:UOM>
         <Default>{}</Default>
 {}
       </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                 layer_title, layer_id, 
-                forecast_default, forecast_values_xml,
+                forecast_default_iso, forecast_values_xml,
                 layer_id
             );
             
@@ -1893,46 +2010,98 @@ pub async fn validation_run_handler(
 
 /// Get the 8 neighboring tiles around a center tile (Google tile strategy).
 /// Returns tiles at the same zoom level that surround the requested tile.
-fn get_neighboring_tiles(center: &TileCoord) -> Vec<TileCoord> {
+/// Get tiles within N rings around a center tile.
+/// Ring 0: just the center (1 tile)
+/// Ring 1: 8 tiles immediately surrounding center
+/// Ring 2: 16 tiles surrounding ring 1 (total 24 tiles for rings=2)
+/// Ring N: 8*N tiles surrounding ring N-1
+fn get_tiles_in_rings(center: &TileCoord, rings: u32) -> Vec<TileCoord> {
     let z = center.z;
     let max_tile = 2u32.pow(z) - 1;
+    let cx = center.x as i32;
+    let cy = center.y as i32;
     
-    let mut neighbors = Vec::with_capacity(8);
+    // Estimate capacity: sum of tiles in all rings (excluding center)
+    // Ring 1: 8, Ring 2: 16, Ring 3: 24, etc.
+    let capacity = if rings == 0 { 0 } else { (rings * (rings + 1) * 4) as usize };
+    let mut tiles = Vec::with_capacity(capacity);
     
-    // All 8 directions: N, NE, E, SE, S, SW, W, NW
-    let offsets: [(i32, i32); 8] = [
-        (0, -1),   // N
-        (1, -1),   // NE
-        (1, 0),    // E
-        (1, 1),    // SE
-        (0, 1),    // S
-        (-1, 1),   // SW
-        (-1, 0),   // W
-        (-1, -1),  // NW
-    ];
-    
-    for (dx, dy) in offsets {
-        let new_x = center.x as i32 + dx;
-        let new_y = center.y as i32 + dy;
+    // Iterate through each ring
+    for ring in 1..=rings {
+        let r = ring as i32;
         
-        // Only include valid tile coordinates
-        if new_x >= 0 && new_x <= max_tile as i32 && new_y >= 0 && new_y <= max_tile as i32 {
-            neighbors.push(TileCoord::new(z, new_x as u32, new_y as u32));
+        // For each ring, we walk around the perimeter
+        // Start at top-left corner of the ring and walk clockwise
+        
+        // Top edge (moving right)
+        for dx in -r..=r {
+            let x = cx + dx;
+            let y = cy - r;
+            if x >= 0 && x <= max_tile as i32 && y >= 0 && y <= max_tile as i32 {
+                tiles.push(TileCoord::new(z, x as u32, y as u32));
+            }
+        }
+        
+        // Right edge (moving down) - skip top-right corner (already added)
+        for dy in -r+1..=r {
+            let x = cx + r;
+            let y = cy + dy;
+            if x >= 0 && x <= max_tile as i32 && y >= 0 && y <= max_tile as i32 {
+                tiles.push(TileCoord::new(z, x as u32, y as u32));
+            }
+        }
+        
+        // Bottom edge (moving left) - skip bottom-right corner
+        for dx in (-r+1..=r).rev() {
+            let x = cx + dx;
+            let y = cy + r;
+            if x >= 0 && x <= max_tile as i32 && y >= 0 && y <= max_tile as i32 {
+                tiles.push(TileCoord::new(z, x as u32, y as u32));
+            }
+        }
+        
+        // Left edge (moving up) - skip bottom-left and top-left corners
+        for dy in (-r+1..r).rev() {
+            let x = cx - r;
+            let y = cy + dy;
+            if x >= 0 && x <= max_tile as i32 && y >= 0 && y <= max_tile as i32 {
+                tiles.push(TileCoord::new(z, x as u32, y as u32));
+            }
         }
     }
     
-    neighbors
+    tiles
+}
+
+/// Get immediate neighboring tiles (1 ring = 8 tiles).
+/// This is a convenience wrapper around get_tiles_in_rings for backward compatibility.
+fn get_neighboring_tiles(center: &TileCoord) -> Vec<TileCoord> {
+    get_tiles_in_rings(center, 1)
 }
 
 /// Spawn background tasks to prefetch neighboring tiles.
 /// This improves perceived performance when panning the map.
+/// 
+/// # Arguments
+/// * `rings` - Number of rings to prefetch (1 = 8 tiles, 2 = 24 tiles, 3 = 48 tiles)
 fn spawn_tile_prefetch(
     state: Arc<AppState>,
     layer: String,
     style: String,
     center: TileCoord,
+    rings: u32,
 ) {
-    let neighbors = get_neighboring_tiles(&center);
+    let neighbors = get_tiles_in_rings(&center, rings);
+    
+    debug!(
+        layer = %layer,
+        z = center.z,
+        x = center.x,
+        y = center.y,
+        rings = rings,
+        tile_count = neighbors.len(),
+        "Spawning prefetch tasks"
+    );
     
     for neighbor in neighbors {
         let state = state.clone();
@@ -1996,7 +2165,7 @@ async fn prefetch_single_tile(
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             Some(coord),
@@ -2015,7 +2184,7 @@ async fn prefetch_single_tile(
         };
         
         crate::rendering::render_isolines_tile(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             model,
             &parameter,
@@ -2030,7 +2199,7 @@ async fn prefetch_single_tile(
         .await
     } else {
         crate::rendering::render_weather_data(
-            &state.storage,
+            &state.grib_cache,
             &state.catalog,
             &state.metrics,
             model,
@@ -2054,3 +2223,366 @@ async fn prefetch_single_tile(
     }
 }
 
+/// Cache viewer - list all cached tiles
+pub async fn cache_list_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use storage::CacheKey;
+    
+    let mut cache = state.cache.lock().await;
+    
+    match cache.keys("*").await {
+        Ok(keys) => {
+            let tiles: Vec<serde_json::Value> = keys.iter().map(|key| {
+                // Parse the cache key to extract metadata
+                // Key format: "wms:layer:style:crs:bbox_w_h:time:format"
+                let parts: Vec<&str> = key.split(':').collect();
+                
+                serde_json::json!({
+                    "key": key,
+                    "layer": parts.get(1).unwrap_or(&"unknown"),
+                    "style": parts.get(2).unwrap_or(&"unknown"),
+                    "crs": parts.get(3).unwrap_or(&"unknown"),
+                })
+            }).collect();
+            
+            Json(serde_json::json!({
+                "total": tiles.len(),
+                "tiles": tiles
+            }))
+        }
+        Err(e) => {
+            Json(serde_json::json!({
+                "error": e.to_string(),
+                "total": 0,
+                "tiles": []
+            }))
+        }
+    }
+}
+
+/// Cache viewer HTML page
+pub async fn cache_viewer_handler() -> impl IntoResponse {
+    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>WMS Cache Viewer</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-top: 0;
+            color: #333;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .filter-bar {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        input, select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .tile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .tile-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+            background: white;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .tile-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .tile-image {
+            width: 100%;
+            height: 280px;
+            object-fit: cover;
+            background: #f0f0f0;
+            cursor: pointer;
+        }
+        .tile-info {
+            padding: 15px;
+            background: #fafafa;
+        }
+        .tile-label {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 3px;
+        }
+        .tile-value {
+            font-size: 13px;
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .refresh-btn {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal img {
+            max-width: 90%;
+            max-height: 90%;
+            border-radius: 4px;
+        }
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: white;
+            font-size: 40px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗺️ WMS Cache Viewer</h1>
+        
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-label">L1 Cache Hits</div>
+                <div class="stat-value" id="l1-hits">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">L1 Hit Rate</div>
+                <div class="stat-value" id="l1-rate">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">L2 Cached Tiles</div>
+                <div class="stat-value" id="l2-count">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Cache Size</div>
+                <div class="stat-value" id="cache-size">-</div>
+            </div>
+        </div>
+        
+        <div class="filter-bar">
+            <input type="text" id="search" placeholder="Search layer..." />
+            <select id="layer-filter">
+                <option value="">All Layers</option>
+            </select>
+            <button class="refresh-btn" onclick="loadCacheData()">🔄 Refresh</button>
+        </div>
+        
+        <div id="tile-container">
+            <div class="loading">Loading cached tiles...</div>
+        </div>
+    </div>
+    
+    <div class="modal" id="modal" onclick="closeModal()">
+        <span class="close-modal">&times;</span>
+        <img id="modal-img" src="" />
+    </div>
+
+    <script>
+        let allTiles = [];
+        
+        async function loadCacheData() {
+            try {
+                // Load metrics
+                const metricsRes = await fetch('/api/metrics');
+                const metrics = await metricsRes.json();
+                
+                document.getElementById('l1-hits').textContent = 
+                    (metrics.l1_cache.hits || 0).toLocaleString();
+                document.getElementById('l1-rate').textContent = 
+                    (metrics.l1_cache.hit_rate || 0).toFixed(1) + '%';
+                document.getElementById('cache-size').textContent = 
+                    formatBytes(metrics.l1_cache.size_bytes || 0);
+                
+                // Load L2 cache info
+                document.getElementById('l2-count').textContent = 
+                    (metrics.l2_cache.key_count || 0).toLocaleString();
+                
+                // Load tile list from L1 cache
+                // For now, we'll show some sample tiles based on common patterns
+                displaySampleTiles();
+                
+            } catch (error) {
+                document.getElementById('tile-container').innerHTML = 
+                    '<div class="error">Error loading cache data: ' + error.message + '</div>';
+            }
+        }
+        
+        function displaySampleTiles() {
+            const container = document.getElementById('tile-container');
+            const layers = ['gfs_TMP'];
+            const styles = ['temperature'];
+            const zooms = [0, 1, 2, 3, 4];
+            
+            let html = '<div class="tile-grid">';
+            
+            // Show zoom levels 0-4 as examples
+            for (const z of zooms) {
+                const max = Math.pow(2, z);
+                const step = Math.max(1, Math.floor(max / 4)); // Show ~4 tiles per zoom
+                
+                for (let x = 0; x < max; x += step) {
+                    for (let y = 0; y < max; y += step) {
+                        const tileUrl = `/wmts/1.0.0/gfs_TMP/temperature/EPSG3857/${z}/${x}/${y}.png`;
+                        html += `
+                            <div class="tile-card">
+                                <img class="tile-image" 
+                                     src="${tileUrl}" 
+                                     alt="Tile ${z}/${x}/${y}"
+                                     onclick="showModal('${tileUrl}')"
+                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22256%22 height=%22256%22><rect width=%22256%22 height=%22256%22 fill=%22%23f0f0f0%22/><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22>Not cached</text></svg>'" />
+                                <div class="tile-info">
+                                    <div class="tile-label">Layer</div>
+                                    <div class="tile-value">gfs_TMP</div>
+                                    <div class="tile-label">Zoom / X / Y</div>
+                                    <div class="tile-value">${z} / ${x} / ${y}</div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+            }
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+        
+        function showModal(url) {
+            document.getElementById('modal-img').src = url;
+            document.getElementById('modal').style.display = 'flex';
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+        }
+        
+        // Load data on page load
+        loadCacheData();
+        
+        // Auto-refresh every 10 seconds
+        setInterval(loadCacheData, 10000);
+    </script>
+</body>
+</html>
+"#;
+
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html
+    )
+}
+
+/// Configuration endpoint - shows current optimization settings
+pub async fn config_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    Json(json!({
+        "optimizations": {
+            "l1_cache": {
+                "enabled": state.optimization_config.l1_cache_enabled,
+                "size": state.optimization_config.l1_cache_size,
+                "ttl_secs": state.optimization_config.l1_cache_ttl_secs,
+            },
+            "grib_cache": {
+                "enabled": state.optimization_config.grib_cache_enabled,
+                "size": state.optimization_config.grib_cache_size,
+            },
+            "prefetch": {
+                "enabled": state.optimization_config.prefetch_enabled,
+                "rings": state.optimization_config.prefetch_rings,
+                "min_zoom": state.optimization_config.prefetch_min_zoom,
+                "max_zoom": state.optimization_config.prefetch_max_zoom,
+            },
+            "cache_warming": {
+                "enabled": state.optimization_config.cache_warming_enabled,
+            }
+        },
+        "version": env!("CARGO_PKG_VERSION"),
+        "runtime": {
+            "prefetch_rings": state.prefetch_rings,
+        }
+    }))
+}

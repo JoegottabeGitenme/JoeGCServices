@@ -50,6 +50,25 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 #------------------------------------------------------------------------------
+# Load Environment Configuration
+#------------------------------------------------------------------------------
+
+load_env_file() {
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        log_info "Loading configuration from .env file"
+        # Export all variables from .env
+        set -a
+        source "$PROJECT_ROOT/.env"
+        set +a
+        log_success "Environment configuration loaded"
+    else
+        log_info "No .env file found, using defaults from .env.example"
+        log_info "Create .env from .env.example to customize settings:"
+        log_info "  cp .env.example .env"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # Helper Functions
 #------------------------------------------------------------------------------
 
@@ -582,6 +601,10 @@ main() {
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║           Weather WMS - Local Development Setup               ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # Load environment configuration first (before any commands)
+    load_env_file
     echo ""
     
     case "${1:-}" in

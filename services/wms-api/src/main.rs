@@ -7,6 +7,7 @@ pub mod metrics;
 mod rendering;
 mod state;
 mod validation;
+mod warming;
 
 use anyhow::Result;
 use axum::{extract::Extension, routing::get, Router};
@@ -93,6 +94,62 @@ async fn async_main(args: Args) -> Result<()> {
     // Initialize application state
     let state = Arc::new(AppState::new().await?);
 
+    // Run cache warming if enabled (Phase 7.D)
+    {
+        let warming_config = warming::WarmingConfig {
+            enabled: state.optimization_config.cache_warming_enabled,
+            max_zoom: env::var("CACHE_WARMING_MAX_ZOOM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(4),
+            forecast_hours: env::var("CACHE_WARMING_HOURS")
+                .ok()
+                .and_then(|v| {
+                    v.split(',')
+                        .filter_map(|s| s.trim().parse::<u32>().ok())
+                        .collect::<Vec<u32>>()
+                        .into()
+                })
+                .unwrap_or_else(|| vec![0]),
+            layers: env::var("CACHE_WARMING_LAYERS")
+                .ok()
+                .and_then(|v| {
+                    v.split(';')
+                        .filter_map(|pair| {
+                            let parts: Vec<&str> = pair.split(':').collect();
+                            if parts.len() == 2 {
+                                Some(warming::WarmingLayer {
+                                    name: parts[0].trim().to_string(),
+                                    style: parts[1].trim().to_string(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<warming::WarmingLayer>>()
+                        .into()
+                })
+                .unwrap_or_else(|| vec![
+                    warming::WarmingLayer {
+                        name: "gfs_TMP".to_string(),
+                        style: "temperature".to_string(),
+                    },
+                ]),
+            concurrency: env::var("CACHE_WARMING_CONCURRENCY")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(10),
+        };
+        
+        if warming_config.enabled {
+            info!("Cache warming enabled - starting background warming task");
+            let warmer = warming::CacheWarmer::new(state.clone(), warming_config);
+            warmer.warm_startup().await;
+        } else {
+            info!("Cache warming disabled (set ENABLE_CACHE_WARMING=true to enable)");
+        }
+    }
+
     // Build router
     let app = Router::new()
         // WMS endpoints
@@ -127,6 +184,11 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/container/stats", get(handlers::container_stats_handler))
         // Application metrics API
         .route("/api/metrics", get(handlers::api_metrics_handler))
+        // Configuration API - shows optimization settings
+        .route("/api/config", get(handlers::config_handler))
+        // Cache viewer (Phase 7 - cache inspection tool)
+        .route("/cache", get(handlers::cache_viewer_handler))
+        .route("/api/cache/list", get(handlers::cache_list_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

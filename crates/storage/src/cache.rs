@@ -98,13 +98,20 @@ impl TileCache {
         self.delete_by_pattern(&pattern).await
     }
 
-    /// Delete keys matching a pattern.
-    async fn delete_by_pattern(&mut self, pattern: &str) -> WmsResult<u64> {
+    /// Get keys matching a pattern.
+    pub async fn keys(&mut self, pattern: &str) -> WmsResult<Vec<String>> {
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg(pattern)
             .query_async(&mut self.conn)
             .await
             .map_err(|e| WmsError::CacheError(format!("Pattern search failed: {}", e)))?;
+        
+        Ok(keys)
+    }
+
+    /// Delete keys matching a pattern.
+    async fn delete_by_pattern(&mut self, pattern: &str) -> WmsResult<u64> {
+        let keys = self.keys(pattern).await?;
 
         if keys.is_empty() {
             return Ok(0);

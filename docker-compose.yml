@@ -1,22 +1,26 @@
 services:
   postgres:
     image: postgres:16-bookworm
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: weatherwms
-      POSTGRES_PASSWORD: weatherwms
-      POSTGRES_DB: weatherwms
+      POSTGRES_USER: ${POSTGRES_USER:-weatherwms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weatherwms}
+      POSTGRES_DB: ${POSTGRES_DB:-weatherwms}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U weatherwms"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-weatherwms}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-bookworm
+    env_file:
+      - .env
     ports:
       - "6379:6379"
     volumes:
@@ -29,9 +33,11 @@ services:
 
   minio:
     image: minio/minio:latest
+    env_file:
+      - .env
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -48,23 +54,46 @@ services:
     build:
       context: .
       dockerfile: services/wms-api/Dockerfile
+    env_file:
+      - .env
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://weatherwms:weatherwms@postgres:5432/weatherwms
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: weather-data
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_REGION: us-east-1
-      S3_ALLOW_HTTP: "true"
-      RUST_LOG: info
-      RUST_BACKTRACE: "1"
+      # Database
+      DATABASE_URL: ${DATABASE_URL:-postgresql://weatherwms:weatherwms@postgres:5432/weatherwms}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-50}
+      # Redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      # Object Storage
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ALLOW_HTTP: ${S3_ALLOW_HTTP:-true}
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
       # Performance tuning
-      TOKIO_WORKER_THREADS: "8"
-      DATABASE_POOL_SIZE: "50"
-      GRIB_CACHE_SIZE: "500"
+      TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-8}
+      # GRIB cache
+      ENABLE_GRIB_CACHE: ${ENABLE_GRIB_CACHE:-true}
+      GRIB_CACHE_SIZE: ${GRIB_CACHE_SIZE:-500}
+      # L1 tile memory cache (Phase 7.A)
+      ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
+      TILE_CACHE_SIZE: ${TILE_CACHE_SIZE:-10000}
+      TILE_CACHE_TTL_SECS: ${TILE_CACHE_TTL_SECS:-300}
+      # Prefetch settings (Phase 7.B)
+      ENABLE_PREFETCH: ${ENABLE_PREFETCH:-true}
+      PREFETCH_RINGS: ${PREFETCH_RINGS:-2}
+      PREFETCH_MIN_ZOOM: ${PREFETCH_MIN_ZOOM:-3}
+      PREFETCH_MAX_ZOOM: ${PREFETCH_MAX_ZOOM:-12}
+      # Cache warming settings (Phase 7.D)
+      ENABLE_CACHE_WARMING: ${ENABLE_CACHE_WARMING:-true}
+      CACHE_WARMING_MAX_ZOOM: ${CACHE_WARMING_MAX_ZOOM:-4}
+      CACHE_WARMING_HOURS: ${CACHE_WARMING_HOURS:-0}
+      CACHE_WARMING_LAYERS: ${CACHE_WARMING_LAYERS:-gfs_TMP:temperature}
+      CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +112,8 @@ services:
   web-dashboard:
     image: python:3.11-slim
     working_dir: /app
+    env_file:
+      - .env
     volumes:
       - ./web:/app
     ports:
@@ -109,6 +140,8 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
+    env_file:
+      - .env
     ports:
       - "9090:9090"
     volumes:
@@ -117,6 +150,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_DAYS:-15}d'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
     depends_on:
@@ -125,11 +159,13 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: ${GF_USERS_ALLOW_SIGN_UP:-false}
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana

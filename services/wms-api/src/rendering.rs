@@ -4,7 +4,7 @@ use renderer::gradient;
 use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
-use storage::{Catalog, CatalogEntry, ObjectStorage};
+use storage::{Catalog, CatalogEntry, ObjectStorage, GribCache};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, debug, warn};
@@ -14,7 +14,7 @@ use crate::metrics::MetricsCollector;
 /// Render weather data from GRIB2 grid to PNG.
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
@@ -26,7 +26,7 @@ use crate::metrics::MetricsCollector;
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_weather_data(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -36,13 +36,13 @@ pub async fn render_weather_data(
     height: u32,
     bbox: Option<[f32; 4]>,
 ) -> Result<Vec<u8>, String> {
-    render_weather_data_with_style(storage, catalog, metrics, model, parameter, forecast_hour, width, height, bbox, None, false).await
+    render_weather_data_with_style(grib_cache, catalog, metrics, model, parameter, forecast_hour, width, height, bbox, None, false).await
 }
 
 /// Render weather data with optional style configuration.
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
@@ -56,7 +56,7 @@ pub async fn render_weather_data(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_weather_data_with_style(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -69,14 +69,14 @@ pub async fn render_weather_data_with_style(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data_with_level(
-        storage, catalog, metrics, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
+        grib_cache, catalog, metrics, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
     ).await
 }
 
 /// Render weather data with optional style configuration and level.
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
@@ -91,7 +91,7 @@ pub async fn render_weather_data_with_style(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_weather_data_with_level(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -105,7 +105,7 @@ pub async fn render_weather_data_with_level(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data_with_time(
-        storage, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
+        grib_cache, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
     ).await
 }
 
@@ -116,7 +116,7 @@ pub async fn render_weather_data_with_level(
 /// - Observation data (MRMS, GOES): Use `observation_time` parameter
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving files
+/// - `grib_cache`: GRIB cache for retrieving files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name
@@ -129,7 +129,7 @@ pub async fn render_weather_data_with_level(
 /// - `style_name`: Optional style name
 /// - `use_mercator`: Use Web Mercator projection
 pub async fn render_weather_data_with_time(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -191,7 +191,7 @@ pub async fn render_weather_data_with_time(
         }
     }};
 
-    // Load grid data from storage (handles both GRIB2 and NetCDF formats)
+    // Load grid data from cache/storage (handles both GRIB2 and NetCDF formats)
     info!(
         parameter = parameter,
         level = %entry.level,
@@ -201,7 +201,7 @@ pub async fn render_weather_data_with_time(
     );
     
     let start = Instant::now();
-    let grid_result = load_grid_data(storage, metrics, &entry, parameter).await?;
+    let grid_result = load_grid_data(grib_cache, metrics, &entry, parameter).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
     let grid_data = grid_result.data;
@@ -1375,13 +1375,13 @@ struct GoesProjectionParams {
 /// For GRIB2 files, searches for the matching parameter and level.
 /// For NetCDF (GOES) files, reads the CMI variable directly.
 async fn load_grid_data(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     metrics: &MetricsCollector,
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
-    // Load file from storage
-    let file_data = storage
+    // Load file from cache (or storage on cache miss)
+    let file_data = grib_cache
         .get(&entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load file: {}", e))?;
@@ -1393,7 +1393,7 @@ async fn load_grid_data(
     
     if is_netcdf {
         // Handle NetCDF (GOES) data
-        load_netcdf_grid_data(storage, entry).await
+        load_netcdf_grid_data(grib_cache, entry).await
     } else {
         // Handle GRIB2 data
         // For MRMS (shredded single-message files), just read the first message
@@ -1437,7 +1437,7 @@ async fn load_grid_data(
 /// This uses ncdump to extract data since we don't have direct HDF5 support.
 /// Downloads the file from S3 storage to a temp location first.
 async fn load_netcdf_grid_data(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     entry: &CatalogEntry,
 ) -> Result<GridData, String> {
     use std::process::Command;
@@ -1446,14 +1446,14 @@ async fn load_netcdf_grid_data(
     info!(
         storage_path = %entry.storage_path,
         parameter = %entry.parameter,
-        "Loading GOES NetCDF data from storage"
+        "Loading GOES NetCDF data from cache/storage"
     );
     
-    // Download file from S3 to temp location
-    let file_data = storage
+    // Load file from cache (or storage on cache miss)
+    let file_data = grib_cache
         .get(&entry.storage_path)
         .await
-        .map_err(|e| format!("Failed to load NetCDF file from storage: {}", e))?;
+        .map_err(|e| format!("Failed to load NetCDF file from cache/storage: {}", e))?;
     
     // Write to temp file for ncdump to read
     let temp_dir = std::env::temp_dir();
@@ -1689,7 +1689,7 @@ fn parse_attribute(header: &str, name: &str) -> Result<f64, String> {
 /// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
@@ -1700,7 +1700,7 @@ fn parse_attribute(header: &str, name: &str) -> Result<f64, String> {
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_tile(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
@@ -1712,7 +1712,7 @@ pub async fn render_wind_barbs_tile(
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
     // Load U and V component data
-    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components(storage, catalog, model, forecast_hour).await?;
+    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components(grib_cache, catalog, model, forecast_hour).await?;
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -1783,7 +1783,7 @@ pub async fn render_wind_barbs_tile(
 /// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
@@ -1796,7 +1796,7 @@ pub async fn render_wind_barbs_tile(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_tile_with_level(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
@@ -1810,7 +1810,7 @@ pub async fn render_wind_barbs_tile_with_level(
     
     // Load U and V component data with level support
     let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components_with_level(
-        storage, catalog, model, forecast_hour, level
+        grib_cache, catalog, model, forecast_hour, level
     ).await?;
     
     // Determine if we should use expanded rendering
@@ -1879,9 +1879,9 @@ pub async fn render_wind_barbs_tile_with_level(
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
 
-/// Load U and V wind component data from storage with optional level
+/// Load U and V wind component data from cache/storage with optional level
 async fn load_wind_components_with_level(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     forecast_hour: Option<u32>,
@@ -1951,13 +1951,13 @@ async fn load_wind_components_with_level(
         }
     };
 
-    // Load GRIB2 files
-    let u_grib = storage
+    // Load GRIB2 files from cache
+    let u_grib = grib_cache
         .get(&u_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
 
-    let v_grib = storage
+    let v_grib = grib_cache
         .get(&v_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
@@ -1996,9 +1996,9 @@ async fn load_wind_components_with_level(
     Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds))
 }
 
-/// Load U and V wind component data from storage
+/// Load U and V wind component data from cache/storage
 async fn load_wind_components(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     forecast_hour: Option<u32>,
@@ -2033,13 +2033,13 @@ async fn load_wind_components(
             .ok_or_else(|| "No VGRD data available".to_string())?
     };
 
-    // Load GRIB2 files
-    let u_grib = storage
+    // Load GRIB2 files from cache
+    let u_grib = grib_cache
         .get(&u_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
 
-    let v_grib = storage
+    let v_grib = grib_cache
         .get(&v_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
@@ -2092,7 +2092,7 @@ async fn load_wind_components(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_layer(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     width: u32,
@@ -2131,13 +2131,13 @@ pub async fn render_wind_barbs_layer(
             .ok_or_else(|| "No VGRD data available".to_string())?
     };
 
-    // Load GRIB2 files
-    let u_grib = storage
+    // Load GRIB2 files from cache
+    let u_grib = grib_cache
         .get(&u_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
 
-    let v_grib = storage
+    let v_grib = grib_cache
         .get(&v_entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
@@ -2357,7 +2357,7 @@ pub async fn render_wind_barbs_layer(
 /// # Returns
 /// Vector of FeatureInfo with data values at the queried point
 pub async fn query_point_value(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     layer: &str,
     bbox: [f64; 4],
@@ -2404,7 +2404,7 @@ pub async fn query_point_value(
     
     // Handle special composite layers
     if parameter == "WIND_BARBS" {
-        return query_wind_barbs_value(storage, catalog, model, lon, lat, forecast_hour, level).await;
+        return query_wind_barbs_value(grib_cache, catalog, model, lon, lat, forecast_hour, level).await;
     }
     
     // Get dataset for this parameter, optionally at a specific level
@@ -2439,8 +2439,8 @@ pub async fn query_point_value(
         }
     };
     
-    // Load GRIB2 file from storage
-    let grib_data = storage
+    // Load GRIB2 file from cache
+    let grib_data = grib_cache
         .get(&entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
@@ -2482,7 +2482,7 @@ pub async fn query_point_value(
 
 /// Query wind barbs value (combines UGRD and VGRD)
 async fn query_wind_barbs_value(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     lon: f64,
@@ -2556,10 +2556,10 @@ async fn query_wind_barbs_value(
         }
     };
     
-    // Load GRIB2 files
-    let u_grib = storage.get(&u_entry.storage_path).await
+    // Load GRIB2 files from cache
+    let u_grib = grib_cache.get(&u_entry.storage_path).await
         .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-    let v_grib = storage.get(&v_entry.storage_path).await
+    let v_grib = grib_cache.get(&v_entry.storage_path).await
         .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
     
     // Parse and unpack - use level from catalog entry
@@ -2702,7 +2702,7 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_isolines_tile(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     parameter: &str,
@@ -2715,14 +2715,14 @@ pub async fn render_isolines_tile(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_isolines_tile_with_level(
-        storage, catalog, model, parameter, tile_coord, width, height, bbox,
+        grib_cache, catalog, model, parameter, tile_coord, width, height, bbox,
         style_path, forecast_hour, None, use_mercator
     ).await
 }
 
 /// Render isolines (contour lines) for a single tile with optional level.
 pub async fn render_isolines_tile_with_level(
-    storage: &ObjectStorage,
+    grib_cache: &GribCache,
     catalog: &Catalog,
     model: &str,
     parameter: &str,
@@ -2773,8 +2773,8 @@ pub async fn render_isolines_tile_with_level(
         }
     };
     
-    // Load GRIB2 file from storage
-    let grib_data = storage
+    // Load GRIB2 file from cache
+    let grib_data = grib_cache
         .get(&entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;

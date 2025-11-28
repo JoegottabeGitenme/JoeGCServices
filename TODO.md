@@ -1,29 +1,26 @@
 
 ## WMS/WMTS Capabilities Improvements
 
-### Convert Forecast Hour Dimension to ISO8601 Duration Format
+### ✅ Convert Forecast Hour Dimension to ISO8601 Duration Format (COMPLETED - Nov 28, 2024)
 
-**Current State:**
-- Forecast hours are expressed as simple integers (e.g., `0,1,2,3,6,12,24`)
-- Dimension units are "hours"
-- Example: `<Dimension name="FORECAST" units="hours" default="0">0,3,6,12,24</Dimension>`
+**Implementation:**
+- Converted FORECAST dimension from simple integers to ISO8601 duration format
+- Updated both WMS and WMTS GetCapabilities XML generation
+- Changed units from "hours" to "ISO8601"
+- Forecast values now use PT#H format (e.g., PT0H, PT3H, PT6H, PT12H, PT24H)
 
-**Target State:**
-- Should use ISO8601 duration format for better standards compliance
-- Example: `<Dimension name="FORECAST" units="ISO8601" default="PT0H">PT0H,PT3H,PT6H,PT12H,PT24H</Dimension>`
-- Or use relative time: `<Dimension name="time" units="ISO8601">2025-11-26T00:00:00Z/PT1H/2025-11-26T12:00:00Z</Dimension>`
+**Examples:**
+- **GFS**: `<Dimension name="FORECAST" units="ISO8601" default="PT0H">PT0H,PT3H,PT6H,PT12H,PT24H</Dimension>`
+- **HRRR**: `<Dimension name="FORECAST" units="ISO8601" default="PT0H">PT0H,PT1H,PT2H,PT3H,PT6H,PT12H</Dimension>`
+- **WMTS**: `<ows:UOM>ISO8601</ows:UOM>` with `<Value>PT0H</Value>` format
 
-**Benefits:**
-- Better WMS/WMTS standards compliance
-- More flexible for non-hourly forecasts (e.g., 30-minute updates)
-- Clearer for international clients
-- Consistent with RUN dimension which already uses ISO8601
+**Benefits Achieved:**
+- ✅ Better WMS/WMTS standards compliance (ISO 19128)
+- ✅ Consistent with RUN dimension which already uses ISO8601
+- ✅ More flexible for non-hourly forecasts (HRRR uses PT1H, PT2H)
+- ✅ Clearer for international clients
+- ✅ Proper semantic representation of time durations
 
-**Files to Modify:**
-- `services/wms-api/src/handlers.rs` - WMS GetCapabilities XML generation
-- May need to update WMTS capabilities as well
-
-**References:**
-- OGC WMS 1.3.0 Standard (ISO 19128)
-- ISO 8601 Duration format: https://en.wikipedia.org/wiki/ISO_8601#Durations
+**Files Modified:**
+- `services/wms-api/src/handlers.rs` - WMS and WMTS GetCapabilities XML generation (lines 1493-1503, 1736-1766, 1783-1820)
 
