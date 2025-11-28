@@ -1,0 +1,89 @@
+//! Configuration loading and management.
+
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// Main test configuration loaded from YAML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConfig {
+    pub name: String,
+    pub description: String,
+    pub base_url: String,
+    pub duration_secs: u64,
+    pub concurrency: u32,
+    #[serde(default)]
+    pub requests_per_second: Option<f64>,
+    #[serde(default)]
+    pub warmup_secs: u64,
+    #[serde(default)]
+    pub seed: Option<u64>,  // Optional RNG seed for reproducible tests
+    pub layers: Vec<LayerConfig>,
+    pub tile_selection: TileSelection,
+}
+
+/// Layer configuration for testing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerConfig {
+    pub name: String,
+    pub style: Option<String>,
+    #[serde(default = "default_weight")]
+    pub weight: f64,
+}
+
+fn default_weight() -> f64 {
+    1.0
+}
+
+/// How to select tiles for testing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TileSelection {
+    Random {
+        zoom_range: (u32, u32),
+        #[serde(default)]
+        bbox: Option<BBox>,
+    },
+    Sequential {
+        zoom: u32,
+        bbox: BBox,
+    },
+    Fixed {
+        tiles: Vec<(u32, u32, u32)>,
+    },
+    PanSimulation {
+        start: (u32, u32, u32),
+        steps: u32,
+    },
+}
+
+/// Geographic bounding box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BBox {
+    pub min_lon: f64,
+    pub min_lat: f64,
+    pub max_lon: f64,
+    pub max_lat: f64,
+}
+
+impl TestConfig {
+    /// Load configuration from YAML file.
+    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: TestConfig = serde_yaml::from_str(&content)?;
+        Ok(config)
+    }
+
+    /// Validate configuration.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.duration_secs == 0 {
+            anyhow::bail!("duration_secs must be > 0");
+        }
+        if self.concurrency == 0 {
+            anyhow::bail!("concurrency must be > 0");
+        }
+        if self.layers.is_empty() {
+            anyhow::bail!("at least one layer must be specified");
+        }
+        Ok(())
+    }
+}

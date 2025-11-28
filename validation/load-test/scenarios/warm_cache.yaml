@@ -1,0 +1,20 @@
+name: warm_cache
+description: Warm cache test - limited tile set to measure cache-hit performance
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 20
+warmup_secs: 10
+requests_per_second: 100.0
+layers:
+  - name: gfs_TMP
+    style: temperature
+    weight: 1.0
+tile_selection:
+  type: random
+  zoom_range: [5, 5]
+  bbox:
+    min_lon: -100.0
+    min_lat: 35.0
+    max_lon: -90.0
+    max_lat: 45.0
+seed: 54321

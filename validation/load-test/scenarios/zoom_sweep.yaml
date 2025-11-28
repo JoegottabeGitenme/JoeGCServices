@@ -1,0 +1,19 @@
+name: zoom_sweep
+description: Test performance across different zoom levels (3 to 9)
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+layers:
+  - name: gfs_TMP
+    style: temperature
+    weight: 1.0
+tile_selection:
+  type: random
+  zoom_range: [3, 9]
+  bbox:
+    min_lon: -105.0
+    min_lat: 35.0
+    max_lon: -95.0
+    max_lat: 42.0
+seed: 77777

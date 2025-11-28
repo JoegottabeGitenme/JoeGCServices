@@ -100,3 +100,96 @@ cargo clippy -- -D warnings
 - Keep workspace dependencies synchronized in `Cargo.toml [workspace.dependencies]`
 - Use workspace inheritance for common crates (tokio, serde, axum, etc.)
 - Avoid duplicate dependency versions across the workspace
+
+## Performance Testing and Load Tests
+
+**Run a quick smoke test:**
+```bash
+./scripts/run_load_test.sh
+# or
+./scripts/run_load_test.sh quick
+```
+
+**Run specific test scenarios:**
+```bash
+# Test cache-miss performance
+./scripts/run_load_test.sh cold_cache
+
+# Test cache-hit performance (requires cache warming first)
+./scripts/run_load_test.sh warm_cache
+
+# High concurrency stress test
+./scripts/run_load_test.sh stress
+
+# Compare different layer types
+./scripts/run_load_test.sh layer_comparison
+```
+
+**Save results for tracking over time:**
+```bash
+# Save as JSON
+./scripts/run_load_test.sh cold_cache --save --output json
+
+# Append to CSV for historical tracking
+./scripts/run_load_test.sh cold_cache --save --output csv
+```
+
+**Reset cache before testing:**
+```bash
+./scripts/run_load_test.sh cold_cache --reset-cache
+```
+
+**Run custom scenario:**
+```bash
+./scripts/run_load_test.sh --scenario my_custom_test.yaml
+```
+
+**Direct use of load-test tool:**
+```bash
+# Build the tool
+cargo build --package load-test --release
+
+# Run a scenario
+./target/release/load-test run --scenario validation/load-test/scenarios/quick.yaml
+
+# Quick test with defaults
+./target/release/load-test quick --layer gfs_TMP --requests 100
+
+# List available scenarios
+./target/release/load-test list
+```
+
+**Reset system state for consistent benchmarking:**
+```bash
+# Flush Redis cache and reset metrics
+./scripts/reset_test_state.sh
+
+# Also restart WMS API to clear in-memory state
+./scripts/reset_test_state.sh --restart
+```
+
+**Create custom test scenarios:**
+
+Create a YAML file in `validation/load-test/scenarios/`:
+```yaml
+name: my_test
+description: Custom test scenario
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 20
+warmup_secs: 5
+layers:
+  - name: gfs_TMP
+    style: temperature
+    weight: 1.0
+  - name: gfs_WIND_BARBS
+    weight: 0.5
+tile_selection:
+  type: random
+  zoom_range: [4, 8]
+  bbox:
+    min_lon: -130
+    min_lat: 20
+    max_lon: -60
+    max_lat: 55
+```

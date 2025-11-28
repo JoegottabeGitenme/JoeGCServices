@@ -1,0 +1,19 @@
+name: layer_comparison
+description: Compare performance across different layer types (run multiple times with --layer override)
+base_url: http://localhost:8080
+duration_secs: 30
+concurrency: 10
+warmup_secs: 5
+layers:
+  - name: gfs_TMP
+    style: temperature
+    weight: 1.0
+tile_selection:
+  type: random
+  zoom_range: [5, 6]
+  bbox:
+    min_lon: -110.0
+    min_lat: 30.0
+    max_lon: -80.0
+    max_lat: 45.0
+seed: 11111

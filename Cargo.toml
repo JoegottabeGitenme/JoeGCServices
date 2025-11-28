@@ -11,6 +11,7 @@ members = [
     "services/ingester",
     "services/renderer-worker",
     "services/wms-api",
+    "validation/load-test",
 ]
 
 [workspace.package]
