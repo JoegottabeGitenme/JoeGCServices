@@ -21,7 +21,7 @@ layers:
 
 tile_selection:
   type: random
-  zoom_range: [5, 6]
+  zoom_range: [5, 13]
   bbox:
     # Focus on CONUS for radar/precipitation
     min_lon: -105.0

@@ -2,7 +2,7 @@
 
 use crate::config::TestConfig;
 use crate::generator::TileGenerator;
-use crate::metrics::{MetricsCollector, TestResults};
+use crate::metrics::{MetricsCollector, SystemConfig, TestResults};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -41,6 +41,9 @@ impl LoadRunner {
 
     /// Run the load test.
     pub async fn run(&mut self) -> anyhow::Result<TestResults> {
+        // Fetch system configuration from API
+        let system_config = self.fetch_system_config().await.ok();
+        
         let total_duration = Duration::from_secs(self.config.duration_secs + self.config.warmup_secs);
         let warmup_duration = Duration::from_secs(self.config.warmup_secs);
         
@@ -51,6 +54,27 @@ impl LoadRunner {
         if let Some(rps) = self.config.requests_per_second {
             println!("  Rate limit: {:.1} req/s", rps);
         }
+        
+        // Display system configuration if available
+        if let Some(ref config) = system_config {
+            println!();
+            println!("System Configuration:");
+            println!("  L1 Cache: {} (size: {}, ttl: {}s)", 
+                if config.l1_cache_enabled { "enabled" } else { "disabled" },
+                config.l1_cache_size,
+                config.l1_cache_ttl_secs);
+            println!("  GRIB Cache: {} (size: {})", 
+                if config.grib_cache_enabled { "enabled" } else { "disabled" },
+                config.grib_cache_size);
+            println!("  Prefetch: {} (rings: {}, zoom: {}-{})", 
+                if config.prefetch_enabled { "enabled" } else { "disabled" },
+                config.prefetch_rings,
+                config.prefetch_min_zoom,
+                config.prefetch_max_zoom);
+            println!("  Cache Warming: {}", 
+                if config.cache_warming_enabled { "enabled" } else { "disabled" });
+        }
+        
         println!();
 
         // Create progress bar
@@ -157,7 +181,50 @@ impl LoadRunner {
 
         // Generate results
         let m = metrics.lock().await;
-        Ok(m.results(self.config.name.clone()))
+        
+        // Extract layer names
+        let layers = self.config.layers.iter().map(|l| l.name.clone()).collect();
+        
+        Ok(m.results(
+            self.config.name.clone(),
+            self.config.name.clone(), // scenario_name same as config_name for now
+            layers,
+            self.config.concurrency,
+            system_config,
+        ))
+    }
+    
+    /// Fetch system configuration from WMS API
+    async fn fetch_system_config(&self) -> anyhow::Result<SystemConfig> {
+        let config_url = format!("{}/api/config", self.config.base_url);
+        
+        let response = self.client
+            .get(&config_url)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            anyhow::bail!("Failed to fetch system config: HTTP {}", response.status());
+        }
+        
+        let json: serde_json::Value = response.json().await?;
+        
+        // Parse the config from the API response
+        let opts = &json["optimizations"];
+        
+        Ok(SystemConfig {
+            l1_cache_enabled: opts["l1_cache"]["enabled"].as_bool().unwrap_or(false),
+            l1_cache_size: opts["l1_cache"]["size"].as_u64().unwrap_or(0) as usize,
+            l1_cache_ttl_secs: opts["l1_cache"]["ttl_secs"].as_u64().unwrap_or(0),
+            grib_cache_enabled: opts["grib_cache"]["enabled"].as_bool().unwrap_or(false),
+            grib_cache_size: opts["grib_cache"]["size"].as_u64().unwrap_or(0) as usize,
+            prefetch_enabled: opts["prefetch"]["enabled"].as_bool().unwrap_or(false),
+            prefetch_rings: opts["prefetch"]["rings"].as_u64().unwrap_or(0) as u32,
+            prefetch_min_zoom: opts["prefetch"]["min_zoom"].as_u64().unwrap_or(0) as u32,
+            prefetch_max_zoom: opts["prefetch"]["max_zoom"].as_u64().unwrap_or(0) as u32,
+            cache_warming_enabled: opts["cache_warming"]["enabled"].as_bool().unwrap_or(false),
+        })
     }
 
     /// Execute a single HTTP request (static version for use in spawned tasks).

@@ -20,7 +20,7 @@ layers:
 tile_selection:
   type: random
   # Focused zoom range for faster test
-  zoom_range: [4, 7]
+  zoom_range: [4, 12]
   bbox:
     # Western CONUS (Pacific weather systems)
     min_lon: -125.0

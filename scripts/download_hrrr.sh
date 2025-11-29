@@ -12,6 +12,9 @@ DATE="${1:-$(date -u +%Y%m%d)}"  # Format: YYYYMMDD, default to today
 CYCLE="${2:-00}"  # Model run hour (00, 06, 12, 18), default 00
 FORECAST_HOURS="${3:-0 1 2 3 6}"  # Forecast hours to download, default: 0, 1, 2, 3, 6
 
+# Max files limit (can be overridden by environment variable)
+MAX_FILES="${HRRR_MAX_FILES:-999}"  # Default: no limit
+
 # Parameters to download (surface level only for now)
 # Using wrfsfcf files which contain 2D surface fields
 PRODUCT="wrfsfcf"  # Surface forecast files
@@ -36,7 +39,15 @@ echo "=========================================="
 mkdir -p "$OUTPUT_DIR/$DATE"
 
 # Download each forecast hour
+FILES_DOWNLOADED=0
+
 for fhr in $FORECAST_HOURS; do
+    # Check if we've reached the max file limit
+    if [ $FILES_DOWNLOADED -ge $MAX_FILES ]; then
+        echo "Reached maximum file limit ($MAX_FILES files)"
+        break
+    fi
+    
     # Zero-pad forecast hour to 2 digits
     fhr_padded=$(printf "%02d" $fhr)
     
@@ -52,6 +63,7 @@ for fhr in $FORECAST_HOURS; do
     # Check if file already exists
     if [ -f "$output_path" ]; then
         echo "✓ File already exists: $filename ($(du -h "$output_path" | cut -f1))"
+        FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
         continue
     fi
     
@@ -61,6 +73,7 @@ for fhr in $FORECAST_HOURS; do
     if curl -f -s -S --show-error --retry 3 --retry-delay 5 -o "$output_path" "$url"; then
         file_size=$(du -h "$output_path" | cut -f1)
         echo "✓ Downloaded: $filename ($file_size)"
+        FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
     else
         echo "✗ Failed to download: $filename"
         echo "  URL: $url"

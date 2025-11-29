@@ -18,7 +18,7 @@ layers:
 tile_selection:
   type: random
   # Focus on moderate zoom levels for faster test
-  zoom_range: [5, 9]
+  zoom_range: [5, 12]
   bbox:
     # Central CONUS (storms, tornado alley)
     min_lon: -105.0

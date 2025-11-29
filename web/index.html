@@ -21,20 +21,34 @@
                     <div class="status-indicators">
                         <div class="status-item">
                             <span class="status-label">WMS:</span>
-                            <div class="status-badge" id="wms-status">
-                                <span class="status-dot"></span>
-                                <span class="status-text">Checking...</span>
-                            </div>
+                            <a href="http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" 
+                               target="_blank" 
+                               class="status-badge-link"
+                               title="Click to open WMS GetCapabilities">
+                                <div class="status-badge" id="wms-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </a>
                         </div>
                         <div class="status-item">
                             <span class="status-label">WMTS:</span>
-                            <div class="status-badge" id="wmts-status">
-                                <span class="status-dot"></span>
-                                <span class="status-text">Checking...</span>
-                            </div>
+                            <a href="http://localhost:8080/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" 
+                               target="_blank"
+                               class="status-badge-link"
+                               title="Click to open WMTS GetCapabilities">
+                                <div class="status-badge" id="wmts-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </a>
                         </div>
                     </div>
                     <div class="external-links">
+                        <a href="http://localhost:8080/loadtest" target="_blank" class="external-link" title="Open Load Test Dashboard">
+                            <span class="link-icon">⚡</span>
+                            <span class="link-text">Load Tests</span>
+                        </a>
                         <a href="http://localhost:8080/cache" target="_blank" class="external-link" title="Open Cache Viewer">
                             <span class="link-icon">💾</span>
                             <span class="link-text">Cache</span>
@@ -66,11 +80,17 @@
                 <div class="sidebar-section">
                     <h2>Layer Selection</h2>
                     <div class="control-group">
-                        <label for="protocol-select">Protocol:</label>
-                        <select id="protocol-select" class="control-input">
-                            <option value="wms">WMS (Web Map Service)</option>
-                            <option value="wmts" selected>WMTS (Web Map Tile Service)</option>
-                        </select>
+                        <label>Protocol:</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="protocol" value="wms" class="radio-input">
+                                <span class="radio-text">WMS</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="protocol" value="wmts" class="radio-input" checked>
+                                <span class="radio-text">WMTS</span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="control-group">

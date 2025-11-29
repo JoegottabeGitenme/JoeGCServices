@@ -62,7 +62,14 @@ impl MetricsCollector {
     }
 
     /// Generate final test results.
-    pub fn results(&self, config_name: String) -> TestResults {
+    pub fn results(
+        &self, 
+        config_name: String, 
+        scenario_name: String,
+        layers: Vec<String>,
+        concurrency: u32,
+        system_config: Option<SystemConfig>,
+    ) -> TestResults {
         let duration = self
             .last_request_time
             .and_then(|last| self.first_request_time.map(|first| last.duration_since(first)))
@@ -83,6 +90,8 @@ impl MetricsCollector {
         };
 
         TestResults {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            scenario_name,
             config_name,
             duration_secs,
             total_requests: self.requests_total,
@@ -104,6 +113,9 @@ impl MetricsCollector {
                 0.0
             },
             tiles_per_second: rps,
+            layers,
+            concurrency,
+            system_config,
         }
     }
 }
@@ -117,6 +129,8 @@ impl Default for MetricsCollector {
 /// Final test results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResults {
+    pub timestamp: String,
+    pub scenario_name: String,
     pub config_name: String,
     pub duration_secs: f64,
     pub total_requests: u64,
@@ -140,4 +154,27 @@ pub struct TestResults {
     // Throughput
     pub bytes_per_second: f64,
     pub tiles_per_second: f64,
+    
+    // Test configuration
+    pub layers: Vec<String>,
+    pub concurrency: u32,
+    
+    // System configuration at test time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_config: Option<SystemConfig>,
+}
+
+/// System configuration captured at test time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemConfig {
+    pub l1_cache_enabled: bool,
+    pub l1_cache_size: usize,
+    pub l1_cache_ttl_secs: u64,
+    pub grib_cache_enabled: bool,
+    pub grib_cache_size: usize,
+    pub prefetch_enabled: bool,
+    pub prefetch_rings: u32,
+    pub prefetch_min_zoom: u32,
+    pub prefetch_max_zoom: u32,
+    pub cache_warming_enabled: bool,
 }

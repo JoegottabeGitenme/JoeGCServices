@@ -39,6 +39,20 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$PROJECT_ROOT"
 
+# Load environment variables from .env file if it exists
+if [ -f .env ]; then
+    log_info "Loading configuration from .env file..."
+    set -a  # Automatically export all variables
+    source .env
+    set +a
+fi
+
+# Set defaults for ingestion flags if not set
+INGEST_GFS="${INGEST_GFS:-true}"
+INGEST_HRRR="${INGEST_HRRR:-true}"
+INGEST_GOES="${INGEST_GOES:-true}"
+INGEST_MRMS="${INGEST_MRMS:-true}"
+
 log_info "Starting weather data ingestion..."
 echo ""
 
@@ -158,204 +172,225 @@ fi
 # Ingest GFS data
 #------------------------------------------------------------------------------
 
-echo ""
-log_info "=== Ingesting GFS data ==="
-echo ""
+if [ "$INGEST_GFS" = "true" ]; then
+    echo ""
+    log_info "=== Ingesting GFS data ==="
+    echo ""
 
-# Find GFS files in data/gfs/ directory first, then fall back to testdata/
-GFS_FILES=$(find data/gfs -type f -name "gfs_f*.grib2" 2>/dev/null | sort)
+    # Find GFS files in data/gfs/ directory first, then fall back to testdata/
+    GFS_FILES=$(find data/gfs -type f -name "gfs_f*.grib2" 2>/dev/null | sort)
 
-if [ -z "$GFS_FILES" ]; then
-    # Fall back to legacy testdata location
-    GFS_FILES=$(find testdata -type f -name "gfs_f*.grib2" 2>/dev/null | sort)
-    
     if [ -z "$GFS_FILES" ]; then
-        # Try gfs_sample.grib2 as last resort
-        if [ -f "testdata/gfs_sample.grib2" ]; then
-            GFS_FILES="testdata/gfs_sample.grib2"
+        # Fall back to legacy testdata location
+        GFS_FILES=$(find testdata -type f -name "gfs_f*.grib2" 2>/dev/null | sort)
+        
+        if [ -z "$GFS_FILES" ]; then
+            # Try gfs_sample.grib2 as last resort
+            if [ -f "testdata/gfs_sample.grib2" ]; then
+                GFS_FILES="testdata/gfs_sample.grib2"
+            fi
         fi
     fi
-fi
 
-if [ -z "$GFS_FILES" ]; then
-    log_warn "No GFS files found, skipping GFS ingestion"
+    if [ -z "$GFS_FILES" ]; then
+        log_warn "No GFS files found, skipping GFS ingestion"
+    else
+        GFS_COUNT=$(echo "$GFS_FILES" | wc -l | tr -d ' ')
+        CURRENT=0
+
+        for TEST_FILE in $GFS_FILES; do
+            CURRENT=$((CURRENT + 1))
+            
+            # Extract forecast hour from filename (e.g., gfs_f003.grib2 -> 3)
+            FORECAST_HOUR=$(basename "$TEST_FILE" | sed 's/gfs_f\([0-9]*\).grib2/\1/' | sed 's/^0*//')
+            
+            # Handle gfs_sample.grib2 case
+            if [ -z "$FORECAST_HOUR" ] || [ "$FORECAST_HOUR" = "$(basename $TEST_FILE)" ]; then
+                FORECAST_HOUR=0
+            fi
+            
+            log_info "[GFS $CURRENT/$GFS_COUNT] Ingesting $TEST_FILE (forecast hour: ${FORECAST_HOUR})"
+            
+            DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
+            REDIS_URL="redis://localhost:6379" \
+            S3_ENDPOINT="http://localhost:9000" \
+            timeout 120 cargo run --release --package ingester -- \
+                --test-file "$TEST_FILE" \
+                --forecast-hour "$FORECAST_HOUR" 2>&1 | tail -10
+            
+            echo ""
+        done
+    fi
 else
-    GFS_COUNT=$(echo "$GFS_FILES" | wc -l | tr -d ' ')
-    CURRENT=0
-
-    for TEST_FILE in $GFS_FILES; do
-        CURRENT=$((CURRENT + 1))
-        
-        # Extract forecast hour from filename (e.g., gfs_f003.grib2 -> 3)
-        FORECAST_HOUR=$(basename "$TEST_FILE" | sed 's/gfs_f\([0-9]*\).grib2/\1/' | sed 's/^0*//')
-        
-        # Handle gfs_sample.grib2 case
-        if [ -z "$FORECAST_HOUR" ] || [ "$FORECAST_HOUR" = "$(basename $TEST_FILE)" ]; then
-            FORECAST_HOUR=0
-        fi
-        
-        log_info "[GFS $CURRENT/$GFS_COUNT] Ingesting $TEST_FILE (forecast hour: ${FORECAST_HOUR})"
-        
-        DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
-        REDIS_URL="redis://localhost:6379" \
-        S3_ENDPOINT="http://localhost:9000" \
-        timeout 120 cargo run --release --package ingester -- \
-            --test-file "$TEST_FILE" \
-            --forecast-hour "$FORECAST_HOUR" 2>&1 | tail -10
-        
-        echo ""
-    done
+    echo ""
+    log_info "=== Skipping GFS ingestion (INGEST_GFS=false) ==="
+    echo ""
 fi
 
 #------------------------------------------------------------------------------
 # Ingest HRRR data
 #------------------------------------------------------------------------------
 
-log_info "=== Ingesting HRRR data ==="
-echo ""
+if [ "$INGEST_HRRR" = "true" ]; then
+    log_info "=== Ingesting HRRR data ==="
+    echo ""
 
-# Find HRRR files in data/hrrr directory
-HRRR_FILES=$(find data/hrrr -type f -name "hrrr.t*.wrfsfcf*.grib2" 2>/dev/null | sort)
+    # Find HRRR files in data/hrrr directory
+    HRRR_FILES=$(find data/hrrr -type f -name "hrrr.t*.wrfsfcf*.grib2" 2>/dev/null | sort)
 
-if [ -z "$HRRR_FILES" ]; then
-    log_warn "No HRRR files found in data/hrrr/, skipping HRRR ingestion"
-    log_info "  To download HRRR data, run: ./scripts/download_hrrr.sh"
+    if [ -z "$HRRR_FILES" ]; then
+        log_warn "No HRRR files found in data/hrrr/, skipping HRRR ingestion"
+        log_info "  To download HRRR data, run: ./scripts/download_hrrr.sh"
+    else
+        HRRR_COUNT=$(echo "$HRRR_FILES" | wc -l | tr -d ' ')
+        CURRENT=0
+        
+        for HRRR_FILE in $HRRR_FILES; do
+            CURRENT=$((CURRENT + 1))
+            
+            # Extract forecast hour from filename (e.g., hrrr.t00z.wrfsfcf03.grib2 -> 3)
+            FORECAST_HOUR=$(basename "$HRRR_FILE" | sed -n 's/.*wrfsfcf\([0-9]\+\)\.grib2/\1/p' | sed 's/^0*//')
+            
+            # If extraction failed, default to 0
+            if [ -z "$FORECAST_HOUR" ]; then
+                FORECAST_HOUR=0
+            fi
+            
+            log_info "[HRRR $CURRENT/$HRRR_COUNT] Ingesting $(basename $HRRR_FILE) (forecast hour: ${FORECAST_HOUR})"
+            
+            DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
+            REDIS_URL="redis://localhost:6379" \
+            S3_ENDPOINT="http://localhost:9000" \
+            timeout 180 cargo run --release --package ingester -- \
+                --test-file "$HRRR_FILE" \
+                --forecast-hour "$FORECAST_HOUR" 2>&1 | tail -10
+            
+            echo ""
+        done
+    fi
 else
-    HRRR_COUNT=$(echo "$HRRR_FILES" | wc -l | tr -d ' ')
-    CURRENT=0
-    
-    for HRRR_FILE in $HRRR_FILES; do
-        CURRENT=$((CURRENT + 1))
-        
-        # Extract forecast hour from filename (e.g., hrrr.t00z.wrfsfcf03.grib2 -> 3)
-        FORECAST_HOUR=$(basename "$HRRR_FILE" | sed -n 's/.*wrfsfcf\([0-9]\+\)\.grib2/\1/p' | sed 's/^0*//')
-        
-        # If extraction failed, default to 0
-        if [ -z "$FORECAST_HOUR" ]; then
-            FORECAST_HOUR=0
-        fi
-        
-        log_info "[HRRR $CURRENT/$HRRR_COUNT] Ingesting $(basename $HRRR_FILE) (forecast hour: ${FORECAST_HOUR})"
-        
-        DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
-        REDIS_URL="redis://localhost:6379" \
-        S3_ENDPOINT="http://localhost:9000" \
-        timeout 180 cargo run --release --package ingester -- \
-            --test-file "$HRRR_FILE" \
-            --forecast-hour "$FORECAST_HOUR" 2>&1 | tail -10
-        
-        echo ""
-    done
+    log_info "=== Skipping HRRR ingestion (INGEST_HRRR=false) ==="
+    echo ""
 fi
 
 #------------------------------------------------------------------------------
 # Ingest GOES data
 #------------------------------------------------------------------------------
 
-log_info "=== Ingesting GOES satellite data ==="
-echo ""
+if [ "$INGEST_GOES" = "true" ]; then
+    log_info "=== Ingesting GOES satellite data ==="
+    echo ""
 
-# Find GOES NetCDF files in data/goes directory
-GOES_FILES=$(find data/goes -type f -name "*.nc" 2>/dev/null | sort)
+    # Find GOES NetCDF files in data/goes directory
+    GOES_FILES=$(find data/goes -type f -name "*.nc" 2>/dev/null | sort)
 
-if [ -z "$GOES_FILES" ]; then
-    log_warn "No GOES files found in data/goes/, skipping GOES ingestion"
-    log_info "  To download GOES data, run: ./scripts/download_goes.sh"
+    if [ -z "$GOES_FILES" ]; then
+        log_warn "No GOES files found in data/goes/, skipping GOES ingestion"
+        log_info "  To download GOES data, run: ./scripts/download_goes.sh"
+    else
+        GOES_COUNT=$(echo "$GOES_FILES" | wc -l | tr -d ' ')
+        CURRENT=0
+        
+        for GOES_FILE in $GOES_FILES; do
+            CURRENT=$((CURRENT + 1))
+            
+            # Determine satellite from filename or path
+            if echo "$GOES_FILE" | grep -qi "G18\|goes18\|goes-18"; then
+                MODEL="goes18"
+            else
+                MODEL="goes16"
+            fi
+            
+            log_info "[GOES $CURRENT/$GOES_COUNT] Ingesting $(basename $GOES_FILE) as $MODEL"
+            
+            DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
+            REDIS_URL="redis://localhost:6379" \
+            S3_ENDPOINT="http://localhost:9000" \
+            timeout 180 cargo run --release --package ingester -- \
+                --test-file "$GOES_FILE" \
+                --model "$MODEL" 2>&1 | tail -10
+            
+            echo ""
+        done
+    fi
 else
-    GOES_COUNT=$(echo "$GOES_FILES" | wc -l | tr -d ' ')
-    CURRENT=0
-    
-    for GOES_FILE in $GOES_FILES; do
-        CURRENT=$((CURRENT + 1))
-        
-        # Determine satellite from filename or path
-        if echo "$GOES_FILE" | grep -qi "G18\|goes18\|goes-18"; then
-            MODEL="goes18"
-        else
-            MODEL="goes16"
-        fi
-        
-        log_info "[GOES $CURRENT/$GOES_COUNT] Ingesting $(basename $GOES_FILE) as $MODEL"
-        
-        DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
-        REDIS_URL="redis://localhost:6379" \
-        S3_ENDPOINT="http://localhost:9000" \
-        timeout 180 cargo run --release --package ingester -- \
-            --test-file "$GOES_FILE" \
-            --model "$MODEL" 2>&1 | tail -10
-        
-        echo ""
-    done
+    log_info "=== Skipping GOES ingestion (INGEST_GOES=false) ==="
+    echo ""
 fi
 
 #------------------------------------------------------------------------------
 # Download and Ingest MRMS data
 #------------------------------------------------------------------------------
 
-log_info "=== Downloading and Ingesting MRMS radar data ==="
-echo ""
+if [ "$INGEST_MRMS" = "true" ]; then
+    log_info "=== Downloading and Ingesting MRMS radar data ==="
+    echo ""
 
-# Create MRMS directory if it doesn't exist
-mkdir -p data/mrms
+    # Create MRMS directory if it doesn't exist
+    mkdir -p data/mrms
 
-# Check if we already have MRMS data
-EXISTING_MRMS=$(find data/mrms -type f -name "*.grib2" 2>/dev/null | head -1)
+    # Check if we already have MRMS data
+    EXISTING_MRMS=$(find data/mrms -type f -name "*.grib2" 2>/dev/null | head -1)
 
-if [ -z "$EXISTING_MRMS" ]; then
-    # Download fresh MRMS data from NCEP
-    MRMS_BASE_URL="https://mrms.ncep.noaa.gov/2D"
-    MRMS_PRODUCTS=(
-        "MergedReflectivityComposite"
-        "PrecipRate"
-        "MultiSensor_QPE_01H_Pass2"
-    )
+    if [ -z "$EXISTING_MRMS" ]; then
+        # Download fresh MRMS data from NCEP
+        MRMS_BASE_URL="https://mrms.ncep.noaa.gov/2D"
+        MRMS_PRODUCTS=(
+            "MergedReflectivityComposite"
+            "PrecipRate"
+            "MultiSensor_QPE_01H_Pass2"
+        )
 
-    for product in "${MRMS_PRODUCTS[@]}"; do
-        log_info "Downloading MRMS ${product}..."
-        
-        latest_url="${MRMS_BASE_URL}/${product}/MRMS_${product}.latest.grib2.gz"
-        output_file="data/mrms/${product}_latest.grib2.gz"
-        
-        if curl -f -s -S --retry 3 --retry-delay 2 --connect-timeout 10 -o "$output_file" "$latest_url" 2>/dev/null; then
-            # Decompress
-            gunzip -f "$output_file" 2>/dev/null || true
-            grib_file="data/mrms/${product}_latest.grib2"
+        for product in "${MRMS_PRODUCTS[@]}"; do
+            log_info "Downloading MRMS ${product}..."
             
-            if [ -f "$grib_file" ]; then
-                file_size=$(du -h "$grib_file" | cut -f1)
-                log_success "  Downloaded: ${product}_latest.grib2 (${file_size})"
+            latest_url="${MRMS_BASE_URL}/${product}/MRMS_${product}.latest.grib2.gz"
+            output_file="data/mrms/${product}_latest.grib2.gz"
+            
+            if curl -f -s -S --retry 3 --retry-delay 2 --connect-timeout 10 -o "$output_file" "$latest_url" 2>/dev/null; then
+                # Decompress
+                gunzip -f "$output_file" 2>/dev/null || true
+                grib_file="data/mrms/${product}_latest.grib2"
+                
+                if [ -f "$grib_file" ]; then
+                    file_size=$(du -h "$grib_file" | cut -f1)
+                    log_success "  Downloaded: ${product}_latest.grib2 (${file_size})"
+                fi
+            else
+                log_warn "  Could not download ${product} (server may be unavailable)"
+                rm -f "$output_file"
             fi
-        else
-            log_warn "  Could not download ${product} (server may be unavailable)"
-            rm -f "$output_file"
-        fi
-    done
-else
-    log_info "Using existing MRMS data in data/mrms/"
-fi
+        done
+    else
+        log_info "Using existing MRMS data in data/mrms/"
+    fi
 
-# Find and ingest MRMS files
-MRMS_FILES=$(find data/mrms -type f -name "*.grib2" 2>/dev/null | sort)
+    # Find and ingest MRMS files
+    MRMS_FILES=$(find data/mrms -type f -name "*.grib2" 2>/dev/null | sort)
 
-if [ -z "$MRMS_FILES" ]; then
-    log_warn "No MRMS files found in data/mrms/, skipping MRMS ingestion"
+    if [ -z "$MRMS_FILES" ]; then
+        log_warn "No MRMS files found in data/mrms/, skipping MRMS ingestion"
+    else
+        MRMS_COUNT=$(echo "$MRMS_FILES" | wc -l | tr -d ' ')
+        CURRENT=0
+        
+        for MRMS_FILE in $MRMS_FILES; do
+            CURRENT=$((CURRENT + 1))
+            
+            log_info "[MRMS $CURRENT/$MRMS_COUNT] Ingesting $(basename $MRMS_FILE)"
+            
+            DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
+            REDIS_URL="redis://localhost:6379" \
+            S3_ENDPOINT="http://localhost:9000" \
+            timeout 120 cargo run --release --package ingester -- \
+                --test-file "$MRMS_FILE" 2>&1 | tail -10
+            
+            echo ""
+        done
+    fi
 else
-    MRMS_COUNT=$(echo "$MRMS_FILES" | wc -l | tr -d ' ')
-    CURRENT=0
-    
-    for MRMS_FILE in $MRMS_FILES; do
-        CURRENT=$((CURRENT + 1))
-        
-        log_info "[MRMS $CURRENT/$MRMS_COUNT] Ingesting $(basename $MRMS_FILE)"
-        
-        DATABASE_URL="postgresql://weatherwms:weatherwms@localhost:5432/weatherwms" \
-        REDIS_URL="redis://localhost:6379" \
-        S3_ENDPOINT="http://localhost:9000" \
-        timeout 120 cargo run --release --package ingester -- \
-            --test-file "$MRMS_FILE" 2>&1 | tail -10
-        
-        echo ""
-    done
+    log_info "=== Skipping MRMS ingestion (INGEST_MRMS=false) ==="
+    echo ""
 fi
 
 #------------------------------------------------------------------------------

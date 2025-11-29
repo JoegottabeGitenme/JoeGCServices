@@ -7,12 +7,20 @@ set -e
 DATA_DIR="${1:-data/goes}"
 mkdir -p "$DATA_DIR"
 
+# Configuration from environment variables
+MAX_FILES="${GOES_MAX_FILES:-999}"  # Default: no limit
+GOES_CHANNELS="${GOES_CHANNELS:-02 08 13}"  # Default: Visible, Water Vapor, IR
+
 echo "=== Downloading GOES-16 Sample Data ==="
 echo "Data will be saved to: $DATA_DIR"
+echo "Max files: $MAX_FILES"
+echo "Channels: $GOES_CHANNELS"
 
 # Get the current UTC date for finding recent data
 YEAR=$(date -u +%Y)
 DOY=$(date -u +%j)  # Day of year
+
+FILES_DOWNLOADED=0
 
 # GOES-16 ABI products on AWS:
 # - ABI-L1b-RadC: Level 1b Radiances (CONUS)
@@ -38,47 +46,53 @@ echo "Listing available GOES-16 CONUS CMI products..."
 if command -v aws &> /dev/null; then
     echo "Using AWS CLI..."
     
-    # List recent CONUS CMI files
-    echo "Looking for recent CONUS CMI Band 02 (Visible)..."
-    LATEST_VIS=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/ 2>/dev/null | grep "M6C02" | tail -1 | awk '{print $4}')
-    
-    if [ -n "$LATEST_VIS" ]; then
-        echo "Found: $LATEST_VIS"
-        aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/${LATEST_VIS}" "$DATA_DIR/"
-    else
-        echo "No visible band found for today, trying yesterday..."
-        DOY_PREV=$(printf "%03d" $((10#$DOY - 1)))
-        LATEST_VIS=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY_PREV}/ 2>/dev/null | grep "M6C02" | tail -1 | awk '{print $4}')
-        if [ -n "$LATEST_VIS" ]; then
-            echo "Found: $LATEST_VIS"
-            aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY_PREV}/${LATEST_VIS}" "$DATA_DIR/"
+    # Download each requested channel
+    for CHANNEL in $GOES_CHANNELS; do
+        # Check if we've reached the max file limit
+        if [ $FILES_DOWNLOADED -ge $MAX_FILES ]; then
+            echo "Reached maximum file limit ($MAX_FILES files)"
+            break
         fi
-    fi
-    
-    echo ""
-    echo "Looking for recent CONUS CMI Band 08 (Water Vapor)..."
-    LATEST_WV=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/ 2>/dev/null | grep "M6C08" | tail -1 | awk '{print $4}')
-    
-    if [ -n "$LATEST_WV" ]; then
-        echo "Found: $LATEST_WV"
-        aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/${LATEST_WV}" "$DATA_DIR/"
-    fi
-    
-    echo ""
-    echo "Looking for recent CONUS CMI Band 13 (IR)..."
-    LATEST_IR=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/ 2>/dev/null | grep "M6C13" | tail -1 | awk '{print $4}')
-    
-    if [ -n "$LATEST_IR" ]; then
-        echo "Found: $LATEST_IR"
-        aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/${LATEST_IR}" "$DATA_DIR/"
-    fi
+        
+        # Zero-pad channel to 2 digits
+        CHANNEL_PADDED=$(printf "%02d" $CHANNEL)
+        
+        # Map channel to name
+        case "$CHANNEL_PADDED" in
+            "02") CHANNEL_NAME="Visible (Red)" ;;
+            "08") CHANNEL_NAME="Water Vapor" ;;
+            "13") CHANNEL_NAME="Clean IR" ;;
+            *) CHANNEL_NAME="Channel $CHANNEL_PADDED" ;;
+        esac
+        
+        echo ""
+        echo "Looking for recent CONUS CMI Band $CHANNEL_PADDED ($CHANNEL_NAME)..."
+        LATEST_FILE=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/ 2>/dev/null | grep "M6C${CHANNEL_PADDED}" | tail -1 | awk '{print $4}')
+        
+        if [ -n "$LATEST_FILE" ]; then
+            echo "Found: $LATEST_FILE"
+            if aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY}/${LATEST_FILE}" "$DATA_DIR/"; then
+                FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
+            fi
+        else
+            echo "No Band $CHANNEL_PADDED found for today, trying yesterday..."
+            DOY_PREV=$(printf "%03d" $((10#$DOY - 1)))
+            LATEST_FILE=$(aws s3 ls --no-sign-request s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY_PREV}/ 2>/dev/null | grep "M6C${CHANNEL_PADDED}" | tail -1 | awk '{print $4}')
+            if [ -n "$LATEST_FILE" ]; then
+                echo "Found: $LATEST_FILE"
+                if aws s3 cp --no-sign-request "s3://noaa-goes16/ABI-L2-CMIPC/${YEAR}/${DOY_PREV}/${LATEST_FILE}" "$DATA_DIR/"; then
+                    FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
+                fi
+            fi
+        fi
+    done
     
 else
     echo "AWS CLI not found. Please install it or download manually from:"
     echo "https://noaa-goes16.s3.amazonaws.com/index.html"
     echo ""
     echo "Navigate to: ABI-L2-CMIPC/${YEAR}/${DOY}/"
-    echo "Download files matching: *M6C02*.nc (Visible), *M6C08*.nc (Water Vapor), *M6C13*.nc (IR)"
+    echo "Download files matching the requested channels: $GOES_CHANNELS"
 fi
 
 echo ""

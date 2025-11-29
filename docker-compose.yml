@@ -94,6 +94,8 @@ services:
       CACHE_WARMING_HOURS: ${CACHE_WARMING_HOURS:-0}
       CACHE_WARMING_LAYERS: ${CACHE_WARMING_LAYERS:-gfs_TMP:temperature}
       CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-10}
+    volumes:
+      - ./validation/load-test/results:/app/validation/load-test/results:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -15,6 +15,9 @@ HOURS="${MRMS_HOURS:-24}"
 # Maximum files to list from S3 (determines how far back we can go)
 MAX_S3_LIST="${MAX_S3_LIST:-1000}"
 
+# Max files limit (can be overridden by environment variable)
+MAX_FILES="${MRMS_MAX_FILES:-999}"  # Default: no limit
+
 # Products to download
 # Only MergedReflectivityQC_00.50 is reliably available on AWS S3
 declare -A PRODUCTS=(
@@ -77,6 +80,7 @@ for product in "${!PRODUCTS[@]}"; do
     success_count=0
     fail_count=0
     skip_count=0
+    files_downloaded=0
     
     # List available files from S3 for today, sorted newest-first
     log_info "  Listing available files from AWS S3..."
@@ -86,6 +90,11 @@ for product in "${!PRODUCTS[@]}"; do
         grep -oP "(?<=<Key>)CONUS/${product}/${current_date}/MRMS[^<]+" | \
         sort -r | \
         while IFS= read -r s3_key; do
+            # Check if we've reached the max file limit
+            if [ $files_downloaded -ge $MAX_FILES ]; then
+                log_info "  Reached maximum file limit ($MAX_FILES files)"
+                break
+            fi
             # Extract timestamp from filename
             filename=$(basename "$s3_key")
             timestamp=$(echo "$filename" | grep -oP "\d{8}-\d{6}")
@@ -113,6 +122,7 @@ for product in "${!PRODUCTS[@]}"; do
             if curl -f -s --retry 2 --retry-delay 1 --connect-timeout 10 -o "$temp_file" "$file_url" 2>/dev/null; then
                 if gunzip -f "$temp_file" 2>/dev/null; then
                     echo "  ✓ ${filename}"
+                    files_downloaded=$((files_downloaded + 1))
                 else
                     rm -f "$temp_file"
                 fi

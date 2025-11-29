@@ -2586,3 +2586,465 @@ pub async fn config_handler(
         }
     }))
 }
+
+/// Load test results endpoint - serves historical test results
+pub async fn loadtest_results_handler() -> impl IntoResponse {
+    use serde_json::json;
+    use std::fs;
+    
+    // Read JSONL file from validation/load-test/results/
+    let results_dir = std::env::var("LOAD_TEST_RESULTS_DIR")
+        .unwrap_or_else(|_| "./validation/load-test/results".to_string());
+    
+    let jsonl_path = format!("{}/runs.jsonl", results_dir);
+    
+    info!("Looking for load test results at: {}", jsonl_path);
+    
+    #[derive(Serialize, Deserialize, Clone)]
+    struct TestRun {
+        timestamp: String,
+        scenario_name: String,
+        duration_secs: f64,
+        total_requests: u64,
+        successful_requests: u64,
+        failed_requests: u64,
+        requests_per_second: f64,
+        latency_p50: f64,
+        latency_p90: f64,
+        latency_p95: f64,
+        latency_p99: f64,
+        latency_min: f64,
+        latency_max: f64,
+        latency_avg: f64,
+        cache_hit_rate: f64,
+        bytes_per_second: f64,
+        #[serde(default)]
+        layers: Vec<String>,
+        #[serde(default)]
+        concurrency: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        system_config: Option<SystemConfigInfo>,
+    }
+    
+    #[derive(Serialize, Deserialize, Clone)]
+    struct SystemConfigInfo {
+        l1_cache_enabled: bool,
+        l1_cache_size: usize,
+        l1_cache_ttl_secs: u64,
+        grib_cache_enabled: bool,
+        grib_cache_size: usize,
+        prefetch_enabled: bool,
+        prefetch_rings: u32,
+        prefetch_min_zoom: u32,
+        prefetch_max_zoom: u32,
+        cache_warming_enabled: bool,
+    }
+    
+    let mut runs = Vec::new();
+    
+    if let Ok(content) = fs::read_to_string(&jsonl_path) {
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // Parse each line as JSON
+            if let Ok(run) = serde_json::from_str::<TestRun>(line) {
+                runs.push(run);
+            }
+        }
+    } else {
+        info!("No JSONL file found at {}, returning empty results", jsonl_path);
+    }
+    
+    Json(json!({
+        "count": runs.len(),
+        "runs": runs,
+    }))
+}
+
+/// Load test dashboard HTML page
+pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load Test Dashboard - Weather WMS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        h1 {
+            color: #2d3748;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        
+        .back-link {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+        
+        .back-link:hover {
+            background: #edf2f7;
+        }
+        
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card h3 {
+            color: #718096;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+        
+        .stat {
+            color: #2d3748;
+            font-size: 36px;
+            font-weight: 700;
+        }
+        
+        .stat-label {
+            color: #a0aec0;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+        
+        .runs-table {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow-x: auto;
+        }
+        
+        .runs-table h2 {
+            color: #2d3748;
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        thead {
+            background: #f7fafc;
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px;
+            color: #4a5568;
+            font-weight: 600;
+            font-size: 13px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        td {
+            padding: 12px;
+            color: #2d3748;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        tbody tr:hover {
+            background: #f7fafc;
+        }
+        
+        .metric {
+            font-weight: 600;
+        }
+        
+        .excellent {
+            color: #48bb78;
+        }
+        
+        .good {
+            color: #4299e1;
+        }
+        
+        .ok {
+            color: #ed8936;
+        }
+        
+        .slow {
+            color: #f56565;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #e2e8f0;
+            color: #4a5568;
+            margin-right: 4px;
+        }
+        
+        .badge.enabled {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .badge.disabled {
+            background: #cbd5e0;
+            color: #718096;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #718096;
+        }
+        
+        .empty-state h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: #4a5568;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ Load Test Dashboard</h1>
+            <a href="/" class="back-link">← Back to Map</a>
+        </header>
+        
+        <div class="summary-cards">
+            <div class="card">
+                <h3>Total Test Runs</h3>
+                <div class="stat" id="total-runs">--</div>
+                <div class="stat-label">Historical tests</div>
+            </div>
+            <div class="card">
+                <h3>Best Requests/sec</h3>
+                <div class="stat" id="best-rps">--</div>
+                <div class="stat-label">Peak performance</div>
+            </div>
+            <div class="card">
+                <h3>Best p99 Latency</h3>
+                <div class="stat" id="best-p99">--</div>
+                <div class="stat-label">Milliseconds</div>
+            </div>
+            <div class="card">
+                <h3>Avg Cache Hit Rate</h3>
+                <div class="stat" id="avg-cache">--</div>
+                <div class="stat-label">Percentage</div>
+            </div>
+        </div>
+        
+        <div class="runs-table">
+            <h2>Test Run History</h2>
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 16px;">Loading test results...</p>
+            </div>
+            <div id="table-container" style="display: none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Scenario</th>
+                            <th>Layers</th>
+                            <th>Concurrency</th>
+                            <th>Requests/sec</th>
+                            <th>p50 (ms)</th>
+                            <th>p99 (ms)</th>
+                            <th>Cache Hit %</th>
+                            <th>Optimizations</th>
+                        </tr>
+                    </thead>
+                    <tbody id="runs-tbody"></tbody>
+                </table>
+            </div>
+            <div id="empty-state" class="empty-state" style="display: none;">
+                <h3>No test results found</h3>
+                <p>Run a load test to see results here.</p>
+                <p style="margin-top: 16px; font-family: monospace; font-size: 14px;">
+                    ./scripts/run_load_test.sh
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        async function loadResults() {
+            try {
+                const response = await fetch('/api/loadtest/results');
+                const data = await response.json();
+                
+                document.getElementById('loading').style.display = 'none';
+                
+                if (data.runs.length === 0) {
+                    document.getElementById('empty-state').style.display = 'block';
+                    document.getElementById('total-runs').textContent = '0';
+                    return;
+                }
+                
+                document.getElementById('table-container').style.display = 'block';
+                
+                // Update summary cards
+                document.getElementById('total-runs').textContent = data.count;
+                
+                const bestRps = Math.max(...data.runs.map(r => r.requests_per_second));
+                const bestP99 = Math.min(...data.runs.map(r => r.latency_p99));
+                const avgCache = data.runs.reduce((sum, r) => sum + r.cache_hit_rate, 0) / data.runs.length;
+                
+                document.getElementById('best-rps').textContent = bestRps.toFixed(1);
+                document.getElementById('best-p99').textContent = bestP99.toFixed(2) + 'ms';
+                document.getElementById('avg-cache').textContent = avgCache.toFixed(1) + '%';
+                
+                // Populate table
+                const tbody = document.getElementById('runs-tbody');
+                tbody.innerHTML = data.runs.slice().reverse().map(run => {
+                    const date = new Date(run.timestamp);
+                    const formattedDate = date.toLocaleString();
+                    
+                    // Format layers
+                    const layersText = run.layers && run.layers.length > 0 
+                        ? run.layers.join(', ') 
+                        : 'N/A';
+                    
+                    // Format optimization badges
+                    let optBadges = '';
+                    if (run.system_config) {
+                        const sc = run.system_config;
+                        if (sc.l1_cache_enabled) optBadges += '<span class="badge enabled" title="L1 Cache Enabled">L1</span> ';
+                        if (sc.grib_cache_enabled) optBadges += '<span class="badge enabled" title="GRIB Cache Enabled">GRIB</span> ';
+                        if (sc.prefetch_enabled) optBadges += `<span class="badge enabled" title="Prefetch: ${sc.prefetch_rings} rings">PF(${sc.prefetch_rings})</span> `;
+                        if (sc.cache_warming_enabled) optBadges += '<span class="badge enabled" title="Cache Warming Enabled">WARM</span> ';
+                        
+                        if (optBadges === '') {
+                            optBadges = '<span class="badge disabled">None</span>';
+                        }
+                    } else {
+                        optBadges = '<span class="badge">Unknown</span>';
+                    }
+                    
+                    return `
+                        <tr>
+                            <td>${formattedDate}</td>
+                            <td>${run.scenario_name}</td>
+                            <td>${layersText}</td>
+                            <td>${run.concurrency || 'N/A'}</td>
+                            <td class="metric ${getRpsClass(run.requests_per_second)}">${run.requests_per_second.toFixed(1)}</td>
+                            <td class="metric">${run.latency_p50.toFixed(2)}</td>
+                            <td class="metric ${getLatencyClass(run.latency_p99)}">${run.latency_p99.toFixed(2)}</td>
+                            <td class="metric ${getCacheClass(run.cache_hit_rate)}">${run.cache_hit_rate.toFixed(1)}%</td>
+                            <td>${optBadges}</td>
+                        </tr>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error('Failed to load results:', error);
+                document.getElementById('loading').innerHTML = '<p style="color: #f56565;">Failed to load results</p>';
+            }
+        }
+        
+        function getRpsClass(rps) {
+            if (rps >= 10000) return 'excellent';
+            if (rps >= 5000) return 'good';
+            if (rps >= 1000) return 'ok';
+            return 'slow';
+        }
+        
+        function getLatencyClass(ms) {
+            if (ms <= 1) return 'excellent';
+            if (ms <= 10) return 'good';
+            if (ms <= 100) return 'ok';
+            return 'slow';
+        }
+        
+        function getCacheClass(percent) {
+            if (percent >= 95) return 'excellent';
+            if (percent >= 80) return 'good';
+            if (percent >= 50) return 'ok';
+            return 'slow';
+        }
+        
+        // Load data on page load
+        loadResults();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadResults, 30000);
+    </script>
+</body>
+</html>
+"#;
+
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html
+    )
+}

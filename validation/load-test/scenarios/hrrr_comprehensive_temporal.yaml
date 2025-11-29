@@ -29,7 +29,7 @@ layers:
 
 tile_selection:
   type: random
-  zoom_range: [4, 10]
+  zoom_range: [4, 12]
   bbox:
     min_lon: -130.0
     min_lat: 20.0

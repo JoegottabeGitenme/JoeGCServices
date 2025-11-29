@@ -37,7 +37,7 @@ const storageSizeEl = document.getElementById('storage-size');
 const ingestLogEl = document.getElementById('ingest-log');
 
 // Layer Selection Elements
-const protocolSelectEl = document.getElementById('protocol-select');
+const protocolRadios = document.querySelectorAll('input[name="protocol"]');
 const layerSelectEl = document.getElementById('layer-select');
 const styleSelectEl = document.getElementById('style-select');
 const styleGroupEl = document.getElementById('style-group');
@@ -90,7 +90,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Setup event listeners for protocol and layer selection
 function setupEventListeners() {
-    protocolSelectEl.addEventListener('change', onProtocolChange);
+    // Protocol radio buttons
+    protocolRadios.forEach(radio => {
+        radio.addEventListener('change', onProtocolChange);
+    });
+    
     layerSelectEl.addEventListener('change', onLayerChange);
     loadLayerBtnEl.addEventListener('click', onLoadLayer);
     
@@ -151,7 +155,9 @@ function setupTimeControls() {
 
 // Handle protocol selection change
 function onProtocolChange() {
-    selectedProtocol = protocolSelectEl.value;
+    // Get selected radio button value
+    const selectedRadio = document.querySelector('input[name="protocol"]:checked');
+    selectedProtocol = selectedRadio ? selectedRadio.value : 'wmts';
     console.log('Protocol changed to:', selectedProtocol);
     // Reload layers for the new protocol
     loadAvailableLayers();

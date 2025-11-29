@@ -25,7 +25,7 @@ layers:
 tile_selection:
   type: random
   # Lower zoom range for GOES (2km resolution doesn't benefit from high zoom)
-  zoom_range: [3, 8]
+  zoom_range: [3, 12]
   bbox:
     # CONUS bounding box
     min_lon: -130.0

@@ -189,6 +189,9 @@ async fn async_main(args: Args) -> Result<()> {
         // Cache viewer (Phase 7 - cache inspection tool)
         .route("/cache", get(handlers::cache_viewer_handler))
         .route("/api/cache/list", get(handlers::cache_list_handler))
+        // Load test dashboard
+        .route("/loadtest", get(handlers::loadtest_dashboard_handler))
+        .route("/api/loadtest/results", get(handlers::loadtest_results_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

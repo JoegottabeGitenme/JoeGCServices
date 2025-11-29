@@ -204,11 +204,18 @@ LOAD_TEST_BIN="$PROJECT_ROOT/target/release/load-test"
 if [ "$SAVE_RESULTS" = true ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     
+    # Always save JSON to JSONL file for dashboard
+    JSONL_FILE="$RESULTS_DIR/runs.jsonl"
+    
     case "$OUTPUT_FORMAT" in
         json)
             OUTPUT_FILE="$RESULTS_DIR/${SCENARIO}_${TIMESTAMP}.json"
             log_info "Saving results to: $OUTPUT_FILE"
-            "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json | tee "$OUTPUT_FILE"
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            echo "$RESULT" | tee "$OUTPUT_FILE"
+            # Extract just the JSON and append to JSONL for dashboard (compact JSON, one line per record)
+            # The JSON starts with { and we want everything from the first { to the last }
+            echo "$RESULT" | sed -n '/^{/,/^}/p' | jq -c '.' >> "$JSONL_FILE" 2>/dev/null || true
             ;;
         csv)
             OUTPUT_FILE="$RESULTS_DIR/${SCENARIO}.csv"
@@ -217,14 +224,24 @@ if [ "$SAVE_RESULTS" = true ]; then
                 echo "timestamp,config,duration,requests,rps,p50,p90,p99,cache_hit_rate" > "$OUTPUT_FILE"
             fi
             log_info "Appending results to: $OUTPUT_FILE"
-            "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output csv >> "$OUTPUT_FILE"
-            # Also show table output to console
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            # Extract just the JSON part
+            JSON_ONLY=$(echo "$RESULT" | sed -n '/^{/,/^}/p')
+            # Save JSON to JSONL for dashboard (compact JSON, one line per record)
+            echo "$JSON_ONLY" | jq -c '.' >> "$JSONL_FILE" 2>/dev/null || true
+            # Extract CSV line and append
+            echo "$JSON_ONLY" | jq -r '[.timestamp, .scenario_name, .duration_secs, .total_requests, .requests_per_second, .latency_p50, .latency_p90, .latency_p99, .cache_hit_rate] | @csv' >> "$OUTPUT_FILE"
+            # Show table output to console
             "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table
             ;;
         *)
             OUTPUT_FILE="$RESULTS_DIR/${SCENARIO}_${TIMESTAMP}.txt"
             log_info "Saving results to: $OUTPUT_FILE"
-            "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table | tee "$OUTPUT_FILE"
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table | tee "$OUTPUT_FILE")
+            # Also save JSON to JSONL for dashboard (compact JSON, one line per record)
+            JSON_RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            echo "$JSON_RESULT" | sed -n '/^{/,/^}/p' | jq -c '.' >> "$JSONL_FILE" 2>/dev/null || true
+            echo "$RESULT"
             ;;
     esac
 else

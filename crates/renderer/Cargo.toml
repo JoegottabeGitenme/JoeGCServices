@@ -19,3 +19,17 @@ tiny-skia = { workspace = true }
 [dev-dependencies]
 grib2-parser = { path = "../grib2-parser" }
 bytes = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "render_benchmarks"
+harness = false
+
+[[bench]]
+name = "barbs_benchmarks"
+harness = false
+
+[[bench]]
+name = "contour_benchmarks"
+harness = false

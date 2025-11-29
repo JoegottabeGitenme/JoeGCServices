@@ -22,7 +22,7 @@ layers:
 
 tile_selection:
   type: random
-  zoom_range: [5, 8]
+  zoom_range: [5, 12]
   bbox:
     # Central US
     min_lon: -110.0

@@ -8,4 +8,4 @@ layers:
   - name: gfs_TMP
 tile_selection:
   type: random
-  zoom_range: [4, 6]
+  zoom_range: [4, 12]

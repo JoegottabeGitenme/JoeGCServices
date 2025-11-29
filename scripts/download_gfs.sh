@@ -11,7 +11,17 @@ GFS_BUCKET="https://noaa-gfs-bdp-pds.s3.amazonaws.com"
 OUTPUT_DIR="${OUTPUT_DIR:-./data/gfs}"
 DATE="${1:-$(date -u -d 'yesterday' +%Y%m%d)}"  # Format: YYYYMMDD, default to yesterday
 CYCLE="${2:-00}"  # Model run hour (00, 06, 12, 18), default 00
-FORECAST_HOURS="${3:-0 3 6 12 24}"  # Forecast hours to download
+
+# Read forecast hours from environment variable or use default
+if [ -n "$GFS_FORECAST_HOURS" ]; then
+    # Convert comma-separated to space-separated
+    FORECAST_HOURS=$(echo "$GFS_FORECAST_HOURS" | tr ',' ' ')
+else
+    FORECAST_HOURS="${3:-0 3 6 12 24}"  # Forecast hours to download
+fi
+
+# Max files limit (can be overridden by environment variable)
+MAX_FILES="${GFS_MAX_FILES:-999}"  # Default: no limit
 
 # Product type: 1-degree resolution (~40MB per file)
 # Contains: TMP, UGRD, VGRD, PRMSL, RH, HGT, and more
@@ -35,7 +45,15 @@ echo "=========================================="
 mkdir -p "$OUTPUT_DIR"
 
 # Download each forecast hour
+FILES_DOWNLOADED=0
+
 for fhr in $FORECAST_HOURS; do
+    # Check if we've reached the max file limit
+    if [ $FILES_DOWNLOADED -ge $MAX_FILES ]; then
+        echo "Reached maximum file limit ($MAX_FILES files)"
+        break
+    fi
+    
     # Zero-pad forecast hour to 3 digits
     fhr_padded=$(printf "%03d" $fhr)
     
@@ -53,6 +71,7 @@ for fhr in $FORECAST_HOURS; do
         SIZE=$(stat -c%s "$output_path" 2>/dev/null || stat -f%z "$output_path" 2>/dev/null)
         if [ "$SIZE" -gt 10000000 ]; then  # At least 10MB
             echo "File already exists: $filename ($(numfmt --to=iec-i --suffix=B $SIZE 2>/dev/null || echo "${SIZE} bytes"))"
+            FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
             continue
         else
             echo "File incomplete, re-downloading: $filename"
@@ -66,6 +85,7 @@ for fhr in $FORECAST_HOURS; do
     if curl -f -s -S --show-error --retry 3 --retry-delay 5 -o "$output_path" "$url"; then
         file_size=$(du -h "$output_path" | cut -f1)
         echo "Downloaded: $filename ($file_size)"
+        FILES_DOWNLOADED=$((FILES_DOWNLOADED + 1))
     else
         echo "Failed to download: $filename"
         echo "  URL: $url"

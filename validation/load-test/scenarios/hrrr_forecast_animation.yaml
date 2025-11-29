@@ -31,7 +31,7 @@ layers:
 tile_selection:
   type: random
   # HRRR 3km resolution - good for zoom 4-10
-  zoom_range: [4, 9]
+  zoom_range: [4, 12]
   bbox:
     # CONUS coverage
     min_lon: -130.0
