@@ -1,39 +1,45 @@
 {
-  "name": "precip_rate",
-  "title": "Precipitation Rate",
-  "description": "Precipitation rate color scale (mm/hr)",
-  "type": "gradient",
-  "units": "mm/hr",
-  "range": {
-    "min": 0,
-    "max": 100
+  "version": "1.0",
+  "metadata": {
+    "name": "Precipitation Rate Styles",
+    "description": "Precipitation rate color scale for real-time precipitation data (MRMS)"
   },
-  "colors": [
-    {"value": 0, "color": [0, 0, 0, 0]},
-    {"value": 0.1, "color": [200, 200, 200]},
-    {"value": 0.5, "color": [170, 210, 255]},
-    {"value": 1, "color": [100, 170, 255]},
-    {"value": 2.5, "color": [50, 130, 255]},
-    {"value": 5, "color": [0, 90, 255]},
-    {"value": 10, "color": [0, 200, 100]},
-    {"value": 15, "color": [0, 255, 0]},
-    {"value": 20, "color": [150, 255, 0]},
-    {"value": 30, "color": [255, 255, 0]},
-    {"value": 40, "color": [255, 200, 0]},
-    {"value": 50, "color": [255, 140, 0]},
-    {"value": 75, "color": [255, 50, 0]},
-    {"value": 100, "color": [200, 0, 100]}
-  ],
-  "legend": {
-    "labels": [
-      "0",
-      "1",
-      "5",
-      "10",
-      "20",
-      "40",
-      "75",
-      "100 mm/hr"
-    ]
+  "styles": {
+    "default": {
+      "name": "Precipitation Rate",
+      "description": "Precipitation rate color scale (mm/hr)",
+      "type": "gradient",
+      "units": "mm/hr",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#00000000", "label": "0" },
+        { "value": 0.1, "color": "#C8C8C8", "label": "0.1" },
+        { "value": 0.5, "color": "#AAD2FF", "label": "0.5" },
+        { "value": 1, "color": "#64AAFF", "label": "1" },
+        { "value": 2.5, "color": "#3282FF", "label": "2.5" },
+        { "value": 5, "color": "#005AFF", "label": "5" },
+        { "value": 10, "color": "#00C864", "label": "10" },
+        { "value": 15, "color": "#00FF00", "label": "15" },
+        { "value": 20, "color": "#96FF00", "label": "20" },
+        { "value": 30, "color": "#FFFF00", "label": "30" },
+        { "value": 40, "color": "#FFC800", "label": "40" },
+        { "value": 50, "color": "#FF8C00", "label": "50" },
+        { "value": 75, "color": "#FF3200", "label": "75" },
+        { "value": 100, "color": "#C80064", "label": "100" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "no_data": {
+        "value": -999,
+        "color": "transparent"
+      },
+      "legend": {
+        "title": "Precipitation Rate (mm/hr)",
+        "labels": ["0", "1", "5", "10", "20", "40", "75", "100"]
+      }
+    }
   }
 }

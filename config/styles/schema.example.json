@@ -1,0 +1,214 @@
+{
+  "_comment": "This is a reference schema for Weather WMS style configuration files.",
+
+  "version": "1.0",
+
+  "metadata": {
+    "_comment": "Optional metadata about this style collection",
+    "name": "Example Style Collection",
+    "description": "A collection of styles demonstrating all available options",
+    "author": "Weather WMS Team",
+    "created": "2025-01-01"
+  },
+
+  "styles": {
+    "_comment": "Each key is a unique style identifier used in WMS/WMTS requests",
+
+    "example_gradient": {
+      "_comment": "Gradient styles map continuous data values to colors",
+      "name": "Example Gradient Style",
+      "description": "Human-readable description of what this style visualizes",
+      "type": "gradient",
+      "units": "K",
+
+      "range": {
+        "_comment": "Optional explicit data range (otherwise derived from stops)",
+        "min": 233.15,
+        "max": 313.15
+      },
+
+      "transform": {
+        "_comment": "Optional transformation applied to input data before color mapping",
+        "type": "linear",
+        "_type_options": ["none", "linear", "pa_to_hpa", "mps_to_knots", "k_to_c"],
+        "scale": 1.0,
+        "offset": -273.15
+      },
+
+      "stops": [
+        {
+          "_comment": "Color stops define the gradient. Colors are hex #RRGGBB or #RRGGBBAA",
+          "value": 233.15,
+          "color": "#1E0082",
+          "label": "-40C"
+        },
+        { "value": 253.15, "color": "#0096FF", "label": "-20C" },
+        { "value": 273.15, "color": "#96FFC8", "label": "0C" },
+        { "value": 293.15, "color": "#FF9600", "label": "20C" },
+        { "value": 313.15, "color": "#960000", "label": "40C" }
+      ],
+
+      "interpolation": "linear",
+      "_interpolation_options": ["linear", "step", "nearest"],
+
+      "out_of_range": "clamp",
+      "_out_of_range_options": ["clamp", "extend", "transparent"],
+
+      "no_data": {
+        "_comment": "How to handle missing/invalid data values",
+        "value": -9999,
+        "color": "transparent"
+      },
+
+      "legend": {
+        "_comment": "Configuration for legend generation",
+        "title": "Temperature",
+        "labels": ["-40C", "-20C", "0C", "20C", "40C"]
+      }
+    },
+
+    "example_contour": {
+      "_comment": "Contour styles render isolines at specified intervals",
+      "name": "Example Contour Style",
+      "description": "Contour lines at regular intervals",
+      "type": "contour",
+      "units": "hPa",
+
+      "transform": {
+        "type": "pa_to_hpa"
+      },
+
+      "contour": {
+        "_comment": "Contour-specific rendering options",
+        "interval": 4,
+        "base": 1000,
+        "min_value": 900,
+        "max_value": 1100,
+        "line_width": 1.5,
+        "line_color": "#000000",
+        "major_interval": 20,
+        "major_line_width": 2.5,
+        "labels": true,
+        "label_font_size": 10.0,
+        "smoothing_passes": 1
+      },
+
+      "legend": {
+        "title": "Pressure (hPa)"
+      }
+    },
+
+    "example_filled_contour": {
+      "_comment": "Filled contours render discrete color bands between levels",
+      "name": "Example Filled Contour Style",
+      "description": "Discrete color bands (like radar reflectivity)",
+      "type": "filled_contour",
+      "units": "dBZ",
+
+      "stops": [
+        { "value": -30, "color": "#00000000", "label": "<-30" },
+        { "value": 20, "color": "#00BFFF", "label": "20" },
+        { "value": 40, "color": "#00FF00", "label": "40" },
+        { "value": 60, "color": "#FF0000", "label": "60" }
+      ],
+
+      "out_of_range": "transparent",
+
+      "legend": {
+        "title": "Reflectivity (dBZ)"
+      }
+    },
+
+    "example_wind_barbs": {
+      "_comment": "Wind barb styles render traditional meteorological wind symbols",
+      "name": "Example Wind Barbs Style",
+      "description": "Traditional meteorological wind barbs",
+      "type": "wind_barbs",
+      "units": "kt",
+
+      "wind": {
+        "_comment": "Wind barb rendering options",
+        "spacing": 50,
+        "size": 25.0,
+        "line_width": 1.5,
+        "color": "#000000",
+        "direction_from": true,
+        "calm_threshold": 2.5
+      },
+
+      "color_by_speed": {
+        "_comment": "Optional: color barbs by wind speed instead of single color",
+        "enabled": false,
+        "stops": [
+          { "value": 0, "color": "#808080", "label": "Calm" },
+          { "value": 25, "color": "#00FF00", "label": "25 kt" },
+          { "value": 50, "color": "#FFFF00", "label": "50 kt" },
+          { "value": 75, "color": "#FF0000", "label": "75 kt" }
+        ]
+      }
+    },
+
+    "example_wind_arrows": {
+      "_comment": "Wind arrow styles render directional arrows scaled by speed",
+      "name": "Example Wind Arrows Style",
+      "description": "Wind direction arrows colored by speed",
+      "type": "wind_arrows",
+      "units": "m/s",
+
+      "wind": {
+        "spacing": 40,
+        "min_length": 5.0,
+        "max_length": 40.0,
+        "line_width": 1.5
+      },
+
+      "color_by_speed": {
+        "enabled": true,
+        "stops": [
+          { "value": 0, "color": "#808080" },
+          { "value": 10, "color": "#00FF00" },
+          { "value": 20, "color": "#FFFF00" },
+          { "value": 30, "color": "#FF0000" }
+        ],
+        "interpolation": "linear"
+      }
+    }
+  },
+
+  "_schema_reference": {
+    "version": {
+      "type": "string",
+      "required": true,
+      "description": "Schema version, currently '1.0'"
+    },
+    "metadata": {
+      "type": "object",
+      "required": false,
+      "description": "Optional metadata about the style collection"
+    },
+    "styles": {
+      "type": "object",
+      "required": true,
+      "description": "Map of style_id -> style definition"
+    },
+    "style_types": {
+      "gradient": "Continuous color interpolation between stops",
+      "contour": "Isolines at specified intervals",
+      "filled_contour": "Discrete color bands between levels",
+      "wind_barbs": "Traditional meteorological wind barb symbols",
+      "wind_arrows": "Directional arrows with optional speed coloring"
+    },
+    "color_formats": {
+      "hex6": "#RRGGBB (e.g., #FF0000 for red)",
+      "hex8": "#RRGGBBAA (e.g., #FF000080 for 50% transparent red)",
+      "transparent": "Use the string 'transparent' for fully transparent"
+    },
+    "transform_types": {
+      "none": "No transformation (default)",
+      "linear": "Apply scale and offset: output = input * scale + offset",
+      "pa_to_hpa": "Convert Pascals to hectoPascals (divide by 100)",
+      "mps_to_knots": "Convert m/s to knots (multiply by 1.94384)",
+      "k_to_c": "Convert Kelvin to Celsius (subtract 273.15)"
+    }
+  }
+}

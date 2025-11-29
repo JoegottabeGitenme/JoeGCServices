@@ -767,50 +767,52 @@ async function fetchBackendMetrics() {
         if (!response.ok) return;
         
         const data = await response.json();
-        const { metrics, system } = data;
+        const metrics = data.metrics || {};
+        const system = data.system || {};
+        const cache = data.cache || {};
         
         // Update request counts
-        if (metricWmsRequestsEl) metricWmsRequestsEl.textContent = metrics.wms_requests;
-        if (metricWmtsRequestsEl) metricWmtsRequestsEl.textContent = metrics.wmts_requests;
+        if (metricWmsRequestsEl) metricWmsRequestsEl.textContent = metrics.wms_requests ?? 0;
+        if (metricWmtsRequestsEl) metricWmtsRequestsEl.textContent = metrics.wmts_requests ?? 0;
         
         // Update render stats
         if (metricRendersEl) {
-            const errors = metrics.render_errors > 0 ? ` (${metrics.render_errors} err)` : '';
-            metricRendersEl.textContent = metrics.renders_total + errors;
+            const errors = (metrics.render_errors ?? 0) > 0 ? ` (${metrics.render_errors} err)` : '';
+            metricRendersEl.textContent = (metrics.renders_total ?? 0) + errors;
         }
         if (metricRenderAvgEl) {
-            const avgMs = metrics.render_avg_ms.toFixed(0);
+            const avgMs = (metrics.render_avg_ms ?? 0).toFixed(0);
             metricRenderAvgEl.textContent = `${avgMs}ms`;
-            metricRenderAvgEl.className = 'metric-value ' + getSpeedClass(metrics.render_avg_ms);
+            metricRenderAvgEl.className = 'metric-value ' + getSpeedClass(metrics.render_avg_ms ?? 0);
         }
         if (metricRenderLastEl) {
-            const lastMs = metrics.render_last_ms.toFixed(0);
+            const lastMs = (metrics.render_last_ms ?? 0).toFixed(0);
             metricRenderLastEl.textContent = `${lastMs}ms`;
-            metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms);
+            metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms ?? 0);
         }
         
         // Update Redis cache stats
-        const cache = data.cache;
         if (metricCacheStatusEl) {
-            metricCacheStatusEl.textContent = cache.connected ? 'Connected' : 'Disconnected';
-            metricCacheStatusEl.className = 'metric-value ' + (cache.connected ? 'good' : 'bad');
+            const connected = cache.connected ?? false;
+            metricCacheStatusEl.textContent = connected ? 'Connected' : 'Disconnected';
+            metricCacheStatusEl.className = 'metric-value ' + (connected ? 'good' : 'bad');
         }
         if (metricCacheKeysEl) {
-            metricCacheKeysEl.textContent = cache.key_count;
+            metricCacheKeysEl.textContent = cache.key_count ?? '--';
         }
         if (metricCacheMemoryEl) {
-            metricCacheMemoryEl.textContent = formatBytes(cache.memory_used);
+            metricCacheMemoryEl.textContent = cache.memory_used ? formatBytes(cache.memory_used) : '--';
         }
         
         // Update system stats
         if (metricMemoryEl) {
-            metricMemoryEl.textContent = formatBytes(system.memory_used_bytes);
+            metricMemoryEl.textContent = system.memory_used_bytes ? formatBytes(system.memory_used_bytes) : '--';
         }
         if (metricThreadsEl) {
-            metricThreadsEl.textContent = system.num_threads;
+            metricThreadsEl.textContent = system.num_threads ?? '--';
         }
         if (metricUptimeEl) {
-            metricUptimeEl.textContent = formatUptime(metrics.uptime_secs);
+            metricUptimeEl.textContent = metrics.uptime_secs ? formatUptime(metrics.uptime_secs) : '--';
         }
     } catch (error) {
         console.error('Error fetching backend metrics:', error);
@@ -1512,7 +1514,18 @@ async function fetchAvailableTimes() {
                     }
                     if (dimName === 'FORECAST') {
                         const forecastText = dim.textContent.trim();
-                        availableForecastHours = forecastText.split(',').map(h => parseInt(h));
+                        // Parse forecast hours - handle both plain integers and ISO 8601 duration format (PT0H, PT3H, etc.)
+                        availableForecastHours = forecastText.split(',').map(h => {
+                            h = h.trim();
+                            // Check for ISO 8601 duration format (e.g., PT0H, PT3H, PT12H)
+                            const isoMatch = h.match(/^PT(\d+)H$/i);
+                            if (isoMatch) {
+                                return parseInt(isoMatch[1]);
+                            }
+                            // Try plain integer
+                            const parsed = parseInt(h);
+                            return isNaN(parsed) ? 0 : parsed;
+                        }).filter(h => !isNaN(h));
                         updateForecastSlider();
                     }
                     if (dimName === 'ELEVATION') {
