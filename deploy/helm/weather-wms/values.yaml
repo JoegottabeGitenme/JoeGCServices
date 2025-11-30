@@ -73,6 +73,26 @@ renderer:
     LOG_LEVEL: info
     CONCURRENCY: "4"
 
+# Dashboard (web UI)
+dashboard:
+  enabled: true
+  image:
+    repository: weather-wms/dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8000
+  
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
 # Ingester
 ingester:
   enabled: true
@@ -90,11 +110,11 @@ ingester:
   
   resources:
     limits:
-      cpu: 1000m
-      memory: 1Gi
+      cpu: 2000m
+      memory: 4Gi
     requests:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 100m
+      memory: 2Gi
 
   env:
     LOG_LEVEL: info
@@ -154,13 +174,48 @@ config:
     bucket: weather-data
     region: us-east-1
   
-  # Database URL (auto-configured from postgresql chart if enabled)
+  # Database settings (auto-configured from postgresql chart if enabled)
   database:
     url: ""  # Leave empty to auto-configure
+    poolSize: "50"
   
-  # Redis URL (auto-configured from redis chart if enabled)  
+  # Redis settings (auto-configured from redis chart if enabled)  
   redis:
     url: ""  # Leave empty to auto-configure
+  
+  # Logging
+  logging:
+    level: info
+    backtrace: "1"
+  
+  # Performance tuning
+  performance:
+    workerThreads: "8"
+  
+  # GRIB data cache
+  cache:
+    grib:
+      enabled: true
+      size: "500"
+    l1:
+      enabled: true
+      size: "10000"
+      ttlSecs: "300"
+  
+  # Tile prefetching
+  prefetch:
+    enabled: true
+    rings: "2"
+    minZoom: "3"
+    maxZoom: "12"
+  
+  # Cache warming (pre-render tiles at startup)
+  cacheWarming:
+    enabled: false  # Disable for faster startup in dev
+    maxZoom: "4"
+    hours: "0"
+    layers: "gfs_TMP:temperature"
+    concurrency: "10"
 
 # ServiceAccount
 serviceAccount:

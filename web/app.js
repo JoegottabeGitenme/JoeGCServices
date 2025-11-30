@@ -6,10 +6,9 @@ const REDIS_URL = 'http://localhost:8080/api/ingestion'; // Placeholder - would 
 // External service URLs - can be customized for different environments
 const EXTERNAL_URLS = {
     minio: 'http://localhost:9001',
-    // Standard K8s dashboard URL when using kubectl proxy
-    k8sDashboard: 'http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/',
-    // Alternative: Direct NodePort or LoadBalancer URL
-    // k8sDashboard: 'https://localhost:30443',
+    grafana: 'http://localhost:3000',
+    prometheus: 'http://localhost:9090',
+    k8sDashboard: 'http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/',
 };
 let map;
 let wmsLayer = null;

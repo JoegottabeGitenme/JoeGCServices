@@ -5,9 +5,36 @@ metadata:
   labels:
     {{- include "weather-wms.labels" . | nindent 4 }}
 data:
+  # Storage
   S3_ENDPOINT: {{ include "weather-wms.s3Endpoint" . | quote }}
   S3_BUCKET: {{ .Values.config.s3.bucket | quote }}
   S3_REGION: {{ .Values.config.s3.region | quote }}
   S3_ALLOW_HTTP: "true"
+  # Database
   DATABASE_URL: {{ include "weather-wms.databaseUrl" . | quote }}
+  DATABASE_POOL_SIZE: {{ .Values.config.database.poolSize | default "50" | quote }}
+  # Redis
   REDIS_URL: {{ include "weather-wms.redisUrl" . | quote }}
+  # Logging
+  RUST_LOG: {{ .Values.config.logging.level | default "info" | quote }}
+  RUST_BACKTRACE: {{ .Values.config.logging.backtrace | default "1" | quote }}
+  # Performance tuning
+  TOKIO_WORKER_THREADS: {{ .Values.config.performance.workerThreads | default "8" | quote }}
+  # GRIB cache
+  ENABLE_GRIB_CACHE: {{ .Values.config.cache.grib.enabled | default true | quote }}
+  GRIB_CACHE_SIZE: {{ .Values.config.cache.grib.size | default "500" | quote }}
+  # L1 tile memory cache
+  ENABLE_L1_CACHE: {{ .Values.config.cache.l1.enabled | default true | quote }}
+  TILE_CACHE_SIZE: {{ .Values.config.cache.l1.size | default "10000" | quote }}
+  TILE_CACHE_TTL_SECS: {{ .Values.config.cache.l1.ttlSecs | default "300" | quote }}
+  # Prefetch settings
+  ENABLE_PREFETCH: {{ .Values.config.prefetch.enabled | default true | quote }}
+  PREFETCH_RINGS: {{ .Values.config.prefetch.rings | default "2" | quote }}
+  PREFETCH_MIN_ZOOM: {{ .Values.config.prefetch.minZoom | default "3" | quote }}
+  PREFETCH_MAX_ZOOM: {{ .Values.config.prefetch.maxZoom | default "12" | quote }}
+  # Cache warming settings
+  ENABLE_CACHE_WARMING: {{ .Values.config.cacheWarming.enabled | default false | quote }}
+  CACHE_WARMING_MAX_ZOOM: {{ .Values.config.cacheWarming.maxZoom | default "4" | quote }}
+  CACHE_WARMING_HOURS: {{ .Values.config.cacheWarming.hours | default "0" | quote }}
+  CACHE_WARMING_LAYERS: {{ .Values.config.cacheWarming.layers | default "gfs_TMP:temperature" | quote }}
+  CACHE_WARMING_CONCURRENCY: {{ .Values.config.cacheWarming.concurrency | default "10" | quote }}

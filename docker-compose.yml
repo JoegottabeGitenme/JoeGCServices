@@ -96,6 +96,7 @@ services:
       CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-10}
     volumes:
       - ./validation/load-test/results:/app/validation/load-test/results:ro
+      - ./config:/app/config:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -6,10 +6,12 @@
 //! - Wind barbs
 //! - Wind arrows
 //! - Style-based color mapping
+//! - Numeric values at grid points
 
 pub mod barbs;
 pub mod contour;
 pub mod gradient;
+pub mod numbers;
 pub mod png;
 pub mod style;
 

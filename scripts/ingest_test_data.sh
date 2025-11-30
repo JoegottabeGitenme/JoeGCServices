@@ -47,6 +47,66 @@ if [ -f .env ]; then
     set +a
 fi
 
+#------------------------------------------------------------------------------
+# Detect runtime environment (Docker Compose vs Kubernetes)
+#------------------------------------------------------------------------------
+
+RUNTIME_ENV="compose"  # default
+
+# Check if we're running in Kubernetes context
+if kubectl config current-context &>/dev/null; then
+    K8S_CONTEXT=$(kubectl config current-context 2>/dev/null)
+    if [ "$K8S_CONTEXT" = "weather-wms" ]; then
+        # Check if weather-wms namespace has pods
+        if kubectl get pods -n weather-wms --no-headers 2>/dev/null | grep -q "Running"; then
+            RUNTIME_ENV="kubernetes"
+            K8S_NAMESPACE="weather-wms"
+            log_info "Detected Kubernetes environment (context: $K8S_CONTEXT)"
+        fi
+    fi
+fi
+
+# Allow override via environment variable
+if [ -n "$FORCE_RUNTIME_ENV" ]; then
+    RUNTIME_ENV="$FORCE_RUNTIME_ENV"
+    log_info "Runtime environment forced to: $RUNTIME_ENV"
+fi
+
+# Helper functions for multi-environment support
+pg_exec() {
+    local sql="$1"
+    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
+        kubectl exec -n "$K8S_NAMESPACE" postgresql-0 -- bash -c "export PGPASSWORD=\$(cat /opt/bitnami/postgresql/secrets/password) && psql -U weatherwms -d weatherwms -t -c \"$sql\"" 2>/dev/null
+    else
+        docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c "$sql" 2>/dev/null
+    fi
+}
+
+pg_exec_batch() {
+    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
+        kubectl exec -n "$K8S_NAMESPACE" -i postgresql-0 -- bash -c 'export PGPASSWORD=$(cat /opt/bitnami/postgresql/secrets/password) && psql -U weatherwms -d weatherwms' 2>/dev/null
+    else
+        docker-compose exec -T postgres psql -U weatherwms -d weatherwms 2>/dev/null
+    fi
+}
+
+pg_isready() {
+    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
+        kubectl exec -n "$K8S_NAMESPACE" postgresql-0 -- pg_isready -U weatherwms &>/dev/null
+    else
+        docker-compose exec -T postgres pg_isready -U weatherwms &>/dev/null
+    fi
+}
+
+redis_exec() {
+    local cmd="$1"
+    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
+        kubectl exec -n "$K8S_NAMESPACE" redis-master-0 -- redis-cli $cmd &>/dev/null
+    else
+        docker-compose exec -T redis redis-cli $cmd &>/dev/null
+    fi
+}
+
 # Set defaults for ingestion flags if not set
 INGEST_GFS="${INGEST_GFS:-true}"
 INGEST_HRRR="${INGEST_HRRR:-true}"
@@ -135,7 +195,7 @@ check_and_download_data
 log_info "Waiting for PostgreSQL to be ready..."
 retries=30
 while [ $retries -gt 0 ]; do
-    if docker-compose exec -T postgres pg_isready -U weatherwms &>/dev/null; then
+    if pg_isready; then
         log_success "PostgreSQL is ready"
         break
     fi
@@ -153,7 +213,7 @@ echo ""
 log_info "Clearing previous ingestion data..."
 
 # Clear old datasets from catalog (keep schema)
-docker-compose exec -T postgres psql -U weatherwms -d weatherwms << SQL
+pg_exec_batch << SQL
 DELETE FROM datasets WHERE status = 'available';
 DELETE FROM layer_styles;
 SQL
@@ -162,7 +222,7 @@ log_success "Cleared catalog data"
 
 # Clear Redis tile cache
 log_info "Flushing Redis tile cache..."
-if docker-compose exec -T redis redis-cli FLUSHALL &>/dev/null; then
+if redis_exec "FLUSHALL"; then
     log_success "Redis cache cleared"
 else
     log_warn "Could not clear Redis cache (may not be running yet)"
@@ -400,8 +460,7 @@ fi
 echo ""
 log_info "Verifying ingestion..."
 
-DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE status = 'available';" | tr -d ' ')
+DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE status = 'available';" | tr -d ' \n\r')
 
 if [ -z "$DATASET_COUNT" ] || [ "$DATASET_COUNT" = "0" ]; then
     log_error "No datasets found after ingestion!"
@@ -413,7 +472,7 @@ log_success "Ingestion verified: $DATASET_COUNT datasets registered"
 # Show what was ingested
 echo ""
 log_info "Ingested datasets:"
-docker-compose exec -T postgres psql -U weatherwms -d weatherwms << SQL
+pg_exec_batch << SQL
 SELECT 
     model,
     parameter,
@@ -432,10 +491,19 @@ echo ""
 # Verify MinIO has the file
 log_info "Verifying storage in MinIO..."
 
-if docker exec weather-wms-minio-1 bash -c 'export AWS_ACCESS_KEY_ID=minioadmin && export AWS_SECRET_ACCESS_KEY=minioadmin && /usr/bin/mc alias set local http://localhost:9000 minioadmin minioadmin 2>/dev/null && /usr/bin/mc ls --recursive local/weather-data | head -5' &>/dev/null; then
-    log_success "Data confirmed in MinIO"
+if [ "$RUNTIME_ENV" = "kubernetes" ]; then
+    # For K8s, try to check via mc in the minio pod
+    if kubectl exec -n "$K8S_NAMESPACE" deployment/minio -- mc ls --recursive local/weather-data 2>/dev/null | head -5 &>/dev/null; then
+        log_success "Data confirmed in MinIO"
+    else
+        log_warn "Could not verify MinIO storage (file may be present)"
+    fi
 else
-    log_warn "Could not verify MinIO storage (file may be present)"
+    if docker exec weather-wms-minio-1 bash -c 'export AWS_ACCESS_KEY_ID=minioadmin && export AWS_SECRET_ACCESS_KEY=minioadmin && /usr/bin/mc alias set local http://localhost:9000 minioadmin minioadmin 2>/dev/null && /usr/bin/mc ls --recursive local/weather-data | head -5' &>/dev/null; then
+        log_success "Data confirmed in MinIO"
+    else
+        log_warn "Could not verify MinIO storage (file may be present)"
+    fi
 fi
 
 echo ""
@@ -445,20 +513,15 @@ log_success "============================================"
 echo ""
 
 # Count datasets by model
-GFS_DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE model = 'gfs' AND status = 'available';" | tr -d ' ')
+GFS_DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE model = 'gfs' AND status = 'available';" | tr -d ' \n\r')
 
-HRRR_DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE model = 'hrrr' AND status = 'available';" | tr -d ' ')
+HRRR_DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE model = 'hrrr' AND status = 'available';" | tr -d ' \n\r')
 
-GOES16_DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE model = 'goes16' AND status = 'available';" | tr -d ' ')
+GOES16_DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE model = 'goes16' AND status = 'available';" | tr -d ' \n\r')
 
-GOES18_DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE model = 'goes18' AND status = 'available';" | tr -d ' ')
+GOES18_DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE model = 'goes18' AND status = 'available';" | tr -d ' \n\r')
 
-MRMS_DATASET_COUNT=$(docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c \
-    "SELECT COUNT(*) FROM datasets WHERE model = 'mrms' AND status = 'available';" | tr -d ' ')
+MRMS_DATASET_COUNT=$(pg_exec "SELECT COUNT(*) FROM datasets WHERE model = 'mrms' AND status = 'available';" | tr -d ' \n\r')
 
 log_info "System is ready with:"
 log_info "  Total: $DATASET_COUNT datasets in catalog"

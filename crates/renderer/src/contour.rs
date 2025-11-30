@@ -42,6 +42,29 @@ pub struct ContourConfig {
     pub line_color: [u8; 4],
     /// Number of smoothing passes (0 = no smoothing)
     pub smoothing_passes: u32,
+    /// Whether to draw labels on contour lines
+    pub labels_enabled: bool,
+    /// Font size for labels
+    pub label_font_size: f32,
+    /// Minimum spacing between labels (in pixels)
+    pub label_spacing: f32,
+    /// Unit conversion offset for label display (e.g., -273.15 to show Celsius)
+    pub label_unit_offset: f32,
+    /// Special level styling overrides
+    pub special_levels: Vec<SpecialLevelConfig>,
+}
+
+/// Special styling for a specific contour level
+#[derive(Debug, Clone)]
+pub struct SpecialLevelConfig {
+    /// The level value (in data units)
+    pub level: f32,
+    /// Custom line color for this level
+    pub line_color: Option<[u8; 4]>,
+    /// Custom line width for this level
+    pub line_width: Option<f32>,
+    /// Custom label text (overrides numeric value)
+    pub label: Option<String>,
 }
 
 impl Default for ContourConfig {
@@ -51,6 +74,55 @@ impl Default for ContourConfig {
             line_width: 2.0,
             line_color: [0, 0, 0, 255],
             smoothing_passes: 1,
+            labels_enabled: false,
+            label_font_size: 10.0,
+            label_spacing: 150.0,
+            label_unit_offset: 0.0,
+            special_levels: vec![],
+        }
+    }
+}
+
+impl ContourConfig {
+    /// Get the color for a specific level, checking special levels first
+    pub fn get_level_color(&self, level: f32) -> [u8; 4] {
+        for special in &self.special_levels {
+            if (special.level - level).abs() < 0.01 {
+                if let Some(color) = special.line_color {
+                    return color;
+                }
+            }
+        }
+        self.line_color
+    }
+    
+    /// Get the line width for a specific level, checking special levels first
+    pub fn get_level_width(&self, level: f32) -> f32 {
+        for special in &self.special_levels {
+            if (special.level - level).abs() < 0.01 {
+                if let Some(width) = special.line_width {
+                    return width;
+                }
+            }
+        }
+        self.line_width
+    }
+    
+    /// Get the label text for a level
+    pub fn get_level_label(&self, level: f32) -> String {
+        for special in &self.special_levels {
+            if (special.level - level).abs() < 0.01 {
+                if let Some(ref label) = special.label {
+                    return label.clone();
+                }
+            }
+        }
+        // Default: show numeric value with unit offset applied
+        let display_value = level + self.label_unit_offset;
+        if display_value.fract().abs() < 0.01 {
+            format!("{:.0}", display_value)
+        } else {
+            format!("{:.1}", display_value)
         }
     }
 }
@@ -336,25 +408,27 @@ pub fn render_contours_to_canvas(
     // Fill with transparent
     pixmap.fill(Color::TRANSPARENT);
     
-    let mut paint = Paint::default();
-    paint.set_color_rgba8(
-        config.line_color[0],
-        config.line_color[1],
-        config.line_color[2],
-        config.line_color[3],
-    );
-    paint.anti_alias = true;
+    // Collect label positions to avoid overlaps
+    let mut label_positions: Vec<LabelPosition> = Vec::new();
     
-    let mut stroke = Stroke::default();
-    stroke.width = config.line_width;
-    stroke.line_cap = LineCap::Round;
-    stroke.line_join = LineJoin::Round;
-    
-    // Draw each contour
+    // Draw each contour with per-level styling
     for contour in contours {
         if contour.points.len() < 2 {
             continue;
         }
+        
+        // Get level-specific styling
+        let line_color = config.get_level_color(contour.level);
+        let line_width = config.get_level_width(contour.level);
+        
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(line_color[0], line_color[1], line_color[2], line_color[3]);
+        paint.anti_alias = true;
+        
+        let mut stroke = Stroke::default();
+        stroke.width = line_width;
+        stroke.line_cap = LineCap::Round;
+        stroke.line_join = LineJoin::Round;
         
         let mut pb = PathBuilder::new();
         
@@ -374,10 +448,335 @@ pub fn render_contours_to_canvas(
         if let Some(path) = pb.finish() {
             pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
+        
+        // Collect label positions along this contour
+        if config.labels_enabled {
+            collect_label_positions(contour, config, &mut label_positions, width, height);
+        }
+    }
+    
+    // Draw labels after all contours are drawn
+    if config.labels_enabled && !label_positions.is_empty() {
+        draw_labels(&mut pixmap, &label_positions, config);
     }
     
     // Convert to RGBA bytes
     pixmap.data().to_vec()
+}
+
+/// Position and metadata for a contour label
+#[derive(Debug, Clone)]
+struct LabelPosition {
+    x: f32,
+    y: f32,
+    angle: f32,  // Rotation angle in radians
+    text: String,
+    level: f32,
+}
+
+/// Calculate the total length of a contour
+fn contour_length(contour: &Contour) -> f32 {
+    let mut length = 0.0;
+    for i in 1..contour.points.len() {
+        let dx = contour.points[i].x - contour.points[i-1].x;
+        let dy = contour.points[i].y - contour.points[i-1].y;
+        length += (dx * dx + dy * dy).sqrt();
+    }
+    length
+}
+
+/// Collect label positions along a contour line
+fn collect_label_positions(
+    contour: &Contour,
+    config: &ContourConfig,
+    positions: &mut Vec<LabelPosition>,
+    width: usize,
+    height: usize,
+) {
+    let total_length = contour_length(contour);
+    if total_length < config.label_spacing * 0.5 {
+        return; // Contour too short for labels
+    }
+    
+    let label_text = config.get_level_label(contour.level);
+    let margin = config.label_font_size * 2.0; // Keep labels away from edges
+    
+    // Calculate how many labels to place
+    let num_labels = ((total_length / config.label_spacing).floor() as usize).max(1);
+    
+    // Space labels evenly along the contour
+    let spacing = total_length / (num_labels as f32 + 1.0);
+    
+    let mut accumulated_length = 0.0;
+    let mut next_label_at = spacing;
+    let mut label_count = 0;
+    
+    for i in 1..contour.points.len() {
+        if label_count >= num_labels {
+            break;
+        }
+        
+        let p1 = contour.points[i - 1];
+        let p2 = contour.points[i];
+        let dx = p2.x - p1.x;
+        let dy = p2.y - p1.y;
+        let segment_length = (dx * dx + dy * dy).sqrt();
+        
+        // Check if this segment contains our next label position
+        while accumulated_length + segment_length >= next_label_at && label_count < num_labels {
+            let t = (next_label_at - accumulated_length) / segment_length;
+            let x = p1.x + t * dx;
+            let y = p1.y + t * dy;
+            
+            // Check if position is within bounds (with margin)
+            if x > margin && x < (width as f32 - margin) && 
+               y > margin && y < (height as f32 - margin) {
+                // Calculate angle from segment direction
+                let angle = dy.atan2(dx);
+                
+                // Flip angle if text would be upside down
+                let angle = if angle.abs() > std::f32::consts::FRAC_PI_2 {
+                    angle + std::f32::consts::PI
+                } else {
+                    angle
+                };
+                
+                // Check for overlap with existing labels
+                let min_distance = config.label_font_size * 4.0;
+                let has_overlap = positions.iter().any(|pos| {
+                    let dist_sq = (pos.x - x).powi(2) + (pos.y - y).powi(2);
+                    dist_sq < min_distance * min_distance
+                });
+                
+                if !has_overlap {
+                    positions.push(LabelPosition {
+                        x,
+                        y,
+                        angle,
+                        text: label_text.clone(),
+                        level: contour.level,
+                    });
+                }
+            }
+            
+            next_label_at += spacing;
+            label_count += 1;
+        }
+        
+        accumulated_length += segment_length;
+    }
+}
+
+/// Draw labels on the pixmap
+fn draw_labels(
+    pixmap: &mut tiny_skia::Pixmap,
+    positions: &[LabelPosition],
+    config: &ContourConfig,
+) {
+    // Use simple bitmap font rendering for labels
+    // Each character is rendered as a small filled rectangle pattern
+    
+    for pos in positions {
+        let color = config.get_level_color(pos.level);
+        draw_text_label(pixmap, pos.x, pos.y, pos.angle, &pos.text, config.label_font_size, color);
+    }
+}
+
+/// Draw a text label at the given position with rotation
+fn draw_text_label(
+    pixmap: &mut tiny_skia::Pixmap,
+    x: f32,
+    y: f32,
+    angle: f32,
+    text: &str,
+    font_size: f32,
+    color: [u8; 4],
+) {
+    use tiny_skia::*;
+    
+    // Character width and height based on font size
+    let char_width = font_size * 0.6;
+    let char_height = font_size;
+    let char_spacing = font_size * 0.1;
+    
+    // Calculate total text width
+    let text_width = text.len() as f32 * (char_width + char_spacing) - char_spacing;
+    
+    // Draw background (white with some transparency) for readability
+    let bg_padding = font_size * 0.2;
+    let bg_width = text_width + bg_padding * 2.0;
+    let bg_height = char_height + bg_padding * 2.0;
+    
+    // Create background rectangle
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+    
+    // Background paint
+    let mut bg_paint = Paint::default();
+    bg_paint.set_color_rgba8(255, 255, 255, 220);
+    bg_paint.anti_alias = true;
+    
+    // Draw rotated background rectangle
+    let half_w = bg_width / 2.0;
+    let half_h = bg_height / 2.0;
+    
+    // Rectangle corners relative to center
+    let corners = [
+        (-half_w, -half_h),
+        (half_w, -half_h),
+        (half_w, half_h),
+        (-half_w, half_h),
+    ];
+    
+    // Rotate and translate corners
+    let mut pb = PathBuilder::new();
+    for (i, (cx, cy)) in corners.iter().enumerate() {
+        let rx = cx * cos_a - cy * sin_a + x;
+        let ry = cx * sin_a + cy * cos_a + y;
+        if i == 0 {
+            pb.move_to(rx, ry);
+        } else {
+            pb.line_to(rx, ry);
+        }
+    }
+    pb.close();
+    
+    if let Some(path) = pb.finish() {
+        pixmap.fill_path(&path, &bg_paint, FillRule::Winding, Transform::identity(), None);
+    }
+    
+    // Text paint
+    let mut text_paint = Paint::default();
+    text_paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+    text_paint.anti_alias = true;
+    
+    // Draw each character using simple shapes
+    let start_x = -text_width / 2.0;
+    
+    for (i, ch) in text.chars().enumerate() {
+        let char_x = start_x + i as f32 * (char_width + char_spacing) + char_width / 2.0;
+        let char_y = 0.0;
+        
+        // Rotate character position
+        let rx = char_x * cos_a - char_y * sin_a + x;
+        let ry = char_x * sin_a + char_y * cos_a + y;
+        
+        draw_character(pixmap, rx, ry, angle, ch, char_width, char_height, &text_paint);
+    }
+}
+
+/// Draw a single character as simple geometric shapes
+fn draw_character(
+    pixmap: &mut tiny_skia::Pixmap,
+    x: f32,
+    y: f32,
+    angle: f32,
+    ch: char,
+    width: f32,
+    height: f32,
+    paint: &tiny_skia::Paint,
+) {
+    use tiny_skia::*;
+    
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+    let half_w = width / 2.0;
+    let half_h = height / 2.0;
+    let stroke_w = width * 0.15;
+    
+    let mut stroke = Stroke::default();
+    stroke.width = stroke_w;
+    stroke.line_cap = LineCap::Round;
+    stroke.line_join = LineJoin::Round;
+    
+    // Helper to rotate a point around (x, y)
+    let rotate = |px: f32, py: f32| -> (f32, f32) {
+        (px * cos_a - py * sin_a + x, px * sin_a + py * cos_a + y)
+    };
+    
+    // Define character shapes (simplified 7-segment style)
+    let segments: Vec<((f32, f32), (f32, f32))> = match ch {
+        '0' => vec![
+            ((-half_w, -half_h), (half_w, -half_h)),  // top
+            ((half_w, -half_h), (half_w, half_h)),     // right
+            ((half_w, half_h), (-half_w, half_h)),     // bottom
+            ((-half_w, half_h), (-half_w, -half_h)),   // left
+        ],
+        '1' => vec![
+            ((0.0, -half_h), (0.0, half_h)),           // center vertical
+        ],
+        '2' => vec![
+            ((-half_w, -half_h), (half_w, -half_h)),   // top
+            ((half_w, -half_h), (half_w, 0.0)),        // top right
+            ((half_w, 0.0), (-half_w, 0.0)),           // middle
+            ((-half_w, 0.0), (-half_w, half_h)),       // bottom left
+            ((-half_w, half_h), (half_w, half_h)),     // bottom
+        ],
+        '3' => vec![
+            ((-half_w, -half_h), (half_w, -half_h)),   // top
+            ((half_w, -half_h), (half_w, half_h)),     // right
+            ((half_w, half_h), (-half_w, half_h)),     // bottom
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+        ],
+        '4' => vec![
+            ((-half_w, -half_h), (-half_w, 0.0)),      // top left
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+            ((half_w, -half_h), (half_w, half_h)),     // right
+        ],
+        '5' => vec![
+            ((half_w, -half_h), (-half_w, -half_h)),   // top
+            ((-half_w, -half_h), (-half_w, 0.0)),      // top left
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+            ((half_w, 0.0), (half_w, half_h)),         // bottom right
+            ((half_w, half_h), (-half_w, half_h)),     // bottom
+        ],
+        '6' => vec![
+            ((half_w, -half_h), (-half_w, -half_h)),   // top
+            ((-half_w, -half_h), (-half_w, half_h)),   // left
+            ((-half_w, half_h), (half_w, half_h)),     // bottom
+            ((half_w, half_h), (half_w, 0.0)),         // bottom right
+            ((half_w, 0.0), (-half_w, 0.0)),           // middle
+        ],
+        '7' => vec![
+            ((-half_w, -half_h), (half_w, -half_h)),   // top
+            ((half_w, -half_h), (0.0, half_h)),        // diagonal
+        ],
+        '8' => vec![
+            ((-half_w, -half_h), (half_w, -half_h)),   // top
+            ((half_w, -half_h), (half_w, half_h)),     // right
+            ((half_w, half_h), (-half_w, half_h)),     // bottom
+            ((-half_w, half_h), (-half_w, -half_h)),   // left
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+        ],
+        '9' => vec![
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+            ((half_w, 0.0), (half_w, -half_h)),        // top right
+            ((half_w, -half_h), (-half_w, -half_h)),   // top
+            ((-half_w, -half_h), (-half_w, 0.0)),      // top left
+            ((half_w, 0.0), (half_w, half_h)),         // bottom right
+        ],
+        '-' => vec![
+            ((-half_w, 0.0), (half_w, 0.0)),           // middle
+        ],
+        '.' => vec![
+            ((0.0, half_h * 0.7), (0.0, half_h * 0.8)), // dot (small line)
+        ],
+        _ => vec![], // Unknown character - skip
+    };
+    
+    // Draw each segment
+    for ((x1, y1), (x2, y2)) in segments {
+        let (rx1, ry1) = rotate(x1, y1);
+        let (rx2, ry2) = rotate(x2, y2);
+        
+        let mut pb = PathBuilder::new();
+        pb.move_to(rx1, ry1);
+        pb.line_to(rx2, ry2);
+        
+        if let Some(path) = pb.finish() {
+            pixmap.stroke_path(&path, paint, &stroke, Transform::identity(), None);
+        }
+    }
 }
 
 /// Generate all contours for multiple levels
@@ -419,8 +818,30 @@ pub fn render_contours(
     height: usize,
     config: &ContourConfig,
 ) -> Vec<u8> {
+    // Log data stats for debugging
+    let valid_data: Vec<f32> = data.iter().filter(|v| !v.is_nan()).copied().collect();
+    let data_min = valid_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+    let data_max = valid_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    
+    tracing::debug!(
+        data_len = data.len(),
+        valid_count = valid_data.len(),
+        data_min = data_min,
+        data_max = data_max,
+        num_levels = config.levels.len(),
+        first_level = config.levels.first().copied().unwrap_or(0.0),
+        last_level = config.levels.last().copied().unwrap_or(0.0),
+        "render_contours input"
+    );
+    
     // Generate all contours
     let contours = generate_all_contours(data, width, height, config);
+    
+    tracing::debug!(
+        num_contours = contours.len(),
+        total_points = contours.iter().map(|c| c.points.len()).sum::<usize>(),
+        "Generated contours"
+    );
     
     // Render to canvas
     render_contours_to_canvas(&contours, width, height, config)

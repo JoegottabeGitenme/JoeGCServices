@@ -13,7 +13,9 @@
 #   ./start.sh --clear-cache # Clear Redis tile cache (after rendering changes)
 #   ./start.sh --kubernetes # Full Kubernetes setup with minikube
 #   ./start.sh --k8s        # Same as --kubernetes
+#   ./start.sh --forward    # Restart port forwards for existing K8s cluster
 #   ./start.sh --stop       # Stop docker-compose
+#   ./start.sh --stop-k8s   # Stop K8s port forwards (cluster keeps running)
 #   ./start.sh --clean      # Delete everything and start fresh
 #   ./start.sh --status     # Show status
 #   ./start.sh --help       # Show this help message
@@ -427,9 +429,8 @@ start_minikube() {
     # Set kubectl context
     kubectl config use-context "$MINIKUBE_PROFILE"
     
-    # Enable only essential addons (dashboard often has DNS issues)
-    minikube addons enable ingress -p "$MINIKUBE_PROFILE" || true
-    minikube addons enable metrics-server -p "$MINIKUBE_PROFILE" || true
+    # Skip ingress addon - it causes webhook issues and we use port-forward anyway
+    # minikube addons enable ingress -p "$MINIKUBE_PROFILE"
     
     log_success "Minikube cluster is running!"
 }
@@ -449,69 +450,775 @@ deploy_dependencies() {
     helm repo update
     
     log_success "Helm repositories updated!"
+    
+    # Build Helm chart dependencies
+    log_info "Building Helm chart dependencies..."
+    cd "$PROJECT_ROOT/deploy/helm/weather-wms"
+    helm dependency build
+    cd "$PROJECT_ROOT"
+    
+    log_success "Helm dependencies ready!"
+}
+
+build_single_image() {
+    local name="$1"
+    local dockerfile="$2"
+    local context="$3"
+    local start_time=$(date +%s)
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Building: $name"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if docker build -t "weather-wms/${name}:latest" -f "$dockerfile" "$context" 2>&1 | while read line; do
+        # Show key build steps
+        if echo "$line" | grep -qE '^\[|^Step|^#[0-9]|CACHED|ERROR|error:'; then
+            echo "  $line"
+        fi
+    done; then
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+        log_success "$name built in ${duration}s"
+        return 0
+    else
+        log_error "Failed to build $name"
+        return 1
+    fi
+}
+
+load_single_image() {
+    local name="$1"
+    local start_time=$(date +%s)
+    
+    echo -n "  Loading $name into minikube... "
+    
+    if minikube -p "$MINIKUBE_PROFILE" image load "weather-wms/${name}:latest" 2>&1 | head -5; then
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+        echo "done (${duration}s)"
+        return 0
+    else
+        echo "FAILED"
+        return 1
+    fi
+}
+
+build_k8s_images() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║              Building Docker Images                           ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_warn "First build may take 10-20 minutes (Rust compilation)"
+    log_info "Subsequent builds will be much faster (cached layers)"
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    
+    local failed=0
+    
+    # Build Dashboard first (fastest, good sanity check)
+    build_single_image "dashboard" "web/Dockerfile" "web/" || failed=1
+    
+    if [ $failed -eq 1 ]; then
+        log_error "Dashboard build failed. Check Docker is running."
+        return 1
+    fi
+    
+    # Build the Rust services (these take longer)
+    build_single_image "wms-api" "services/wms-api/Dockerfile" "." || failed=1
+    build_single_image "ingester" "services/ingester/Dockerfile" "." || failed=1
+    build_single_image "renderer-worker" "services/renderer-worker/Dockerfile" "." || failed=1
+    
+    if [ $failed -eq 1 ]; then
+        log_error "One or more image builds failed!"
+        return 1
+    fi
+    
+    echo ""
+    log_success "All Docker images built successfully!"
+    echo ""
+    
+    # Load images into minikube
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Loading Images into Minikube                        ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    load_single_image "dashboard" || failed=1
+    load_single_image "wms-api" || failed=1
+    load_single_image "ingester" || failed=1
+    load_single_image "renderer-worker" || failed=1
+    
+    if [ $failed -eq 1 ]; then
+        log_error "Failed to load some images into minikube!"
+        return 1
+    fi
+    
+    echo ""
+    log_success "All images loaded into minikube!"
+}
+
+preload_infra_images() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Pre-loading Infrastructure Images                   ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Pulling images on host and loading into minikube..."
+    log_info "(This works around minikube's network/DNS issues)"
+    echo ""
+    
+    # Infrastructure and monitoring images
+    local images=(
+        "docker.io/bitnami/redis:latest"
+        "docker.io/bitnami/postgresql:latest"
+        "docker.io/minio/minio:latest"
+        "docker.io/grafana/grafana:latest"
+        "docker.io/prom/prometheus:latest"
+        "docker.io/kubernetesui/dashboard:v2.7.0"
+        "docker.io/kubernetesui/metrics-scraper:v1.0.8"
+    )
+    
+    for img in "${images[@]}"; do
+        local name=$(echo "$img" | sed 's|.*/||' | cut -d: -f1)
+        echo -n "  $name: "
+        
+        # Pull
+        echo -n "pulling... "
+        if docker pull "$img" >/dev/null 2>&1; then
+            echo -n "✓ "
+        else
+            echo "✗ pull failed"
+            continue
+        fi
+        
+        # Load into minikube
+        echo -n "loading... "
+        if minikube -p "$MINIKUBE_PROFILE" image load "$img" >/dev/null 2>&1; then
+            echo "✓"
+        else
+            echo "✗ load failed"
+        fi
+    done
+    echo ""
 }
 
 deploy_dev_stack() {
-    log_info "Deploying development stack..."
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Deploying Infrastructure (Redis, PG, MinIO)         ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
     
-    # Redis
-    log_info "Deploying Redis..."
-    helm upgrade --install redis bitnami/redis \
+    # Redis - force tag to 'latest' which we pre-loaded
+    echo -n "  [1/3] Redis............ "
+    if helm upgrade --install redis bitnami/redis \
         --namespace "$NAMESPACE" \
         --set architecture=standalone \
         --set auth.enabled=false \
         --set master.persistence.enabled=false \
-        --wait --timeout 5m || true
+        --set image.registry=docker.io \
+        --set image.repository=bitnami/redis \
+        --set image.tag=latest \
+        --set image.pullPolicy=Never \
+        --wait --timeout 3m 2>&1 | grep -E 'deployed|STATUS' | head -1; then
+        echo " ✓"
+    else
+        echo " ✗ (continuing...)"
+    fi
     
-    # PostgreSQL
-    log_info "Deploying PostgreSQL..."
-    helm upgrade --install postgresql bitnami/postgresql \
+    # PostgreSQL - force tag to 'latest'
+    echo -n "  [2/3] PostgreSQL....... "
+    if helm upgrade --install postgresql bitnami/postgresql \
         --namespace "$NAMESPACE" \
         --set auth.username=weatherwms \
         --set auth.password=weatherwms \
         --set auth.database=weatherwms \
         --set primary.persistence.enabled=false \
-        --wait --timeout 5m || true
+        --set image.registry=docker.io \
+        --set image.repository=bitnami/postgresql \
+        --set image.tag=latest \
+        --set image.pullPolicy=Never \
+        --wait --timeout 3m 2>&1 | grep -E 'deployed|STATUS' | head -1; then
+        echo " ✓"
+    else
+        echo " ✗ (continuing...)"
+    fi
     
-    # MinIO
-    log_info "Deploying MinIO..."
-    helm upgrade --install minio bitnami/minio \
+    # MinIO - deploy directly with kubectl (bitnami chart has image tag issues)
+    echo -n "  [3/3] MinIO............ "
+    
+    # Delete any existing minio resources to ensure clean state
+    kubectl delete svc minio minio-console -n "$NAMESPACE" 2>/dev/null || true
+    kubectl delete deployment minio -n "$NAMESPACE" 2>/dev/null || true
+    sleep 1
+    
+    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1 <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        imagePullPolicy: Never
+        args: ["server", "/data", "--console-address", ":9001"]
+        env:
+        - name: MINIO_ROOT_USER
+          value: "minioadmin"
+        - name: MINIO_ROOT_PASSWORD
+          value: "minioadmin"
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+EOF
+    if [ $? -eq 0 ]; then
+        echo "✓"
+    else
+        echo "✗ (continuing...)"
+    fi
+    
+    echo ""
+    log_success "Infrastructure deployment initiated!"
+}
+
+deploy_monitoring() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Deploying Monitoring (Prometheus, Grafana)          ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # Deploy Prometheus and Grafana
+    echo -n "  [1/2] Prometheus....... "
+    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'wms-api'
+        static_configs:
+          - targets: ['wms-weather-wms-api:8080']
+        metrics_path: /metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        imagePullPolicy: Never
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - port: 9090
+    targetPort: 9090
+EOF
+    if [ $? -eq 0 ]; then
+        echo "✓"
+    else
+        echo "✗"
+    fi
+    
+    echo -n "  [2/2] Grafana.......... "
+    
+    # Create Grafana ConfigMaps from files
+    # Dashboard provisioning config
+    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provisioning
+data:
+  dashboard.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'WMS Dashboards'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+EOF
+
+    # Datasource provisioning config
+    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-provisioning
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: true
+EOF
+
+    # Create dashboard ConfigMap from the JSON file
+    kubectl create configmap grafana-dashboards \
+        --from-file=wms-performance.json="$PROJECT_ROOT/grafana-enhanced-dashboard.json" \
+        -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+    
+    # Deploy Grafana with volume mounts
+    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "true"
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: "Viewer"
+        volumeMounts:
+        - name: dashboard-provisioning
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: datasource-provisioning
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: dashboard-provisioning
+        configMap:
+          name: grafana-dashboard-provisioning
+      - name: datasource-provisioning
+        configMap:
+          name: grafana-datasource-provisioning
+      - name: dashboards
+        configMap:
+          name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: 3000
+EOF
+    if [ $? -eq 0 ]; then
+        echo "✓"
+    else
+        echo "✗"
+    fi
+    
+    echo ""
+    log_success "Monitoring stack deployed!"
+}
+
+enable_k8s_dashboard() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Enabling Kubernetes Dashboard                       ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # Enable the dashboard addon
+    echo -n "  Enabling dashboard addon... "
+    minikube addons enable dashboard -p "$MINIKUBE_PROFILE" >/dev/null 2>&1
+    echo "✓"
+    
+    # Wait for dashboard pods
+    sleep 3
+    
+    # Patch deployments to remove image digests (allows using pre-loaded images)
+    echo -n "  Patching deployments... "
+    kubectl patch deployment kubernetes-dashboard -n kubernetes-dashboard --type='json' \
+        -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": "docker.io/kubernetesui/dashboard:v2.7.0"}]' >/dev/null 2>&1 || true
+    kubectl patch deployment dashboard-metrics-scraper -n kubernetes-dashboard --type='json' \
+        -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": "docker.io/kubernetesui/metrics-scraper:v1.0.8"}]' >/dev/null 2>&1 || true
+    echo "✓"
+    
+    # Wait for pods to be ready
+    echo -n "  Waiting for dashboard pods... "
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        local ready
+        ready=$(kubectl get pods -n kubernetes-dashboard --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null) || ready=0
+        if [ "$ready" -ge 2 ]; then
+            echo "✓"
+            break
+        fi
+        sleep 2
+        retries=$((retries - 1))
+    done
+    
+    if [ $retries -eq 0 ]; then
+        echo "timeout (may still be starting)"
+    fi
+    
+    echo ""
+    log_success "Kubernetes Dashboard enabled!"
+}
+
+deploy_weather_wms() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Deploying Weather WMS Application                   ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    
+    log_info "Installing Helm chart..."
+    
+    # Deploy the weather-wms Helm chart
+    # - Disable subcharts (we deployed infra separately)
+    # - Use explicit URLs pointing to our standalone services
+    # - Use Never pull policy since images are pre-loaded
+    # - Disable ingress (we use port-forward for local dev)
+    if helm upgrade --install "$HELM_RELEASE" deploy/helm/weather-wms \
         --namespace "$NAMESPACE" \
-        --set auth.rootUser=minioadmin \
-        --set auth.rootPassword=minioadmin \
-        --set persistence.enabled=false \
-        --set defaultBuckets=weather-data \
-        --wait --timeout 5m || true
+        -f deploy/helm/weather-wms/values-dev.yaml \
+        --set redis.enabled=false \
+        --set postgresql.enabled=false \
+        --set minio.enabled=false \
+        --set config.redis.url="redis://redis-master:6379" \
+        --set config.database.url="postgresql://weatherwms:weatherwms@postgresql:5432/weatherwms" \
+        --set config.s3.endpoint="http://minio:9000" \
+        --set api.image.pullPolicy=Never \
+        --set ingester.image.pullPolicy=Never \
+        --set renderer.image.pullPolicy=Never \
+        --set dashboard.image.pullPolicy=Never \
+        --set api.ingress.enabled=false \
+        --wait --timeout 10m 2>&1 | grep -E 'STATUS|REVISION|deployed|failed|error' | head -5; then
+        echo ""
+        log_success "Weather WMS application deployed!"
+    else
+        log_error "Failed to deploy Weather WMS!"
+        echo ""
+        log_info "Debug: Check pod status with:"
+        echo "  kubectl get pods -n $NAMESPACE"
+        echo "  kubectl describe pods -n $NAMESPACE"
+        return 1
+    fi
+}
+
+setup_port_forwards() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Setting up Port Forwards                            ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
     
-    log_success "Development stack deployed!"
+    # Kill any existing port forwards
+    pkill -f "kubectl port-forward" 2>/dev/null || true
+    sleep 1
+    
+    # Create a directory for port-forward logs
+    local pf_log_dir="/tmp/weather-wms-port-forwards"
+    mkdir -p "$pf_log_dir"
+    
+    log_info "Starting port forwards..."
+    echo ""
+    
+    # Get actual service names
+    local api_svc=$(kubectl get svc -n "$NAMESPACE" -o name 2>/dev/null | grep -E 'api$' | head -1)
+    local dashboard_svc=$(kubectl get svc -n "$NAMESPACE" -o name 2>/dev/null | grep -E 'wms.*dashboard$' | head -1)
+    
+    # Port forward WMS API (8080)
+    if [ -n "$api_svc" ]; then
+        nohup kubectl port-forward -n "$NAMESPACE" "$api_svc" 8080:8080 \
+            > "$pf_log_dir/api.log" 2>&1 &
+        echo $! > "$pf_log_dir/api.pid"
+        echo "    ✓ WMS API:          http://localhost:8080"
+    else
+        echo "    ✗ WMS API service not found"
+    fi
+    
+    # Port forward Weather Dashboard (8000)
+    if [ -n "$dashboard_svc" ]; then
+        nohup kubectl port-forward -n "$NAMESPACE" "$dashboard_svc" 8000:8000 \
+            > "$pf_log_dir/dashboard.log" 2>&1 &
+        echo $! > "$pf_log_dir/dashboard.pid"
+        echo "    ✓ Weather Dashboard: http://localhost:8000"
+    else
+        echo "    ✗ Weather Dashboard service not found"
+    fi
+    
+    # Port forward MinIO API (9000) and Console (9001)
+    if kubectl get svc minio -n "$NAMESPACE" &>/dev/null; then
+        nohup kubectl port-forward -n "$NAMESPACE" svc/minio 9000:9000 9001:9001 \
+            > "$pf_log_dir/minio.log" 2>&1 &
+        echo $! > "$pf_log_dir/minio.pid"
+        echo "    ✓ MinIO Console:    http://localhost:9001  (minioadmin/minioadmin)"
+    fi
+    
+    # Port forward Grafana (3000)
+    if kubectl get svc grafana -n "$NAMESPACE" &>/dev/null; then
+        nohup kubectl port-forward -n "$NAMESPACE" svc/grafana 3000:3000 \
+            > "$pf_log_dir/grafana.log" 2>&1 &
+        echo $! > "$pf_log_dir/grafana.pid"
+        echo "    ✓ Grafana:          http://localhost:3000  (admin/admin)"
+    fi
+    
+    # Port forward Prometheus (9090)
+    if kubectl get svc prometheus -n "$NAMESPACE" &>/dev/null; then
+        nohup kubectl port-forward -n "$NAMESPACE" svc/prometheus 9090:9090 \
+            > "$pf_log_dir/prometheus.log" 2>&1 &
+        echo $! > "$pf_log_dir/prometheus.pid"
+        echo "    ✓ Prometheus:       http://localhost:9090"
+    fi
+    
+    # Start kubectl proxy for K8s Dashboard and API access (8001)
+    if kubectl get svc kubernetes-dashboard -n kubernetes-dashboard &>/dev/null; then
+        nohup kubectl proxy --port=8001 \
+            > "$pf_log_dir/k8s-dashboard.log" 2>&1 &
+        echo $! > "$pf_log_dir/k8s-dashboard.pid"
+        echo "    ✓ K8s Dashboard:    http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/"
+    fi
+    
+    echo ""
+    
+    # Wait for port forwards to establish
+    log_info "Waiting for port forwards to establish..."
+    local retries=10
+    while [ $retries -gt 0 ]; do
+        sleep 1
+        if curl -s --max-time 2 "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities" &>/dev/null; then
+            break
+        fi
+        retries=$((retries - 1))
+    done
+    
+    if [ $retries -gt 0 ]; then
+        log_success "Port forwards are active and services are responding!"
+    else
+        log_warn "Port forwards started but API may still be initializing..."
+        log_info "Check logs: cat $pf_log_dir/*.log"
+    fi
+    
+    echo ""
+    echo "  Port forward logs: $pf_log_dir/"
+    echo "  To stop port forwards: pkill -f 'kubectl port-forward'"
+}
+
+run_k8s_data_ingestion() {
+    log_info "Running data ingestion in Kubernetes..."
+    
+    # Ensure port forwards are active for data services
+    echo "  Ensuring port forwards are active..."
+    
+    # Check and start PostgreSQL port-forward if needed
+    if ! netstat -tlnp 2>/dev/null | grep -q ":5432" && ! ss -tlnp 2>/dev/null | grep -q ":5432"; then
+        kubectl port-forward -n "$NAMESPACE" svc/postgresql 5432:5432 &>/dev/null &
+        sleep 1
+    fi
+    
+    # Check and start Redis port-forward if needed
+    if ! netstat -tlnp 2>/dev/null | grep -q ":6379" && ! ss -tlnp 2>/dev/null | grep -q ":6379"; then
+        kubectl port-forward -n "$NAMESPACE" svc/redis-master 6379:6379 &>/dev/null &
+        sleep 1
+    fi
+    
+    # Check and start MinIO port-forward if needed
+    if ! netstat -tlnp 2>/dev/null | grep -q ":9000" && ! ss -tlnp 2>/dev/null | grep -q ":9000"; then
+        kubectl port-forward -n "$NAMESPACE" svc/minio 9000:9000 &>/dev/null &
+        sleep 1
+    fi
+    
+    # Ensure MinIO bucket exists
+    echo "  Ensuring MinIO bucket exists..."
+    kubectl exec -n "$NAMESPACE" deployment/minio -- mc alias set local http://localhost:9000 minioadmin minioadmin &>/dev/null || true
+    kubectl exec -n "$NAMESPACE" deployment/minio -- mc mb --ignore-existing local/weather-data &>/dev/null || true
+    
+    # Wait for API to be ready
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        if curl -s "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities" &>/dev/null; then
+            break
+        fi
+        echo -ne "\rWaiting for API to be ready... ($retries seconds remaining)"
+        sleep 1
+        retries=$((retries - 1))
+    done
+    echo ""
+    
+    if [ $retries -eq 0 ]; then
+        log_warn "API may not be fully ready yet. Skipping data ingestion."
+        return
+    fi
+    
+    # Run the ingestion script (it will use localhost URLs via port-forward)
+    if bash scripts/ingest_test_data.sh; then
+        log_success "Data ingestion completed!"
+    else
+        log_warn "Data ingestion had issues, but services are still running"
+    fi
 }
 
 wait_for_pods() {
     local namespace=$1
     local timeout=${2:-300}
     
-    log_info "Waiting for pods in namespace '$namespace' to be ready..."
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Waiting for Pods to be Ready                        ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
     
     local start_time=$(date +%s)
+    local last_status=""
+    
     while true; do
         local current_time=$(date +%s)
         local elapsed=$((current_time - start_time))
         
         if [ $elapsed -gt $timeout ]; then
-            log_error "Timeout waiting for pods"
+            echo ""
+            log_error "Timeout waiting for pods after ${timeout}s"
+            echo ""
             kubectl get pods -n "$namespace"
             return 1
         fi
         
-        local not_ready=$(kubectl get pods -n "$namespace" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "False" || echo "0")
+        # Get pod status summary
+        local pod_status=$(kubectl get pods -n "$namespace" --no-headers 2>/dev/null | awk '{print $1": "$3}' | tr '\n' ' ')
+        local total=$(kubectl get pods -n "$namespace" --no-headers 2>/dev/null | wc -l)
+        local ready
+        ready=$(kubectl get pods -n "$namespace" --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null) || ready=0
         
-        if [ "$not_ready" -eq 0 ]; then
-            log_success "All pods are ready!"
+        # Only print if status changed
+        if [ "$pod_status" != "$last_status" ]; then
+            echo ""
+            echo "  [${elapsed}s] Pods: $ready/$total ready"
+            kubectl get pods -n "$namespace" --no-headers 2>/dev/null | while read line; do
+                local name=$(echo "$line" | awk '{print $1}')
+                local ready_col=$(echo "$line" | awk '{print $2}')
+                local status=$(echo "$line" | awk '{print $3}')
+                case "$status" in
+                    Running)
+                        echo "    ✓ $name ($status)"
+                        ;;
+                    Pending|ContainerCreating|PodInitializing)
+                        echo "    ⏳ $name ($status)"
+                        ;;
+                    *)
+                        echo "    ✗ $name ($status)"
+                        ;;
+                esac
+            done
+            last_status="$pod_status"
+        else
+            echo -ne "."
+        fi
+        
+        # Check if all pods are ready
+        local not_ready
+        not_ready=$(kubectl get pods -n "$namespace" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "False" 2>/dev/null) || not_ready=0
+        local pending
+        pending=$(kubectl get pods -n "$namespace" --no-headers 2>/dev/null | grep -c "Pending\|ContainerCreating\|PodInitializing" 2>/dev/null) || pending=0
+        
+        if [ "$not_ready" -eq 0 ] && [ "$pending" -eq 0 ] && [ "$total" -gt 0 ]; then
+            echo ""
+            log_success "All $total pods are ready!"
             return 0
         fi
         
-        echo -ne "\rWaiting... ($elapsed/$timeout seconds, $not_ready not ready)    "
-        sleep 5
+        sleep 3
     done
 }
 
@@ -534,42 +1241,51 @@ show_k8s_status() {
 
 show_k8s_access_info() {
     echo ""
-    log_success "=== Kubernetes Cluster Running ==="
+    echo ""
+    log_success "╔═══════════════════════════════════════════════════════════════╗"
+    log_success "║           Weather WMS is Ready!                               ║"
+    log_success "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  Open these URLs in your browser:"
+    echo ""
+    echo "    🌐 Weather Dashboard:  http://localhost:8000"
+    echo "    🗺️  WMS API:            http://localhost:8080"
+    echo ""
+    echo "    📊 Grafana:            http://localhost:3000   (admin/admin)"
+    echo "    📈 Prometheus:         http://localhost:9090"
+    echo "    📦 MinIO Console:      http://localhost:9001   (minioadmin/minioadmin)"
+    echo "    ☸️  K8s Dashboard:      http://localhost:8001/.../proxy/ (via kubectl proxy)"
+    echo ""
+    echo "  ─────────────────────────────────────────────────────────────────"
+    echo ""
+    echo "  Quick test commands:"
+    echo ""
+    echo "    # Get WMS capabilities"
+    echo "    curl \"http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities\""
+    echo ""
+    echo "    # View pods"
+    echo "    kubectl get pods -n $NAMESPACE"
+    echo ""
+    echo "    # View logs"
+    echo "    kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=api -f"
+    echo ""
+    echo "  ─────────────────────────────────────────────────────────────────"
+    echo ""
+    echo "  To stop:"
+    echo "    ./scripts/start.sh --stop-k8s    # Stop port forwards"
+    echo "    minikube stop -p $MINIKUBE_PROFILE       # Stop cluster"
+    echo "    minikube delete -p $MINIKUBE_PROFILE     # Delete cluster"
     echo ""
     
-    local minikube_ip=$(minikube ip -p "$MINIKUBE_PROFILE")
-    
-    echo "Minikube IP: $minikube_ip"
+    log_success "=== Additional Services ==="
     echo ""
-    
-    log_success "=== View Resources ==="
-    echo ""
-    echo "List all resources:"
-    echo "  kubectl get all -n $NAMESPACE"
-    echo ""
-    echo "Watch pods live:"
-    echo "  kubectl get pods -n $NAMESPACE -w"
-    echo ""
-    echo "View pod logs:"
-    echo "  kubectl logs -n $NAMESPACE <pod-name> -f"
-    echo ""
-    echo "See MONITORING.md for 100+ more kubectl commands"
-    echo ""
-    
-    log_success "=== Access Services ==="
-    echo ""
-    echo "PostgreSQL (port-forward in another terminal):"
+    echo "PostgreSQL:"
     echo "  kubectl port-forward -n $NAMESPACE svc/postgresql 5432:5432"
     echo "  psql -h localhost -U weatherwms -d weatherwms"
     echo ""
     echo "Redis:"
     echo "  kubectl port-forward -n $NAMESPACE svc/redis-master 6379:6379"
     echo "  redis-cli -h localhost"
-    echo ""
-    echo "MinIO:"
-    echo "  kubectl port-forward -n $NAMESPACE svc/minio 9000:9000"
-    echo "  kubectl port-forward -n $NAMESPACE svc/minio 9001:9001"
-    echo "  Access UI: http://localhost:9001 (minioadmin/minioadmin)"
     echo ""
 }
 
@@ -612,9 +1328,16 @@ main() {
             check_k8s_prerequisites
             start_minikube
             setup_namespace
+            build_k8s_images
+            preload_infra_images
+            enable_k8s_dashboard
             deploy_dependencies
             deploy_dev_stack
+            deploy_monitoring
+            deploy_weather_wms
             wait_for_pods "$NAMESPACE" 300
+            setup_port_forwards
+            run_k8s_data_ingestion
             show_k8s_status
             show_k8s_access_info
             ;;
@@ -641,6 +1364,28 @@ main() {
             if minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
                 stop_k8s
             fi
+            ;;
+        --stop-k8s)
+            log_info "Stopping Kubernetes port forwards..."
+            pkill -f "kubectl port-forward.*$NAMESPACE" 2>/dev/null || true
+            rm -rf /tmp/weather-wms-port-forwards 2>/dev/null || true
+            log_success "Port forwards stopped!"
+            echo ""
+            echo "  Cluster is still running. To stop it:"
+            echo "    minikube stop -p $MINIKUBE_PROFILE"
+            echo ""
+            echo "  To restart port forwards:"
+            echo "    ./scripts/start.sh --forward"
+            ;;
+        --forward)
+            log_info "Starting port forwards for existing cluster..."
+            if ! minikube status -p "$MINIKUBE_PROFILE" &> /dev/null; then
+                log_error "Minikube cluster '$MINIKUBE_PROFILE' is not running!"
+                echo "  Start it with: ./scripts/start.sh --kubernetes"
+                exit 1
+            fi
+            setup_port_forwards
+            show_k8s_access_info
             ;;
         --clean)
             log_info "Cleaning up..."

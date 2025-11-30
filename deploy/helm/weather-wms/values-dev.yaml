@@ -1,5 +1,14 @@
 # Development values - minimal resources, no persistence
 
+# Service URLs for standalone deployments (not using subcharts)
+config:
+  database:
+    url: "postgresql://weatherwms:weatherwms@postgresql:5432/weatherwms"
+  redis:
+    url: "redis://redis-master:6379"
+  s3:
+    endpoint: "http://minio:9000"
+
 # API - reduced replicas
 api:
   replicaCount: 1
@@ -7,11 +16,11 @@ api:
     enabled: false
   resources:
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 1Gi  # Increased from 256Mi due to OOMKills
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 100m
+      memory: 512Mi  # Increased from 128Mi
 
 # Renderer - single replica
 renderer:
@@ -20,19 +29,38 @@ renderer:
     enabled: false
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 2Gi  # Increased from 512Mi for rendering heavy workloads
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 200m
+      memory: 1Gi  # Increased from 256Mi
 
-# Ingester - disabled for initial testing
+# Ingester - enabled for dev
 ingester:
-  enabled: false
-
-# Redis - minimal
-redis:
   enabled: true
+  mode: deployment
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# Dashboard
+dashboard:
+  enabled: true
+  resources:
+    limits:
+      cpu: 50m
+      memory: 64Mi
+    requests:
+      cpu: 25m
+      memory: 32Mi
+
+# Redis - minimal (using standalone deployment, not subchart)
+redis:
+  enabled: false
   architecture: standalone
   auth:
     enabled: false
@@ -44,9 +72,9 @@ redis:
         cpu: 100m
         memory: 128Mi
 
-# PostgreSQL - minimal
+# PostgreSQL - minimal (using standalone deployment, not subchart)
 postgresql:
-  enabled: true
+  enabled: false
   auth:
     username: weatherwms
     password: weatherwms
@@ -55,13 +83,16 @@ postgresql:
     persistence:
       enabled: false
     resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
       limits:
-        cpu: 100m
+        cpu: 250m  # Match the bitnami chart's default request
         memory: 256Mi
 
-# MinIO - minimal
+# MinIO - minimal (using standalone deployment, not subchart)
 minio:
-  enabled: true
+  enabled: false
   mode: standalone
   auth:
     rootUser: minioadmin
@@ -70,6 +101,9 @@ minio:
     enabled: false
   resources:
     limits:
-      cpu: 100m
+      cpu: 200m
+      memory: 512Mi  # Increased from 256Mi (was at 291Mi)
+    requests:
+      cpu: 50m
       memory: 256Mi
   defaultBuckets: "weather-data"

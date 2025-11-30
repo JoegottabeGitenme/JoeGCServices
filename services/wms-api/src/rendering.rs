@@ -3,6 +3,7 @@
 use renderer::gradient;
 use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
+use renderer::numbers::{self, NumbersConfig};
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, ObjectStorage, GribCache};
 use std::path::Path;
@@ -2335,7 +2336,160 @@ pub async fn render_wind_barbs_layer(
     );
 
     // Encode as PNG
-    renderer::png::create_png(&barb_pixels, render_width, render_height)
+    renderer::png::create_png(&barb_pixels, width as usize, height as usize)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
+}
+
+/// Render numeric values at grid points for a parameter.
+///
+/// # Arguments
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `parameter`: Parameter name (e.g., "TMP")
+/// - `width`: Output image width
+/// - `height`: Output image height
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
+/// - `style_path`: Path to style configuration file (for color mapping)
+/// - `forecast_hour`: Optional forecast hour
+/// - `level`: Optional vertical level
+/// - `use_mercator`: Use Web Mercator projection
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_numbers_tile(
+    grib_cache: &GribCache,
+    catalog: &Catalog,
+    model: &str,
+    parameter: &str,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+    style_path: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+    use_mercator: bool,
+) -> Result<Vec<u8>, String> {
+    // Load style configuration for color mapping
+    let style_json = std::fs::read_to_string(style_path)
+        .map_err(|e| format!("Failed to read style file: {}", e))?;
+    let style_config: StyleConfig = serde_json::from_str(&style_json)
+        .map_err(|e| format!("Failed to parse style JSON: {}", e))?;
+
+    // Get the first style definition (there should only be one in the file)
+    let style_def = style_config.styles.values().next()
+        .ok_or_else(|| "No style definition found in style file".to_string())?;
+
+    // Get dataset for this parameter, optionally at a specific level
+    let entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, parameter, hour)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest_run_earliest_forecast(model, parameter)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+        }
+    };
+
+    // Load GRIB2 file from cache
+    let grib_data = grib_cache
+        .get(&entry.storage_path)
+        .await
+        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+
+    // Parse GRIB2 and find parameter with matching level
+    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
+
+    // Unpack grid data
+    let grid_data = msg
+        .unpack_data()
+        .map_err(|e| format!("Unpacking failed: {}", e))?;
+
+    let (grid_height, grid_width) = msg.grid_dims();
+    let grid_width = grid_width as usize;
+    let grid_height = grid_height as usize;
+
+    info!(
+        parameter = parameter,
+        grid_width = grid_width,
+        grid_height = grid_height,
+        "Loaded grid data for numbers rendering"
+    );
+
+    // Get data bounds from catalog entry
+    let data_bounds = [
+        entry.bbox.min_x as f32,
+        entry.bbox.min_y as f32,
+        entry.bbox.max_x as f32,
+        entry.bbox.max_y as f32,
+    ];
+
+    // Resample data to the render bbox
+    let resampled_data = resample_grid_for_bbox(
+        &grid_data,
+        grid_width,
+        grid_height,
+        width as usize,
+        height as usize,
+        bbox,
+        data_bounds,
+        use_mercator,
+        model,
+    );
+
+    // Convert flat array to 2D grid for numbers renderer
+    let grid_2d: Vec<Vec<f32>> = (0..height as usize)
+        .map(|y| {
+            (0..width as usize)
+                .map(|x| resampled_data[y * width as usize + x])
+                .collect()
+        })
+        .collect();
+
+    // Determine unit conversion (e.g., K to C for temperature)
+    let unit_conversion = if parameter.contains("TMP") || parameter.contains("TEMP") {
+        Some(273.15) // Kelvin to Celsius
+    } else {
+        None
+    };
+
+    // Build NumbersConfig
+    let numbers_config = NumbersConfig {
+        spacing: 50, // 50 pixels between numbers
+        font_size: 12.0,
+        color_stops: style_def.stops.clone(),
+        unit_conversion,
+    };
+
+    // Render numbers
+    let img = numbers::render_numbers(&grid_2d, width, height, &numbers_config);
+
+    // Convert RgbaImage to flat RGBA buffer
+    let pixels = img.into_raw();
+
+    // Encode as PNG
+    renderer::png::create_png(&pixels, width as usize, height as usize)
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
 
@@ -2388,8 +2542,11 @@ pub async fn query_point_value(
         let (max_lon, max_lat) = mercator_to_wgs84(max_x, max_y);
         pixel_to_geographic(i, j, width, height, [min_lon, min_lat, max_lon, max_lat])
     } else {
-        // Assume WGS84 (EPSG:4326)
-        pixel_to_geographic(i, j, width, height, bbox)
+        // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+        // So bbox is [min_lat, min_lon, max_lat, max_lon]
+        // But pixel_to_geographic expects [min_lon, min_lat, max_lon, max_lat]
+        let [min_lat, min_lon, max_lat, max_lon] = bbox;
+        pixel_to_geographic(i, j, width, height, [min_lon, min_lat, max_lon, max_lat])
     };
     
     info!(
@@ -2458,7 +2615,7 @@ pub async fn query_point_value(
     let grid_height = grid_height as usize;
     
     // Sample value at the point using bilinear interpolation
-    let value = sample_grid_value(&grid_data, grid_width, grid_height, lon, lat)?;
+    let value = sample_grid_value(&grid_data, grid_width, grid_height, lon, lat, model)?;
     
     // Convert value based on parameter type
     let (display_value, display_unit, raw_unit, param_name) = convert_parameter_value(&parameter, value);
@@ -2574,8 +2731,8 @@ async fn query_wind_barbs_value(
     let grid_height = grid_height as usize;
     
     // Sample both components
-    let u = sample_grid_value(&u_data, grid_width, grid_height, lon, lat)?;
-    let v = sample_grid_value(&v_data, grid_width, grid_height, lon, lat)?;
+    let u = sample_grid_value(&u_data, grid_width, grid_height, lon, lat, model)?;
+    let v = sample_grid_value(&v_data, grid_width, grid_height, lon, lat, model)?;
     
     // Calculate speed and direction
     let speed = (u * u + v * v).sqrt();
@@ -2619,8 +2776,14 @@ fn sample_grid_value(
     grid_height: usize,
     lon: f64,
     lat: f64,
+    model: &str,
 ) -> Result<f32, String> {
-    // GRIB grid: lat 90 to -90, lon 0 to 360
+    // Handle HRRR's Lambert Conformal projection
+    if model == "hrrr" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    }
+    
+    // GFS and other models use global lat/lon grids: lat 90 to -90, lon 0 to 360
     let lon_step = 360.0 / grid_width as f64;
     let lat_step = 180.0 / grid_height as f64;
     
@@ -2636,20 +2799,57 @@ fn sample_grid_value(
         return Err(format!("Point ({}, {}) outside grid bounds", lon, lat));
     }
     
-    // Bilinear interpolation
+    bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, true)
+}
+
+/// Sample a Lambert Conformal grid (HRRR) at a geographic point
+fn sample_lambert_grid_value(
+    grid_data: &[f32],
+    grid_width: usize,
+    grid_height: usize,
+    lon: f64,
+    lat: f64,
+) -> Result<f32, String> {
+    // Create HRRR projection
+    let proj = LambertConformal::hrrr();
+    
+    // Convert geographic coordinates (lat, lon) to Lambert grid coordinates (i, j)
+    let (grid_x, grid_y) = proj.geo_to_grid(lat, lon);
+    
+    // Bounds check
+    if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 || grid_y >= grid_height as f64 {
+        return Err(format!("Point ({}, {}) outside HRRR grid bounds (grid coords: {}, {})", lon, lat, grid_x, grid_y));
+    }
+    
+    bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false)
+}
+
+/// Perform bilinear interpolation at grid coordinates
+fn bilinear_interpolate(
+    grid_data: &[f32],
+    grid_width: usize,
+    grid_height: usize,
+    grid_x: f64,
+    grid_y: f64,
+    wrap_longitude: bool,
+) -> Result<f32, String> {
     let x1 = grid_x.floor() as usize;
     let y1 = grid_y.floor() as usize;
-    let x2 = if x1 + 1 >= grid_width { 0 } else { x1 + 1 }; // Longitude wrap-around
-    let y2 = (y1 + 1).min(grid_height - 1); // Latitude clamp
+    let x2 = if wrap_longitude {
+        if x1 + 1 >= grid_width { 0 } else { x1 + 1 }
+    } else {
+        (x1 + 1).min(grid_width - 1)
+    };
+    let y2 = (y1 + 1).min(grid_height - 1);
     
     let dx = grid_x - x1 as f64;
     let dy = grid_y - y1 as f64;
     
     // Sample four surrounding grid points
-    let v11 = grid_data.get(y1 * grid_width + x1).copied().unwrap_or(0.0);
-    let v21 = grid_data.get(y1 * grid_width + x2).copied().unwrap_or(0.0);
-    let v12 = grid_data.get(y2 * grid_width + x1).copied().unwrap_or(0.0);
-    let v22 = grid_data.get(y2 * grid_width + x2).copied().unwrap_or(0.0);
+    let v11 = grid_data.get(y1 * grid_width + x1).copied().unwrap_or(f32::NAN);
+    let v21 = grid_data.get(y1 * grid_width + x2).copied().unwrap_or(f32::NAN);
+    let v12 = grid_data.get(y2 * grid_width + x1).copied().unwrap_or(f32::NAN);
+    let v22 = grid_data.get(y2 * grid_width + x2).copied().unwrap_or(f32::NAN);
     
     // Bilinear interpolation
     let v1 = v11 * (1.0 - dx as f32) + v21 * dx as f32;
@@ -2843,6 +3043,21 @@ pub async fn render_isolines_tile_with_level(
         model,
     );
     
+    // Log resampled data stats for debugging
+    let resampled_valid: Vec<f32> = resampled_data.iter().filter(|v| !v.is_nan()).copied().collect();
+    let resampled_min = resampled_valid.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+    let resampled_max = resampled_valid.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let nan_count = resampled_data.iter().filter(|v| v.is_nan()).count();
+    
+    info!(
+        resampled_min = resampled_min,
+        resampled_max = resampled_max,
+        valid_count = resampled_valid.len(),
+        nan_count = nan_count,
+        total = resampled_data.len(),
+        "Resampled data stats for isolines"
+    );
+    
     // Generate contour levels from style config
     let levels = style_config.generate_levels(min_val, max_val);
     
@@ -2853,12 +3068,42 @@ pub async fn render_isolines_tile_with_level(
         "Generated contour levels"
     );
     
+    // Build special level configs from style
+    let special_levels: Vec<contour::SpecialLevelConfig> = style_config.contour.special_levels
+        .as_ref()
+        .map(|levels| {
+            levels.iter().map(|sl| {
+                // Convert from display units to data units
+                let level_in_data_units = if let Some(conv) = style_config.contour.unit_conversion {
+                    sl.value + conv
+                } else {
+                    sl.value
+                };
+                contour::SpecialLevelConfig {
+                    level: level_in_data_units,
+                    line_color: sl.line_color,
+                    line_width: sl.line_width,
+                    label: sl.label.clone(),
+                }
+            }).collect()
+        })
+        .unwrap_or_default();
+    
+    // Calculate label unit offset (to display in user-friendly units)
+    // If unit_conversion is 273.15 (K to C), offset should be -273.15
+    let label_unit_offset = style_config.contour.unit_conversion.map(|c| -c).unwrap_or(0.0);
+    
     // Build ContourConfig
     let contour_config = contour::ContourConfig {
         levels,
         line_width: style_config.contour.line_width,
         line_color: style_config.contour.line_color,
         smoothing_passes: style_config.contour.smoothing_passes.unwrap_or(1),
+        labels_enabled: style_config.contour.labels.unwrap_or(false),
+        label_font_size: style_config.contour.label_font_size.unwrap_or(10.0),
+        label_spacing: style_config.contour.label_spacing.unwrap_or(150.0),
+        label_unit_offset,
+        special_levels,
     };
     
     // Render contours

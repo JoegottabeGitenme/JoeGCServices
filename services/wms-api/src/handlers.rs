@@ -693,6 +693,17 @@ async fn wmts_get_tile(
         )
         .await
     } else if style == "isolines" {
+        // Isolines are only supported for GRIB2 data (GFS, HRRR temperature)
+        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
+        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
+        if is_netcdf_model {
+            return wmts_exception(
+                "StyleNotDefined",
+                &format!("Isolines style is not supported for {} layers. Isolines are only available for temperature parameters (GFS, HRRR).", model.to_uppercase()),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+        
         // Render isolines (contours) for this parameter
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
@@ -708,6 +719,51 @@ async fn wmts_get_tile(
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
+            256,  // tile width
+            256,  // tile height
+            bbox_array,
+            &style_file,
+            forecast_hour,
+            elevation,
+            true,  // WMTS tiles are always in Web Mercator
+        )
+        .await
+    } else if style == "numbers" {
+        // Numbers style is only supported for GRIB2 data (GFS, HRRR)
+        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
+        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
+        if is_netcdf_model {
+            return wmts_exception(
+                "StyleNotDefined",
+                &format!("Numbers style is not supported for {} layers. Numbers are only available for gridded parameters (GFS, HRRR).", model.to_uppercase()),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+        
+        // Get appropriate style file for color mapping
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature.json", style_config_dir)
+        } else if parameter.contains("WIND") || parameter.contains("GUST") {
+            format!("{}/wind.json", style_config_dir)
+        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
+            format!("{}/atmospheric.json", style_config_dir)
+        } else if parameter.contains("PRECIP_RATE") {
+            format!("{}/precip_rate.json", style_config_dir)
+        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
+            format!("{}/precipitation.json", style_config_dir)
+        } else if parameter.contains("REFL") {
+            format!("{}/reflectivity.json", style_config_dir)
+        } else {
+            // Default to temperature for generic parameters
+            format!("{}/temperature.json", style_config_dir)
+        };
+        
+        crate::rendering::render_numbers_tile(
+            &state.grib_cache,
+            &state.catalog,
+            model,
+            &parameter,
             256,  // tile width
             256,  // tile height
             bbox_array,
@@ -1197,6 +1253,16 @@ async fn render_weather_data(
     let use_mercator = crs_str.contains("3857");
     
     if style == "isolines" {
+        // Isolines are only supported for GRIB2 data (GFS, HRRR temperature)
+        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
+        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
+        if is_netcdf_model {
+            return Err(format!(
+                "Isolines style is not supported for {} layers. Isolines are only available for temperature parameters (GFS, HRRR).",
+                model.to_uppercase()
+            ));
+        }
+        
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
             format!("{}/temperature_isolines.json", style_config_dir)
@@ -1212,6 +1278,51 @@ async fn render_weather_data(
             model,
             &parameter,
             None,  // No tile coordinate - render full bbox
+            width,
+            height,
+            parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
+            &style_file,
+            forecast_hour,
+            level.as_deref(),
+            use_mercator,
+        )
+        .await;
+    }
+    
+    if style == "numbers" {
+        // Numbers style is only supported for GRIB2 data (GFS, HRRR)
+        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
+        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
+        if is_netcdf_model {
+            return Err(format!(
+                "Numbers style is not supported for {} layers. Numbers are only available for gridded parameters (GFS, HRRR).",
+                model.to_uppercase()
+            ));
+        }
+        
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature.json", style_config_dir)
+        } else if parameter.contains("WIND") || parameter.contains("GUST") {
+            format!("{}/wind.json", style_config_dir)
+        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
+            format!("{}/atmospheric.json", style_config_dir)
+        } else if parameter.contains("PRECIP_RATE") {
+            format!("{}/precip_rate.json", style_config_dir)
+        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
+            format!("{}/precipitation.json", style_config_dir)
+        } else if parameter.contains("REFL") {
+            format!("{}/reflectivity.json", style_config_dir)
+        } else {
+            // Default to temperature for generic parameters
+            format!("{}/temperature.json", style_config_dir)
+        };
+        
+        return crate::rendering::render_numbers_tile(
+            &state.grib_cache,
+            &state.catalog,
+            model,
+            &parameter,
             width,
             height,
             parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
@@ -1551,21 +1662,21 @@ fn build_wms_capabilities_xml(
                     
                     // Add styles to each layer
                     let styles = if p.contains("TMP") || p.contains("TEMP") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("WIND") || p.contains("GUST") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("PRES") || p.contains("PRMSL") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("RH") || p.contains("HUMID") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>humidity</Name><Title>Humidity</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>humidity</Name><Title>Humidity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("REFL") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>reflectivity</Name><Title>Radar Reflectivity</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>reflectivity</Name><Title>Radar Reflectivity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("PRECIP_RATE") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precip_rate</Name><Title>Precipitation Rate</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precip_rate</Name><Title>Precipitation Rate</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("QPE") || p.contains("PRECIP") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else {
-                        "<Style><Name>default</Name><Title>Default</Title></Style>"
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     };
                     
                     format!(
@@ -1715,6 +1826,10 @@ fn build_wmts_capabilities_xml(
       <Style>
         <ows:Title>Temperature Isolines</ows:Title>
         <ows:Identifier>isolines</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Numeric Values</ows:Title>
+        <ows:Identifier>numbers</ows:Identifier>
       </Style>"#
                 } else if param.contains("WIND") || param.contains("GUST") {
                     r#"      <Style isDefault="true">
@@ -1724,6 +1839,10 @@ fn build_wmts_capabilities_xml(
       <Style>
         <ows:Title>Wind Speed</ows:Title>
         <ows:Identifier>wind</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Numeric Values</ows:Title>
+        <ows:Identifier>numbers</ows:Identifier>
       </Style>"#
                 } else if param.contains("PRES") || param.contains("PRMSL") {
                     r#"      <Style isDefault="true">
@@ -1733,6 +1852,10 @@ fn build_wmts_capabilities_xml(
       <Style>
         <ows:Title>Atmospheric Pressure</ows:Title>
         <ows:Identifier>atmospheric</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Numeric Values</ows:Title>
+        <ows:Identifier>numbers</ows:Identifier>
       </Style>"#
                 } else if param.contains("RH") || param.contains("HUMID") || param.contains("PRECIP") {
                     r#"      <Style isDefault="true">
@@ -1742,11 +1865,19 @@ fn build_wmts_capabilities_xml(
       <Style>
         <ows:Title>Precipitation</ows:Title>
         <ows:Identifier>precipitation</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Numeric Values</ows:Title>
+        <ows:Identifier>numbers</ows:Identifier>
       </Style>"#
                 } else {
                     r#"      <Style isDefault="true">
         <ows:Title>Default</ows:Title>
         <ows:Identifier>default</ows:Identifier>
+      </Style>
+      <Style>
+        <ows:Title>Numeric Values</ows:Title>
+        <ows:Identifier>numbers</ows:Identifier>
       </Style>"#
                 };
                 
@@ -2193,6 +2324,38 @@ async fn prefetch_single_tile(
             256,
             bbox_array,
             &style_file,
+            None,
+            true,
+        )
+        .await
+    } else if style == "numbers" {
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+            format!("{}/temperature.json", style_config_dir)
+        } else if parameter.contains("WIND") || parameter.contains("GUST") {
+            format!("{}/wind.json", style_config_dir)
+        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
+            format!("{}/atmospheric.json", style_config_dir)
+        } else if parameter.contains("PRECIP_RATE") {
+            format!("{}/precip_rate.json", style_config_dir)
+        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
+            format!("{}/precipitation.json", style_config_dir)
+        } else if parameter.contains("REFL") {
+            format!("{}/reflectivity.json", style_config_dir)
+        } else {
+            format!("{}/temperature.json", style_config_dir)
+        };
+        
+        crate::rendering::render_numbers_tile(
+            &state.grib_cache,
+            &state.catalog,
+            model,
+            &parameter,
+            256,
+            256,
+            bbox_array,
+            &style_file,
+            None,
             None,
             true,
         )

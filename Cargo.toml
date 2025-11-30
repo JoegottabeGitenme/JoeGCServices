@@ -64,6 +64,9 @@ crc32fast = "1.3"  # for PNG CRC
 resvg = "0.42"  # for SVG rendering (wind barbs)
 usvg = "0.42"  # SVG parsing for resvg
 tiny-skia = "0.11"  # raster backend for resvg
+image = "0.24"  # for advanced image operations
+rusttype = "0.9"  # for TrueType font rendering
+imageproc = "0.23"  # for drawing text on images
 
 # GRIB2 parsing
 grib = { version = "0.13.5", default-features = false, features = ["png-unpack-with-png-crate"] }  # GRIB2 support with PNG unpacking only

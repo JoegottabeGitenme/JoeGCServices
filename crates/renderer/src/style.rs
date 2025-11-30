@@ -82,7 +82,34 @@ pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// Contour style configuration
+/// Contour style configuration (nested format from JSON files)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContourStyleFile {
+    pub version: Option<String>,
+    pub metadata: Option<ContourMetadata>,
+    pub styles: std::collections::HashMap<String, ContourStyleDefinition>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContourMetadata {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// A single contour style definition within the file
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContourStyleDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub style_type: String,
+    pub units: Option<String>,
+    pub transform: Option<Transform>,
+    pub contour: ContourOptions,
+    pub legend: Option<Legend>,
+}
+
+/// Contour style configuration (flattened for rendering use)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ContourStyle {
     pub name: String,
@@ -103,21 +130,184 @@ pub struct ContourOptions {
     pub min_value: Option<f32>,
     pub max_value: Option<f32>,
     pub line_width: f32,
+    #[serde(deserialize_with = "deserialize_color")]
     pub line_color: [u8; 4],
     pub smoothing_passes: Option<u32>,
+    pub base: Option<f32>,
+    pub major_interval: Option<u32>,
+    pub major_line_width: Option<f32>,
+    pub labels: Option<bool>,
+    pub label_font_size: Option<f32>,
+    /// Minimum spacing between labels along a contour (in pixels)
+    pub label_spacing: Option<f32>,
+    /// Special levels with custom styling (e.g., freezing level)
+    pub special_levels: Option<Vec<SpecialLevel>>,
+}
+
+/// Special level with custom styling
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SpecialLevel {
+    /// The value in display units (e.g., 0 for 0°C)
+    pub value: f32,
+    /// Custom line color for this level
+    #[serde(default, deserialize_with = "deserialize_color_option")]
+    pub line_color: Option<[u8; 4]>,
+    /// Custom line width for this level
+    pub line_width: Option<f32>,
+    /// Custom label for this level (e.g., "Freezing")
+    pub label: Option<String>,
+}
+
+/// Custom deserializer for optional color
+fn deserialize_color_option<'de, D>(deserializer: D) -> Result<Option<[u8; 4]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    
+    struct ColorOptionVisitor;
+    
+    impl<'de> Visitor<'de> for ColorOptionVisitor {
+        type Value = Option<[u8; 4]>;
+        
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a hex color string like '#FF0000', an RGBA array [255, 0, 0, 255], or null")
+        }
+        
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let hex = value.trim_start_matches('#');
+            if hex.len() == 6 {
+                let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
+                let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
+                let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
+                Ok(Some([r, g, b, 255]))
+            } else if hex.len() == 8 {
+                let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
+                let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
+                let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
+                let a = u8::from_str_radix(&hex[6..8], 16).map_err(de::Error::custom)?;
+                Ok(Some([r, g, b, a]))
+            } else {
+                Err(de::Error::custom(format!("invalid hex color: {}", value)))
+            }
+        }
+        
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let r = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+            let g = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(1, &self))?;
+            let b = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+            let a = seq.next_element()?.unwrap_or(255u8);
+            Ok(Some([r, g, b, a]))
+        }
+    }
+    
+    deserializer.deserialize_any(ColorOptionVisitor)
+}
+
+/// Custom deserializer for color that handles both hex strings and arrays
+fn deserialize_color<'de, D>(deserializer: D) -> Result<[u8; 4], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    
+    struct ColorVisitor;
+    
+    impl<'de> Visitor<'de> for ColorVisitor {
+        type Value = [u8; 4];
+        
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a hex color string like '#FF0000' or an RGBA array [255, 0, 0, 255]")
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let hex = value.trim_start_matches('#');
+            if hex.len() == 6 {
+                let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
+                let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
+                let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
+                Ok([r, g, b, 255])
+            } else if hex.len() == 8 {
+                let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
+                let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
+                let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
+                let a = u8::from_str_radix(&hex[6..8], 16).map_err(de::Error::custom)?;
+                Ok([r, g, b, a])
+            } else {
+                Err(de::Error::custom(format!("invalid hex color: {}", value)))
+            }
+        }
+        
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let r = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+            let g = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(1, &self))?;
+            let b = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+            let a = seq.next_element()?.unwrap_or(255u8);
+            Ok([r, g, b, a])
+        }
+    }
+    
+    deserializer.deserialize_any(ColorVisitor)
 }
 
 impl ContourStyle {
     /// Load contour style from JSON file
+    /// Supports both nested format (with styles.default) and flat format
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_file_with_style(path, "default")
+    }
+    
+    /// Load a specific style variant from JSON file
+    pub fn from_file_with_style(path: &str, style_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
+        
+        // First try to parse as nested format (with styles map)
+        if let Ok(file) = serde_json::from_str::<ContourStyleFile>(&content) {
+            let style_def = file.styles.get(style_name)
+                .ok_or_else(|| format!("Style '{}' not found in {}", style_name, path))?;
+            
+            return Ok(ContourStyle {
+                name: style_def.name.clone(),
+                title: Some(style_def.name.clone()),
+                description: style_def.description.clone(),
+                style_type: style_def.style_type.clone(),
+                units: style_def.units.clone(),
+                contour: style_def.contour.clone(),
+            });
+        }
+        
+        // Fall back to flat format (direct ContourStyle)
         Ok(serde_json::from_str(&content)?)
     }
     
     /// Generate contour levels from the configuration
     pub fn generate_levels(&self, data_min: f32, data_max: f32) -> Vec<f32> {
-        use crate::contour::generate_contour_levels;
-        
         // If levels are explicitly specified, use them
         if let Some(ref levels) = self.contour.levels {
             return levels.clone();
@@ -127,25 +317,36 @@ impl ContourStyle {
         if let Some(interval) = self.contour.interval {
             let min = self.contour.min_value.unwrap_or(data_min);
             let max = self.contour.max_value.unwrap_or(data_max);
+            let base = self.contour.base.unwrap_or(0.0);
             
-            // Apply unit conversion if specified (e.g., Kelvin to Celsius)
-            let min_converted = if let Some(conversion) = self.contour.unit_conversion {
-                min + conversion
-            } else {
-                min
-            };
-            let max_converted = if let Some(conversion) = self.contour.unit_conversion {
-                max + conversion
-            } else {
-                max
-            };
+            // Generate levels in display units (e.g., Celsius) starting from base
+            // This ensures levels align with nice values like 0°C
+            let mut levels = Vec::new();
             
-            // Generate levels in converted units
-            let levels = generate_contour_levels(min_converted, max_converted, interval);
+            // Start from the base and go down to min
+            let mut level = base;
+            while level >= min {
+                if level >= min && level <= max {
+                    levels.push(level);
+                }
+                level -= interval;
+            }
             
-            // Convert back to original units
+            // Go up from base to max
+            level = base + interval;
+            while level <= max {
+                if level >= min && level <= max {
+                    levels.push(level);
+                }
+                level += interval;
+            }
+            
+            // Sort levels
+            levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // Convert to data units if unit_conversion is specified
             if let Some(conversion) = self.contour.unit_conversion {
-                levels.into_iter().map(|l| l - conversion).collect()
+                levels.iter().map(|&l| l + conversion).collect()
             } else {
                 levels
             }
