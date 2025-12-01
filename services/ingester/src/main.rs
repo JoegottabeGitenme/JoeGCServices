@@ -4,6 +4,7 @@
 //! GRIB2/NetCDF files into object storage with catalog updates.
 
 mod config;
+mod config_loader;
 mod ingest;
 mod sources;
 
@@ -77,9 +78,25 @@ async fn main() -> Result<()> {
 
     info!("Starting weather data ingester");
 
-    // Load configuration
-    let config = IngesterConfig::from_env()?;
-    info!(models = ?config.models.keys().collect::<Vec<_>>(), "Loaded configuration");
+    // Load configuration (try YAML first, fall back to env vars)
+    let config = if std::path::Path::new("config/ingestion.yaml").exists() {
+        info!("Loading configuration from YAML files");
+        match IngesterConfig::from_yaml(".") {
+            Ok(cfg) => {
+                info!(models = ?cfg.models.keys().collect::<Vec<_>>(), "Loaded configuration from YAML");
+                cfg
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load YAML config, falling back to environment variables");
+                IngesterConfig::from_env()?
+            }
+        }
+    } else {
+        info!("No YAML config found, loading from environment variables");
+        IngesterConfig::from_env()?
+    };
+    
+    info!(models = ?config.models.keys().collect::<Vec<_>>(), "Configuration loaded");
 
     // Handle test file mode
     if let Some(test_file) = &args.test_file {

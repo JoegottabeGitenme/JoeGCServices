@@ -1,0 +1,22 @@
+name: temperature_isolines
+description: Test temperature isoline (numbers style) rendering with labels
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+layers:
+  - name: gfs_TMP
+    style: temperature_isolines
+    weight: 1.0
+  - name: hrrr_TMP
+    style: temperature_isolines
+    weight: 0.8
+tile_selection:
+  type: random
+  zoom_range: [5, 10]
+  bbox:
+    min_lon: -120.0
+    min_lat: 25.0
+    max_lon: -70.0
+    max_lat: 50.0
+seed: 7777

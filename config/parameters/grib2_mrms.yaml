@@ -1,0 +1,315 @@
+# GRIB2 MRMS Local Parameter Table
+# Source: Multi-Radar Multi-Sensor (MRMS) System
+# Discipline 209 is used for MRMS local products
+
+table:
+  source: MRMS
+  discipline: 209  # MRMS-specific discipline
+  version: local
+
+# MRMS-specific radar and precipitation parameters
+# These use discipline 209 (MRMS local)
+# Structured to match WMO format with intermediate "mrms" category level
+
+mrms:
+  # Category 0: Reflectivity
+  reflectivity:
+  - parameter: 0
+    name: REFL_AT_LOWEST_LEVEL
+    description: "Reflectivity at Lowest Altitude"
+    units: "dBZ"
+  - parameter: 1
+    name: REFL_AT_1KM
+    description: "Reflectivity at 1 km AGL"
+    units: "dBZ"
+  - parameter: 2
+    name: REFL_AT_2KM
+    description: "Reflectivity at 2 km AGL"
+    units: "dBZ"
+  - parameter: 3
+    name: REFL_AT_3KM
+    description: "Reflectivity at 3 km AGL"
+    units: "dBZ"
+  - parameter: 4
+    name: REFL_AT_4KM
+    description: "Reflectivity at 4 km AGL"
+    units: "dBZ"
+  - parameter: 5
+    name: REFL_COMP
+    description: "Composite Reflectivity"
+    units: "dBZ"
+  - parameter: 16
+    name: REFL_QC
+    description: "Reflectivity with Quality Control"
+    units: "dBZ"
+  - parameter: 17
+    name: MERGED_REFL_QC
+    description: "Merged Reflectivity Quality Controlled"
+    units: "dBZ"
+  - parameter: 18
+    name: MERGED_REFL_QC_AT_0.5DEG
+    description: "Merged Reflectivity QC at 0.5° elevation"
+    units: "dBZ"
+
+  # Category 1: Precipitation
+  precipitation:
+  - parameter: 0
+    name: PRECIP_RATE
+    description: "Precipitation Rate"
+    units: "mm/hr"
+  - parameter: 1
+    name: QPE_01H
+    description: "1-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 2
+    name: QPE_03H
+    description: "3-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 3
+    name: QPE_06H
+    description: "6-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 4
+    name: QPE_12H
+    description: "12-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 5
+    name: QPE_24H
+    description: "24-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 6
+    name: QPE_48H
+    description: "48-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 7
+    name: QPE_72H
+    description: "72-Hour Quantitative Precipitation Estimate"
+    units: "mm"
+  - parameter: 8
+    name: GAUGE_CORR_QPE_01H
+    description: "Gauge-Corrected 1-Hour QPE"
+    units: "mm"
+  - parameter: 9
+    name: GAUGE_CORR_QPE_03H
+    description: "Gauge-Corrected 3-Hour QPE"
+    units: "mm"
+  - parameter: 10
+    name: GAUGE_CORR_QPE_06H
+    description: "Gauge-Corrected 6-Hour QPE"
+    units: "mm"
+  - parameter: 11
+    name: GAUGE_CORR_QPE_12H
+    description: "Gauge-Corrected 12-Hour QPE"
+    units: "mm"
+  - parameter: 12
+    name: GAUGE_CORR_QPE_24H
+    description: "Gauge-Corrected 24-Hour QPE"
+    units: "mm"
+  - parameter: 13
+    name: GAUGE_CORR_QPE_48H
+    description: "Gauge-Corrected 48-Hour QPE"
+    units: "mm"
+  - parameter: 14
+    name: GAUGE_CORR_QPE_72H
+    description: "Gauge-Corrected 72-Hour QPE"
+    units: "mm"
+  - parameter: 15
+    name: PRECIP_FLAG
+    description: "Precipitation Detection Flag"
+    units: "code"
+  - parameter: 16
+    name: RADAR_QPE_01H
+    description: "Radar-Only 1-Hour QPE"
+    units: "mm"
+  - parameter: 17
+    name: RADAR_QPE_03H
+    description: "Radar-Only 3-Hour QPE"
+    units: "mm"
+  - parameter: 18
+    name: MOUNTAIN_MAPPER_QPE
+    description: "Mountain Mapper QPE"
+    units: "mm"
+
+  # Category 2: Precipitation Type
+  precipitation_type:
+  - parameter: 0
+    name: PRECIP_TYPE
+    description: "Precipitation Type"
+    units: "code"
+  - parameter: 1
+    name: SNOW_RATE
+    description: "Snowfall Rate"
+    units: "mm/hr"
+  - parameter: 2
+    name: ICE_ACCUM_RATE
+    description: "Ice Accumulation Rate"
+    units: "mm/hr"
+  - parameter: 3
+    name: HAIL_PROB
+    description: "Probability of Hail"
+    units: "%"
+  - parameter: 4
+    name: SEVERE_HAIL_PROB
+    description: "Probability of Severe Hail"
+    units: "%"
+  - parameter: 5
+    name: HAIL_SIZE
+    description: "Maximum Expected Hail Size"
+    units: "mm"
+
+  # Category 3: Echo Tops
+  echo_tops:
+  - parameter: 0
+    name: ECHO_TOP
+    description: "Echo Top Height"
+    units: "m"
+  - parameter: 1
+    name: ECHO_TOP_18DBZ
+    description: "Echo Top (18 dBZ threshold)"
+    units: "m"
+  - parameter: 2
+    name: ECHO_TOP_30DBZ
+    description: "Echo Top (30 dBZ threshold)"
+    units: "m"
+  - parameter: 3
+    name: ECHO_TOP_50DBZ
+    description: "Echo Top (50 dBZ threshold)"
+    units: "m"
+  - parameter: 4
+    name: ECHO_TOP_60DBZ
+    description: "Echo Top (60 dBZ threshold)"
+    units: "m"
+
+  # Category 4: Vertically Integrated Products
+  vil:
+  - parameter: 0
+    name: VIL
+    description: "Vertically Integrated Liquid"
+    units: "kg/m^2"
+  - parameter: 1
+    name: VIL_DENSITY
+    description: "Vertically Integrated Liquid Density"
+    units: "g/m^3"
+  - parameter: 2
+    name: ENHANCED_VIL
+    description: "Enhanced Vertically Integrated Liquid"
+    units: "kg/m^2"
+  - parameter: 3
+    name: INTEGRATED_ICE
+    description: "Vertically Integrated Ice"
+    units: "kg/m^2"
+  - parameter: 4
+    name: INTEGRATED_WATER
+    description: "Vertically Integrated Liquid + Ice"
+    units: "kg/m^2"
+
+  # Category 5: Rotation and Mesocyclones
+  rotation:
+  - parameter: 0
+    name: ROTATION_TRACK
+    description: "Rotation Track"
+    units: "code"
+  - parameter: 1
+    name: ROTATION_TRACK_30MIN
+    description: "30-Minute Rotation Track"
+    units: "code"
+  - parameter: 2
+    name: ROTATION_TRACK_60MIN
+    description: "60-Minute Rotation Track"
+    units: "code"
+  - parameter: 3
+    name: ROTATION_TRACK_120MIN
+    description: "120-Minute Rotation Track"
+    units: "code"
+  - parameter: 4
+    name: ROTATION_TRACK_240MIN
+    description: "240-Minute Rotation Track"
+    units: "code"
+  - parameter: 5
+    name: AZSHEAR_0.5KM
+    description: "Azimuthal Shear at 0.5 km AGL"
+    units: "1/s"
+  - parameter: 6
+    name: AZSHEAR_1.0KM
+    description: "Azimuthal Shear at 1.0 km AGL"
+    units: "1/s"
+  - parameter: 7
+    name: AZSHEAR_2.0KM
+    description: "Azimuthal Shear at 2.0 km AGL"
+    units: "1/s"
+  - parameter: 8
+    name: AZSHEAR_3.0KM
+    description: "Azimuthal Shear at 3.0 km AGL"
+    units: "1/s"
+
+  # Category 6: Lightning
+  lightning:
+  - parameter: 0
+    name: LIGHTNING_DENSITY
+    description: "Lightning Density"
+    units: "flashes/km^2/min"
+  - parameter: 1
+    name: LIGHTNING_PROB_NEXT_HOUR
+    description: "Lightning Probability in Next Hour"
+    units: "%"
+
+  # Category 7: Quality and Hybrid Products
+  quality:
+  - parameter: 0
+    name: HYBRID_SCAN_REFL
+    description: "Hybrid Scan Reflectivity"
+    units: "dBZ"
+  - parameter: 1
+    name: HYBRID_SCAN_REFL_HEIGHT
+    description: "Height of Hybrid Scan Reflectivity Sample"
+    units: "m"
+  - parameter: 2
+    name: LOWEST_ALTITUDE_REFL
+    description: "Reflectivity at Lowest Altitude with Significant Data"
+    units: "dBZ"
+  - parameter: 3
+    name: LOWEST_ALTITUDE
+    description: "Lowest Altitude with Significant Data"
+    units: "m"
+  - parameter: 4
+    name: RQI
+    description: "Radar Quality Index"
+    units: "%"
+  - parameter: 5
+    name: QPE_RQI
+    description: "QPE Radar Quality Index"
+    units: "%"
+
+  # Category 8: Severe Weather Indices
+  severe:
+  - parameter: 0
+    name: MESH
+    description: "Maximum Estimated Size of Hail (MESH)"
+    units: "mm"
+  - parameter: 1
+    name: POSH
+    description: "Probability of Severe Hail"
+    units: "%"
+  - parameter: 2
+    name: SHI
+    description: "Severe Hail Index"
+    units: "index"
+  - parameter: 3
+    name: VILD
+    description: "Vertically Integrated Liquid Density (for severe)"
+    units: "g/m^3"
+  - parameter: 4
+    name: FLASH_FLOOD_GUIDANCE_RATIO
+    description: "Flash Flood Guidance Ratio"
+    units: "-"
+
+  # Category 9: Freezing Level
+  freezing:
+  - parameter: 0
+    name: FREEZING_LEVEL
+    description: "Freezing Level Height"
+    units: "m"
+  - parameter: 1
+    name: ISOTHERMAL_REFL_AT_MINUS_20C
+    description: "Reflectivity at -20°C Isotherm"
+    units: "dBZ"

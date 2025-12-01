@@ -1,0 +1,99 @@
+# Global Ingestion Configuration
+# Shared settings for all model ingesters
+
+# Database configuration
+database:
+  host: "${POSTGRES_HOST}"
+  port: ${POSTGRES_PORT:-5432}
+  database: "${POSTGRES_DB}"
+  user: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+  max_connections: ${DB_MAX_CONNECTIONS:-10}
+  connection_timeout_secs: ${DB_CONNECTION_TIMEOUT:-30}
+
+# Redis cache configuration
+cache:
+  host: "${REDIS_HOST}"
+  port: ${REDIS_PORT:-6379}
+  password: "${REDIS_PASSWORD:-}"
+  database: ${REDIS_DB:-0}
+  ttl_secs: ${CACHE_TTL:-3600}
+  max_connections: ${REDIS_MAX_CONNECTIONS:-10}
+
+# Storage paths
+storage:
+  base_path: "${DATA_DIR:-./data}"
+  temp_path: "${TEMP_DIR:-/tmp/weather-wms}"
+  cache_path: "${CACHE_DIR:-./cache}"
+  
+  # Model-specific subdirectories (appended to base_path)
+  models:
+    gfs: "gfs"
+    hrrr: "hrrr"
+    goes16: "goes16"
+    goes18: "goes18"
+    mrms: "mrms"
+
+# Download settings
+download:
+  parallel_downloads: ${PARALLEL_DOWNLOADS:-4}
+  max_retries: ${MAX_RETRIES:-3}
+  retry_delay_secs: ${RETRY_DELAY:-5}
+  connect_timeout_secs: ${CONNECT_TIMEOUT:-30}
+  read_timeout_secs: ${READ_TIMEOUT:-300}
+  user_agent: "weather-wms-ingester/1.0"
+
+# Ingestion behavior
+ingestion:
+  # How far back to look for data on startup
+  lookback_hours: ${LOOKBACK_HOURS:-48}
+  
+  # Cleanup old data beyond retention period
+  cleanup_enabled: ${CLEANUP_ENABLED:-true}
+  cleanup_interval_hours: ${CLEANUP_INTERVAL:-6}
+  
+  # Batch size for database operations
+  batch_size: ${BATCH_SIZE:-100}
+  
+  # Deduplication strategy
+  deduplicate: ${DEDUPLICATE:-true}
+
+# Logging configuration
+logging:
+  level: "${LOG_LEVEL:-info}"  # trace, debug, info, warn, error
+  format: "${LOG_FORMAT:-json}" # json or pretty
+  target: "${LOG_TARGET:-stdout}" # stdout, stderr, or file path
+
+# Monitoring/metrics
+metrics:
+  enabled: ${METRICS_ENABLED:-true}
+  port: ${METRICS_PORT:-9090}
+  path: "${METRICS_PATH:-/metrics}"
+
+# Health check endpoint
+health:
+  enabled: ${HEALTH_ENABLED:-true}
+  port: ${HEALTH_PORT:-8080}
+  path: "${HEALTH_PATH:-/health}"
+
+# Model loading
+models:
+  # Directory containing model YAML configs
+  config_dir: "${MODEL_CONFIG_DIR:-./config/models}"
+  
+  # Which models to enable (empty = all enabled models)
+  enabled: ${ENABLED_MODELS:-}  # Comma-separated list, e.g., "gfs,hrrr"
+  
+  # Which models to disable (overrides enabled list)
+  disabled: ${DISABLED_MODELS:-}  # Comma-separated list
+
+# Parameter table loading
+parameters:
+  # Directory containing GRIB2 parameter tables
+  tables_dir: "${PARAM_TABLES_DIR:-./config/parameters}"
+  
+  # Which tables to load
+  tables:
+    - grib2_wmo
+    - grib2_ncep
+    - grib2_mrms

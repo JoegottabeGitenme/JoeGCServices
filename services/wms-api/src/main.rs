@@ -2,6 +2,7 @@
 //!
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
+mod admin;
 mod handlers;
 pub mod metrics;
 mod rendering;
@@ -10,7 +11,7 @@ mod validation;
 mod warming;
 
 use anyhow::Result;
-use axum::{extract::Extension, routing::get, Router};
+use axum::{extract::Extension, routing::{get, put}, Router};
 use clap::Parser;
 use std::{env, net::SocketAddr, sync::Arc};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
@@ -192,6 +193,12 @@ async fn async_main(args: Args) -> Result<()> {
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route("/api/loadtest/results", get(handlers::loadtest_results_handler))
+        // Admin dashboard
+        .route("/api/admin/ingestion/status", get(admin::ingestion_status_handler))
+        .route("/api/admin/ingestion/log", get(admin::ingestion_log_handler))
+        .route("/api/admin/preview-shred", get(admin::preview_shred_handler))
+        .route("/api/admin/config/models", get(admin::list_models_handler))
+        .route("/api/admin/config/models/:id", get(admin::get_model_config_handler).put(admin::update_model_config_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

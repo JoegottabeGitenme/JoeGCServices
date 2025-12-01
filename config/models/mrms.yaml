@@ -1,0 +1,105 @@
+# MRMS - Multi-Radar Multi-Sensor Configuration
+# High-resolution radar and precipitation analysis
+
+model:
+  id: mrms
+  name: "MRMS - Multi-Radar Multi-Sensor"
+  description: "CONUS-wide radar mosaic and precipitation analysis at ~1km resolution"
+  enabled: true
+
+source:
+  type: aws_s3_grib2
+  bucket: noaa-mrms-pds
+  path_pattern: "CONUS/{product}/{date:yyyyMMdd}/MRMS_{product}.{timestamp}.grib2.gz"
+  region: us-east-1
+  compression: gzip
+
+grid:
+  projection: latlon
+  resolution: "0.01deg"                  # ~1km
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+  dimensions:
+    x: 7000
+    y: 3500
+
+schedule:
+  type: observation                      # Observation data, not forecast
+  poll_interval_secs: 120                # Check every 2 minutes (data updates ~2min)
+  lookback_minutes: 30                   # Check last 30 minutes
+
+retention:
+  hours: 24                              # Keep 1 day of radar data
+
+parameters:
+  # Composite Reflectivity at 0.5° elevation
+  - name: REFL
+    description: "Merged Reflectivity QC (0.5° elevation)"
+    grib2:
+      discipline: 209                    # MRMS local table
+      category: 0
+      parameter: 16                      # MergedReflectivityQC
+    product: "MergedReflectivityQC_00.50"
+    levels:
+      - type: height_above_ground
+        value: 500
+        units: "m"
+        display: "composite"
+    style: reflectivity
+    units: "dBZ"
+    display_units: "dBZ"
+    valid_range: [-30, 80]
+
+  # Precipitation Rate
+  - name: PRECIP_RATE
+    description: "Precipitation Rate"
+    grib2:
+      discipline: 209
+      category: 1
+      parameter: 0                       # PrecipRate
+    product: "PrecipRate_00.00"
+    levels:
+      - type: surface
+        value: 0
+        display: "surface"
+    style: precip_rate
+    units: "mm/hr"
+    display_units: "mm/hr"
+    valid_range: [0, 100]
+
+  # Quantitative Precipitation Estimate - 1 hour
+  - name: QPE_01H
+    description: "1-Hour Precipitation Accumulation"
+    grib2:
+      discipline: 209
+      category: 1
+      parameter: 1                       # QPE
+    product: "MultiSensor_QPE_01H_Pass2"
+    levels:
+      - type: surface
+        value: 0
+        display: "1hr"
+    style: precipitation
+    units: "mm"
+    display_units: "mm"
+    valid_range: [0, 200]
+
+  # Quantitative Precipitation Estimate - 24 hour
+  - name: QPE_24H
+    description: "24-Hour Precipitation Accumulation"
+    grib2:
+      discipline: 209
+      category: 1
+      parameter: 1
+    product: "MultiSensor_QPE_24H_Pass2"
+    levels:
+      - type: surface
+        value: 0
+        display: "24hr"
+    style: precipitation
+    units: "mm"
+    display_units: "mm"
+    valid_range: [0, 500]

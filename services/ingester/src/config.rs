@@ -34,7 +34,15 @@ pub struct IngesterConfig {
 }
 
 impl IngesterConfig {
-    /// Load configuration from environment variables.
+    /// Load configuration from YAML files.
+    pub fn from_yaml<P: AsRef<std::path::Path>>(base_path: P) -> Result<Self> {
+        use crate::config_loader;
+        
+        let all_configs = config_loader::load_all_configs(base_path)?;
+        all_configs.to_runtime_config()
+    }
+    
+    /// Load configuration from environment variables (legacy fallback).
     pub fn from_env() -> Result<Self> {
         let storage = ObjectStorageConfig {
             endpoint: env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://minio:9000".to_string()),

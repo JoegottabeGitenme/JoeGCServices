@@ -1,0 +1,81 @@
+# GOES-16 - GOES East Satellite Configuration
+# Geostationary satellite imagery, CONUS coverage
+
+model:
+  id: goes16
+  name: "GOES-16 - GOES East"
+  description: "GOES-16 (GOES East) satellite imagery, ABI CONUS product"
+  enabled: true
+
+source:
+  type: aws_s3_goes
+  bucket: noaa-goes16
+  product: "ABI-L2-CMIPC"                # CONUS Cloud and Moisture Imagery
+  file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G16_s{start}_e{end}_c{created}.nc"
+  region: us-east-1
+  bands: [1, 2, 8, 13]                   # Blue, Red, WV, IR
+
+grid:
+  projection: geostationary
+  resolution: "1km"                      # Approximate
+  bbox:
+    min_lon: -143.0
+    min_lat: 14.5
+    max_lon: -53.0
+    max_lat: 55.5
+  projection_params:
+    satellite_longitude: -75.0
+    satellite_height: 35786023.0         # meters
+    semi_major_axis: 6378137.0           # WGS84
+    semi_minor_axis: 6356752.31414       # WGS84
+
+schedule:
+  type: observation                      # Observation data, not forecast
+  poll_interval_secs: 300                # Check every 5 minutes
+  lookback_minutes: 60                   # Check last hour of data
+
+retention:
+  hours: 48                              # Keep 2 days of imagery
+
+parameters:
+  # Blue Visible (0.47µm)
+  - name: CMI_C01
+    description: "Blue Visible (0.47µm)"
+    band: 1
+    levels:
+      - type: top_of_atmosphere
+        display: "visible_blue"
+    style: goes_visible
+    units: "reflectance"
+
+  # Red Visible (0.64µm)  
+  - name: CMI_C02
+    description: "Red Visible (0.64µm)"
+    band: 2
+    levels:
+      - type: top_of_atmosphere
+        display: "visible_red"
+    style: goes_visible
+    units: "reflectance"
+
+  # Upper-Level Water Vapor (6.2µm)
+  - name: CMI_C08
+    description: "Upper-Level Water Vapor (6.2µm)"
+    band: 8
+    levels:
+      - type: top_of_atmosphere
+        display: "upper_vapor"
+    style: goes_ir
+    units: "K"
+    display_units: "K"
+
+  # Clean IR (10.3µm)
+  - name: CMI_C13
+    description: "Clean Longwave IR (10.3µm)"
+    band: 13
+    levels:
+      - type: top_of_atmosphere
+        display: "clean_ir"
+    style: goes_ir
+    units: "K"
+    display_units: "K"

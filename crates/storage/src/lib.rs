@@ -12,9 +12,9 @@ pub mod object_store;
 pub mod queue;
 pub mod tile_memory_cache;
 
-pub use self::object_store::{ObjectStorage, ObjectStorageConfig, StorageStats};
+pub use self::object_store::{ObjectStorage, ObjectStorageConfig, StorageStats, DetailedStorageStats};
 pub use cache::{CacheKey, TileCache};
-pub use catalog::{Catalog, CatalogEntry};
+pub use catalog::{Catalog, CatalogEntry, DatasetQuery};
 pub use grib_cache::{GribCache, CacheStats as GribCacheStats};
 pub use queue::{JobQueue, JobStatus, RenderJob};
 pub use tile_memory_cache::{TileMemoryCache, TileMemoryCacheStats};

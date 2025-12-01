@@ -164,12 +164,18 @@ impl ObjectStorage {
 
     /// Get storage statistics (total size and object count).
     pub async fn stats(&self) -> WmsResult<StorageStats> {
+        self.stats_with_prefix(None).await
+    }
+
+    /// Get storage statistics for objects matching a prefix.
+    pub async fn stats_with_prefix(&self, prefix: Option<&str>) -> WmsResult<StorageStats> {
         use futures::TryStreamExt;
 
         let mut total_size: u64 = 0;
         let mut object_count: u64 = 0;
 
-        let mut stream = self.store.list(None);
+        let prefix_path = prefix.map(|p| object_store::path::Path::from(p));
+        let mut stream = self.store.list(prefix_path.as_ref());
         while let Some(meta) = stream
             .try_next()
             .await
@@ -185,6 +191,23 @@ impl ObjectStorage {
             bucket: self.bucket.clone(),
         })
     }
+
+    /// Get detailed storage statistics with breakdown by storage type (raw vs shredded).
+    pub async fn detailed_stats(&self) -> WmsResult<DetailedStorageStats> {
+        // Query raw/ and shredded/ prefixes in parallel
+        let raw_stats = self.stats_with_prefix(Some("raw/")).await?;
+        let shredded_stats = self.stats_with_prefix(Some("shredded/")).await?;
+
+        Ok(DetailedStorageStats {
+            raw_size_bytes: raw_stats.total_size,
+            raw_object_count: raw_stats.object_count,
+            shredded_size_bytes: shredded_stats.total_size,
+            shredded_object_count: shredded_stats.object_count,
+            total_size_bytes: raw_stats.total_size + shredded_stats.total_size,
+            total_object_count: raw_stats.object_count + shredded_stats.object_count,
+            bucket: self.bucket.clone(),
+        })
+    }
 }
 
 /// Storage statistics.
@@ -194,6 +217,22 @@ pub struct StorageStats {
     pub total_size: u64,
     /// Number of objects
     pub object_count: u64,
+    /// Bucket name
+    pub bucket: String,
+}
+
+/// Detailed storage statistics with breakdown by storage type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetailedStorageStats {
+    /// Statistics for raw ingested files (raw/ prefix)
+    pub raw_size_bytes: u64,
+    pub raw_object_count: u64,
+    /// Statistics for shredded/processed files (shredded/ prefix)
+    pub shredded_size_bytes: u64,
+    pub shredded_object_count: u64,
+    /// Total across all storage
+    pub total_size_bytes: u64,
+    pub total_object_count: u64,
     /// Bucket name
     pub bucket: String,
 }

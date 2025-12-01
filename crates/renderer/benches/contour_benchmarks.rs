@@ -200,6 +200,11 @@ fn bench_generate_all_contours(c: &mut Criterion) {
             line_width: 2.0,
             line_color: [0, 0, 0, 255],
             smoothing_passes: 1,
+            labels_enabled: false,
+            label_font_size: 10.0,
+            label_spacing: 150.0,
+            label_unit_offset: 0.0,
+            special_levels: vec![],
         };
 
         // Many levels
@@ -208,6 +213,11 @@ fn bench_generate_all_contours(c: &mut Criterion) {
             line_width: 2.0,
             line_color: [0, 0, 0, 255],
             smoothing_passes: 1,
+            labels_enabled: false,
+            label_font_size: 10.0,
+            label_spacing: 150.0,
+            label_unit_offset: 0.0,
+            special_levels: vec![],
         };
 
         group.bench_with_input(
@@ -247,6 +257,11 @@ fn bench_render_contours_to_canvas(c: &mut Criterion) {
             line_width: 2.0,
             line_color: [0, 0, 0, 255],
             smoothing_passes: 1,
+            labels_enabled: false,
+            label_font_size: 10.0,
+            label_spacing: 150.0,
+            label_unit_offset: 0.0,
+            special_levels: vec![],
         };
         let contours = generate_all_contours(&data, width, height, &config);
 
@@ -282,6 +297,11 @@ fn bench_full_contour_pipeline(c: &mut Criterion) {
         line_width: 2.0,
         line_color: [50, 50, 50, 255],
         smoothing_passes: 1,
+        labels_enabled: false,
+        label_font_size: 10.0,
+        label_spacing: 150.0,
+        label_unit_offset: 0.0,
+        special_levels: vec![],
     };
 
     group.bench_function("contour_256x256_7levels", |b| {
@@ -300,6 +320,11 @@ fn bench_full_contour_pipeline(c: &mut Criterion) {
         line_width: 1.0,
         line_color: [0, 0, 0, 200],
         smoothing_passes: 1,
+        labels_enabled: false,
+        label_font_size: 10.0,
+        label_spacing: 150.0,
+        label_unit_offset: 0.0,
+        special_levels: vec![],
     };
 
     group.bench_function("contour_256x256_dense", |b| {
@@ -328,6 +353,11 @@ fn bench_line_width_impact(c: &mut Criterion) {
             line_width,
             line_color: [0, 0, 0, 255],
             smoothing_passes: 1,
+            labels_enabled: false,
+            label_font_size: 10.0,
+            label_spacing: 150.0,
+            label_unit_offset: 0.0,
+            special_levels: vec![],
         };
 
         group.bench_with_input(BenchmarkId::new("width", line_width), &config, |b, config| {

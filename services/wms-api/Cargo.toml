@@ -23,7 +23,9 @@ tower-http = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 quick-xml = { workspace = true }
+num_cpus = "1.16"
 bytes = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }

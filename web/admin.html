@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Weather WMS</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .admin-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .admin-header h1 {
+            font-size: 2rem;
+            color: #fff;
+            margin: 0;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .back-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .admin-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .admin-card h2 {
+            font-size: 1.25rem;
+            margin: 0 0 1rem 0;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-icon {
+            font-size: 1.5rem;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+        }
+
+        .info-value {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .status-badge.success {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .status-badge.warning {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ff9800;
+        }
+
+        .status-badge.error {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .status-badge.info {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196f3;
+        }
+
+        .model-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .model-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .model-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .model-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .model-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .model-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .config-viewer {
+            margin-top: 1.5rem;
+        }
+
+        .config-title {
+            font-size: 1.1rem;
+            color: #fff;
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .config-content {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            padding: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .config-content pre {
+            margin: 0;
+            color: rgba(255, 255, 255, 0.9);
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .error-message {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            color: #f44336;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+
+        .refresh-button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .refresh-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .catalog-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-box {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        /* Ingestion Log Styles */
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+
+        .log-entry {
+            display: grid;
+            grid-template-columns: 140px 80px 100px 120px 1fr;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.85rem;
+            align-items: center;
+        }
+
+        .log-entry:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .log-entry .timestamp {
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+        }
+
+        .log-entry .model {
+            color: #64b5f6;
+            font-weight: 500;
+        }
+
+        .log-entry .param {
+            color: #81c784;
+        }
+
+        .log-entry .level {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .log-entry .path {
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+            font-size: 0.75rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .log-header {
+            display: grid;
+            grid-template-columns: 140px 80px 100px 120px 1fr;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: rgba(0, 0, 0, 0.3);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 600;
+            border-radius: 4px 4px 0 0;
+        }
+
+        /* Shred Preview Styles */
+        .shred-preview {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .shred-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .shred-summary {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .shred-stat {
+            text-align: center;
+        }
+
+        .shred-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #4caf50;
+        }
+
+        .shred-stat-label {
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .shred-params {
+            display: grid;
+            gap: 0.5rem;
+        }
+
+        .shred-param {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 4px;
+            padding: 0.75rem;
+        }
+
+        .shred-param-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .shred-param-name {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .shred-param-levels {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .shred-levels-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.25rem;
+        }
+
+        .shred-level-badge {
+            background: rgba(100, 181, 246, 0.2);
+            color: #64b5f6;
+            padding: 0.125rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+        }
+
+        /* Config Editor Styles */
+        .config-editor {
+            margin-top: 1rem;
+        }
+
+        .config-editor textarea {
+            width: 100%;
+            min-height: 400px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            padding: 1rem;
+            resize: vertical;
+        }
+
+        .config-editor textarea:focus {
+            outline: none;
+            border-color: #64b5f6;
+        }
+
+        .config-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: #4caf50;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-danger {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        .validation-errors {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            color: #f44336;
+            font-size: 0.85rem;
+        }
+
+        .validation-errors ul {
+            margin: 0.25rem 0 0 1rem;
+            padding: 0;
+        }
+
+        .success-message {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            color: #4caf50;
+            font-size: 0.85rem;
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab-btn {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-radius: 4px 4px 0 0;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn.active {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+            border-bottom: 2px solid #64b5f6;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .model-item.selected {
+            background: rgba(100, 181, 246, 0.1);
+            border-color: #64b5f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1>⚙️ Admin Dashboard</h1>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button class="refresh-button" id="refresh-btn">🔄 Refresh</button>
+                <a href="index.html" class="back-link">
+                    <span>←</span>
+                    <span>Back to Map</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- System Overview -->
+        <div class="admin-grid">
+            <div class="admin-card">
+                <h2><span class="card-icon">📊</span> System Status</h2>
+                <div class="info-grid">
+                    <div class="info-row">
+                        <span class="info-label">Service Status</span>
+                        <span class="info-value" id="service-status">
+                            <span class="status-badge info">Loading...</span>
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">CPU Cores</span>
+                        <span class="info-value" id="cpu-cores">--</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Worker Threads</span>
+                        <span class="info-value" id="worker-threads">--</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Uptime</span>
+                        <span class="info-value" id="system-uptime">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="admin-card">
+                <h2><span class="card-icon">📦</span> Storage Overview</h2>
+                <div class="catalog-stats">
+                    <div class="stat-box">
+                        <div class="stat-value" id="total-datasets">--</div>
+                        <div class="stat-label">Total Datasets</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="total-models">--</div>
+                        <div class="stat-label">Models</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="catalog-size">--</div>
+                        <div class="stat-label">Total Size</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="latest-ingest">--</div>
+                        <div class="stat-label">Latest Ingest</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="raw-size">--</div>
+                        <div class="stat-label">Raw Files</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="shredded-size">--</div>
+                        <div class="stat-label">Shredded Files</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ingestion Log -->
+        <div class="admin-card full-width">
+            <h2><span class="card-icon">📋</span> Recent Ingestion Log</h2>
+            <div class="log-header">
+                <span>Timestamp</span>
+                <span>Model</span>
+                <span>Parameter</span>
+                <span>Level</span>
+                <span>Storage Path</span>
+            </div>
+            <div class="log-container" id="log-container">
+                <div class="loading">Loading log...</div>
+            </div>
+        </div>
+
+        <!-- Model Configuration -->
+        <div class="admin-card full-width">
+            <h2><span class="card-icon">🗂️</span> Model Configurations</h2>
+            <div id="models-container" class="loading">Loading models...</div>
+        </div>
+
+        <!-- Selected Model Details (Tabs: View / Preview / Edit) -->
+        <div class="admin-card full-width" id="model-details" style="display: none;">
+            <h2>
+                <span class="card-icon">📄</span>
+                <span id="config-model-name">Model Configuration</span>
+            </h2>
+            
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="view-tab">View YAML</button>
+                <button class="tab-btn" data-tab="preview-tab">Shred Preview</button>
+                <button class="tab-btn" data-tab="edit-tab">Edit Config</button>
+            </div>
+
+            <!-- View Tab -->
+            <div class="tab-content active" id="view-tab">
+                <div class="config-content">
+                    <pre id="config-yaml">Select a model to view its configuration...</pre>
+                </div>
+            </div>
+
+            <!-- Shred Preview Tab -->
+            <div class="tab-content" id="preview-tab">
+                <div id="shred-preview-container" class="loading">Loading preview...</div>
+            </div>
+
+            <!-- Edit Tab -->
+            <div class="tab-content" id="edit-tab">
+                <div class="config-editor">
+                    <textarea id="config-editor-textarea" placeholder="Loading configuration..."></textarea>
+                    <div id="validation-feedback"></div>
+                    <div class="config-actions">
+                        <button class="btn btn-secondary" id="validate-btn">Validate</button>
+                        <button class="btn btn-secondary" id="reset-btn">Reset</button>
+                        <button class="btn btn-primary" id="save-btn">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

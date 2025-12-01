@@ -1,0 +1,97 @@
+# HRRR - High-Resolution Rapid Refresh Configuration
+# NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS
+
+model:
+  id: hrrr
+  name: "HRRR - High-Resolution Rapid Refresh"
+  description: "NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS coverage"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: noaa-hrrr-bdp-pds
+  prefix_template: "hrrr.{date}/conus"
+  file_pattern: "hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2"
+  region: us-east-1
+  
+grid:
+  projection: lambert_conformal
+  resolution: "3km"
+  bbox:
+    min_lon: -122.719528
+    min_lat: 21.138123
+    max_lon: -60.917193
+    max_lat: 47.842195
+  projection_params:
+    lat1: 21.138123
+    lon1: -122.719528
+    lov: -97.5             # Central meridian
+    latin1: 38.5           # Standard parallel
+    latin2: 38.5           # Standard parallel (tangent cone)
+    dx: 3000.0             # meters
+    dy: 3000.0             # meters
+    nx: 1799
+    ny: 1059
+
+schedule:
+  cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]  # Hourly
+  forecast_hours: 
+    start: 0
+    end: 48                          # 48 hours
+    step: 1                          # Every hour
+  poll_interval_secs: 3600           # Check every hour
+  delay_hours: 2                     # Data typically available 2 hours after cycle
+
+retention:
+  hours: 72                          # Keep data for 3 days
+
+parameters:
+  # Surface Temperature
+  - name: TMP
+    description: "Temperature"
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m above ground"
+    style: temperature
+    units: K
+    display_units: °C
+    conversion: K_to_C
+
+  # U-component wind
+  - name: UGRD
+    description: "U-Component of Wind"
+    levels:
+      - type: height_above_ground
+        value: 10
+        display: "10 m above ground"
+    style: wind
+    units: m/s
+
+  # V-component wind
+  - name: VGRD
+    description: "V-Component of Wind"
+    levels:
+      - type: height_above_ground
+        value: 10
+        display: "10 m above ground"
+    style: wind
+    units: m/s
+
+  # Composite Reflectivity  
+  - name: REFC
+    description: "Composite Reflectivity"
+    levels:
+      - type: height_above_ground
+        value: 1000
+        display: "1000 m above ground"
+    style: reflectivity
+    units: dBZ
+
+# Composite layers
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs
+    style: wind_barbs

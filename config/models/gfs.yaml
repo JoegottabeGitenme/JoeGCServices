@@ -1,0 +1,140 @@
+# GFS - Global Forecast System Configuration
+# NCEP Global Forecast System, 0.25° resolution
+
+model:
+  id: gfs
+  name: "GFS - Global Forecast System"
+  description: "NCEP Global Forecast System, 0.25° resolution"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: noaa-gfs-bdp-pds
+  prefix_template: "gfs.{date}/{cycle:02}/atmos"
+  file_pattern: "gfs.t{cycle:02}z.pgrb2.{resolution}.f{forecast:03}"
+  region: us-east-1
+  
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox:
+    min_lon: 0.0
+    min_lat: -90.0
+    max_lon: 360.0
+    max_lat: 90.0
+  # Longitude convention: 0-360 (data is stored as 0-360, convert for -180 to 180 requests)
+  lon_convention: 0_to_360
+
+schedule:
+  cycles: [0, 6, 12, 18]              # UTC hours (00z, 06z, 12z, 18z)
+  forecast_hours: 
+    start: 0
+    end: 384                          # 16 days
+    step: 3                           # Every 3 hours
+  poll_interval_secs: 3600            # Check for new data every hour
+  delay_hours: 4                      # Data typically available 4 hours after cycle time
+
+retention:
+  hours: 168                          # Keep data for 7 days
+
+parameters:
+  # Surface Temperature
+  - name: TMP
+    description: "Temperature"
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m above ground"
+    style: temperature
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    
+  # Temperature at pressure levels
+  - name: TMP
+    description: "Temperature"
+    levels:
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        display_template: "{value} mb"
+    style: temperature
+    units: K
+    display_units: °C
+    conversion: K_to_C
+
+  # U-component wind at 10m
+  - name: UGRD
+    description: "U-Component of Wind"
+    levels:
+      - type: height_above_ground
+        value: 10
+        display: "10 m above ground"
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100]
+        display_template: "{value} mb"
+    style: wind
+    units: m/s
+
+  # V-component wind at 10m  
+  - name: VGRD
+    description: "V-Component of Wind"
+    levels:
+      - type: height_above_ground
+        value: 10
+        display: "10 m above ground"
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100]
+        display_template: "{value} mb"
+    style: wind
+    units: m/s
+
+  # Mean sea level pressure
+  - name: PRMSL
+    description: "Pressure Reduced to MSL"
+    levels:
+      - type: mean_sea_level
+        display: "mean sea level"
+    style: atmospheric
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+
+  # Relative humidity
+  - name: RH
+    description: "Relative Humidity"
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m above ground"
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300]
+        display_template: "{value} mb"
+    style: default
+    units: "%"
+
+  # Geopotential height
+  - name: HGT
+    description: "Geopotential Height"
+    levels:
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 50, 10]
+        display_template: "{value} mb"
+    style: default
+    units: gpm
+
+  # Surface wind gust
+  - name: GUST
+    description: "Wind Speed (Gust)"
+    levels:
+      - type: surface
+        display: "surface"
+    style: wind
+    units: m/s
+
+# Composite layers (derived from multiple parameters)
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs
+    style: wind_barbs
