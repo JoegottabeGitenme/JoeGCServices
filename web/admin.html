@@ -536,6 +536,105 @@
             background: rgba(100, 181, 246, 0.1);
             border-color: #64b5f6;
         }
+
+        /* Cleanup Section Styles */
+        .cleanup-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .cleanup-stat {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .cleanup-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .cleanup-stat-value.warning {
+            color: #ff9800;
+        }
+
+        .cleanup-stat-value.danger {
+            color: #f44336;
+        }
+
+        .cleanup-stat-label {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 0.25rem;
+        }
+
+        .retention-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        .retention-table th,
+        .retention-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .retention-table th {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .retention-table td {
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .retention-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .purge-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .purge-count.none {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .purge-count.some {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ff9800;
+        }
+
+        .purge-count.many {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .time-until {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.85rem;
+        }
+
+        .cleanup-actions {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -605,6 +704,14 @@
                         <div class="stat-label">Shredded Files</div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Data Retention & Cleanup -->
+        <div class="admin-card full-width">
+            <h2><span class="card-icon">🗑️</span> Data Retention & Cleanup</h2>
+            <div id="cleanup-status-container">
+                <div class="loading">Loading cleanup status...</div>
             </div>
         </div>
 

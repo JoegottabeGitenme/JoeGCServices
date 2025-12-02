@@ -61,6 +61,10 @@ impl LoadRunner {
         // Fetch system configuration from API
         let system_config = self.fetch_system_config().await.ok();
         
+        // Resolve dynamic times if using QuerySequential/QueryRandom
+        println!("Initializing tile generator...");
+        let generator = TileGenerator::new_async(self.config.clone()).await?;
+        
         let total_duration = Duration::from_secs(self.config.duration_secs + self.config.warmup_secs);
         let warmup_duration = Duration::from_secs(self.config.warmup_secs);
         
@@ -105,7 +109,7 @@ impl LoadRunner {
 
         // Shared state
         let metrics = Arc::new(Mutex::new(MetricsCollector::new()));
-        let generator = Arc::new(Mutex::new(TileGenerator::new(self.config.clone())));
+        let generator = Arc::new(Mutex::new(generator));
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
         
         // Request logging setup

@@ -26,15 +26,12 @@ tile_selection:
     - [5, 5, 11]
 
 # Sequential through 5 time steps
-# Using actual ingested GOES-18 timestamps
+# Dynamically queries the 5 most recent times from WMS GetCapabilities
 time_selection:
-  type: sequential
-  times:
-    - "2025-12-02T02:41:00Z"
-    - "2025-12-02T02:46:00Z"
-    - "2025-12-02T02:51:00Z"
-    - "2025-12-02T03:01:00Z"
-    - "2025-12-02T03:06:00Z"
+  type: query_sequential
+  layer: goes18_CMI_C13
+  count: 5
+  order: newest_first
 
 # Expected behavior:
 # With 5 concurrent workers and 60s duration:

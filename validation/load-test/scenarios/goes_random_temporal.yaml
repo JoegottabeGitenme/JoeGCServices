@@ -20,7 +20,7 @@ layers:
 tile_selection:
   type: random
   # Focused zoom range for faster test
-  zoom_range: [4, 8]
+  zoom_range: [4, 12]
   bbox:
     # Western CONUS (Pacific weather systems) - within GOES-18 coverage
     min_lon: -125.0
@@ -29,15 +29,12 @@ tile_selection:
     max_lat: 50.0
 
 # Random time selection - unpredictable access pattern
-# Using actual ingested GOES-18 timestamps
+# Dynamically queries the 5 most recent times from WMS GetCapabilities
 time_selection:
-  type: random
-  times:
-    - "2025-12-02T02:01:00Z"
-    - "2025-12-02T02:16:00Z"
-    - "2025-12-02T02:31:00Z"
-    - "2025-12-02T02:46:00Z"
-    - "2025-12-02T03:01:00Z"
+  type: query_random
+  layer: goes18_CMI_C13
+  count: 5
+  order: newest_first
 
 # Expected behavior:
 # With 10 concurrent workers and 90s duration:

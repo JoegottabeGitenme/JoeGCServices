@@ -1,6 +1,12 @@
 # Build stage - use latest rust with bookworm base for glibc compatibility
 FROM rust:bookworm AS builder
 
+# Install build dependencies for netcdf-parser (needs libhdf5-dev and libnetcdf-dev)
+RUN apt-get update && apt-get install -y \
+    libhdf5-dev \
+    libnetcdf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy workspace files
@@ -20,6 +26,8 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     curl \
     netcdf-bin \
+    libhdf5-103 \
+    libnetcdf19 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/wms-api /usr/local/bin/wms-api

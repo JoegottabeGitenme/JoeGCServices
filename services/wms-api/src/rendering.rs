@@ -1465,7 +1465,6 @@ async fn load_netcdf_grid_data(
     grid_cache: Option<&GridDataCache>,
     entry: &CatalogEntry,
 ) -> Result<GridData, String> {
-    use std::process::Command;
     use std::sync::Arc;
     
     // Check grid cache first (if available)
@@ -1507,167 +1506,37 @@ async fn load_netcdf_grid_data(
         .await
         .map_err(|e| format!("Failed to load NetCDF file from cache/storage: {}", e))?;
     
-    // Write to temp file for ncdump to read
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join(format!("goes_temp_{}.nc", uuid::Uuid::new_v4()));
-    let file_path = temp_file.to_string_lossy().to_string();
-    
-    std::fs::write(&temp_file, &file_data[..])
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    
     info!(
-        temp_file = %file_path,
         size = file_data.len(),
-        "Downloaded NetCDF to temp file"
+        "Loaded NetCDF file from cache/storage"
     );
     
-    // Use ncdump to get header information
-    let header_output = Command::new("ncdump")
-        .arg("-h")
-        .arg(&file_path)
-        .output()
-        .map_err(|e| format!("Failed to run ncdump -h: {}", e))?;
-    
-    if !header_output.status.success() {
-        return Err(format!(
-            "ncdump -h failed: {}",
-            String::from_utf8_lossy(&header_output.stderr)
-        ));
-    }
-    
-    let header = String::from_utf8_lossy(&header_output.stdout);
-    
-    // Parse dimensions from header
-    let width = parse_dimension(&header, "x")?;
-    let height = parse_dimension(&header, "y")?;
-    
-    // Parse scale/offset for CMI
-    let scale_factor = parse_attribute(&header, "scale_factor").unwrap_or(1.0) as f32;
-    let add_offset = parse_attribute(&header, "add_offset").unwrap_or(0.0) as f32;
-    let fill_value = parse_attribute(&header, "_FillValue").unwrap_or(-1.0) as i16;
-    
-    // Parse projection parameters for x and y coordinates
-    // x: scale_factor and add_offset give us x_origin and dx
-    // y: scale_factor and add_offset give us y_origin and dy
-    let x_scale = parse_coordinate_attribute(&header, "x", "scale_factor").unwrap_or(1.4e-05);
-    let x_offset = parse_coordinate_attribute(&header, "x", "add_offset").unwrap_or(-0.101353);
-    let y_scale = parse_coordinate_attribute(&header, "y", "scale_factor").unwrap_or(-1.4e-05);
-    let y_offset = parse_coordinate_attribute(&header, "y", "add_offset").unwrap_or(0.128233);
-    
-    // Parse GOES projection parameters
-    let perspective_point_height = parse_attribute(&header, "perspective_point_height").unwrap_or(35786023.0);
-    let semi_major_axis = parse_attribute(&header, "semi_major_axis").unwrap_or(6378137.0);
-    let semi_minor_axis = parse_attribute(&header, "semi_minor_axis").unwrap_or(6356752.31414);
-    let longitude_origin = parse_attribute(&header, "longitude_of_projection_origin").unwrap_or(-75.0);
+    // Use native netcdf library to parse the file (5-10x faster than ncdump)
+    let (data, width, height, projection, x_offset, y_offset, x_scale, y_scale) = 
+        netcdf_parser::load_goes_netcdf_from_bytes(&file_data)
+            .map_err(|e| format!("Failed to parse NetCDF: {}", e))?;
     
     info!(
         width = width,
         height = height,
-        scale_factor = scale_factor,
-        add_offset = add_offset,
         x_scale = x_scale,
         x_offset = x_offset,
         y_scale = y_scale,
         y_offset = y_offset,
-        longitude_origin = longitude_origin,
-        "Parsed NetCDF metadata"
+        longitude_origin = projection.longitude_origin,
+        "Parsed NetCDF using native library"
     );
     
-    // Use ncdump to extract CMI data
-    let data_output = Command::new("ncdump")
-        .arg("-v")
-        .arg("CMI")
-        .arg("-p")
-        .arg("9,17")
-        .arg(&file_path)
-        .output()
-        .map_err(|e| format!("Failed to run ncdump -v CMI: {}", e))?;
-    
-    if !data_output.status.success() {
-        return Err(format!(
-            "ncdump -v CMI failed: {}",
-            String::from_utf8_lossy(&data_output.stderr)
-        ));
-    }
-    
-    let output_str = String::from_utf8_lossy(&data_output.stdout);
-    
-    // Find the data section
-    let data_start = output_str.find("CMI =")
-        .ok_or_else(|| "CMI data section not found".to_string())?;
-    
-    let data_section = &output_str[data_start..];
-    
-    // Parse the numeric values
-    let mut data = Vec::with_capacity(width * height);
-    let mut in_data = false;
-    
-    for line in data_section.lines() {
-        if line.contains("CMI =") {
-            in_data = true;
-            continue;
-        }
-        if !in_data {
-            continue;
-        }
-        if line.contains(';') && !line.contains(',') {
-            break;
-        }
-        
-        for part in line.split(',') {
-            let trimmed = part.trim().trim_end_matches(';');
-            if trimmed.is_empty() {
-                continue;
-            }
-            if let Ok(val) = trimmed.parse::<i16>() {
-                let scaled = if val == fill_value {
-                    f32::NAN
-                } else {
-                    val as f32 * scale_factor + add_offset
-                };
-                data.push(scaled);
-            } else if trimmed == "_" {
-                data.push(f32::NAN);
-            }
-        }
-    }
-    
-    info!(
-        data_len = data.len(),
-        expected_len = width * height,
-        "Parsed CMI data"
-    );
-    
-    // Verify we got the expected amount of data
-    if data.len() != width * height {
-        warn!(
-            "Data length mismatch: got {} expected {}",
-            data.len(),
-            width * height
-        );
-        // If we got less data, pad with NaN
-        while data.len() < width * height {
-            data.push(f32::NAN);
-        }
-        // If we got more, truncate
-        data.truncate(width * height);
-    }
-    
-    // Clean up temp file
-    if let Err(e) = std::fs::remove_file(&temp_file) {
-        warn!("Failed to remove temp file {}: {}", temp_file.display(), e);
-    }
-    
-    // Create projection parameters
+    // Create projection parameters from parsed data (cast f32 to f64)
     let goes_projection = GoesProjectionParams {
-        x_origin: x_offset,
-        y_origin: y_offset,
-        dx: x_scale,
-        dy: y_scale,
-        perspective_point_height,
-        semi_major_axis,
-        semi_minor_axis,
-        longitude_origin,
+        x_origin: x_offset as f64,
+        y_origin: y_offset as f64,
+        dx: x_scale as f64,
+        dy: y_scale as f64,
+        perspective_point_height: projection.perspective_point_height,
+        semi_major_axis: projection.semi_major_axis,
+        semi_minor_axis: projection.semi_minor_axis,
+        longitude_origin: projection.longitude_origin,
     };
     
     // Store in grid cache for future requests
@@ -1677,14 +1546,14 @@ async fn load_netcdf_grid_data(
             width,
             height,
             goes_projection: Some(storage::GoesProjectionParams {
-                x_origin: x_offset,
-                y_origin: y_offset,
-                dx: x_scale,
-                dy: y_scale,
-                perspective_point_height,
-                semi_major_axis,
-                semi_minor_axis,
-                longitude_origin,
+                x_origin: x_offset as f64,
+                y_origin: y_offset as f64,
+                dx: x_scale as f64,
+                dy: y_scale as f64,
+                perspective_point_height: projection.perspective_point_height,
+                semi_major_axis: projection.semi_major_axis,
+                semi_minor_axis: projection.semi_minor_axis,
+                longitude_origin: projection.longitude_origin,
             }),
         };
         cache.insert(cache_key, cached_data).await;
@@ -1704,64 +1573,7 @@ async fn load_netcdf_grid_data(
     })
 }
 
-/// Parse coordinate variable attribute (e.g., x:scale_factor or y:add_offset)
-fn parse_coordinate_attribute(header: &str, coord: &str, attr: &str) -> Result<f64, String> {
-    // Look for lines like: "x:scale_factor = 1.4e-05f ;"
-    let pattern = format!("{}:{} = ", coord, attr);
-    for line in header.lines() {
-        if line.trim().contains(&pattern) {
-            let parts: Vec<&str> = line.split('=').collect();
-            if parts.len() >= 2 {
-                let num_str = parts[1].trim()
-                    .trim_end_matches(';')
-                    .trim_end_matches('f')
-                    .trim();
-                let clean = num_str.replace('f', "");
-                return clean.parse()
-                    .map_err(|_| format!("Failed to parse {}:{}: '{}'", coord, attr, num_str));
-            }
-        }
-    }
-    Err(format!("{}:{} not found", coord, attr))
-}
 
-/// Parse dimension from ncdump header (e.g., "x = 5000")
-fn parse_dimension(header: &str, name: &str) -> Result<usize, String> {
-    let pattern = format!("{} = ", name);
-    for line in header.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains(&pattern) && !trimmed.contains(":") {
-            let parts: Vec<&str> = trimmed.split('=').collect();
-            if parts.len() >= 2 {
-                let num_str = parts[1].trim().trim_end_matches(';').trim();
-                return num_str.parse()
-                    .map_err(|_| format!("Failed to parse dimension {}", name));
-            }
-        }
-    }
-    Err(format!("dimension {} not found", name))
-}
-
-/// Parse attribute from ncdump header
-fn parse_attribute(header: &str, name: &str) -> Result<f64, String> {
-    let pattern = format!(":{} = ", name);
-    for line in header.lines() {
-        if line.contains(&pattern) {
-            let parts: Vec<&str> = line.split('=').collect();
-            if parts.len() >= 2 {
-                let num_str = parts[1].trim()
-                    .trim_end_matches(';')
-                    .trim_end_matches('f')
-                    .trim_end_matches('s')
-                    .trim();
-                let clean = num_str.replace('f', "").replace('s', "");
-                return clean.parse()
-                    .map_err(|_| format!("Failed to parse attribute {}: '{}'", name, num_str));
-            }
-        }
-    }
-    Err(format!("attribute {} not found", name))
-}
 
 /// Render wind barbs combining U and V component data using expanded tile rendering.
 /// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.

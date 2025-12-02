@@ -81,8 +81,31 @@ pub enum TimeSelection {
     Random {
         times: Vec<String>,  // ISO 8601 timestamps
     },
+    /// Query times from WMS GetCapabilities and select sequentially
+    QuerySequential {
+        layer: String,  // Layer name to query times from
+        count: usize,   // Number of times to select (e.g., 5 = most recent 5)
+        #[serde(default)]
+        order: TimeOrder,  // Order to select times (newest_first or oldest_first)
+    },
+    /// Query times from WMS GetCapabilities and select randomly
+    QueryRandom {
+        layer: String,  // Layer name to query times from
+        count: usize,   // Number of times to select randomly from
+        #[serde(default)]
+        order: TimeOrder,  // Which times to select from (newest_first or oldest_first)
+    },
     /// No time parameter (default behavior)
     None,
+}
+
+/// Order for selecting times from WMS GetCapabilities
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeOrder {
+    #[default]
+    NewestFirst,
+    OldestFirst,
 }
 
 impl TestConfig {

@@ -522,3 +522,96 @@ mod tests {
         println!("Off-earth test result: {:?}", result);
     }
 }
+
+/// Load GOES NetCDF data directly from bytes using native netcdf library.
+/// This is much faster than using ncdump subprocess.
+
+/// Load GOES NetCDF data directly from bytes using native netcdf library.
+/// Returns (data, width, height, projection, x_offset, y_offset, x_scale, y_scale)
+pub fn load_goes_netcdf_from_bytes(data: &[u8]) -> NetCdfResult<(Vec<f32>, usize, usize, GoesProjection, f32, f32, f32, f32)> {
+    use std::io::Write;
+    
+    // netcdf crate requires a file path, so we need a temp file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join(format!("goes_native_{}.nc", std::process::id()));
+    
+    // Write temp file
+    let mut file = std::fs::File::create(&temp_file)?;
+    file.write_all(data)?;
+    drop(file);
+    
+    // Open with netcdf library
+    let nc_file = netcdf::open(&temp_file)
+        .map_err(|e| NetCdfError::InvalidFormat(format!("Failed to open NetCDF: {}", e)))?;
+    
+    // Get dimensions
+    let width = nc_file.dimension("x")
+        .ok_or_else(|| NetCdfError::MissingData("x dimension".to_string()))?.len();
+    let height = nc_file.dimension("y")
+        .ok_or_else(|| NetCdfError::MissingData("y dimension".to_string()))?.len();
+    
+    // Get CMI variable and its data
+    let cmi_var = nc_file.variable("CMI")
+        .ok_or_else(|| NetCdfError::MissingData("CMI variable".to_string()))?;
+    
+    // Read raw data as i16 using (..) to read all extents
+    let raw_data: Vec<i16> = cmi_var.get_values(..)
+        .map_err(|e| NetCdfError::InvalidFormat(format!("Failed to read CMI: {}", e)))?;
+    
+    // Get attributes using get_value helper
+    let scale_factor = get_f32_attr(&cmi_var, "scale_factor").unwrap_or(1.0);
+    let add_offset = get_f32_attr(&cmi_var, "add_offset").unwrap_or(0.0);
+    let fill_value = get_i16_attr(&cmi_var, "_FillValue").unwrap_or(-1);
+    
+    // Apply scale and offset
+    let data: Vec<f32> = raw_data.iter().map(|&val| {
+        if val == fill_value { f32::NAN } else { val as f32 * scale_factor + add_offset }
+    }).collect();
+    
+    // Get coordinate attributes
+    let x_var = nc_file.variable("x")
+        .ok_or_else(|| NetCdfError::MissingData("x variable".to_string()))?;
+    let x_scale = get_f32_attr(&x_var, "scale_factor").unwrap_or(1.4e-05);
+    let x_offset = get_f32_attr(&x_var, "add_offset").unwrap_or(-0.101353);
+    
+    let y_var = nc_file.variable("y")
+        .ok_or_else(|| NetCdfError::MissingData("y variable".to_string()))?;
+    let y_scale = get_f32_attr(&y_var, "scale_factor").unwrap_or(-1.4e-05);
+    let y_offset = get_f32_attr(&y_var, "add_offset").unwrap_or(0.128233);
+    
+    // Get projection
+    let proj_var = nc_file.variable("goes_imager_projection")
+        .ok_or_else(|| NetCdfError::MissingData("goes_imager_projection variable".to_string()))?;
+    
+    let projection = GoesProjection {
+        perspective_point_height: get_f64_attr(&proj_var, "perspective_point_height").unwrap_or(35786023.0),
+        semi_major_axis: get_f64_attr(&proj_var, "semi_major_axis").unwrap_or(6378137.0),
+        semi_minor_axis: get_f64_attr(&proj_var, "semi_minor_axis").unwrap_or(6356752.31414),
+        longitude_origin: get_f64_attr(&proj_var, "longitude_of_projection_origin").unwrap_or(-75.0),
+        latitude_origin: 0.0,
+        sweep_angle_axis: "x".to_string(),
+    };
+    
+    // Clean up
+    let _ = std::fs::remove_file(&temp_file);
+    
+    Ok((data, width, height, projection, x_offset, y_offset, x_scale, y_scale))
+}
+
+// Helper to get f32 attribute using TryInto
+fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
+    let attr_value = var.attribute_value(name)?.ok()?;
+    f32::try_from(attr_value).ok()
+}
+
+// Helper to get f64 attribute using TryInto
+fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
+    let attr_value = var.attribute_value(name)?.ok()?;
+    f64::try_from(attr_value).ok()
+}
+
+// Helper to get i16 attribute using TryInto
+fn get_i16_attr(var: &netcdf::Variable, name: &str) -> Option<i16> {
+    let attr_value = var.attribute_value(name)?.ok()?;
+    i16::try_from(attr_value).ok()
+}

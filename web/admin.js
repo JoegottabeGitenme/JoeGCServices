@@ -56,7 +56,8 @@ async function loadAllData() {
         loadSystemStatus(),
         loadCatalogSummary(),
         loadModelConfigs(),
-        loadIngestionLog()
+        loadIngestionLog(),
+        loadCleanupStatus()
     ]);
 }
 
@@ -188,6 +189,144 @@ function shortenPath(path) {
         return '...' + path.slice(-47);
     }
     return path;
+}
+
+// Load cleanup/retention status
+async function loadCleanupStatus() {
+    const container = document.getElementById('cleanup-status-container');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/cleanup/status`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        renderCleanupStatus(data);
+        
+    } catch (error) {
+        console.error('Error loading cleanup status:', error);
+        container.innerHTML = `<div class="error-message">Failed to load cleanup status: ${error.message}</div>`;
+    }
+}
+
+// Render cleanup status
+function renderCleanupStatus(data) {
+    const container = document.getElementById('cleanup-status-container');
+    
+    // Calculate next run time
+    const nextRunMins = Math.round(data.next_run_in_secs / 60);
+    const intervalMins = Math.round(data.interval_secs / 60);
+    
+    // Build overview stats
+    const overviewHtml = `
+        <div class="cleanup-overview">
+            <div class="cleanup-stat">
+                <div class="cleanup-stat-value">${data.enabled ? '✓ Active' : '✗ Disabled'}</div>
+                <div class="cleanup-stat-label">Cleanup Status</div>
+            </div>
+            <div class="cleanup-stat">
+                <div class="cleanup-stat-value">${intervalMins} min</div>
+                <div class="cleanup-stat-label">Cleanup Interval</div>
+            </div>
+            <div class="cleanup-stat">
+                <div class="cleanup-stat-value">${nextRunMins} min</div>
+                <div class="cleanup-stat-label">Next Run In</div>
+            </div>
+            <div class="cleanup-stat">
+                <div class="cleanup-stat-value ${data.expired_count > 0 ? 'warning' : ''}">${data.expired_count}</div>
+                <div class="cleanup-stat-label">Expired Datasets</div>
+            </div>
+            <div class="cleanup-stat">
+                <div class="cleanup-stat-value ${data.total_purge_size_bytes > 0 ? 'warning' : ''}">${formatBytes(data.total_purge_size_bytes)}</div>
+                <div class="cleanup-stat-label">To Be Purged</div>
+            </div>
+        </div>
+    `;
+    
+    // Build retention table
+    let tableHtml = `
+        <table class="retention-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Retention</th>
+                    <th>Cutoff Time</th>
+                    <th>Oldest Data</th>
+                    <th>Next Purge In</th>
+                    <th>Files to Purge</th>
+                    <th>Size</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    // Sort by model name
+    const previews = data.purge_preview || [];
+    previews.sort((a, b) => a.model.localeCompare(b.model));
+    
+    for (const preview of previews) {
+        const purgeClass = preview.dataset_count === 0 ? 'none' : 
+                          preview.dataset_count < 10 ? 'some' : 'many';
+        
+        tableHtml += `
+            <tr>
+                <td><strong>${preview.model}</strong></td>
+                <td>${preview.retention_hours} hours</td>
+                <td class="time-until">${preview.cutoff_time || 'N/A'}</td>
+                <td class="time-until">${preview.oldest_data || 'No data'}</td>
+                <td class="time-until">${preview.next_purge_in || 'N/A'}</td>
+                <td>
+                    <span class="purge-count ${purgeClass}">
+                        ${preview.dataset_count} files
+                    </span>
+                </td>
+                <td>${formatBytes(preview.total_size_bytes)}</td>
+            </tr>
+        `;
+    }
+    
+    tableHtml += `
+            </tbody>
+        </table>
+    `;
+    
+    // Add manual cleanup button
+    const actionsHtml = `
+        <div class="cleanup-actions">
+            <button class="btn btn-secondary" onclick="runManualCleanup()">🗑️ Run Cleanup Now</button>
+        </div>
+    `;
+    
+    container.innerHTML = overviewHtml + tableHtml + actionsHtml;
+}
+
+// Run manual cleanup
+async function runManualCleanup() {
+    if (!confirm('This will permanently delete expired datasets. Continue?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/cleanup/run`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        alert(`Cleanup complete!\n\nMarked expired: ${data.marked_expired}\nFiles deleted: ${data.files_deleted}\nRecords removed: ${data.records_removed}`);
+        
+        // Refresh the status
+        loadCleanupStatus();
+        loadCatalogSummary();
+        
+    } catch (error) {
+        console.error('Error running cleanup:', error);
+        alert(`Failed to run cleanup: ${error.message}`);
+    }
 }
 
 // Load model configurations

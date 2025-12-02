@@ -838,12 +838,12 @@ async fn ingest_netcdf_file(
         "Parsed GOES file metadata"
     );
     
-    // Create storage path
-    let run_date = observation_time.format("%Y%m%d_%Hz").to_string();
+    // Create storage path - include hour and minute for GOES (5-minute intervals)
+    let run_datetime = observation_time.format("%Y%m%d_%H%Mz").to_string();
     let storage_path = format!(
         "raw/{}/{}/{}.nc",
         model,
-        run_date,
+        run_datetime,
         parameter.to_lowercase()
     );
     

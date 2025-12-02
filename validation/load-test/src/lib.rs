@@ -11,6 +11,7 @@ pub mod generator;
 pub mod metrics;
 pub mod report;
 pub mod runner;
+pub mod wms_client;
 
 pub use config::{BBox, LayerConfig, TestConfig, TileSelection};
 pub use generator::TileGenerator;
