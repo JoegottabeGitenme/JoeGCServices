@@ -9,3 +9,4 @@ layers:
 tile_selection:
   type: random
   zoom_range: [4, 12]
+seed: 123456

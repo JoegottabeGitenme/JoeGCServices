@@ -10,6 +10,13 @@ pub struct StyleConfig {
     pub styles: HashMap<String, StyleDefinition>,
 }
 
+/// Value range for the style
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ValueRange {
+    pub min: f32,
+    pub max: f32,
+}
+
 /// A single style definition
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StyleDefinition {
@@ -18,6 +25,7 @@ pub struct StyleDefinition {
     #[serde(rename = "type")]
     pub style_type: String,
     pub units: Option<String>,
+    pub range: Option<ValueRange>,
     pub transform: Option<Transform>,
     pub stops: Vec<ColorStop>,
     pub interpolation: Option<String>,
@@ -68,18 +76,34 @@ impl StyleConfig {
     }
 }
 
-/// Parse hex color string to RGB
-pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+/// Parse hex color string to RGBA
+/// Supports both 6-char RGB (#RRGGBB) and 8-char RGBA (#RRGGBBAA) formats
+pub fn hex_to_rgba(hex: &str) -> Option<(u8, u8, u8, u8)> {
     let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
+    
+    match hex.len() {
+        6 => {
+            // RGB format - fully opaque
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some((r, g, b, 255))
+        }
+        8 => {
+            // RGBA format
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some((r, g, b, a))
+        }
+        _ => None,
     }
-    
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    
-    Some((r, g, b))
+}
+
+/// Legacy function for backwards compatibility
+pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    hex_to_rgba(hex).map(|(r, g, b, _)| (r, g, b))
 }
 
 /// Contour style configuration (nested format from JSON files)
@@ -356,6 +380,9 @@ impl ContourStyle {
     }
 }
 
+/// Common missing value markers for weather data
+const MISSING_VALUE_THRESHOLD: f32 = -90.0;
+
 /// Apply style-based color mapping to data
 pub fn apply_style_gradient(
     data: &[f32],
@@ -373,15 +400,12 @@ pub fn apply_style_gradient(
         return pixels;
     }
     
-    // Convert hex colors to RGB
-    let colors: Vec<Option<(u8, u8, u8)>> = stops.iter().map(|s| hex_to_rgb(&s.color)).collect();
-    let values: Vec<f32> = stops.iter().map(|s| s.value).collect();
+    // Convert hex colors to RGBA (supports 6-char RGB and 8-char RGBA)
+    let colors: Vec<Option<(u8, u8, u8, u8)>> = stops.iter().map(|s| hex_to_rgba(&s.color)).collect();
+    let stop_values: Vec<f32> = stops.iter().map(|s| s.value).collect();
     
-    // Find data range
-    let (min_val, max_val) = data.iter().fold(
-        (f32::INFINITY, f32::NEG_INFINITY),
-        |(min, max), &val| (min.min(val), max.max(val)),
-    );
+    let min_stop = stop_values[0];
+    let max_stop = stop_values[stop_values.len() - 1];
     
     // Render each pixel
     for (idx, &value) in data.iter().enumerate() {
@@ -389,9 +413,11 @@ pub fn apply_style_gradient(
             break;
         }
         
-        // Handle NaN as transparent (for data outside geographic bounds)
-        if value.is_nan() {
-            let pixel_offset = idx * 4;
+        let pixel_offset = idx * 4;
+        
+        // Handle NaN and common missing values as transparent
+        // MRMS uses -99 and -999, other datasets may use different markers
+        if value.is_nan() || value <= MISSING_VALUE_THRESHOLD {
             pixels[pixel_offset] = 0;     // R
             pixels[pixel_offset + 1] = 0; // G
             pixels[pixel_offset + 2] = 0; // B
@@ -399,60 +425,75 @@ pub fn apply_style_gradient(
             continue;
         }
         
-        // Normalize value to 0-1 range
-        let range = max_val - min_val;
-        let normalized = if range.abs() < 0.001 {
-            0.5
-        } else {
-            ((value - min_val) / range).clamp(0.0, 1.0)
-        };
-        
-        // Find the two surrounding color stops
+        // Map value directly to color stops (no normalization needed)
+        // Find the two surrounding color stops based on actual data value
         let mut low_idx = 0;
-        let mut high_idx = values.len() - 1;
+        let mut high_idx = stop_values.len() - 1;
         
-        for (i, &stop_val) in values.iter().enumerate() {
-            if stop_val <= normalized * (values[values.len() - 1] - values[0]) + values[0] {
+        for (i, &stop_val) in stop_values.iter().enumerate() {
+            if stop_val <= value {
                 low_idx = i;
             }
-            if stop_val >= normalized * (values[values.len() - 1] - values[0]) + values[0] {
+            if stop_val >= value && i > 0 {
                 high_idx = i;
                 break;
             }
         }
         
-        // Interpolate color
+        // Handle out-of-range values
+        if value <= min_stop {
+            // Below minimum - use first stop's color
+            if let Some((r, g, b, a)) = colors[0] {
+                pixels[pixel_offset] = r;
+                pixels[pixel_offset + 1] = g;
+                pixels[pixel_offset + 2] = b;
+                pixels[pixel_offset + 3] = a;
+            }
+            continue;
+        }
+        
+        if value >= max_stop {
+            // Above maximum - use last stop's color
+            if let Some((r, g, b, a)) = colors[colors.len() - 1] {
+                pixels[pixel_offset] = r;
+                pixels[pixel_offset + 1] = g;
+                pixels[pixel_offset + 2] = b;
+                pixels[pixel_offset + 3] = a;
+            }
+            continue;
+        }
+        
+        // Interpolate color between two stops
         let (r, g, b, a) = if low_idx == high_idx {
             match colors[low_idx] {
-                Some((r, g, b)) => (r, g, b, 255),
+                Some((r, g, b, a)) => (r, g, b, a),
                 None => (200, 200, 200, 255),
             }
         } else {
-            let low_val = values[low_idx];
-            let high_val = values[high_idx];
+            let low_val = stop_values[low_idx];
+            let high_val = stop_values[high_idx];
             let t = if (high_val - low_val).abs() < 0.001 {
                 0.0
             } else {
-                ((normalized * (values[values.len() - 1] - values[0]) + values[0] - low_val) / (high_val - low_val))
-                    .clamp(0.0, 1.0)
+                ((value - low_val) / (high_val - low_val)).clamp(0.0, 1.0)
             };
             
             match (colors[low_idx], colors[high_idx]) {
-                (Some((r1, g1, b1)), Some((r2, g2, b2))) => {
+                (Some((r1, g1, b1, a1)), Some((r2, g2, b2, a2))) => {
                     let r = (r1 as f32 * (1.0 - t) + r2 as f32 * t) as u8;
                     let g = (g1 as f32 * (1.0 - t) + g2 as f32 * t) as u8;
                     let b = (b1 as f32 * (1.0 - t) + b2 as f32 * t) as u8;
-                    (r, g, b, 255)
+                    let a = (a1 as f32 * (1.0 - t) + a2 as f32 * t) as u8;
+                    (r, g, b, a)
                 }
                 _ => (200, 200, 200, 255),
             }
         };
         
-        let pixel_idx = idx * 4;
-        pixels[pixel_idx] = r;
-        pixels[pixel_idx + 1] = g;
-        pixels[pixel_idx + 2] = b;
-        pixels[pixel_idx + 3] = a;
+        pixels[pixel_offset] = r;
+        pixels[pixel_offset + 1] = g;
+        pixels[pixel_offset + 2] = b;
+        pixels[pixel_offset + 3] = a;
     }
     
     pixels

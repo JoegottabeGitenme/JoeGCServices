@@ -51,6 +51,12 @@ impl TileGenerator {
 
     /// Generate the next tile request URL.
     pub fn next_url(&mut self) -> String {
+        self.next_url_with_info().0
+    }
+    
+    /// Generate the next tile request URL with tile info for logging.
+    /// Returns (url, (z, x, y, layer_name))
+    pub fn next_url_with_info(&mut self) -> (String, (u32, u32, u32, String)) {
         // Select layer index based on weights
         let layer_idx = self.select_layer_index();
         
@@ -60,8 +66,13 @@ impl TileGenerator {
         // Select time (if temporal testing enabled)
         let time = self.select_time();
         
+        // Get layer name
+        let layer_name = self.config.layers[layer_idx].name.clone();
+        
         // Build WMTS URL
-        self.build_wmts_url(layer_idx, z, x, y, time.as_deref())
+        let url = self.build_wmts_url(layer_idx, z, x, y, time.as_deref());
+        
+        (url, (z, x, y, layer_name))
     }
 
     /// Select a layer index based on configured weights.

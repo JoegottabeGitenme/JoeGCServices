@@ -275,6 +275,92 @@ impl Catalog {
         Ok(result.rows_affected())
     }
 
+    /// Mark old datasets for a specific model as expired based on retention hours.
+    pub async fn mark_model_expired(&self, model: &str, older_than: DateTime<Utc>) -> WmsResult<u64> {
+        let result = sqlx::query(
+            "UPDATE datasets SET status = 'expired' WHERE model = $1 AND valid_time < $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(older_than)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Update failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get storage paths for expired datasets (for deletion from object storage).
+    pub async fn get_expired_storage_paths(&self) -> WmsResult<Vec<String>> {
+        let paths = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT storage_path FROM datasets WHERE status = 'expired'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(paths)
+    }
+
+    /// Delete expired dataset records from the database.
+    /// Call this AFTER deleting files from object storage.
+    pub async fn delete_expired(&self) -> WmsResult<u64> {
+        let result = sqlx::query("DELETE FROM datasets WHERE status = 'expired'")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Delete failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get count of expired datasets.
+    pub async fn count_expired(&self) -> WmsResult<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM datasets WHERE status = 'expired'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Preview what datasets would be expired for a specific model based on retention.
+    /// Returns count and total size of datasets that would be purged.
+    pub async fn preview_model_expiration(
+        &self,
+        model: &str,
+        older_than: DateTime<Utc>,
+    ) -> WmsResult<PurgePreview> {
+        let row = sqlx::query_as::<_, (i64, Option<i64>)>(
+            "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM datasets \
+             WHERE model = $1 AND valid_time < $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(older_than)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(PurgePreview {
+            dataset_count: row.0 as u64,
+            total_size_bytes: row.1.unwrap_or(0) as u64,
+        })
+    }
+
+    /// Get the oldest dataset time for a model (for calculating when next purge will happen).
+    pub async fn get_oldest_dataset_time(&self, model: &str) -> WmsResult<Option<DateTime<Utc>>> {
+        // MIN returns NULL when no rows match, so we use Option<Option<DateTime>>
+        let oldest = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT MIN(valid_time) FROM datasets WHERE model = $1 AND status = 'available'",
+        )
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(oldest)
+    }
+
     /// Get available model run times (reference_time) for a model/parameter.
     pub async fn get_available_runs(
         &self,
@@ -517,6 +603,15 @@ pub struct DatasetQuery {
     pub level: Option<String>,
     pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     pub bbox: Option<BoundingBox>,
+}
+
+/// Preview of what would be purged for a model.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PurgePreview {
+    /// Number of datasets that would be purged
+    pub dataset_count: u64,
+    /// Total size of datasets that would be purged
+    pub total_size_bytes: u64,
 }
 
 /// Internal row type for database queries.

@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tile Request Visualization - Weather WMS</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        .header {
+            padding: 12px 20px;
+            background: #16213e;
+            border-bottom: 1px solid #0f3460;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+            color: #00d9ff;
+        }
+        .header h1 a {
+            color: #00d9ff;
+            text-decoration: none;
+        }
+        .header h1 a:hover {
+            text-decoration: underline;
+        }
+        .back-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 13px;
+            padding: 6px 12px;
+            background: #0f3460;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .back-link:hover {
+            background: #1a4080;
+            color: #fff;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-group label {
+            font-size: 13px;
+            color: #aaa;
+        }
+        input[type="file"] {
+            font-size: 13px;
+            padding: 6px 12px;
+            background: #0f3460;
+            border: 1px solid #1a4080;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+        }
+        select, input[type="range"] {
+            padding: 6px 10px;
+            background: #0f3460;
+            border: 1px solid #1a4080;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+        }
+        button {
+            padding: 6px 14px;
+            background: #00d9ff;
+            border: none;
+            border-radius: 4px;
+            color: #000;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #00b8d9;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        #map {
+            flex: 1;
+            background: #0a0a1a;
+        }
+        .sidebar {
+            width: 320px;
+            background: #16213e;
+            border-left: 1px solid #0f3460;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .stats {
+            padding: 15px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .stats h2 {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #00d9ff;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .stat-item {
+            background: #0f3460;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .stat-item .label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+        }
+        .stat-item .value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .stat-item .value.hit { color: #00ff88; }
+        .stat-item .value.miss { color: #ff4466; }
+        .timeline-container {
+            flex: 1;
+            padding: 15px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .timeline-container h2 {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #00d9ff;
+        }
+        #timeline {
+            flex: 1;
+            background: #0f3460;
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        .timeline-bar {
+            position: absolute;
+            height: 4px;
+            border-radius: 2px;
+            transition: opacity 0.2s;
+        }
+        .timeline-bar.hit { background: #00ff88; }
+        .timeline-bar.miss { background: #ff4466; }
+        .request-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        .request-list h2 {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #00d9ff;
+            position: sticky;
+            top: 0;
+            background: #16213e;
+            padding-bottom: 8px;
+        }
+        .request-item {
+            padding: 8px 10px;
+            background: #0f3460;
+            border-radius: 4px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            font-family: monospace;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: background 0.2s;
+        }
+        .request-item:hover {
+            background: #1a4080;
+        }
+        .request-item.hit {
+            border-left-color: #00ff88;
+        }
+        .request-item.miss {
+            border-left-color: #ff4466;
+        }
+        .request-item .tile-coords {
+            color: #00d9ff;
+            font-weight: 500;
+        }
+        .request-item .latency {
+            color: #888;
+            float: right;
+        }
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            left: 10px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 10px 15px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1000;
+            border: 1px solid #0f3460;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 4px 0;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+        }
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+            text-align: center;
+            padding: 40px;
+        }
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 15px;
+            background: #0f3460;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .playback-controls input[type="range"] {
+            flex: 1;
+        }
+        .playback-time {
+            font-size: 12px;
+            font-family: monospace;
+            min-width: 80px;
+        }
+        .zoom-filter {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+        .zoom-btn {
+            padding: 4px 8px;
+            font-size: 11px;
+            background: #0f3460;
+            border: 1px solid #1a4080;
+            color: #888;
+        }
+        .zoom-btn.active {
+            background: #00d9ff;
+            color: #000;
+            border-color: #00d9ff;
+        }
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #0a0a1a;
+            border: 1px solid #1a4080;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        .file-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #1a4080;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .file-item:hover {
+            background: #0f3460;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item .file-name {
+            color: #00d9ff;
+        }
+        .file-item .file-meta {
+            color: #666;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="index.html" class="back-link">← Dashboard</a>
+        <h1>Tile Request Visualization</h1>
+        <div class="controls">
+            <div class="control-group">
+                <label>Load from server:</label>
+                <select id="serverFiles">
+                    <option value="">Select a file...</option>
+                </select>
+                <button id="loadServerFile">Load</button>
+            </div>
+            <div class="control-group">
+                <label>Or upload:</label>
+                <input type="file" id="fileInput" accept=".jsonl,.json">
+            </div>
+            <div class="control-group">
+                <label>Zoom Filter:</label>
+                <div class="zoom-filter" id="zoomFilter"></div>
+            </div>
+            <div class="control-group">
+                <label>Show:</label>
+                <select id="showFilter">
+                    <option value="all">All Requests</option>
+                    <option value="hit">Cache Hits Only</option>
+                    <option value="miss">Cache Misses Only</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="main">
+        <div id="map"></div>
+        <div class="sidebar">
+            <div class="stats">
+                <h2>Statistics</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="label">Total Requests</div>
+                        <div class="value" id="statTotal">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Unique Tiles</div>
+                        <div class="value" id="statUnique">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Cache Hits</div>
+                        <div class="value hit" id="statHits">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Cache Misses</div>
+                        <div class="value miss" id="statMisses">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Hit Rate</div>
+                        <div class="value" id="statHitRate">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Avg Latency</div>
+                        <div class="value" id="statLatency">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="timeline-container">
+                <h2>Playback</h2>
+                <div class="playback-controls">
+                    <button id="playBtn">Play</button>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100">
+                    <span class="playback-time" id="timeDisplay">--:--</span>
+                </div>
+                <div id="timeline"></div>
+            </div>
+            <div class="request-list">
+                <h2>Recent Requests</h2>
+                <div id="requestList">
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                        </svg>
+                        <div>Load a JSONL file to see requests</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: #00ff88;"></div>
+            <span>Cache Hit</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff4466;"></div>
+            <span>Cache Miss</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: rgba(255,255,255,0.3);"></div>
+            <span>Tile Boundary</span>
+        </div>
+    </div>
+
+    <script>
+        // Initialize map
+        const map = L.map('map', {
+            center: [39.8, -98.5], // Center of US
+            zoom: 4,
+            preferCanvas: true
+        });
+
+        // Add dark tile layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // State
+        let allRequests = [];
+        let tileRectangles = new Map(); // key: "z/x/y" -> {rect, hitCount, missCount}
+        let displayedRequests = [];
+        let isPlaying = false;
+        let playbackIndex = 0;
+        let zoomLevels = new Set();
+        let selectedZooms = new Set();
+
+        // DOM elements
+        const fileInput = document.getElementById('fileInput');
+        const showFilter = document.getElementById('showFilter');
+        const zoomFilterContainer = document.getElementById('zoomFilter');
+        const playBtn = document.getElementById('playBtn');
+        const timeSlider = document.getElementById('timeSlider');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const requestList = document.getElementById('requestList');
+        const serverFiles = document.getElementById('serverFiles');
+        const loadServerFileBtn = document.getElementById('loadServerFile');
+
+        // API base URL - use WMS API server (port 8080)
+        const API_BASE = window.location.port === '8080' ? '' : 'http://localhost:8080';
+
+        // Fetch available log files from server
+        async function loadFileList() {
+            try {
+                const response = await fetch(`${API_BASE}/api/loadtest/files`);
+                if (response.ok) {
+                    const files = await response.json();
+                    serverFiles.innerHTML = '<option value="">Select a file...</option>';
+                    for (const file of files) {
+                        const option = document.createElement('option');
+                        option.value = file.path;
+                        option.textContent = `${file.name} (${file.size})`;
+                        serverFiles.appendChild(option);
+                    }
+                    if (files.length === 0) {
+                        serverFiles.innerHTML = '<option value="">No log files found</option>';
+                    }
+                }
+            } catch (err) {
+                console.log('Could not fetch file list from server:', err.message);
+                // Hide the server file selector if API is not available
+                serverFiles.parentElement.style.display = 'none';
+            }
+        }
+
+        // Load file from server
+        loadServerFileBtn.addEventListener('click', async () => {
+            const filePath = serverFiles.value;
+            if (!filePath) return;
+
+            try {
+                const response = await fetch(`${API_BASE}${filePath}`);
+                if (!response.ok) throw new Error('Failed to fetch file');
+                const text = await response.text();
+                loadRequestData(text);
+            } catch (err) {
+                alert('Failed to load file: ' + err.message);
+            }
+        });
+
+        // Load request data from text
+        function loadRequestData(text) {
+            const lines = text.trim().split('\n');
+            
+            allRequests = [];
+            zoomLevels = new Set();
+            for (const line of lines) {
+                try {
+                    const req = JSON.parse(line);
+                    allRequests.push(req);
+                    zoomLevels.add(req.z);
+                } catch (err) {
+                    console.warn('Failed to parse line:', line);
+                }
+            }
+
+            // Sort by timestamp
+            allRequests.sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+
+            // Initialize zoom filter
+            initZoomFilter();
+            
+            // Display all requests
+            updateDisplay();
+        }
+
+        // Initialize - try to load file list
+        loadFileList();
+
+        // File input handler
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const text = await file.text();
+            loadRequestData(text);
+        });
+
+        // Initialize zoom level filter buttons
+        function initZoomFilter() {
+            zoomFilterContainer.innerHTML = '';
+            const sortedZooms = [...zoomLevels].sort((a, b) => a - b);
+            
+            // Add "All" button
+            const allBtn = document.createElement('button');
+            allBtn.className = 'zoom-btn active';
+            allBtn.textContent = 'All';
+            allBtn.addEventListener('click', () => {
+                selectedZooms = new Set(zoomLevels);
+                document.querySelectorAll('.zoom-btn').forEach(b => b.classList.add('active'));
+                updateDisplay();
+            });
+            zoomFilterContainer.appendChild(allBtn);
+
+            // Add individual zoom buttons
+            for (const z of sortedZooms) {
+                selectedZooms.add(z);
+                const btn = document.createElement('button');
+                btn.className = 'zoom-btn active';
+                btn.textContent = `z${z}`;
+                btn.addEventListener('click', () => {
+                    if (selectedZooms.has(z)) {
+                        selectedZooms.delete(z);
+                        btn.classList.remove('active');
+                    } else {
+                        selectedZooms.add(z);
+                        btn.classList.add('active');
+                    }
+                    // Update "All" button state
+                    allBtn.classList.toggle('active', selectedZooms.size === zoomLevels.size);
+                    updateDisplay();
+                });
+                zoomFilterContainer.appendChild(btn);
+            }
+        }
+
+        // Show filter change
+        showFilter.addEventListener('change', updateDisplay);
+
+        // Convert tile coords to lat/lon bounds
+        function tileToBounds(z, x, y) {
+            const n = Math.pow(2, z);
+            const lonMin = (x / n) * 360 - 180;
+            const lonMax = ((x + 1) / n) * 360 - 180;
+            
+            const latRadMax = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+            const latRadMin = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n)));
+            
+            const latMin = latRadMin * 180 / Math.PI;
+            const latMax = latRadMax * 180 / Math.PI;
+            
+            return [[latMin, lonMin], [latMax, lonMax]];
+        }
+
+        // Update the display based on filters
+        function updateDisplay() {
+            // Clear existing rectangles
+            for (const {rect} of tileRectangles.values()) {
+                map.removeLayer(rect);
+            }
+            tileRectangles.clear();
+
+            // Filter requests
+            const filter = showFilter.value;
+            displayedRequests = allRequests.filter(req => {
+                if (!selectedZooms.has(req.z)) return false;
+                if (filter === 'hit' && req.cache_status !== 'HIT') return false;
+                if (filter === 'miss' && req.cache_status !== 'MISS') return false;
+                return true;
+            });
+
+            // Group by tile
+            const tileData = new Map();
+            for (const req of displayedRequests) {
+                const key = `${req.z}/${req.x}/${req.y}`;
+                if (!tileData.has(key)) {
+                    tileData.set(key, { z: req.z, x: req.x, y: req.y, hits: 0, misses: 0, requests: [] });
+                }
+                const data = tileData.get(key);
+                data.requests.push(req);
+                if (req.cache_status === 'HIT') {
+                    data.hits++;
+                } else {
+                    data.misses++;
+                }
+            }
+
+            // Find max request count for intensity scaling
+            let maxCount = 1;
+            for (const data of tileData.values()) {
+                maxCount = Math.max(maxCount, data.hits + data.misses);
+            }
+
+            // Draw rectangles
+            for (const [key, data] of tileData) {
+                const bounds = tileToBounds(data.z, data.x, data.y);
+                const total = data.hits + data.misses;
+                const hitRatio = data.hits / total;
+                const intensity = Math.min(1, (total / maxCount) * 0.8 + 0.2);
+
+                // Color based on hit ratio (green = hit, red = miss)
+                const r = Math.round(255 * (1 - hitRatio));
+                const g = Math.round(255 * hitRatio);
+                const color = `rgb(${r}, ${g}, 100)`;
+
+                const rect = L.rectangle(bounds, {
+                    color: 'rgba(255,255,255,0.3)',
+                    weight: 1,
+                    fillColor: color,
+                    fillOpacity: intensity * 0.6
+                }).addTo(map);
+
+                rect.bindPopup(`
+                    <strong>Tile ${key}</strong><br>
+                    Requests: ${total}<br>
+                    Hits: ${data.hits} (${(hitRatio * 100).toFixed(1)}%)<br>
+                    Misses: ${data.misses}
+                `);
+
+                tileRectangles.set(key, { rect, data });
+            }
+
+            // Update stats
+            updateStats();
+            updateTimeline();
+            updateRequestList();
+        }
+
+        // Update statistics display
+        function updateStats() {
+            const total = displayedRequests.length;
+            const hits = displayedRequests.filter(r => r.cache_status === 'HIT').length;
+            const misses = total - hits;
+            const uniqueTiles = new Set(displayedRequests.map(r => `${r.z}/${r.x}/${r.y}`)).size;
+            const avgLatency = total > 0 
+                ? displayedRequests.reduce((sum, r) => sum + r.latency_ms, 0) / total 
+                : 0;
+            const hitRate = total > 0 ? (hits / total) * 100 : 0;
+
+            document.getElementById('statTotal').textContent = total.toLocaleString();
+            document.getElementById('statUnique').textContent = uniqueTiles.toLocaleString();
+            document.getElementById('statHits').textContent = hits.toLocaleString();
+            document.getElementById('statMisses').textContent = misses.toLocaleString();
+            document.getElementById('statHitRate').textContent = `${hitRate.toFixed(1)}%`;
+            document.getElementById('statLatency').textContent = `${avgLatency.toFixed(1)}ms`;
+        }
+
+        // Update timeline visualization
+        function updateTimeline() {
+            const timeline = document.getElementById('timeline');
+            timeline.innerHTML = '';
+
+            if (displayedRequests.length === 0) return;
+
+            const minTime = displayedRequests[0].timestamp_ms;
+            const maxTime = displayedRequests[displayedRequests.length - 1].timestamp_ms;
+            const duration = maxTime - minTime || 1;
+
+            // Create bars for each request
+            for (const req of displayedRequests) {
+                const bar = document.createElement('div');
+                bar.className = `timeline-bar ${req.cache_status === 'HIT' ? 'hit' : 'miss'}`;
+                
+                const left = ((req.timestamp_ms - minTime) / duration) * 100;
+                const width = Math.max(2, (req.latency_ms / duration) * 100);
+                
+                bar.style.left = `${left}%`;
+                bar.style.width = `${width}px`;
+                bar.style.top = `${Math.random() * 90}%`;
+                
+                timeline.appendChild(bar);
+            }
+
+            // Update slider
+            timeSlider.max = displayedRequests.length;
+            timeSlider.value = displayedRequests.length;
+            updateTimeDisplay(maxTime - minTime);
+        }
+
+        // Update request list
+        function updateRequestList() {
+            if (displayedRequests.length === 0) {
+                requestList.innerHTML = `
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                        </svg>
+                        <div>No requests match the current filter</div>
+                    </div>
+                `;
+                return;
+            }
+
+            // Show last 50 requests
+            const recent = displayedRequests.slice(-50).reverse();
+            requestList.innerHTML = recent.map(req => `
+                <div class="request-item ${req.cache_status === 'HIT' ? 'hit' : 'miss'}" 
+                     data-z="${req.z}" data-x="${req.x}" data-y="${req.y}">
+                    <span class="tile-coords">z${req.z}/${req.x}/${req.y}</span>
+                    <span class="latency">${req.latency_ms.toFixed(1)}ms</span>
+                    <div style="color: #666; font-size: 11px;">${req.layer}</div>
+                </div>
+            `).join('');
+
+            // Click handler to zoom to tile
+            requestList.querySelectorAll('.request-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const z = parseInt(item.dataset.z);
+                    const x = parseInt(item.dataset.x);
+                    const y = parseInt(item.dataset.y);
+                    const bounds = tileToBounds(z, x, y);
+                    map.fitBounds(bounds, { maxZoom: z + 2 });
+                    
+                    // Highlight the tile
+                    const key = `${z}/${x}/${y}`;
+                    if (tileRectangles.has(key)) {
+                        const {rect} = tileRectangles.get(key);
+                        rect.openPopup();
+                    }
+                });
+            });
+        }
+
+        // Update time display
+        function updateTimeDisplay(ms) {
+            const secs = Math.floor(ms / 1000);
+            const mins = Math.floor(secs / 60);
+            const remainingSecs = secs % 60;
+            timeDisplay.textContent = `${mins}:${remainingSecs.toString().padStart(2, '0')}`;
+        }
+
+        // Playback controls
+        playBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                isPlaying = false;
+                playBtn.textContent = 'Play';
+            } else {
+                isPlaying = true;
+                playBtn.textContent = 'Pause';
+                playbackIndex = 0;
+                playAnimation();
+            }
+        });
+
+        timeSlider.addEventListener('input', () => {
+            const idx = parseInt(timeSlider.value);
+            showRequestsUpTo(idx);
+        });
+
+        function playAnimation() {
+            if (!isPlaying || playbackIndex >= displayedRequests.length) {
+                isPlaying = false;
+                playBtn.textContent = 'Play';
+                return;
+            }
+
+            showRequestsUpTo(playbackIndex);
+            timeSlider.value = playbackIndex;
+            playbackIndex += Math.max(1, Math.floor(displayedRequests.length / 200)); // Speed based on total requests
+
+            requestAnimationFrame(() => setTimeout(playAnimation, 50));
+        }
+
+        function showRequestsUpTo(idx) {
+            // Reset all rectangles to low opacity
+            for (const {rect, data} of tileRectangles.values()) {
+                rect.setStyle({ fillOpacity: 0.1, weight: 1 });
+            }
+
+            // Highlight tiles that have been requested up to this point
+            const activeRequests = displayedRequests.slice(0, idx);
+            const activeTiles = new Map();
+            
+            for (const req of activeRequests) {
+                const key = `${req.z}/${req.x}/${req.y}`;
+                if (!activeTiles.has(key)) {
+                    activeTiles.set(key, { hits: 0, misses: 0 });
+                }
+                if (req.cache_status === 'HIT') {
+                    activeTiles.get(key).hits++;
+                } else {
+                    activeTiles.get(key).misses++;
+                }
+            }
+
+            // Find max for scaling
+            let maxCount = 1;
+            for (const data of activeTiles.values()) {
+                maxCount = Math.max(maxCount, data.hits + data.misses);
+            }
+
+            // Update rectangle styles
+            for (const [key, counts] of activeTiles) {
+                if (tileRectangles.has(key)) {
+                    const {rect} = tileRectangles.get(key);
+                    const total = counts.hits + counts.misses;
+                    const intensity = Math.min(1, (total / maxCount) * 0.8 + 0.2);
+                    rect.setStyle({ fillOpacity: intensity * 0.6, weight: 1 });
+                }
+            }
+
+            // Update time display
+            if (idx > 0 && idx <= displayedRequests.length) {
+                const elapsed = displayedRequests[idx - 1].timestamp_ms - displayedRequests[0].timestamp_ms;
+                updateTimeDisplay(elapsed);
+            }
+        }
+    </script>
+</body>
+</html>

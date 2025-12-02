@@ -1,6 +1,6 @@
 name: goes_temporal_5min
 description: |
-  Temporal test for GOES-19 satellite imagery across 5 time steps.
+  Temporal test for GOES-18 (West) satellite imagery across 5 time steps.
   Tests cache behavior with satellite data (larger files than MRMS).
   5-minute intervals, Clean IR Band 13 (2 km resolution, 24/7 availability).
   
@@ -17,31 +17,32 @@ warmup_secs: 10
 seed: 66666
 
 layers:
-  # GOES-19 Clean IR (Band 13) - cloud-top temperatures
-  - name: goes19_IR
-    style: goes_ir
+  # GOES-18 Clean IR (Band 13) - cloud-top temperatures
+  - name: goes18_CMI_C13
+    style: default
     weight: 1.0
 
 tile_selection:
   type: random
   # Lower zoom range for GOES (2km resolution doesn't benefit from high zoom)
-  zoom_range: [3, 12]
+  zoom_range: [3, 8]
   bbox:
-    # CONUS bounding box
-    min_lon: -130.0
-    min_lat: 20.0
-    max_lon: -60.0
-    max_lat: 55.0
+    # GOES-18 West coverage - western CONUS
+    min_lon: -165.0
+    min_lat: 14.5
+    max_lon: -90.0
+    max_lat: 55.5
 
 # Sequential time selection - 5 time steps at 5-minute intervals
+# Using actual ingested GOES-18 timestamps
 time_selection:
   type: sequential
   times:
-    - "2025-11-28T15:01:17Z"
-    - "2025-11-28T15:06:17Z"
-    - "2025-11-28T15:11:17Z"
-    - "2025-11-28T15:16:17Z"
-    - "2025-11-28T15:21:17Z"
+    - "2025-12-02T03:01:00Z"
+    - "2025-12-02T03:06:00Z"
+    - "2025-12-02T03:11:00Z"
+    - "2025-12-02T03:16:00Z"
+    - "2025-12-02T02:51:00Z"
 
 # Expected behavior with 15 concurrent workers and 120s duration:
 # - Each worker cycles through 5 times sequentially

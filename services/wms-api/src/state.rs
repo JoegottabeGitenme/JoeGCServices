@@ -5,7 +5,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use storage::{Catalog, GribCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::metrics::MetricsCollector;
 
 /// Configuration for performance optimizations.
@@ -20,6 +20,10 @@ pub struct OptimizationConfig {
     // GRIB Cache
     pub grib_cache_enabled: bool,
     pub grib_cache_size: usize,
+    
+    // Grid Data Cache (for parsed GOES/NetCDF data)
+    pub grid_cache_enabled: bool,
+    pub grid_cache_size: usize,
     
     // Prefetch
     pub prefetch_enabled: bool,
@@ -72,6 +76,10 @@ impl OptimizationConfig {
             grib_cache_enabled: parse_bool("ENABLE_GRIB_CACHE", true),
             grib_cache_size: parse_usize("GRIB_CACHE_SIZE", 500),
             
+            // Grid Data Cache (for parsed GOES/NetCDF data)
+            grid_cache_enabled: parse_bool("ENABLE_GRID_CACHE", true),
+            grid_cache_size: parse_usize("GRID_CACHE_SIZE", 100),
+            
             // Prefetch
             prefetch_enabled: parse_bool("ENABLE_PREFETCH", true),
             prefetch_rings: parse_u32("PREFETCH_RINGS", 2),
@@ -92,6 +100,7 @@ pub struct AppState {
     pub queue: JobQueue,
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,
+    pub grid_cache: GridDataCache,  // Cache for parsed grid data (GOES/NetCDF)
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
@@ -116,6 +125,7 @@ impl AppState {
 
         // Use optimization config for cache sizes
         let grib_cache_size = optimization_config.grib_cache_size;
+        let grid_cache_size = optimization_config.grid_cache_size;
         let tile_cache_size = optimization_config.l1_cache_size;
         let tile_cache_ttl = optimization_config.l1_cache_ttl_secs;
         let prefetch_rings = optimization_config.prefetch_rings;
@@ -138,6 +148,9 @@ impl AppState {
         
         // Create GRIB cache with shared storage reference
         let grib_cache = GribCache::new(grib_cache_size, storage.clone());
+        
+        // Create grid data cache for parsed GOES/NetCDF data
+        let grid_cache = GridDataCache::new(grid_cache_size);
 
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
@@ -149,6 +162,7 @@ impl AppState {
             queue,
             storage,
             grib_cache,
+            grid_cache,
             metrics,
             prefetch_rings,
             optimization_config,

@@ -7,6 +7,10 @@
 # 3. Waits for database and services to be ready
 # 4. Runs the ingester with the data
 # 5. Verifies the ingestion was successful
+#
+# Options:
+#   --clear    Clear existing catalog data before ingesting (destructive!)
+#   --help     Show this help message
 
 set -e
 
@@ -106,6 +110,37 @@ redis_exec() {
         docker-compose exec -T redis redis-cli $cmd &>/dev/null
     fi
 }
+
+# Parse command-line arguments
+CLEAR_CATALOG=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --clear)
+            CLEAR_CATALOG=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [options]"
+            echo ""
+            echo "Options:"
+            echo "  --clear    Clear existing catalog data before ingesting (destructive!)"
+            echo "  --help     Show this help message"
+            echo ""
+            echo "Environment variables:"
+            echo "  INGEST_GFS=true/false    Enable/disable GFS ingestion (default: true)"
+            echo "  INGEST_HRRR=true/false   Enable/disable HRRR ingestion (default: true)"
+            echo "  INGEST_GOES=true/false   Enable/disable GOES ingestion (default: true)"
+            echo "  INGEST_MRMS=true/false   Enable/disable MRMS ingestion (default: true)"
+            exit 0
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            echo "Run '$0 --help' for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 # Set defaults for ingestion flags if not set
 INGEST_GFS="${INGEST_GFS:-true}"
@@ -210,22 +245,28 @@ if [ $retries -eq 0 ]; then
 fi
 
 echo ""
-log_info "Clearing previous ingestion data..."
 
-# Clear old datasets from catalog (keep schema)
-pg_exec_batch << SQL
+# Only clear data if explicitly requested
+if [ "$CLEAR_CATALOG" = "true" ]; then
+    log_warn "Clearing previous ingestion data (--clear flag set)..."
+
+    # Clear old datasets from catalog (keep schema)
+    pg_exec_batch << SQL
 DELETE FROM datasets WHERE status = 'available';
 DELETE FROM layer_styles;
 SQL
 
-log_success "Cleared catalog data"
+    log_success "Cleared catalog data"
 
-# Clear Redis tile cache
-log_info "Flushing Redis tile cache..."
-if redis_exec "FLUSHALL"; then
-    log_success "Redis cache cleared"
+    # Clear Redis tile cache
+    log_info "Flushing Redis tile cache..."
+    if redis_exec "FLUSHALL"; then
+        log_success "Redis cache cleared"
+    else
+        log_warn "Could not clear Redis cache (may not be running yet)"
+    fi
 else
-    log_warn "Could not clear Redis cache (may not be running yet)"
+    log_info "Preserving existing catalog data (use --clear to reset)"
 fi
 
 #------------------------------------------------------------------------------

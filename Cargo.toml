@@ -8,6 +8,7 @@ members = [
     "crates/renderer",
     "crates/wms-protocol",
     "crates/storage",
+    "services/downloader",
     "services/ingester",
     "services/renderer-worker",
     "services/wms-api",

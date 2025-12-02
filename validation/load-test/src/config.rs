@@ -21,6 +21,8 @@ pub struct TestConfig {
     pub tile_selection: TileSelection,
     #[serde(default)]
     pub time_selection: Option<TimeSelection>,
+    #[serde(default)]
+    pub log_requests: bool,  // Log all requests to file for debugging
 }
 
 /// Layer configuration for testing.

@@ -7,10 +7,14 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
+use bytes::Bytes;
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::{info, warn};
-use storage::DatasetQuery;
+use tracing::{debug, error, info, warn};
+use storage::{CatalogEntry, DatasetQuery};
+use wms_common::BoundingBox;
 
 use crate::state::AppState;
 
@@ -215,6 +219,35 @@ pub struct UpdateConfigResponse {
     pub success: bool,
     pub message: String,
     pub validation_errors: Vec<String>,
+}
+
+// ============================================================================
+// Ingest Request/Response Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct IngestRequest {
+    /// Path to the file to ingest (local filesystem path accessible to wms-api)
+    pub file_path: String,
+    /// Original source URL (for tracking)
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// Model name override (if not auto-detected from filename)
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Forecast hour override (if not auto-detected from filename)
+    #[serde(default)]
+    pub forecast_hour: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IngestResponse {
+    pub success: bool,
+    pub message: String,
+    pub datasets_registered: usize,
+    pub model: Option<String>,
+    pub reference_time: Option<String>,
+    pub parameters: Vec<String>,
 }
 
 // ============================================================================
@@ -448,6 +481,503 @@ pub async fn update_model_config_handler(
                 validation_errors: vec![],
             }).into_response()
         }
+    }
+}
+
+/// POST /admin/ingest - Ingest a downloaded file into the catalog
+/// 
+/// This endpoint is called by the downloader service after successfully
+/// downloading a weather data file. It parses the GRIB2/NetCDF file,
+/// extracts parameters, stores them in object storage, and registers
+/// them in the catalog.
+pub async fn ingest_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<IngestRequest>,
+) -> impl IntoResponse {
+    info!(
+        file_path = %payload.file_path,
+        source_url = ?payload.source_url,
+        model = ?payload.model,
+        "Admin: Ingesting file"
+    );
+    
+    match ingest_file(&state, &payload).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(e) => {
+            error!(error = %e, file = %payload.file_path, "Ingestion failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(IngestResponse {
+                    success: false,
+                    message: format!("Ingestion failed: {}", e),
+                    datasets_registered: 0,
+                    model: None,
+                    reference_time: None,
+                    parameters: vec![],
+                }),
+            ).into_response()
+        }
+    }
+}
+
+/// Ingest a file into the catalog
+async fn ingest_file(
+    state: &Arc<AppState>,
+    request: &IngestRequest,
+) -> anyhow::Result<IngestResponse> {
+    use std::fs;
+    
+    let file_path = &request.file_path;
+    
+    // Check if file exists
+    if !std::path::Path::new(file_path).exists() {
+        anyhow::bail!("File not found: {}", file_path);
+    }
+    
+    // Check file type by extension
+    let is_netcdf = file_path.ends_with(".nc") || file_path.ends_with(".nc4");
+    let is_grib2 = file_path.ends_with(".grib2") || file_path.ends_with(".grb2") || file_path.ends_with(".grib2.gz");
+    
+    if is_netcdf {
+        return ingest_netcdf_file(state, request, file_path).await;
+    }
+    
+    if !is_grib2 {
+        anyhow::bail!("Unsupported file type. Expected .grib2, .grb2, or .nc");
+    }
+    
+    // Read file (decompress if needed)
+    let data = if file_path.ends_with(".gz") {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let file = fs::File::open(file_path)?;
+        let mut decoder = GzDecoder::new(file);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed)?;
+        Bytes::from(decompressed)
+    } else {
+        Bytes::from(fs::read(file_path)?)
+    };
+    
+    // Determine model from filename or request
+    let model = request.model.clone().or_else(|| {
+        extract_model_from_filename(file_path)
+    }).unwrap_or_else(|| "gfs".to_string());
+    
+    // Determine forecast hour from filename or request
+    let forecast_hour = request.forecast_hour.or_else(|| {
+        extract_forecast_hour_from_filename(file_path)
+    }).unwrap_or(0);
+    
+    info!(model = %model, forecast_hour = forecast_hour, "Detected file metadata");
+    
+    // Parse GRIB2 and extract parameters
+    let mut reader = grib2_parser::Grib2Reader::new(data);
+    let mut registered_params = HashSet::new();
+    let mut grib_reference_time: Option<chrono::DateTime<Utc>> = None;
+    let mut datasets_registered = 0;
+    
+    // Parameters to ingest with their accepted level types
+    let pressure_levels: HashSet<u32> = [
+        1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 
+        600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 
+        100, 70, 50, 30, 20, 10
+    ].into_iter().collect();
+    
+    // Target parameters and their level specs
+    let target_params: Vec<(&str, Vec<(u8, Option<u32>)>)> = vec![
+        ("PRMSL", vec![(101, None)]),                    // Mean sea level pressure
+        ("TMP", vec![(103, Some(2)), (100, None)]),      // 2m temp + pressure levels
+        ("UGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
+        ("VGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
+        ("RH", vec![(103, Some(2)), (100, None)]),       // 2m RH + pressure levels
+        ("HGT", vec![(100, None)]),                      // Geopotential height
+        ("GUST", vec![(1, None)]),                       // Surface wind gust
+        ("REFL", vec![(200, None), (1, None)]),          // Reflectivity (MRMS)
+        ("PRECIP_RATE", vec![(1, None)]),                // Precip rate (MRMS)
+    ];
+    
+    // For MRMS, extract parameter name from filename
+    let mrms_param_name: Option<String> = if model == "mrms" {
+        extract_mrms_param_from_filename(file_path)
+    } else {
+        None
+    };
+    
+    while let Some(message) = reader.next_message().ok().flatten() {
+        // Extract reference time from first message
+        if grib_reference_time.is_none() {
+            grib_reference_time = Some(message.identification.reference_time);
+            info!(reference_time = %message.identification.reference_time, "Extracted reference time");
+        }
+        
+        let grib_param = &message.product_definition.parameter_short_name;
+        let param = if model == "mrms" {
+            mrms_param_name.as_ref().unwrap_or(grib_param)
+        } else {
+            grib_param
+        };
+        let level = &message.product_definition.level_description;
+        let level_type = message.product_definition.level_type;
+        let level_value = message.product_definition.level_value;
+        
+        let param_level_key = format!("{}:{}", param, level);
+        
+        // Check if we should register this parameter
+        let should_register = if model == "mrms" {
+            !registered_params.contains(&param_level_key)
+        } else {
+            target_params.iter().any(|(p, level_specs)| {
+                if param != p || registered_params.contains(&param_level_key) {
+                    return false;
+                }
+                level_specs.iter().any(|(lt, lv)| {
+                    if level_type != *lt {
+                        return false;
+                    }
+                    if level_type == 100 {
+                        return pressure_levels.contains(&level_value);
+                    }
+                    if let Some(required_value) = lv {
+                        level_value == *required_value
+                    } else {
+                        true
+                    }
+                })
+            })
+        };
+        
+        if should_register {
+            let reference_time = grib_reference_time.unwrap_or_else(Utc::now);
+            
+            // Sanitize level for path
+            let level_sanitized = level
+                .replace(' ', "_")
+                .replace('/', "_")
+                .to_lowercase();
+            
+            // Storage path: shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
+            let run_date = reference_time.format("%Y%m%d_%Hz").to_string();
+            let storage_path = format!(
+                "shredded/{}/{}/{}_{}/f{:03}.grib2",
+                model,
+                run_date,
+                param.to_lowercase(),
+                level_sanitized,
+                forecast_hour
+            );
+            
+            // Store shredded GRIB message
+            let shredded_data = message.raw_data.clone();
+            let shredded_size = shredded_data.len() as u64;
+            
+            state.storage.put(&storage_path, shredded_data).await?;
+            
+            debug!(
+                param = %param,
+                level = %level,
+                path = %storage_path,
+                size = shredded_size,
+                "Stored shredded GRIB message"
+            );
+            
+            // Get model-specific bounding box
+            let bbox = get_model_bbox(&model);
+            
+            let entry = CatalogEntry {
+                model: model.clone(),
+                parameter: param.to_string(),
+                level: level.clone(),
+                reference_time,
+                forecast_hour,
+                bbox,
+                storage_path,
+                file_size: shredded_size,
+            };
+            
+            match state.catalog.register_dataset(&entry).await {
+                Ok(id) => {
+                    debug!(id = %id, param = %param, level = %level, "Registered dataset");
+                    registered_params.insert(param_level_key);
+                    datasets_registered += 1;
+                }
+                Err(e) => {
+                    debug!(param = %param, level = %level, error = %e, "Could not register (may already exist)");
+                }
+            }
+        }
+    }
+    
+    let parameters: Vec<String> = registered_params
+        .iter()
+        .map(|k| k.split(':').next().unwrap_or(k).to_string())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    
+    info!(
+        model = %model,
+        datasets = datasets_registered,
+        parameters = ?parameters,
+        "Ingestion complete"
+    );
+    
+    Ok(IngestResponse {
+        success: true,
+        message: format!("Ingested {} datasets", datasets_registered),
+        datasets_registered,
+        model: Some(model),
+        reference_time: grib_reference_time.map(|t| t.to_rfc3339()),
+        parameters,
+    })
+}
+
+/// Ingest a NetCDF file (GOES satellite data) into the catalog
+async fn ingest_netcdf_file(
+    state: &Arc<AppState>,
+    request: &IngestRequest,
+    file_path: &str,
+) -> anyhow::Result<IngestResponse> {
+    use chrono::TimeZone;
+    use std::fs;
+    
+    info!(file_path = %file_path, "Ingesting GOES NetCDF file");
+    
+    // Read file
+    let data = fs::read(file_path)?;
+    let data_bytes = Bytes::from(data);
+    let file_size = data_bytes.len() as u64;
+    
+    // Parse filename to extract metadata
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown.nc");
+    
+    // Extract band number from filename (e.g., "C02" from "...M6C02_G18...")
+    let band = filename
+        .find("M6C")
+        .or_else(|| filename.find("M3C"))
+        .and_then(|pos| {
+            let band_str = &filename[pos + 3..pos + 5];
+            band_str.parse::<u8>().ok()
+        })
+        .unwrap_or(2); // Default to band 2 (visible red)
+    
+    // Determine model from filename or override
+    let model = request.model.clone().unwrap_or_else(|| {
+        if filename.contains("_G16_") || filename.to_lowercase().contains("goes16") {
+            "goes16".to_string()
+        } else if filename.contains("_G18_") || filename.to_lowercase().contains("goes18") {
+            "goes18".to_string()
+        } else {
+            "goes16".to_string() // Default to GOES-16
+        }
+    });
+    
+    // Extract satellite ID for logging
+    let satellite = if filename.contains("_G16_") {
+        "G16"
+    } else if filename.contains("_G18_") {
+        "G18"
+    } else {
+        "GOES"
+    };
+    
+    // Extract observation time from filename (format: s20250500001170)
+    // Time is in format: YYYYDDDHHMMSSt (year, day-of-year, hour, min, sec, tenths)
+    let observation_time = filename
+        .find("_s")
+        .and_then(|pos| {
+            if pos + 15 > filename.len() {
+                return None;
+            }
+            let time_str = &filename[pos + 2..pos + 15];
+            // Parse YYYYDDDHHMMSS
+            let year: i32 = time_str.get(0..4)?.parse().ok()?;
+            let doy: u32 = time_str.get(4..7)?.parse().ok()?;
+            let hour: u32 = time_str.get(7..9)?.parse().ok()?;
+            let min: u32 = time_str.get(9..11)?.parse().ok()?;
+            let sec: u32 = time_str.get(11..13)?.parse().ok()?;
+            
+            // Convert to DateTime
+            let date = chrono::NaiveDate::from_yo_opt(year, doy)?;
+            let time = chrono::NaiveTime::from_hms_opt(hour, min, sec)?;
+            Some(Utc.from_utc_datetime(&date.and_time(time)))
+        })
+        .unwrap_or_else(Utc::now);
+    
+    // Determine parameter name based on band
+    let (parameter, level) = match band {
+        1 => ("CMI_C01", "visible_blue"),       // 0.47µm Blue
+        2 => ("CMI_C02", "visible_red"),        // 0.64µm Red (most common visible)
+        3 => ("CMI_C03", "visible_veggie"),     // 0.86µm Vegetation
+        4 => ("CMI_C04", "cirrus"),             // 1.37µm Cirrus
+        5 => ("CMI_C05", "snow_ice"),           // 1.6µm Snow/Ice
+        6 => ("CMI_C06", "cloud_particle"),     // 2.2µm Cloud Particle Size
+        7 => ("CMI_C07", "shortwave_ir"),       // 3.9µm Shortwave Window
+        8 => ("CMI_C08", "upper_vapor"),        // 6.2µm Upper-Level Water Vapor
+        9 => ("CMI_C09", "mid_vapor"),          // 6.9µm Mid-Level Water Vapor
+        10 => ("CMI_C10", "low_vapor"),         // 7.3µm Lower-Level Water Vapor
+        11 => ("CMI_C11", "cloud_phase"),       // 8.4µm Cloud-Top Phase
+        12 => ("CMI_C12", "ozone"),             // 9.6µm Ozone
+        13 => ("CMI_C13", "clean_ir"),          // 10.3µm "Clean" Longwave IR
+        14 => ("CMI_C14", "ir"),                // 11.2µm Longwave IR
+        15 => ("CMI_C15", "dirty_ir"),          // 12.3µm "Dirty" Longwave IR
+        16 => ("CMI_C16", "co2"),               // 13.3µm CO2
+        _ => ("CMI_C02", "visible_red"),        // Default to visible red
+    };
+    
+    info!(
+        band = band,
+        satellite = satellite,
+        parameter = parameter,
+        model = %model,
+        observation_time = %observation_time,
+        file_size = file_size,
+        "Parsed GOES file metadata"
+    );
+    
+    // Create storage path
+    let run_date = observation_time.format("%Y%m%d_%Hz").to_string();
+    let storage_path = format!(
+        "raw/{}/{}/{}.nc",
+        model,
+        run_date,
+        parameter.to_lowercase()
+    );
+    
+    // Store the NetCDF file in object storage
+    state.storage.put(&storage_path, data_bytes).await?;
+    info!(path = %storage_path, "Stored GOES NetCDF file");
+    
+    // Get model-specific bounding box
+    let bbox = match model.as_str() {
+        "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
+        "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
+        _ => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
+    };
+    
+    // Create catalog entry
+    let entry = CatalogEntry {
+        model: model.clone(),
+        parameter: parameter.to_string(),
+        level: level.to_string(),
+        reference_time: observation_time,
+        forecast_hour: 0, // Observational data, no forecast
+        bbox,
+        storage_path: storage_path.clone(),
+        file_size,
+    };
+    
+    // Register in catalog
+    match state.catalog.register_dataset(&entry).await {
+        Ok(id) => {
+            info!(id = %id, parameter = %parameter, model = %model, band = band, "Registered GOES dataset");
+        }
+        Err(e) => {
+            // If registration fails (e.g., duplicate), still count as success since file is stored
+            warn!(error = %e, "Could not register dataset (may already exist)");
+        }
+    }
+    
+    Ok(IngestResponse {
+        success: true,
+        message: format!("Ingested GOES {} band {}", satellite, band),
+        datasets_registered: 1,
+        model: Some(model),
+        reference_time: Some(observation_time.to_rfc3339()),
+        parameters: vec![parameter.to_string()],
+    })
+}
+
+/// Extract model name from filename
+fn extract_model_from_filename(file_path: &str) -> Option<String> {
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|s| s.to_str())?;
+    
+    if filename.contains("_G16_") || filename.contains("goes16") {
+        Some("goes16".to_string())
+    } else if filename.contains("_G18_") || filename.contains("goes18") {
+        Some("goes18".to_string())
+    } else if filename.starts_with("hrrr") || filename.contains("hrrr") {
+        Some("hrrr".to_string())
+    } else if filename.starts_with("gfs") || filename.contains("gfs") {
+        Some("gfs".to_string())
+    } else if filename.starts_with("MRMS_") || filename.contains("mrms") {
+        Some("mrms".to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract forecast hour from filename
+fn extract_forecast_hour_from_filename(file_path: &str) -> Option<u32> {
+    let filename = std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())?;
+    
+    // Pattern: _f### (e.g., gfs_20241201_00z_f003.grib2)
+    if let Some(pos) = filename.rfind("_f") {
+        let rest = &filename[pos + 2..];
+        if let Some(hour) = rest.get(..3).and_then(|s| s.parse::<u32>().ok()) {
+            return Some(hour);
+        }
+    }
+    
+    // Pattern: wrfsfcf## (HRRR)
+    if let Some(pos) = filename.find("wrfsfcf") {
+        let rest = &filename[pos + 7..];
+        if let Some(hour) = rest.get(..2).and_then(|s| s.parse::<u32>().ok()) {
+            return Some(hour);
+        }
+    }
+    
+    // Pattern: z_f### at end (our download naming)
+    if let Some(pos) = filename.find("z_f") {
+        let rest = &filename[pos + 3..];
+        if let Some(hour) = rest.parse::<u32>().ok() {
+            return Some(hour);
+        }
+    }
+    
+    None
+}
+
+/// Extract MRMS parameter name from filename
+fn extract_mrms_param_from_filename(file_path: &str) -> Option<String> {
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|s| s.to_str())?;
+    
+    let lower = filename.to_lowercase();
+    if lower.contains("reflectivity") || lower.contains("refl") {
+        Some("REFL".to_string())
+    } else if lower.contains("preciprate") || lower.contains("precip_rate") {
+        Some("PRECIP_RATE".to_string())
+    } else if lower.contains("qpe_01h") {
+        Some("QPE_01H".to_string())
+    } else if lower.contains("qpe") {
+        Some("QPE".to_string())
+    } else if filename.starts_with("MRMS_") {
+        filename.strip_prefix("MRMS_")
+            .and_then(|rest| rest.split('_').next())
+            .map(|p| p.to_uppercase())
+    } else {
+        None
+    }
+}
+
+/// Get model-specific bounding box
+fn get_model_bbox(model: &str) -> BoundingBox {
+    match model {
+        "hrrr" => BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195),
+        "mrms" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+        "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
+        "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
+        "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
+        _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
 
@@ -925,4 +1455,184 @@ async fn load_model_config_from_yaml(model_id: &str) -> anyhow::Result<Option<Mo
     };
     
     Ok(Some(config))
+}
+
+// ============================================================================
+// Cleanup/Retention Types and Handlers
+// ============================================================================
+
+/// Response for cleanup status endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupStatusResponse {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub next_run_in_secs: Option<u64>,
+    pub last_run: Option<String>,
+    pub model_retentions: Vec<ModelRetentionInfo>,
+    pub purge_preview: Vec<ModelPurgePreview>,
+    pub expired_count: i64,
+    pub total_purge_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelRetentionInfo {
+    pub model: String,
+    pub retention_hours: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelPurgePreview {
+    pub model: String,
+    pub retention_hours: u32,
+    pub cutoff_time: String,
+    pub dataset_count: u64,
+    pub total_size_bytes: u64,
+    pub oldest_data: Option<String>,
+    pub next_purge_in: Option<String>,
+}
+
+/// Response for manual cleanup trigger
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupRunResponse {
+    pub success: bool,
+    pub message: String,
+    pub marked_expired: u64,
+    pub files_deleted: u64,
+    pub records_deleted: u64,
+    pub errors: u64,
+}
+
+/// GET /api/admin/cleanup/status - Get cleanup/retention status
+pub async fn cleanup_status_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting cleanup status");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
+    let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
+    
+    let expired_count = state.catalog.count_expired().await.unwrap_or(0);
+    
+    // Get list of models from the database
+    let models = state.catalog.list_models().await.unwrap_or_default();
+    
+    let mut model_retentions: Vec<ModelRetentionInfo> = Vec::new();
+    let mut purge_preview: Vec<ModelPurgePreview> = Vec::new();
+    let mut total_purge_size_bytes: u64 = 0;
+    
+    let now = Utc::now();
+    
+    for model in &models {
+        let retention_hours = config.get_retention_hours(model);
+        let cutoff = now - chrono::Duration::hours(retention_hours as i64);
+        
+        model_retentions.push(ModelRetentionInfo {
+            model: model.clone(),
+            retention_hours,
+        });
+        
+        // Get preview of what would be purged
+        let preview = state.catalog
+            .preview_model_expiration(model, cutoff)
+            .await
+            .unwrap_or_default();
+        
+        // Get oldest dataset time to calculate when next purge will happen
+        let oldest_time = state.catalog
+            .get_oldest_dataset_time(model)
+            .await
+            .ok()
+            .flatten();
+        
+        let (oldest_data, next_purge_in) = if let Some(oldest) = oldest_time {
+            let oldest_str = oldest.format("%Y-%m-%d %H:%M UTC").to_string();
+            
+            // Calculate when the oldest data will be purged
+            let purge_time = oldest + chrono::Duration::hours(retention_hours as i64);
+            let time_until_purge = purge_time - now;
+            
+            let next_purge_str = if time_until_purge.num_seconds() <= 0 {
+                Some("Now (next cleanup cycle)".to_string())
+            } else if time_until_purge.num_hours() < 1 {
+                Some(format!("{} minutes", time_until_purge.num_minutes()))
+            } else if time_until_purge.num_hours() < 24 {
+                Some(format!("{} hours", time_until_purge.num_hours()))
+            } else {
+                Some(format!("{} days", time_until_purge.num_days()))
+            };
+            
+            (Some(oldest_str), next_purge_str)
+        } else {
+            (None, None)
+        };
+        
+        total_purge_size_bytes += preview.total_size_bytes;
+        
+        purge_preview.push(ModelPurgePreview {
+            model: model.clone(),
+            retention_hours,
+            cutoff_time: cutoff.format("%Y-%m-%d %H:%M UTC").to_string(),
+            dataset_count: preview.dataset_count,
+            total_size_bytes: preview.total_size_bytes,
+            oldest_data,
+            next_purge_in,
+        });
+    }
+    
+    // Also add models from config that might not have data yet
+    for (model, hours) in &config.model_retentions {
+        if !models.contains(model) {
+            model_retentions.push(ModelRetentionInfo {
+                model: model.clone(),
+                retention_hours: *hours,
+            });
+        }
+    }
+    
+    Json(CleanupStatusResponse {
+        enabled: config.enabled,
+        interval_secs: config.interval_secs,
+        next_run_in_secs: Some(config.interval_secs), // Approximate - could track actual last run
+        last_run: None, // Would need to track this in state
+        model_retentions,
+        purge_preview,
+        expired_count,
+        total_purge_size_bytes,
+    })
+}
+
+/// POST /api/admin/cleanup/run - Manually trigger cleanup
+pub async fn cleanup_run_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Manual cleanup triggered");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
+    let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
+    
+    let cleanup_task = crate::cleanup::CleanupTask::new(state.clone(), config);
+    
+    match cleanup_task.run_once().await {
+        Ok(stats) => {
+            Json(CleanupRunResponse {
+                success: true,
+                message: "Cleanup completed successfully".to_string(),
+                marked_expired: stats.marked_expired,
+                files_deleted: stats.files_deleted,
+                records_deleted: stats.records_deleted,
+                errors: stats.delete_errors,
+            })
+        }
+        Err(e) => {
+            error!(error = %e, "Manual cleanup failed");
+            Json(CleanupRunResponse {
+                success: false,
+                message: format!("Cleanup failed: {}", e),
+                marked_expired: 0,
+                files_deleted: 0,
+                records_deleted: 0,
+                errors: 1,
+            })
+        }
+    }
 }

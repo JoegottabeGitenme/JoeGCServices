@@ -7,7 +7,7 @@
 # Optional: Full Kubernetes with minikube
 #
 # Usage:
-#   ./start.sh              # Start with docker-compose and ingest test data (fast)
+#   ./start.sh              # Start with docker-compose (fast)
 #   ./start.sh --compose    # Start with docker-compose (same as above)
 #   ./start.sh --rebuild    # Force rebuild of Docker images
 #   ./start.sh --clear-cache # Clear Redis tile cache (after rendering changes)
@@ -21,13 +21,13 @@
 #   ./start.sh --help       # Show this help message
 #
 # On startup, the system will:
-#   1. Start all Docker containers (PostgreSQL, Redis, MinIO, WMS API, Dashboard)
+#   1. Start all Docker containers (PostgreSQL, Redis, MinIO, WMS API, Dashboard, Downloader)
 #   2. Wait for services to be ready
-#   3. Ingest test GRIB2 data:
-#      - GFS: Global forecast data (254MB, F00-F24)
-#      - HRRR: High-res CONUS data (809MB, F00-F12) if available
-#   4. Verify ingestion with test renders
-#   5. Display dashboard at http://localhost:8000
+#   3. Display dashboard at http://localhost:8000
+#
+# The downloader service will automatically fetch new weather data.
+# Existing data in the system will be preserved.
+# To manually ingest test data, run: ./scripts/ingest_test_data.sh
 #
 
 set -euo pipefail
@@ -212,13 +212,6 @@ start_compose() {
     
     echo ""
     show_compose_access_info
-    
-    # Ingest test data to populate the system
-    sleep 3  # Give API a moment to fully stabilize
-    run_data_ingestion
-    
-    # Run test rendering to verify the system is working
-    run_test_rendering
 }
 
 stop_compose() {
@@ -255,16 +248,16 @@ show_compose_access_info() {
     echo ""
     log_success "=== Quick Start ==="
     echo ""
-     echo "All services are running with test data ingested! Open your browser:"
+     echo "All services are running! Open your browser:"
      echo "  http://localhost:8000  (Web Dashboard)"
      echo ""
-     echo "Everything is automatically configured, tested, and ready to use!"
-     echo "  ✓ Services running"
-     echo "  ✓ Test data ingested:"
-     echo "    - GFS: Global forecast (F00-F24)"
-     echo "    - HRRR: CONUS high-res (F00-F12, if available)"
-     echo "  ✓ Datasets registered in catalog"
-     echo "  ✓ Sample images generated"
+     echo "Services running:"
+     echo "  ✓ WMS API - serves weather map tiles"
+     echo "  ✓ Downloader - automatically fetches new weather data"
+     echo "  ✓ PostgreSQL, Redis, MinIO - data infrastructure"
+     echo ""
+     echo "The downloader service will automatically fetch new data."
+     echo "Existing data in the database and storage is preserved."
      echo ""
      echo "Test the API directly:"
      echo "  curl \"http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities\""
@@ -295,21 +288,22 @@ show_compose_access_info() {
     echo ""
      log_success "=== Other Commands ==="
      echo ""
-     echo "Run tests:"
-     echo "  cargo test"
-     echo ""
      echo "View service logs:"
      echo "  docker-compose logs -f wms-api"
+     echo "  docker-compose logs -f downloader"
      echo "  docker-compose logs -f web-dashboard"
-     echo "  docker-compose logs -f postgresql"
-     echo "  docker-compose logs -f redis"
-     echo "  docker-compose logs -f minio"
      echo ""
      echo "Stop services:"
      echo "  ./start.sh --stop"
      echo ""
-     echo "Generate test rendering images:"
-     echo "  bash scripts/test_rendering.sh"
+     echo "Manually ingest test data (optional):"
+     echo "  ./scripts/ingest_test_data.sh"
+     echo ""
+     echo "Download specific data:"
+     echo "  ./scripts/download_gfs.sh"
+     echo "  ./scripts/download_hrrr.sh"
+     echo "  ./scripts/download_goes.sh"
+     echo "  ./scripts/download_mrms.sh"
      echo ""
 }
 
@@ -1337,7 +1331,6 @@ main() {
             deploy_weather_wms
             wait_for_pods "$NAMESPACE" 300
             setup_port_forwards
-            run_k8s_data_ingestion
             show_k8s_status
             show_k8s_access_info
             ;;

@@ -129,6 +129,44 @@ ingester:
       enabled: true
       pollInterval: 3600
 
+# Downloader - handles weather data downloads with resumable downloads
+downloader:
+  enabled: true
+  
+  # Run as CronJob or Deployment
+  mode: deployment  # or "cronjob"
+  
+  image:
+    repository: weather-wms/downloader
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  # CronJob settings (if mode: cronjob)
+  schedule: "0 * * * *"  # Every hour
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # Persistent storage for downloads and state
+  persistence:
+    enabled: true
+    downloads:
+      size: 100Gi
+      storageClass: ""
+    state:
+      size: 1Gi
+      storageClass: ""
+
+  env:
+    LOG_LEVEL: info
+    MAX_CONCURRENT: "4"
+    MAX_RETRIES: "5"
+
 # Redis configuration
 redis:
   enabled: true

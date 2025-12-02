@@ -4,10 +4,27 @@ use crate::config::TestConfig;
 use crate::generator::TileGenerator;
 use crate::metrics::{MetricsCollector, SystemConfig, TestResults};
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Serialize;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::sleep;
+
+/// A single logged request for debugging and visualization.
+#[derive(Debug, Serialize)]
+pub struct RequestLog {
+    pub timestamp_ms: u64,
+    pub url: String,
+    pub z: u32,
+    pub x: u32,
+    pub y: u32,
+    pub layer: String,
+    pub latency_ms: f64,
+    pub cache_status: String,
+    pub status: u16,
+}
 
 /// Executes load tests with controlled concurrency.
 pub struct LoadRunner {
@@ -91,6 +108,30 @@ impl LoadRunner {
         let generator = Arc::new(Mutex::new(TileGenerator::new(self.config.clone())));
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
         
+        // Request logging setup
+        let request_log: Option<Arc<Mutex<BufWriter<File>>>> = if self.config.log_requests {
+            // Ensure results directory exists - use validation/load-test/results if it exists,
+            // otherwise create results/ in current directory
+            let results_dir = if std::path::Path::new("validation/load-test/results").exists() 
+                || std::path::Path::new("validation/load-test").exists() {
+                "validation/load-test/results"
+            } else {
+                "results"
+            };
+            std::fs::create_dir_all(results_dir)?;
+            // Include scenario name in filename for easier identification
+            let scenario_name = self.config.name.replace(' ', "_").to_lowercase();
+            let log_path = format!("{}/{}_{}.jsonl", 
+                results_dir,
+                scenario_name,
+                chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+            println!("  Logging requests to: {}", log_path);
+            let file = File::create(&log_path)?;
+            Some(Arc::new(Mutex::new(BufWriter::new(file))))
+        } else {
+            None
+        };
+        
         let start_time = Instant::now();
         let mut _requests_sent = 0u64;
         let mut warmup_complete = false;
@@ -123,10 +164,10 @@ impl LoadRunner {
                 last_request_time = Instant::now();
             }
 
-            // Generate URL
-            let url = {
+            // Generate URL and tile info
+            let (url, tile_info) = {
                 let mut gen = generator.lock().await;
-                gen.next_url()
+                gen.next_url_with_info()
             };
 
             // Acquire semaphore permit for concurrency control
@@ -134,6 +175,8 @@ impl LoadRunner {
             let client = self.client.clone();
             let metrics_clone = metrics.clone();
             let in_warmup = !warmup_complete;
+            let request_log_clone = request_log.clone();
+            let elapsed_ms = start_time.elapsed().as_millis() as u64;
 
             // Spawn request task
             tokio::spawn(async move {
@@ -150,6 +193,26 @@ impl LoadRunner {
                     } else {
                         m.record_failure();
                         eprintln!("Request returned {}: {}", result.status, url);
+                    }
+                    
+                    // Log request if enabled
+                    if let Some(ref log) = request_log_clone {
+                        let cache_status = if result.cache_hit { "HIT" } else { "MISS" };
+                        let log_entry = RequestLog {
+                            timestamp_ms: elapsed_ms,
+                            url: url.clone(),
+                            z: tile_info.0,
+                            x: tile_info.1,
+                            y: tile_info.2,
+                            layer: tile_info.3.clone(),
+                            latency_ms: result.latency_us as f64 / 1000.0,
+                            cache_status: cache_status.to_string(),
+                            status: result.status,
+                        };
+                        if let Ok(json) = serde_json::to_string(&log_entry) {
+                            let mut writer = log.lock().await;
+                            let _ = writeln!(writer, "{}", json);
+                        }
                     }
                 }
                 

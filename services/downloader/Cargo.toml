@@ -1,0 +1,49 @@
+[package]
+name = "downloader"
+version.workspace = true
+edition.workspace = true
+description = "Weather data downloader service with resumable downloads and network stability"
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+
+# Prometheus metrics
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+
+# Use sqlx with SQLite for download state persistence (compatible with workspace)
+sqlx = { workspace = true, features = ["sqlite"] }
+
+# HTTP client with streaming support
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Local crate for config loading
+wms-common = { path = "../../crates/wms-common" }
+
+# YAML config parsing
+serde_yaml = "0.9"
+
+# HTTP server for status API
+axum = { workspace = true }
+tower-http = { workspace = true }
+
+# AWS SDK for S3 listing
+aws-config = "1.1"
+aws-sdk-s3 = "1.11"
+
+[dev-dependencies]
+tokio-test = { workspace = true }

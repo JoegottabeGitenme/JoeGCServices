@@ -1,0 +1,162 @@
+{{- if .Values.downloader.enabled }}
+{{- if eq .Values.downloader.mode "deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "weather-wms.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: downloader
+  template:
+    metadata:
+      labels:
+        {{- include "weather-wms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: downloader
+    spec:
+      serviceAccountName: {{ include "weather-wms.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: downloader
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.downloader.image.repository }}:{{ .Values.downloader.image.tag }}"
+          imagePullPolicy: {{ .Values.downloader.image.pullPolicy }}
+          args:
+            - "--max-concurrent"
+            - {{ .Values.downloader.env.MAX_CONCURRENT | quote }}
+            - "--max-retries"
+            - {{ .Values.downloader.env.MAX_RETRIES | quote }}
+            - "--state-dir"
+            - "/data/downloader"
+            - "--output-dir"
+            - "/data/downloads"
+          envFrom:
+            - configMapRef:
+                name: {{ include "weather-wms.fullname" . }}-config
+            - secretRef:
+                name: {{ include "weather-wms.fullname" . }}-secrets
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.downloader.env.LOG_LEVEL | quote }}
+            - name: INGESTER_URL
+              value: "http://{{ include "weather-wms.fullname" . }}-api:{{ .Values.api.service.port }}/admin/ingest"
+          volumeMounts:
+            - name: downloads
+              mountPath: /data/downloads
+            - name: state
+              mountPath: /data/downloader
+          resources:
+            {{- toYaml .Values.downloader.resources | nindent 12 }}
+      volumes:
+        - name: downloads
+          {{- if .Values.downloader.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "weather-wms.fullname" . }}-downloader-downloads
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: state
+          {{- if .Values.downloader.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "weather-wms.fullname" . }}-downloader-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- else if eq .Values.downloader.mode "cronjob" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+spec:
+  schedule: {{ .Values.downloader.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "weather-wms.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: downloader
+        spec:
+          serviceAccountName: {{ include "weather-wms.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          restartPolicy: OnFailure
+          containers:
+            - name: downloader
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.downloader.image.repository }}:{{ .Values.downloader.image.tag }}"
+              imagePullPolicy: {{ .Values.downloader.image.pullPolicy }}
+              args:
+                - "--once"
+                - "--max-concurrent"
+                - {{ .Values.downloader.env.MAX_CONCURRENT | quote }}
+                - "--max-retries"
+                - {{ .Values.downloader.env.MAX_RETRIES | quote }}
+                - "--state-dir"
+                - "/data/downloader"
+                - "--output-dir"
+                - "/data/downloads"
+              envFrom:
+                - configMapRef:
+                    name: {{ include "weather-wms.fullname" . }}-config
+                - secretRef:
+                    name: {{ include "weather-wms.fullname" . }}-secrets
+              env:
+                - name: LOG_LEVEL
+                  value: {{ .Values.downloader.env.LOG_LEVEL | quote }}
+                - name: INGESTER_URL
+                  value: "http://{{ include "weather-wms.fullname" . }}-api:{{ .Values.api.service.port }}/admin/ingest"
+              volumeMounts:
+                - name: downloads
+                  mountPath: /data/downloads
+                - name: state
+                  mountPath: /data/downloader
+              resources:
+                {{- toYaml .Values.downloader.resources | nindent 16 }}
+          volumes:
+            - name: downloads
+              {{- if .Values.downloader.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "weather-wms.fullname" . }}-downloader-downloads
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: state
+              {{- if .Values.downloader.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "weather-wms.fullname" . }}-downloader-state
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

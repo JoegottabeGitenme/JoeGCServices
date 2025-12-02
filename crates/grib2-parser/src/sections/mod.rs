@@ -188,39 +188,110 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         });
     }
 
-    // Skip section header (4) + section number (1) + template (2) = 7 bytes
-    let grid_data = &section_data[7..];
-
-    // For now, assume Template 0 (regular lat/lon)
-    // Bytes 0-3: grid shape + other flags
-    // Bytes 4-7: num points latitude
-    // Bytes 8-11: num points longitude
-    // etc.
+    // Section 3 structure:
+    // Bytes 0-3: Section length
+    // Byte 4: Section number (3)
+    // Byte 5: Source of grid definition
+    // Bytes 6-9: Number of data points (u32)
+    // Byte 10: Number of optional list
+    // Byte 11: Interpretation of optional list
+    // Bytes 12-13: Grid definition template number (u16)
+    // Bytes 14+: Template-specific data
     
-    // According to GRIB2 Template 3.0 specification:
-    // In this test file, grid dimensions are stored as u16 at specific byte offsets
-    // Empirical analysis of testdata/gfs_sample.grib2 shows:
-    // Longitude (Ni) at grid_data[25:27] = 1440 (0x05a0)
-    // Latitude (Nj) at grid_data[29:31] = 721 (0x02d1)
-    let num_points_longitude = u16::from_be_bytes([grid_data[25], grid_data[26]]) as u32;
-    let num_points_latitude = u16::from_be_bytes([grid_data[29], grid_data[30]]) as u32;
-
-    Ok(GridDefinition {
-        grid_shape: grid_data[0],
-        num_points_latitude,
-        num_points_longitude,
-        first_latitude_millidegrees: 0,
-        first_longitude_millidegrees: 0,
-        last_latitude_millidegrees: 0,
-        last_longitude_millidegrees: 0,
-        latitude_increment_millidegrees: 0,
-        longitude_increment_millidegrees: 0,
-        scanning_mode: 0,
-    })
+    let grid_template = u16::from_be_bytes([section_data[12], section_data[13]]);
+    
+    // Template data starts at byte 14
+    let gd = &section_data[14..];
+    
+    if grid_template == 0 {
+        // Template 0: Latitude/longitude (or equidistant cylindrical or Plate Carree)
+        // GRIB2 Code Table 3.1 - Template 3.0
+        //
+        // Byte 0: Shape of the Earth (Table 3.2)
+        // Byte 1: Scale factor of radius of spherical Earth
+        // Bytes 2-5: Scaled value of radius of spherical Earth
+        // Byte 6: Scale factor of major axis of oblate spheroid Earth
+        // Bytes 7-10: Scaled value of major axis
+        // Byte 11: Scale factor of minor axis
+        // Bytes 12-15: Scaled value of minor axis
+        // Bytes 16-19: Ni - number of points along a parallel (u32)
+        // Bytes 20-23: Nj - number of points along a meridian (u32)
+        // Bytes 24-27: Basic angle of the initial production domain
+        // Bytes 28-31: Subdivisions of basic angle
+        // Bytes 32-35: La1 - latitude of first grid point (i32, microdegrees)
+        // Bytes 36-39: Lo1 - longitude of first grid point (i32, microdegrees)
+        // Byte 40: Resolution and component flags
+        // Bytes 41-44: La2 - latitude of last grid point (i32, microdegrees)
+        // Bytes 45-48: Lo2 - longitude of last grid point (i32, microdegrees)
+        // Bytes 49-52: Di - i direction increment (u32, microdegrees)
+        // Bytes 53-56: Dj - j direction increment (u32, microdegrees)
+        // Byte 57: Scanning mode (flags)
+        
+        if gd.len() < 58 {
+            return Err(Grib2Error::InvalidSection {
+                section: 3,
+                reason: format!("Template 0 needs at least 58 bytes, got {}", gd.len()),
+            });
+        }
+        
+        let grid_shape = gd[0];
+        let ni = u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]]);
+        let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
+        
+        // Latitudes and longitudes are in microdegrees (10^-6 degrees)
+        let la1 = i32::from_be_bytes([gd[32], gd[33], gd[34], gd[35]]);
+        let lo1 = i32::from_be_bytes([gd[36], gd[37], gd[38], gd[39]]);
+        let la2 = i32::from_be_bytes([gd[41], gd[42], gd[43], gd[44]]);
+        let lo2 = i32::from_be_bytes([gd[45], gd[46], gd[47], gd[48]]);
+        let di = u32::from_be_bytes([gd[49], gd[50], gd[51], gd[52]]);
+        let dj = u32::from_be_bytes([gd[53], gd[54], gd[55], gd[56]]);
+        let scanning_mode = gd[57];
+        
+        // Convert from microdegrees to millidegrees (divide by 1000)
+        // Note: Our struct uses millidegrees for historical reasons
+        Ok(GridDefinition {
+            grid_shape,
+            num_points_longitude: ni,
+            num_points_latitude: nj,
+            first_latitude_millidegrees: la1 / 1000,
+            first_longitude_millidegrees: lo1 / 1000,
+            last_latitude_millidegrees: la2 / 1000,
+            last_longitude_millidegrees: lo2 / 1000,
+            latitude_increment_millidegrees: di / 1000,
+            longitude_increment_millidegrees: dj / 1000,
+            scanning_mode,
+        })
+    } else {
+        // Fallback for other templates - just get dimensions
+        // Try to extract Ni/Nj from common positions
+        let ni = if gd.len() >= 20 {
+            u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]])
+        } else {
+            0
+        };
+        let nj = if gd.len() >= 24 {
+            u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]])
+        } else {
+            0
+        };
+        
+        Ok(GridDefinition {
+            grid_shape: gd.get(0).copied().unwrap_or(0),
+            num_points_latitude: nj,
+            num_points_longitude: ni,
+            first_latitude_millidegrees: 0,
+            first_longitude_millidegrees: 0,
+            last_latitude_millidegrees: 0,
+            last_longitude_millidegrees: 0,
+            latitude_increment_millidegrees: 0,
+            longitude_increment_millidegrees: 0,
+            scanning_mode: 0,
+        })
+    }
 }
 
 /// Parse Section 4 (Product Definition)
-pub fn parse_product_definition(data: &[u8]) -> Result<ProductDefinition, Grib2Error> {
+pub fn parse_product_definition(data: &[u8], discipline: u8) -> Result<ProductDefinition, Grib2Error> {
     let section_offset = find_section(data, 4)?;
     let section_data = &data[section_offset..];
 
@@ -272,7 +343,7 @@ pub fn parse_product_definition(data: &[u8]) -> Result<ProductDefinition, Grib2E
         scaled_value
     };
 
-    let parameter_short_name = get_parameter_short_name(parameter_category, parameter_number);
+    let parameter_short_name = get_parameter_short_name(discipline, parameter_category, parameter_number);
     let level_description = get_level_description(level_type, level_value);
 
     Ok(ProductDefinition {
@@ -469,20 +540,29 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
 }
 
 /// Get parameter short name
-fn get_parameter_short_name(category: u8, number: u8) -> String {
-    match (category, number) {
+fn get_parameter_short_name(discipline: u8, category: u8, number: u8) -> String {
+    match (discipline, category, number) {
+        // Discipline 0: Meteorological products
         // Category 0: Temperature
-        (0, 0) => "TMP".to_string(),
-        (0, 1) => "VTMP".to_string(),
-        (0, 2) => "POT".to_string(),
-        (0, 6) => "DPT".to_string(),
+        (0, 0, 0) => "TMP".to_string(),
+        (0, 0, 1) => "VTMP".to_string(),
+        (0, 0, 2) => "POT".to_string(),
+        (0, 0, 6) => "DPT".to_string(),
         // Category 2: Momentum (wind)
-        (2, 2) => "UGRD".to_string(),
-        (2, 3) => "VGRD".to_string(),
+        (0, 2, 2) => "UGRD".to_string(),
+        (0, 2, 3) => "VGRD".to_string(),
         // Category 3: Mass (pressure)
-        (3, 0) => "PRES".to_string(),    // Pressure
-        (3, 1) => "PRMSL".to_string(),   // Pressure reduced to MSL
-        _ => format!("P{}_{}", category, number),
+        (0, 3, 0) => "PRES".to_string(),    // Pressure
+        (0, 3, 1) => "PRMSL".to_string(),   // Pressure reduced to MSL
+        
+        // Discipline 209: MRMS (local use)
+        // Category 0: Reflectivity
+        (209, 0, 16) => "REFL".to_string(),  // MergedReflectivityQC
+        // Category 1: Precipitation
+        (209, 1, 0) => "PRECIP_RATE".to_string(),  // PrecipRate
+        (209, 1, 1) => "QPE".to_string(),          // Quantitative Precipitation Estimate
+        
+        _ => format!("P{}_{}_{}", discipline, category, number),
     }
 }
 

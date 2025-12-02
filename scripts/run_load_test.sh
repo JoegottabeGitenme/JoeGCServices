@@ -45,6 +45,7 @@ SCENARIO="quick"
 OUTPUT_FORMAT="table"
 RESET_CACHE=false
 SAVE_RESULTS=false
+LOG_REQUESTS=false
 RESULTS_DIR="$PROJECT_ROOT/validation/load-test/results"
 
 # Show help
@@ -67,6 +68,7 @@ OPTIONS:
   -o, --output FORMAT     Output format: table, json, csv (default: table)
   -r, --reset-cache       Reset Redis cache before test
   -S, --save              Save results to results/ directory
+  -l, --log-requests      Log all requests to JSONL for visualization
   -h, --help              Show this help message
 
 EXAMPLES:
@@ -108,6 +110,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -S|--save)
             SAVE_RESULTS=true
+            shift
+            ;;
+        -l|--log-requests)
+            LOG_REQUESTS=true
             shift
             ;;
         -h|--help)
@@ -154,6 +160,7 @@ log_info "Scenario:      $(basename $SCENARIO_FILE .yaml)"
 log_info "Output format: $OUTPUT_FORMAT"
 log_info "Reset cache:   $RESET_CACHE"
 log_info "Save results:  $SAVE_RESULTS"
+log_info "Log requests:  $LOG_REQUESTS"
 log_info "=========================================="
 echo ""
 
@@ -200,6 +207,12 @@ echo ""
 
 LOAD_TEST_BIN="$PROJECT_ROOT/target/release/load-test"
 
+# Build extra args
+EXTRA_ARGS=""
+if [ "$LOG_REQUESTS" = true ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --log-requests"
+fi
+
 # Prepare output redirection based on format
 if [ "$SAVE_RESULTS" = true ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -211,7 +224,7 @@ if [ "$SAVE_RESULTS" = true ]; then
         json)
             OUTPUT_FILE="$RESULTS_DIR/${SCENARIO}_${TIMESTAMP}.json"
             log_info "Saving results to: $OUTPUT_FILE"
-            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json $EXTRA_ARGS 2>&1)
             echo "$RESULT" | tee "$OUTPUT_FILE"
             # Extract just the JSON and append to JSONL for dashboard (compact JSON, one line per record)
             # The JSON starts with { and we want everything from the first { to the last }
@@ -224,7 +237,7 @@ if [ "$SAVE_RESULTS" = true ]; then
                 echo "timestamp,config,duration,requests,rps,p50,p90,p99,cache_hit_rate" > "$OUTPUT_FILE"
             fi
             log_info "Appending results to: $OUTPUT_FILE"
-            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json $EXTRA_ARGS 2>&1)
             # Extract just the JSON part
             JSON_ONLY=$(echo "$RESULT" | sed -n '/^{/,/^}/p')
             # Save JSON to JSONL for dashboard (compact JSON, one line per record)
@@ -232,21 +245,21 @@ if [ "$SAVE_RESULTS" = true ]; then
             # Extract CSV line and append
             echo "$JSON_ONLY" | jq -r '[.timestamp, .scenario_name, .duration_secs, .total_requests, .requests_per_second, .latency_p50, .latency_p90, .latency_p99, .cache_hit_rate] | @csv' >> "$OUTPUT_FILE"
             # Show table output to console
-            "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table
+            "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table $EXTRA_ARGS
             ;;
         *)
             OUTPUT_FILE="$RESULTS_DIR/${SCENARIO}_${TIMESTAMP}.txt"
             log_info "Saving results to: $OUTPUT_FILE"
-            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table | tee "$OUTPUT_FILE")
+            RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output table $EXTRA_ARGS | tee "$OUTPUT_FILE")
             # Also save JSON to JSONL for dashboard (compact JSON, one line per record)
-            JSON_RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json 2>&1)
+            JSON_RESULT=$("$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output json $EXTRA_ARGS 2>&1)
             echo "$JSON_RESULT" | sed -n '/^{/,/^}/p' | jq -c '.' >> "$JSONL_FILE" 2>/dev/null || true
             echo "$RESULT"
             ;;
     esac
 else
     # Just run without saving
-    "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output "$OUTPUT_FORMAT"
+    "$LOAD_TEST_BIN" run --scenario "$SCENARIO_FILE" --output "$OUTPUT_FORMAT" $EXTRA_ARGS
 fi
 
 echo ""
@@ -274,4 +287,8 @@ log_info "Next steps:"
 log_info "  - View detailed results: cat $OUTPUT_FILE"
 log_info "  - Run more tests: $0 --help"
 log_info "  - Reset cache: ./scripts/reset_test_state.sh"
+if [ "$LOG_REQUESTS" = true ]; then
+    log_info "  - Visualize requests: open validation/load-test/visualize.html"
+    log_info "    (load the JSONL file from results/ directory)"
+fi
 echo ""

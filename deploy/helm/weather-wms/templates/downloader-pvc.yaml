@@ -1,0 +1,36 @@
+{{- if and .Values.downloader.enabled .Values.downloader.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader-downloads
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.downloader.persistence.downloads.storageClass }}
+  storageClassName: {{ .Values.downloader.persistence.downloads.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.downloader.persistence.downloads.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader-state
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.downloader.persistence.state.storageClass }}
+  storageClassName: {{ .Values.downloader.persistence.state.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.downloader.persistence.state.size }}
+{{- end }}

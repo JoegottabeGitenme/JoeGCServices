@@ -1,6 +1,7 @@
 //! Load test CLI for Weather WMS/WMTS service.
 
 use clap::{Parser, Subcommand};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -13,6 +14,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Compare two request log files to analyze cache behavior
+    Compare {
+        /// First request log file (e.g., from cold cache run)
+        #[arg(short = '1', long)]
+        first: PathBuf,
+
+        /// Second request log file (e.g., from warm cache run)
+        #[arg(short = '2', long)]
+        second: PathBuf,
+    },
+
     /// Run a load test from a scenario file
     Run {
         /// Path to scenario YAML file
@@ -30,6 +42,10 @@ enum Commands {
         /// Output format: table (default), json, csv
         #[arg(short, long, default_value = "table")]
         output: String,
+
+        /// Log all requests to a JSONL file for analysis/visualization
+        #[arg(long)]
+        log_requests: bool,
     },
 
     /// Run a quick smoke test
@@ -60,11 +76,106 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Compare { first, second } => {
+            println!("Comparing request logs:");
+            println!("  First:  {}", first.display());
+            println!("  Second: {}", second.display());
+            println!();
+
+            // Parse first file
+            let first_content = std::fs::read_to_string(&first)?;
+            let first_requests: Vec<serde_json::Value> = first_content
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect();
+
+            // Parse second file
+            let second_content = std::fs::read_to_string(&second)?;
+            let second_requests: Vec<serde_json::Value> = second_content
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect();
+
+            // Extract unique tiles from each
+            let first_tiles: HashSet<String> = first_requests
+                .iter()
+                .map(|r| format!("{}/{}/{}", r["z"], r["x"], r["y"]))
+                .collect();
+
+            let second_tiles: HashSet<String> = second_requests
+                .iter()
+                .map(|r| format!("{}/{}/{}", r["z"], r["x"], r["y"]))
+                .collect();
+
+            // Analyze
+            let common: HashSet<_> = first_tiles.intersection(&second_tiles).collect();
+            let only_first: HashSet<_> = first_tiles.difference(&second_tiles).collect();
+            let only_second: HashSet<_> = second_tiles.difference(&first_tiles).collect();
+
+            // Cache stats for second run
+            let second_hits = second_requests
+                .iter()
+                .filter(|r| r["cache_status"].as_str() == Some("HIT"))
+                .count();
+            let second_misses = second_requests.len() - second_hits;
+
+            println!("Request Counts:");
+            println!("  First run:  {} requests", first_requests.len());
+            println!("  Second run: {} requests", second_requests.len());
+            println!();
+
+            println!("Unique Tiles:");
+            println!("  First run:  {} unique tiles", first_tiles.len());
+            println!("  Second run: {} unique tiles", second_tiles.len());
+            println!();
+
+            println!("Tile Overlap Analysis:");
+            println!("  Common tiles:        {} ({:.1}% of first run)", 
+                common.len(), 
+                (common.len() as f64 / first_tiles.len() as f64) * 100.0);
+            println!("  Only in first run:   {}", only_first.len());
+            println!("  Only in second run:  {} (NEW tiles causing cache misses)", only_second.len());
+            println!();
+
+            println!("Second Run Cache Performance:");
+            println!("  Cache hits:   {} ({:.1}%)", 
+                second_hits, 
+                (second_hits as f64 / second_requests.len() as f64) * 100.0);
+            println!("  Cache misses: {} ({:.1}%)", 
+                second_misses,
+                (second_misses as f64 / second_requests.len() as f64) * 100.0);
+            println!();
+
+            // Expected vs actual
+            let expected_hits = common.len();
+            let expected_misses = only_second.len();
+            println!("Expected (if all common tiles were cached):");
+            println!("  Expected hits from common tiles: ~{}", expected_hits);
+            println!("  Expected misses from new tiles:  ~{}", expected_misses);
+            println!();
+
+            if only_second.len() > 0 {
+                println!("Why aren't you seeing 100% cache hits?");
+                println!("  The second run made {} more requests than the first run,", 
+                    second_requests.len() as i64 - first_requests.len() as i64);
+                println!("  accessing {} tiles that were never requested in the first run.", 
+                    only_second.len());
+                println!();
+                println!("Suggestions:");
+                println!("  1. Use a fixed number of requests instead of duration-based testing");
+                println!("  2. Constrain the tile space with a bbox in your scenario");
+                println!("  3. Use a smaller zoom range to reduce the tile space");
+                println!("  4. Use TileSelection::Fixed with specific tiles for exact reproducibility");
+            }
+
+            Ok(())
+        }
         Commands::Run {
             scenario,
             concurrency,
             duration,
             output,
+            log_requests,
         } => {
             println!("Loading scenario: {}", scenario.display());
             
@@ -77,6 +188,9 @@ async fn main() -> anyhow::Result<()> {
             }
             if let Some(d) = duration {
                 config.duration_secs = d;
+            }
+            if log_requests {
+                config.log_requests = true;
             }
             
             config.validate()?;
@@ -139,6 +253,7 @@ async fn main() -> anyhow::Result<()> {
                 },
                 seed: None,
                 time_selection: None,
+                log_requests: false,
             };
             
             // Run the load test

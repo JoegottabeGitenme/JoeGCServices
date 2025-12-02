@@ -33,7 +33,6 @@ const ingesterServiceStatusEl = document.getElementById('ingester-service-status
 const datasetCountEl = document.getElementById('dataset-count');
 const modelsListEl = document.getElementById('models-list');
 const storageSizeEl = document.getElementById('storage-size');
-const ingestLogEl = document.getElementById('ingest-log');
 
 // Layer Selection Elements
 const protocolRadios = document.querySelectorAll('input[name="protocol"]');

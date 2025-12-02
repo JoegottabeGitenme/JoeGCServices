@@ -1,6 +1,6 @@
 name: goes_random_temporal
 description: |
-  Random temporal access pattern for GOES-19 satellite data.
+  Random temporal access pattern for GOES-18 (West) satellite data.
   Tests worst-case cache behavior with unpredictable time access.
   
   With only 5 time steps, random access should still achieve
@@ -13,30 +13,31 @@ warmup_secs: 5
 seed: 88888
 
 layers:
-  - name: goes19_IR
-    style: goes_ir
+  - name: goes18_CMI_C13
+    style: default
     weight: 1.0
 
 tile_selection:
   type: random
   # Focused zoom range for faster test
-  zoom_range: [4, 12]
+  zoom_range: [4, 8]
   bbox:
-    # Western CONUS (Pacific weather systems)
+    # Western CONUS (Pacific weather systems) - within GOES-18 coverage
     min_lon: -125.0
     min_lat: 30.0
     max_lon: -100.0
     max_lat: 50.0
 
 # Random time selection - unpredictable access pattern
+# Using actual ingested GOES-18 timestamps
 time_selection:
   type: random
   times:
-    - "2025-11-28T15:01:17Z"
-    - "2025-11-28T15:06:17Z"
-    - "2025-11-28T15:11:17Z"
-    - "2025-11-28T15:16:17Z"
-    - "2025-11-28T15:21:17Z"
+    - "2025-12-02T02:01:00Z"
+    - "2025-12-02T02:16:00Z"
+    - "2025-12-02T02:31:00Z"
+    - "2025-12-02T02:46:00Z"
+    - "2025-12-02T03:01:00Z"
 
 # Expected behavior:
 # With 10 concurrent workers and 90s duration:

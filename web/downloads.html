@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Downloads Dashboard - Weather WMS</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .downloads-container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .downloads-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .downloads-header h1 {
+            font-size: 2rem;
+            color: #fff;
+            margin: 0;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .back-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .refresh-button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .refresh-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .stat-value.success { color: #4caf50; }
+        .stat-value.warning { color: #ff9800; }
+        .stat-value.error { color: #f44336; }
+        .stat-value.info { color: #2196f3; }
+
+        /* Main Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1.25rem;
+            margin: 0 0 1rem 0;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-icon {
+            font-size: 1.5rem;
+        }
+
+        /* Charts */
+        .chart-container {
+            position: relative;
+            height: 250px;
+        }
+
+        /* Download Lists */
+        .download-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .download-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .download-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .download-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .download-filename {
+            font-weight: 600;
+            color: #fff;
+            word-break: break-all;
+        }
+
+        .download-model {
+            background: rgba(100, 181, 246, 0.2);
+            color: #64b5f6;
+            padding: 0.125rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        .download-meta {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .download-progress {
+            margin-top: 0.75rem;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50, #8bc34a);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 0.25rem;
+        }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .status-badge.success {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .status-badge.warning {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ff9800;
+        }
+
+        .status-badge.error {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .status-badge.info {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196f3;
+        }
+
+        /* Schedule Table */
+        .schedule-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .schedule-table th,
+        .schedule-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .schedule-table th {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .schedule-table td {
+            color: #fff;
+        }
+
+        .schedule-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .cycles-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+        }
+
+        .cycle-badge {
+            background: rgba(100, 181, 246, 0.2);
+            color: #64b5f6;
+            padding: 0.125rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Service status */
+        .service-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online {
+            background: #4caf50;
+        }
+
+        .status-dot.offline {
+            background: #f44336;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        /* Retry button */
+        .retry-btn {
+            background: rgba(255, 152, 0, 0.2);
+            border: 1px solid rgba(255, 152, 0, 0.3);
+            color: #ff9800;
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .retry-btn:hover {
+            background: rgba(255, 152, 0, 0.3);
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .error-message {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            color: #f44336;
+            padding: 1rem;
+            border-radius: 4px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab-btn {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-radius: 4px 4px 0 0;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn.active {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+            border-bottom: 2px solid #64b5f6;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="downloads-container">
+        <div class="downloads-header">
+            <h1>Downloads Dashboard</h1>
+            <div class="header-actions">
+                <div class="service-status">
+                    <span class="status-dot" id="service-dot"></span>
+                    <span id="service-status-text">Checking...</span>
+                </div>
+                <button class="refresh-button" id="refresh-btn">Refresh</button>
+                <a href="admin.html" class="back-link">Admin</a>
+                <a href="index.html" class="back-link">Map</a>
+            </div>
+        </div>
+
+        <!-- Stats Overview -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value info" id="stat-pending">--</div>
+                <div class="stat-label">Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value warning" id="stat-in-progress">--</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value success" id="stat-completed">--</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value error" id="stat-failed">--</div>
+                <div class="stat-label">Failed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-bytes">--</div>
+                <div class="stat-label">Total Downloaded</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value info" id="stat-pending-ingest">--</div>
+                <div class="stat-label">Pending Ingestion</div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="main-grid">
+            <div class="card">
+                <h2><span class="card-icon">Downloads Over Time (24h)</span></h2>
+                <div class="chart-container">
+                    <canvas id="downloads-chart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <h2><span class="card-icon">Bytes Downloaded (24h)</span></h2>
+                <div class="chart-container">
+                    <canvas id="bytes-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Downloads Lists -->
+        <div class="card full-width">
+            <h2><span class="card-icon">Downloads</span></h2>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="active-tab">Active</button>
+                <button class="tab-btn" data-tab="pending-tab">Pending</button>
+                <button class="tab-btn" data-tab="completed-tab">Completed</button>
+                <button class="tab-btn" data-tab="failed-tab">Failed</button>
+            </div>
+
+            <div class="tab-content active" id="active-tab">
+                <div class="download-list" id="active-downloads">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="pending-tab">
+                <div class="download-list" id="pending-downloads">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="completed-tab">
+                <div class="download-list" id="completed-downloads">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="failed-tab">
+                <div class="download-list" id="failed-downloads">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schedule -->
+        <div class="card full-width">
+            <h2><span class="card-icon">Download Schedule</span></h2>
+            <table class="schedule-table">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Status</th>
+                        <th>S3 Bucket</th>
+                        <th>Cycles</th>
+                        <th>Delay</th>
+                        <th>Poll Interval</th>
+                        <th>Forecast Hours</th>
+                    </tr>
+                </thead>
+                <tbody id="schedule-body">
+                    <tr><td colspan="7" class="loading">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Next Checks -->
+        <div class="card full-width">
+            <h2><span class="card-icon">Upcoming Data Availability</span></h2>
+            <div id="next-checks">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="downloads.js"></script>
+</body>
+</html>

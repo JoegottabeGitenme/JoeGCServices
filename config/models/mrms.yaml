@@ -32,7 +32,7 @@ schedule:
   lookback_minutes: 30                   # Check last 30 minutes
 
 retention:
-  hours: 24                              # Keep 1 day of radar data
+  hours: 6                              # Keep 6 hours of radar data
 
 parameters:
   # Composite Reflectivity at 0.5° elevation

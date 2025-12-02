@@ -3,6 +3,7 @@
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
 mod admin;
+mod cleanup;
 mod handlers;
 pub mod metrics;
 mod rendering;
@@ -11,7 +12,7 @@ mod validation;
 mod warming;
 
 use anyhow::Result;
-use axum::{extract::Extension, routing::{get, put}, Router};
+use axum::{extract::Extension, routing::{get, post, put}, Router};
 use clap::Parser;
 use std::{env, net::SocketAddr, sync::Arc};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
@@ -151,6 +152,26 @@ async fn async_main(args: Args) -> Result<()> {
         }
     }
 
+    // Start data cleanup background task
+    {
+        let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
+        let cleanup_config = cleanup::CleanupConfig::from_env_and_configs(&config_dir);
+        
+        if cleanup_config.enabled {
+            info!(
+                interval_secs = cleanup_config.interval_secs,
+                models = ?cleanup_config.model_retentions.keys().collect::<Vec<_>>(),
+                "Starting data cleanup background task"
+            );
+            let cleanup_task = cleanup::CleanupTask::new(state.clone(), cleanup_config);
+            tokio::spawn(async move {
+                cleanup_task.run_forever().await;
+            });
+        } else {
+            info!("Data cleanup disabled (set ENABLE_CLEANUP=true to enable)");
+        }
+    }
+
     // Build router
     let app = Router::new()
         // WMS endpoints
@@ -193,12 +214,19 @@ async fn async_main(args: Args) -> Result<()> {
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route("/api/loadtest/results", get(handlers::loadtest_results_handler))
+        .route("/api/loadtest/files", get(handlers::loadtest_files_handler))
+        .route("/api/loadtest/file/:filename", get(handlers::loadtest_file_handler))
         // Admin dashboard
         .route("/api/admin/ingestion/status", get(admin::ingestion_status_handler))
         .route("/api/admin/ingestion/log", get(admin::ingestion_log_handler))
         .route("/api/admin/preview-shred", get(admin::preview_shred_handler))
         .route("/api/admin/config/models", get(admin::list_models_handler))
         .route("/api/admin/config/models/:id", get(admin::get_model_config_handler).put(admin::update_model_config_handler))
+        // Ingest endpoint (called by downloader service)
+        .route("/admin/ingest", post(admin::ingest_handler))
+        // Cleanup/retention endpoints
+        .route("/api/admin/cleanup/status", get(admin::cleanup_status_handler))
+        .route("/api/admin/cleanup/run", post(admin::cleanup_run_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

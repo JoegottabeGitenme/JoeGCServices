@@ -35,7 +35,7 @@ schedule:
   lookback_minutes: 60                   # Check last hour of data
 
 retention:
-  hours: 48                              # Keep 2 days of imagery
+  hours: 12                              # Keep 12 hours of imagery
 
 parameters:
   # Blue Visible (0.47µm)

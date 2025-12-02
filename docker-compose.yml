@@ -50,6 +50,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Create MinIO bucket on startup
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing minio/$${S3_BUCKET};
+      mc anonymous set download minio/$${S3_BUCKET};
+      echo 'Bucket $${S3_BUCKET} created and configured';
+      exit 0;
+      "
+    restart: "no"
+
   wms-api:
     build:
       context: .
@@ -97,6 +117,7 @@ services:
     volumes:
       - ./validation/load-test/results:/app/validation/load-test/results:ro
       - ./config:/app/config:ro
+      - downloader_data:/data/downloads:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -176,9 +197,47 @@ services:
       - prometheus
     restart: unless-stopped
 
+  downloader:
+    build:
+      context: .
+      dockerfile: services/downloader/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8081:8081"
+    environment:
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
+      # Ingester URL for triggering ingestion after download (full endpoint path)
+      INGESTER_URL: ${INGESTER_URL:-http://wms-api:8080/admin/ingest}
+      # Status server port
+      STATUS_PORT: 8081
+      # Config directory
+      CONFIG_DIR: /app/config
+    volumes:
+      - downloader_data:/data/downloads
+      - downloader_state:/data/downloader
+      - ./config:/app/config:ro
+    command: ["--max-concurrent", "4", "--config-dir", "/app/config"]
+    depends_on:
+      wms-api:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   prometheus_data:
   grafana_data:
+  downloader_data:
+  downloader_state:

@@ -252,7 +252,7 @@ impl Grib2Reader {
                 }
             })?;
 
-        let product_definition = sections::parse_product_definition(message_data)
+        let product_definition = sections::parse_product_definition(message_data, indicator.discipline)
             .map_err(|e| Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse product definition: {}", e),

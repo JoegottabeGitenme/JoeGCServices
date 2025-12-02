@@ -5,7 +5,7 @@ use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
 use renderer::numbers::{self, NumbersConfig};
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
-use storage::{Catalog, CatalogEntry, ObjectStorage, GribCache};
+use storage::{Catalog, CatalogEntry, ObjectStorage, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, debug, warn};
@@ -106,7 +106,7 @@ pub async fn render_weather_data_with_level(
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data_with_time(
-        grib_cache, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
+        grib_cache, None, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
     ).await
 }
 
@@ -131,6 +131,7 @@ pub async fn render_weather_data_with_level(
 /// - `use_mercator`: Use Web Mercator projection
 pub async fn render_weather_data_with_time(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -202,7 +203,7 @@ pub async fn render_weather_data_with_time(
     );
     
     let start = Instant::now();
-    let grid_result = load_grid_data(grib_cache, metrics, &entry, parameter).await?;
+    let grid_result = load_grid_data(grib_cache, grid_cache, metrics, &entry, parameter).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
     let grid_data = grid_result.data;
@@ -1306,8 +1307,26 @@ fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str, level: Optio
     {
         let msg_param = msg.parameter();
         
-        // Check parameter match
-        if msg_param == parameter {
+        info!(
+            found_param = msg_param,
+            wanted_param = parameter,
+            discipline = msg.indicator.discipline,
+            category = msg.product_definition.parameter_category,
+            number = msg.product_definition.parameter_number,
+            "Checking GRIB2 message parameter"
+        );
+        
+        // Check parameter match (exact or MRMS fallback)
+        // MRMS files lose discipline 209 during shredding, need fallback matching
+        let param_matches = msg_param == parameter || match parameter {
+            // MRMS fallback mappings (discipline 209 → discipline 0 after shredding)
+            "REFL" => msg_param == "P0_9_0",           // MergedReflectivityQC
+            "PRECIP_RATE" => msg_param == "P0_6_1",    // PrecipRate
+            "QPE" => msg_param == "P0_1_8",            // Quantitative Precipitation Estimate
+            _ => false,
+        };
+        
+        if param_matches {
             // If level is specified, check it matches
             if let Some(target_level) = level {
                 let msg_level = msg.product_definition.level_description.as_str();
@@ -1374,29 +1393,30 @@ struct GoesProjectionParams {
 /// Load grid data from a storage path, handling both GRIB2 and NetCDF files
 /// 
 /// For GRIB2 files, searches for the matching parameter and level.
-/// For NetCDF (GOES) files, reads the CMI variable directly.
+/// For NetCDF (GOES) files, reads the CMI variable directly with caching.
 async fn load_grid_data(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     metrics: &MetricsCollector,
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
-    // Load file from cache (or storage on cache miss)
-    let file_data = grib_cache
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load file: {}", e))?;
-    
     // Check file type by extension or magic bytes
     let is_netcdf = entry.storage_path.ends_with(".nc") || 
                     entry.parameter.starts_with("CMI_") ||
                     entry.model.starts_with("goes");
     
     if is_netcdf {
-        // Handle NetCDF (GOES) data
-        load_netcdf_grid_data(grib_cache, entry).await
+        // Handle NetCDF (GOES) data - use grid cache if available
+        load_netcdf_grid_data(grib_cache, grid_cache, entry).await
     } else {
         // Handle GRIB2 data
+        // Load file from cache (or storage on cache miss)
+        let file_data = grib_cache
+            .get(&entry.storage_path)
+            .await
+            .map_err(|e| format!("Failed to load file: {}", e))?;
+        
         // For MRMS (shredded single-message files), just read the first message
         // since each file contains only one parameter
         let is_shredded = entry.storage_path.contains("shredded/") || entry.model == "mrms";
@@ -1433,21 +1453,52 @@ async fn load_grid_data(
     }
 }
 
-/// Load GOES NetCDF data from storage
+/// Load GOES NetCDF data from storage with parsed grid caching
 /// 
 /// This uses ncdump to extract data since we don't have direct HDF5 support.
 /// Downloads the file from S3 storage to a temp location first.
+/// 
+/// The grid_cache parameter enables caching of parsed grid data to avoid
+/// repeated expensive ncdump parsing for the same file.
 async fn load_netcdf_grid_data(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     entry: &CatalogEntry,
 ) -> Result<GridData, String> {
     use std::process::Command;
-    use std::io::Write;
+    use std::sync::Arc;
+    
+    // Check grid cache first (if available)
+    let cache_key = entry.storage_path.clone();
+    if let Some(cache) = grid_cache {
+        if let Some(cached) = cache.get(&cache_key).await {
+            info!(
+                storage_path = %entry.storage_path,
+                "Grid cache HIT for GOES data"
+            );
+            // Convert from CachedGridData back to GridData
+            return Ok(GridData {
+                data: (*cached.data).clone(),
+                width: cached.width,
+                height: cached.height,
+                goes_projection: cached.goes_projection.map(|p| GoesProjectionParams {
+                    x_origin: p.x_origin,
+                    y_origin: p.y_origin,
+                    dx: p.dx,
+                    dy: p.dy,
+                    perspective_point_height: p.perspective_point_height,
+                    semi_major_axis: p.semi_major_axis,
+                    semi_minor_axis: p.semi_minor_axis,
+                    longitude_origin: p.longitude_origin,
+                }),
+            });
+        }
+    }
     
     info!(
         storage_path = %entry.storage_path,
         parameter = %entry.parameter,
-        "Loading GOES NetCDF data from cache/storage"
+        "Loading GOES NetCDF data from cache/storage (grid cache MISS)"
     );
     
     // Load file from cache (or storage on cache miss)
@@ -1618,6 +1669,32 @@ async fn load_netcdf_grid_data(
         semi_minor_axis,
         longitude_origin,
     };
+    
+    // Store in grid cache for future requests
+    if let Some(cache) = grid_cache {
+        let cached_data = CachedGridData {
+            data: Arc::new(data.clone()),
+            width,
+            height,
+            goes_projection: Some(storage::GoesProjectionParams {
+                x_origin: x_offset,
+                y_origin: y_offset,
+                dx: x_scale,
+                dy: y_scale,
+                perspective_point_height,
+                semi_major_axis,
+                semi_minor_axis,
+                longitude_origin,
+            }),
+        };
+        cache.insert(cache_key, cached_data).await;
+        info!(
+            storage_path = %entry.storage_path,
+            width = width,
+            height = height,
+            "Cached parsed GOES grid data"
+        );
+    }
     
     Ok(GridData {
         data,
@@ -2412,23 +2489,31 @@ pub async fn render_numbers_tile(
         }
     };
 
-    // Load GRIB2 file from cache
-    let grib_data = grib_cache
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    // Determine if this is NetCDF or GRIB2 data
+    let is_netcdf = entry.storage_path.ends_with(".nc");
+    
+    let (grid_data, grid_width, grid_height) = if is_netcdf {
+        // Load NetCDF data
+        let grid_result = load_netcdf_grid_data(grib_cache, None, &entry).await?;
+        (grid_result.data, grid_result.width, grid_result.height)
+    } else {
+        // Load GRIB2 file from cache
+        let grib_data = grib_cache
+            .get(&entry.storage_path)
+            .await
+            .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
 
-    // Parse GRIB2 and find parameter with matching level
-    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
+        // Parse GRIB2 and find parameter with matching level
+        let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
 
-    // Unpack grid data
-    let grid_data = msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking failed: {}", e))?;
+        // Unpack grid data
+        let data = msg
+            .unpack_data()
+            .map_err(|e| format!("Unpacking failed: {}", e))?;
 
-    let (grid_height, grid_width) = msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
+        let (grid_height, grid_width) = msg.grid_dims();
+        (data, grid_width as usize, grid_height as usize)
+    };
 
     info!(
         parameter = parameter,
@@ -2513,6 +2598,7 @@ pub async fn render_numbers_tile(
 pub async fn query_point_value(
     grib_cache: &GribCache,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     layer: &str,
     bbox: [f64; 4],
     width: u32,
@@ -2596,26 +2682,66 @@ pub async fn query_point_value(
         }
     };
     
-    // Load GRIB2 file from cache
-    let grib_data = grib_cache
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    // Check if this is a NetCDF file (GOES, MRMS observation data)
+    let is_netcdf = entry.storage_path.ends_with(".nc") || 
+                    entry.parameter.starts_with("CMI_") ||
+                    model.starts_with("goes");
     
-    // Parse GRIB2 and find parameter with matching level
-    let msg = find_parameter_in_grib(grib_data, &parameter, Some(&entry.level))?;
+    // Load and sample grid data
+    let value = if is_netcdf {
+        // Handle NetCDF (GOES satellite) data
+        let grid_result = load_grid_data(grib_cache, None, metrics, &entry, &parameter).await?;
+        let grid_data = grid_result.data;
+        let grid_width = grid_result.width;
+        let grid_height = grid_result.height;
+        let goes_projection = grid_result.goes_projection;
+        
+        // Sample value at the point using projection-aware sampling
+        sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
+    } else {
+        // Handle GRIB2 data
+        let grib_data = grib_cache
+            .get(&entry.storage_path)
+            .await
+            .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+        
+        // Parse GRIB2 and find parameter with matching level
+        let msg = find_parameter_in_grib(grib_data, &parameter, Some(&entry.level))?;
+        
+        // Unpack grid data
+        let grid_data = msg
+            .unpack_data()
+            .map_err(|e| format!("Unpacking failed: {}", e))?;
+        
+        let (grid_height, grid_width) = msg.grid_dims();
+        let grid_width = grid_width as usize;
+        let grid_height = grid_height as usize;
+        
+        // Sample value at the point using bilinear interpolation
+        sample_grid_value(&grid_data, grid_width, grid_height, lon, lat, model)?
+    };
     
-    // Unpack grid data
-    let grid_data = msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking failed: {}", e))?;
-    
-    let (grid_height, grid_width) = msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
-    
-    // Sample value at the point using bilinear interpolation
-    let value = sample_grid_value(&grid_data, grid_width, grid_height, lon, lat, model)?;
+    // Check for missing/no-data values (MRMS uses -99 and -999)
+    const MISSING_VALUE_THRESHOLD: f32 = -90.0;
+    if value <= MISSING_VALUE_THRESHOLD || value.is_nan() {
+        // Return a "no data" response with NaN value
+        // The JSON serialization will handle NaN appropriately
+        return Ok(vec![FeatureInfo {
+            layer_name: layer.to_string(),
+            parameter: parameter.clone(),
+            value: f64::NAN,
+            unit: "N/A".to_string(),
+            raw_value: value as f64,
+            raw_unit: "no data".to_string(),
+            location: Location {
+                longitude: lon,
+                latitude: lat,
+            },
+            forecast_hour: Some(entry.forecast_hour),
+            reference_time: Some(entry.reference_time.to_rfc3339()),
+            level: Some(entry.level.clone()),
+        }]);
+    }
     
     // Convert value based on parameter type
     let (display_value, display_unit, raw_unit, param_name) = convert_parameter_value(&parameter, value);
@@ -2783,6 +2909,11 @@ fn sample_grid_value(
         return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
     }
     
+    // Handle MRMS regional lat/lon grid
+    if model == "mrms" {
+        return sample_mrms_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    }
+    
     // GFS and other models use global lat/lon grids: lat 90 to -90, lon 0 to 360
     let lon_step = 360.0 / grid_width as f64;
     let lat_step = 180.0 / grid_height as f64;
@@ -2822,6 +2953,130 @@ fn sample_lambert_grid_value(
     }
     
     bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false)
+}
+
+/// Sample an MRMS regional lat/lon grid at a geographic point
+/// MRMS grid: 7000x3500, lat 54.995° to 20.005°, lon -129.995° to -60.005° (0.01° resolution)
+fn sample_mrms_grid_value(
+    grid_data: &[f32],
+    grid_width: usize,
+    grid_height: usize,
+    lon: f64,
+    lat: f64,
+) -> Result<f32, String> {
+    // MRMS grid parameters (from GRIB2 grid definition)
+    // Grid starts at NW corner: (54.995°N, -129.995°E) = (54.995°N, 230.005°E in 0-360)
+    // Resolution: 0.01° in both directions
+    // Scan mode 0: rows go from north to south, columns go from west to east
+    let first_lat = 54.995;   // Northern edge
+    let last_lat = 20.005;    // Southern edge  
+    let first_lon = -129.995; // Western edge
+    let last_lon = -60.005;   // Eastern edge
+    
+    // Calculate step sizes from grid dimensions
+    let lon_step = (last_lon - first_lon) / (grid_width as f64 - 1.0);  // ~0.01°
+    let lat_step = (first_lat - last_lat) / (grid_height as f64 - 1.0); // ~0.01°
+    
+    // Bounds check
+    if lat < last_lat || lat > first_lat || lon < first_lon || lon > last_lon {
+        return Err(format!(
+            "Point ({}, {}) outside MRMS grid bounds (lon: {} to {}, lat: {} to {})",
+            lon, lat, first_lon, last_lon, last_lat, first_lat
+        ));
+    }
+    
+    // Convert to grid coordinates
+    // Column: distance from west edge divided by lon step
+    let grid_x = (lon - first_lon) / lon_step;
+    // Row: distance from north edge divided by lat step (rows go south)
+    let grid_y = (first_lat - lat) / lat_step;
+    
+    // Final bounds check on grid coordinates
+    if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 || grid_y >= grid_height as f64 {
+        return Err(format!(
+            "Point ({}, {}) maps to invalid grid coords ({}, {})",
+            lon, lat, grid_x, grid_y
+        ));
+    }
+    
+    bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false)
+}
+
+/// Sample grid value with projection awareness (for GOES geostationary projection)
+fn sample_grid_value_with_projection(
+    grid_data: &[f32],
+    grid_width: usize,
+    grid_height: usize,
+    lon: f64,
+    lat: f64,
+    model: &str,
+    goes_projection: Option<&GoesProjectionParams>,
+) -> Result<f32, String> {
+    // Handle HRRR's Lambert Conformal projection
+    if model == "hrrr" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    }
+    
+    // Handle MRMS regional lat/lon grid
+    if model == "mrms" {
+        return sample_mrms_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    }
+    
+    // Handle GOES geostationary projection
+    if model == "goes16" || model == "goes18" || model == "goes" {
+        if let Some(params) = goes_projection {
+            let proj = Geostationary::from_goes(
+                params.perspective_point_height,
+                params.semi_major_axis,
+                params.semi_minor_axis,
+                params.longitude_origin,
+                params.x_origin,
+                params.y_origin,
+                params.dx,
+                params.dy,
+                grid_width,
+                grid_height,
+            );
+            
+            // Convert geographic to geostationary grid indices
+            let grid_coords = proj.geo_to_grid(lat, lon);
+            
+            let (grid_x, grid_y) = match grid_coords {
+                Some((i, j)) => (i, j),
+                None => return Err(format!("Point ({}, {}) not visible from satellite", lon, lat)),
+            };
+            
+            // Bounds check
+            if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 - 1.0 || grid_y >= grid_height as f64 - 1.0 {
+                return Err(format!("Point ({}, {}) outside GOES coverage (grid coords: {}, {})", lon, lat, grid_x, grid_y));
+            }
+            
+            return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+        } else {
+            // Fallback to preset projection
+            let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
+            let proj = if satellite_lon < -100.0 {
+                Geostationary::goes18_conus()
+            } else {
+                Geostationary::goes16_conus()
+            };
+            
+            let grid_coords = proj.geo_to_grid(lat, lon);
+            let (grid_x, grid_y) = match grid_coords {
+                Some((i, j)) => (i, j),
+                None => return Err(format!("Point ({}, {}) not visible from satellite", lon, lat)),
+            };
+            
+            if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 - 1.0 || grid_y >= grid_height as f64 - 1.0 {
+                return Err(format!("Point ({}, {}) outside GOES coverage", lon, lat));
+            }
+            
+            return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+        }
+    }
+    
+    // Fall back to standard geographic grid sampling
+    sample_grid_value(grid_data, grid_width, grid_height, lon, lat, model)
 }
 
 /// Perform bilinear interpolation at grid coordinates

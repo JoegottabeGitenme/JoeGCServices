@@ -463,6 +463,11 @@ fn get_model_bbox(model_id: &str) -> BoundingBox {
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
         "hrrr" => BoundingBox::new(-134.1, 21.1, -60.9, 52.6),
         "nam" => BoundingBox::new(-152.9, 12.2, -49.4, 57.3),
+        // MRMS CONUS domain (regular lat-lon 0.01 degree, ~1km)
+        // Grid: 7000 x 3500 points
+        // lat 54.995 to 20.005 by 0.01
+        // lon 230.005 to 299.995 by 0.01 (= -129.995 to -60.005)
+        "mrms" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
         // GOES-16 CONUS bounds (approximate)
         "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
         // GOES-18 CONUS bounds (approximate)  

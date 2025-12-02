@@ -294,6 +294,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         match crate::rendering::query_point_value(
             &state.grib_cache,
             &state.catalog,
+            &state.metrics,
             layer,
             bbox_array,
             width,
@@ -729,20 +730,18 @@ async fn wmts_get_tile(
         )
         .await
     } else if style == "numbers" {
-        // Numbers style is only supported for GRIB2 data (GFS, HRRR)
-        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
-        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
-        if is_netcdf_model {
-            return wmts_exception(
-                "StyleNotDefined",
-                &format!("Numbers style is not supported for {} layers. Numbers are only available for gridded parameters (GFS, HRRR).", model.to_uppercase()),
-                StatusCode::BAD_REQUEST,
-            );
-        }
-        
         // Get appropriate style file for color mapping
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+        let style_file = if parameter.contains("CMI") {
+            // GOES satellite data
+            if parameter.contains("C01") || parameter.contains("C02") || parameter.contains("C03") {
+                // Visible/near-IR bands
+                format!("{}/goes_visible.json", style_config_dir)
+            } else {
+                // IR bands (C08-C16)
+                format!("{}/goes_ir.json", style_config_dir)
+            }
+        } else if parameter.contains("TMP") || parameter.contains("TEMP") {
             format!("{}/temperature.json", style_config_dir)
         } else if parameter.contains("WIND") || parameter.contains("GUST") {
             format!("{}/wind.json", style_config_dir)
@@ -778,6 +777,7 @@ async fn wmts_get_tile(
         // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
         crate::rendering::render_weather_data_with_time(
             &state.grib_cache,
+            Some(&state.grid_cache),
             &state.catalog,
             &state.metrics,
             model,
@@ -1290,18 +1290,17 @@ async fn render_weather_data(
     }
     
     if style == "numbers" {
-        // Numbers style is only supported for GRIB2 data (GFS, HRRR)
-        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
-        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
-        if is_netcdf_model {
-            return Err(format!(
-                "Numbers style is not supported for {} layers. Numbers are only available for gridded parameters (GFS, HRRR).",
-                model.to_uppercase()
-            ));
-        }
-        
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
+        let style_file = if parameter.contains("CMI") {
+            // GOES satellite data
+            if parameter.contains("C01") || parameter.contains("C02") || parameter.contains("C03") {
+                // Visible/near-IR bands
+                format!("{}/goes_visible.json", style_config_dir)
+            } else {
+                // IR bands (C08-C16)
+                format!("{}/goes_ir.json", style_config_dir)
+            }
+        } else if parameter.contains("TMP") || parameter.contains("TEMP") {
             format!("{}/temperature.json", style_config_dir)
         } else if parameter.contains("WIND") || parameter.contains("GUST") {
             format!("{}/wind.json", style_config_dir)
@@ -1337,6 +1336,7 @@ async fn render_weather_data(
     // Use shared rendering logic with support for observation time
     crate::rendering::render_weather_data_with_time(
         &state.grib_cache,
+        Some(&state.grid_cache),
         &state.catalog,
         &state.metrics,
         model,
@@ -2472,67 +2472,6 @@ pub async fn cache_viewer_handler() -> impl IntoResponse {
             font-weight: bold;
             color: #007bff;
         }
-        .filter-bar {
-            margin-bottom: 20px;
-            display: flex;
-            gap: 10px;
-        }
-        input, select {
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        .tile-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 20px;
-        }
-        .tile-card {
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            overflow: hidden;
-            background: white;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .tile-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .tile-image {
-            width: 100%;
-            height: 280px;
-            object-fit: cover;
-            background: #f0f0f0;
-            cursor: pointer;
-        }
-        .tile-info {
-            padding: 15px;
-            background: #fafafa;
-        }
-        .tile-label {
-            font-size: 11px;
-            color: #666;
-            margin-bottom: 3px;
-        }
-        .tile-value {
-            font-size: 13px;
-            color: #333;
-            font-weight: 500;
-            margin-bottom: 8px;
-        }
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-        .error {
-            background: #fff3cd;
-            border: 1px solid #ffc107;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }
         .refresh-btn {
             padding: 10px 20px;
             background: #007bff;
@@ -2541,34 +2480,10 @@ pub async fn cache_viewer_handler() -> impl IntoResponse {
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
+            margin-top: 10px;
         }
         .refresh-btn:hover {
             background: #0056b3;
-        }
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            justify-content: center;
-            align-items: center;
-        }
-        .modal img {
-            max-width: 90%;
-            max-height: 90%;
-            border-radius: 4px;
-        }
-        .close-modal {
-            position: absolute;
-            top: 20px;
-            right: 30px;
-            color: white;
-            font-size: 40px;
-            cursor: pointer;
         }
     </style>
 </head>
@@ -2595,27 +2510,10 @@ pub async fn cache_viewer_handler() -> impl IntoResponse {
             </div>
         </div>
         
-        <div class="filter-bar">
-            <input type="text" id="search" placeholder="Search layer..." />
-            <select id="layer-filter">
-                <option value="">All Layers</option>
-            </select>
-            <button class="refresh-btn" onclick="loadCacheData()">🔄 Refresh</button>
-        </div>
-        
-        <div id="tile-container">
-            <div class="loading">Loading cached tiles...</div>
-        </div>
+        <button class="refresh-btn" onclick="loadCacheData()">🔄 Refresh</button>
     </div>
     
-    <div class="modal" id="modal" onclick="closeModal()">
-        <span class="close-modal">&times;</span>
-        <img id="modal-img" src="" />
-    </div>
-
     <script>
-        let allTiles = [];
-        
         async function loadCacheData() {
             try {
                 // Load metrics
@@ -2633,53 +2531,9 @@ pub async fn cache_viewer_handler() -> impl IntoResponse {
                 document.getElementById('l2-count').textContent = 
                     (metrics.l2_cache.key_count || 0).toLocaleString();
                 
-                // Load tile list from L1 cache
-                // For now, we'll show some sample tiles based on common patterns
-                displaySampleTiles();
-                
             } catch (error) {
-                document.getElementById('tile-container').innerHTML = 
-                    '<div class="error">Error loading cache data: ' + error.message + '</div>';
+                console.error('Error loading cache data:', error);
             }
-        }
-        
-        function displaySampleTiles() {
-            const container = document.getElementById('tile-container');
-            const layers = ['gfs_TMP'];
-            const styles = ['temperature'];
-            const zooms = [0, 1, 2, 3, 4];
-            
-            let html = '<div class="tile-grid">';
-            
-            // Show zoom levels 0-4 as examples
-            for (const z of zooms) {
-                const max = Math.pow(2, z);
-                const step = Math.max(1, Math.floor(max / 4)); // Show ~4 tiles per zoom
-                
-                for (let x = 0; x < max; x += step) {
-                    for (let y = 0; y < max; y += step) {
-                        const tileUrl = `/wmts/1.0.0/gfs_TMP/temperature/EPSG3857/${z}/${x}/${y}.png`;
-                        html += `
-                            <div class="tile-card">
-                                <img class="tile-image" 
-                                     src="${tileUrl}" 
-                                     alt="Tile ${z}/${x}/${y}"
-                                     onclick="showModal('${tileUrl}')"
-                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22256%22 height=%22256%22><rect width=%22256%22 height=%22256%22 fill=%22%23f0f0f0%22/><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22>Not cached</text></svg>'" />
-                                <div class="tile-info">
-                                    <div class="tile-label">Layer</div>
-                                    <div class="tile-value">gfs_TMP</div>
-                                    <div class="tile-label">Zoom / X / Y</div>
-                                    <div class="tile-value">${z} / ${x} / ${y}</div>
-                                </div>
-                            </div>
-                        `;
-                    }
-                }
-            }
-            
-            html += '</div>';
-            container.innerHTML = html;
         }
         
         function formatBytes(bytes) {
@@ -2688,15 +2542,6 @@ pub async fn cache_viewer_handler() -> impl IntoResponse {
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-        }
-        
-        function showModal(url) {
-            document.getElementById('modal-img').src = url;
-            document.getElementById('modal').style.display = 'flex';
-        }
-        
-        function closeModal() {
-            document.getElementById('modal').style.display = 'none';
         }
         
         // Load data on page load
@@ -2824,6 +2669,97 @@ pub async fn loadtest_results_handler() -> impl IntoResponse {
         "count": runs.len(),
         "runs": runs,
     }))
+}
+
+/// Load test request log files endpoint - lists available JSONL files
+pub async fn loadtest_files_handler() -> impl IntoResponse {
+    use serde_json::json;
+    use std::fs;
+    
+    let results_dir = std::env::var("LOAD_TEST_RESULTS_DIR")
+        .unwrap_or_else(|_| "./validation/load-test/results".to_string());
+    
+    let mut files = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(&results_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                // Include any JSONL file except runs.jsonl (which is the summary file)
+                if filename.ends_with(".jsonl") && filename != "runs.jsonl" {
+                    if let Ok(metadata) = entry.metadata() {
+                        let size_bytes = metadata.len();
+                        let size_str = if size_bytes > 1_000_000 {
+                            format!("{:.1}MB", size_bytes as f64 / 1_000_000.0)
+                        } else if size_bytes > 1_000 {
+                            format!("{:.1}KB", size_bytes as f64 / 1_000.0)
+                        } else {
+                            format!("{}B", size_bytes)
+                        };
+                        
+                        files.push(json!({
+                            "name": filename,
+                            "path": format!("/api/loadtest/file/{}", filename),
+                            "size": size_str,
+                            "bytes": size_bytes,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sort by modification time (newest first)
+    files.sort_by(|a, b| {
+        let a_name = a["name"].as_str().unwrap_or("");
+        let b_name = b["name"].as_str().unwrap_or("");
+        // Extract timestamp portion (last 15 chars before .jsonl: YYYYMMDD_HHMMSS)
+        let a_ts = if a_name.len() > 21 { &a_name[a_name.len()-21..a_name.len()-6] } else { a_name };
+        let b_ts = if b_name.len() > 21 { &b_name[b_name.len()-21..b_name.len()-6] } else { b_name };
+        b_ts.cmp(a_ts)
+    });
+    
+    Json(files)
+}
+
+/// Serve a specific load test request log file
+pub async fn loadtest_file_handler(
+    Path(filename): Path<String>,
+) -> impl IntoResponse {
+    use std::fs;
+    
+    // Security: only allow JSONL files (not runs.jsonl which is summary data)
+    if !filename.ends_with(".jsonl") || filename == "runs.jsonl" {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid filename".to_string(),
+        ).into_response();
+    }
+    
+    // Prevent path traversal
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid filename".to_string(),
+        ).into_response();
+    }
+    
+    let results_dir = std::env::var("LOAD_TEST_RESULTS_DIR")
+        .unwrap_or_else(|_| "./validation/load-test/results".to_string());
+    
+    let file_path = format!("{}/{}", results_dir, filename);
+    
+    match fs::read_to_string(&file_path) {
+        Ok(content) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/x-ndjson")],
+            content,
+        ).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            "File not found".to_string(),
+        ).into_response(),
+    }
 }
 
 /// Load test dashboard HTML page

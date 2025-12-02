@@ -43,7 +43,7 @@ schedule:
   delay_hours: 2                     # Data typically available 2 hours after cycle
 
 retention:
-  hours: 72                          # Keep data for 3 days
+  hours: 12                          # Keep data for 12 hours
 
 parameters:
   # Surface Temperature
