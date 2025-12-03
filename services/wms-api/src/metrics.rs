@@ -3,7 +3,6 @@
 use metrics::{counter, gauge, histogram};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use std::collections::HashMap;

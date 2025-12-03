@@ -36,6 +36,7 @@ impl CheckResult {
         }
     }
 
+    #[allow(dead_code)]
     pub fn skip(message: impl Into<String>) -> Self {
         Self {
             status: CheckStatus::Skip,

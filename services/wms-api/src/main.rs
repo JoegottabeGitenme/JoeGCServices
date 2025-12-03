@@ -13,13 +13,12 @@ mod validation;
 mod warming;
 
 use anyhow::Result;
-use axum::{extract::Extension, routing::{get, post, put}, Router};
+use axum::{extract::Extension, routing::{get, post}, Router};
 use clap::Parser;
 use std::{env, net::SocketAddr, sync::Arc};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-use metrics_exporter_prometheus::PrometheusHandle;
 
 use state::AppState;
 

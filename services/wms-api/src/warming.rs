@@ -38,6 +38,7 @@ pub struct WarmingLayer {
 
 /// Result of warming a single tile.
 #[derive(Debug)]
+#[allow(dead_code)]
 enum WarmResult {
     /// Tile was rendered successfully
     Rendered,

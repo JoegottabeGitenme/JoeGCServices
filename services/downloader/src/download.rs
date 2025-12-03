@@ -21,6 +21,7 @@ use tracing::{debug, info, instrument, warn};
 use crate::state::{DownloadState, DownloadStatus};
 
 /// Configuration for the download manager.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DownloadConfig {
     /// Maximum number of retry attempts

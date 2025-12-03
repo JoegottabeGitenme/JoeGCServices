@@ -20,6 +20,7 @@ use crate::state::AppState;
 // WMS Handlers
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct WmsParams {
     #[serde(rename = "SERVICE", alias = "service")]
@@ -357,6 +358,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct WmtsKvpParams {
     #[serde(rename = "SERVICE")]
     service: Option<String>,
@@ -638,7 +640,7 @@ async fn wmts_get_tile(
     let tms = web_mercator_tile_matrix_set();
     let coord = TileCoord::new(z, x, y);
     
-    let bbox = match tms.tile_bbox(&coord) {
+    let _bbox = match tms.tile_bbox(&coord) {
         Some(bbox) => bbox,
         None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
     };
@@ -1961,7 +1963,7 @@ fn build_wmts_capabilities_xml(
     // Add composite WIND_BARBS layers for each model that has both UGRD and VGRD
     for model in models {
         let params = model_params.get(model).unwrap_or(&empty_params);
-        let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+        let (_runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
         let has_ugrd = params.iter().any(|p| p == "UGRD");
         let has_vgrd = params.iter().any(|p| p == "VGRD");
         
@@ -2097,6 +2099,7 @@ fn build_wmts_capabilities_xml(
     )
 }
 
+#[allow(dead_code)]
 fn generate_placeholder_image(width: u32, height: u32) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
@@ -2126,6 +2129,7 @@ fn generate_placeholder_image(width: u32, height: u32) -> Vec<u8> {
     png
 }
 
+#[allow(dead_code)]
 fn write_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(name);
@@ -2138,9 +2142,9 @@ fn write_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
 // ============================================================================
 
 /// GET /api/validation/status - Get current validation status
-#[instrument(skip(state))]
+#[instrument(skip(_state))]
 pub async fn validation_status_handler(
-    Extension(state): Extension<Arc<AppState>>,
+    Extension(_state): Extension<Arc<AppState>>,
 ) -> Result<Json<crate::validation::ValidationStatus>, StatusCode> {
     info!("Validation status requested");
     
@@ -2153,9 +2157,9 @@ pub async fn validation_status_handler(
 }
 
 /// GET /api/validation/run - Run validation and return results
-#[instrument(skip(state))]
+#[instrument(skip(_state))]
 pub async fn validation_run_handler(
-    Extension(state): Extension<Arc<AppState>>,
+    Extension(_state): Extension<Arc<AppState>>,
 ) -> Result<Json<crate::validation::ValidationStatus>, StatusCode> {
     info!("Manual validation run requested");
     
@@ -2270,6 +2274,7 @@ fn get_tiles_in_rings(center: &TileCoord, rings: u32) -> Vec<TileCoord> {
 
 /// Get immediate neighboring tiles (1 ring = 8 tiles).
 /// This is a convenience wrapper around get_tiles_in_rings for backward compatibility.
+#[allow(dead_code)]
 fn get_neighboring_tiles(center: &TileCoord) -> Vec<TileCoord> {
     get_tiles_in_rings(center, 1)
 }
@@ -2499,8 +2504,6 @@ pub async fn cache_clear_handler(
 pub async fn cache_list_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
-    use storage::CacheKey;
-    
     let mut cache = state.cache.lock().await;
     
     match cache.keys("*").await {
@@ -2894,6 +2897,7 @@ pub async fn criterion_benchmarks_handler() -> impl IntoResponse {
     use std::fs;
     use std::path::PathBuf;
     
+    #[allow(dead_code)]
     #[derive(Serialize)]
     struct CriterionEstimate {
         point_estimate: f64,

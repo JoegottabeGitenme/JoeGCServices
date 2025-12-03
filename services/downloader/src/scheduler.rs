@@ -60,6 +60,7 @@ impl From<&ModelConfig> for ModelSchedule {
 }
 
 /// Download scheduler coordinating multiple models.
+#[allow(dead_code)]
 pub struct Scheduler {
     download_manager: Arc<DownloadManager>,
     state: Arc<DownloadState>,
@@ -120,6 +121,7 @@ impl Scheduler {
     }
     
     /// Reload model configurations from disk.
+    #[allow(dead_code)]
     pub fn reload_configs(&mut self) -> Result<()> {
         self.model_configs = config::load_model_configs(&self.config_dir)?;
         info!(count = self.model_configs.len(), "Reloaded model configurations");

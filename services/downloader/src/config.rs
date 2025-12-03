@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tracing::{debug, info, warn};
 
 /// Root configuration loaded from a model YAML file.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelConfig {
     pub model: ModelInfo,
@@ -24,6 +25,7 @@ pub struct ModelConfig {
 }
 
 /// Basic model identification.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
@@ -39,6 +41,7 @@ fn default_enabled() -> bool {
 }
 
 /// Data source configuration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceConfig {
     #[serde(rename = "type")]
@@ -67,6 +70,7 @@ fn default_region() -> String {
 }
 
 /// Grid specification.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct GridConfig {
     pub projection: String,
@@ -80,6 +84,7 @@ pub struct GridConfig {
     pub dimensions: Option<Dimensions>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BBox {
     pub min_lon: f64,
@@ -88,6 +93,7 @@ pub struct BBox {
     pub max_lat: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectionParams {
     pub lat1: Option<f64>,
@@ -101,6 +107,7 @@ pub struct ProjectionParams {
     pub ny: Option<u32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Dimensions {
     pub x: u32,
@@ -108,6 +115,7 @@ pub struct Dimensions {
 }
 
 /// Schedule configuration for downloads.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScheduleConfig {
     /// Schedule type: "forecast" (default) or "observation"
@@ -138,6 +146,7 @@ fn default_poll_interval() -> u64 {
     3600
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForecastHoursConfig {
     pub start: u32,
@@ -153,6 +162,7 @@ impl ForecastHoursConfig {
 }
 
 /// Data retention settings.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RetentionConfig {
     #[serde(default = "default_retention_hours")]
@@ -164,6 +174,7 @@ fn default_retention_hours() -> u32 {
 }
 
 /// Parameter configuration (for reference, not used in downloader).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParameterConfig {
     pub name: String,
@@ -180,6 +191,7 @@ pub struct ParameterConfig {
 }
 
 /// Composite layer configuration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct CompositeConfig {
     pub name: String,

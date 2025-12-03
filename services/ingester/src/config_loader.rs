@@ -260,6 +260,7 @@ pub struct ParameterDefinition {
 // Aggregated Configuration
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AllConfigs {
     pub ingestion: IngestionConfig,

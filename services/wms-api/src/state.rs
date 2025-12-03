@@ -97,6 +97,7 @@ pub struct AppState {
     pub catalog: Catalog,
     pub cache: Mutex<TileCache>,
     pub tile_memory_cache: TileMemoryCache,  // L1 cache for rendered tiles
+    #[allow(dead_code)]
     pub queue: JobQueue,
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,

@@ -149,7 +149,7 @@ impl LambertConformal {
     pub fn geo_to_grid(&self, lat_deg: f64, lon_deg: f64) -> (f64, f64) {
         let to_rad = PI / 180.0;
         let lat = lat_deg * to_rad;
-        let mut lon = lon_deg * to_rad;
+        let lon = lon_deg * to_rad;
         
         // Normalize longitude difference to [-π, π]
         let mut dlon = lon - self.lon0;

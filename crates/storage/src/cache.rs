@@ -54,7 +54,7 @@ impl TileCache {
         let ttl = ttl.unwrap_or(self.default_ttl);
 
         self.conn
-            .set_ex(&key_str, data, ttl.as_secs())
+            .set_ex::<_, _, ()>(&key_str, data, ttl.as_secs())
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache set failed: {}", e)))?;
 
@@ -79,7 +79,7 @@ impl TileCache {
         let key_str = key.to_string();
 
         self.conn
-            .del(&key_str)
+            .del::<_, ()>(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache delete failed: {}", e)))?;
 

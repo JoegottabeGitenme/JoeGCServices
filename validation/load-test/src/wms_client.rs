@@ -33,7 +33,6 @@ fn parse_time_dimension(xml: &str, layer_name: &str) -> Result<Vec<String>> {
     let mut buf = Vec::new();
     let mut in_target_layer = false;
     let mut in_dimension = false;
-    let mut dimension_name = String::new();
     let mut dimension_content = String::new();
     
     loop {
@@ -57,8 +56,8 @@ fn parse_time_dimension(xml: &str, layer_name: &str) -> Result<Vec<String>> {
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 if attr.key.as_ref() == b"name" {
-                                    dimension_name = String::from_utf8_lossy(&attr.value).to_string();
-                                    if dimension_name == "TIME" {
+                                    let name = String::from_utf8_lossy(&attr.value);
+                                    if name == "TIME" {
                                         in_dimension = true;
                                         dimension_content.clear();
                                     }

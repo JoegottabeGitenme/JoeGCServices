@@ -8,12 +8,12 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument, warn};
 
-use storage::{Catalog, CatalogEntry, ObjectStorage, ObjectStorageConfig};
+use storage::{Catalog, CatalogEntry, ObjectStorage};
 use wms_common::BoundingBox;
 
 use crate::config::{IngesterConfig, ModelConfig, ParameterConfig};
 use crate::sources::{
-    create_fetcher, cycles_to_check, latest_available_cycle, DataSourceFetcher, RemoteFile,
+    create_fetcher, cycles_to_check, DataSourceFetcher, RemoteFile,
 };
 
 /// Main ingestion pipeline.
@@ -70,7 +70,7 @@ impl IngestionPipeline {
 
     /// Ingest all configured models.
     pub async fn ingest_all(&self) -> Result<()> {
-        for (model_id, model_config) in &self.config.models {
+        for (model_id, _model_config) in &self.config.models {
             if let Err(e) = self.ingest_model(model_id).await {
                 error!(model = %model_id, error = %e, "Model ingestion failed");
             }
@@ -139,7 +139,7 @@ impl IngestionPipeline {
             .map(|&fhr| {
                 let sem = self.download_semaphore.clone();
                 let model_id = model_id.to_string();
-                let date = date.to_string();
+                let _date = date.to_string();
                 let file_pattern = model_config.source.file_pattern(
                     &model_id,
                     &model_config.resolution,
