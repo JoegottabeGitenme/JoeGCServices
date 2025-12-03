@@ -139,7 +139,7 @@ jobs:
           echo "Running benchmarks for: render_benchmarks, barbs_benchmarks, contour_benchmarks" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          cargo bench --package renderer -- --noplot 2>&1 | tee renderer_bench.txt
+          cargo bench --package renderer 2>&1 | tee renderer_bench.txt
           
           # Extract timing info for summary
           echo '```' >> $GITHUB_STEP_SUMMARY
