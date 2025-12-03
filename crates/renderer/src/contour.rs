@@ -818,9 +818,7 @@ pub fn render_contours(
     height: usize,
     config: &ContourConfig,
 ) -> Vec<u8> {
-    // TODO: REMOVE THIS - Added for benchmark testing
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    
+
     // Log data stats for debugging
     let valid_data: Vec<f32> = data.iter().filter(|v| !v.is_nan()).copied().collect();
     let data_min = valid_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
