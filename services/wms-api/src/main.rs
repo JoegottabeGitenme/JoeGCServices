@@ -97,6 +97,11 @@ async fn async_main(args: Args) -> Result<()> {
     // Initialize application state
     let state = Arc::new(AppState::new().await?);
 
+    // Run database migrations
+    info!("Running database migrations...");
+    state.catalog.migrate().await?;
+    info!("Database migrations completed successfully");
+
     // Run cache warming if enabled (Phase 7.D)
     {
         let warming_config = warming::WarmingConfig {
