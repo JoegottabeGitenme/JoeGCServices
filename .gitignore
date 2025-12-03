@@ -3,6 +3,9 @@
 **/*.rs.bk
 *.pdb
 
+# mdBook output
+/docs/book/
+
 # IDE and editor files
 .idea/
 .vscode/
