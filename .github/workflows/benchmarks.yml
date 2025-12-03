@@ -1,0 +1,283 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/renderer/**'
+      - 'crates/grib2-parser/**'
+      - 'crates/projection/**'
+      - 'crates/wms-common/**'
+  pull_request:
+    paths:
+      - 'crates/renderer/**'
+      - 'crates/grib2-parser/**'
+      - 'crates/projection/**'
+      - 'crates/wms-common/**'
+  workflow_dispatch:
+    inputs:
+      run_all:
+        description: 'Run all benchmarks regardless of changes'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      renderer: ${{ steps.filter.outputs.renderer }}
+      grib2-parser: ${{ steps.filter.outputs.grib2-parser }}
+      projection: ${{ steps.filter.outputs.projection }}
+      wms-common: ${{ steps.filter.outputs.wms-common }}
+      any_changed: ${{ steps.filter.outputs.any_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed crates
+        id: filter
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_all }}" == "true" ]]; then
+            echo "renderer=true" >> $GITHUB_OUTPUT
+            echo "grib2-parser=true" >> $GITHUB_OUTPUT
+            echo "projection=true" >> $GITHUB_OUTPUT
+            echo "wms-common=true" >> $GITHUB_OUTPUT
+            echo "any_changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # For PRs, compare against base branch; for pushes, compare against previous commit
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_SHA=${{ github.event.before }}
+          fi
+
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA ${{ github.sha }} 2>/dev/null || echo "")
+          
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Check each crate
+          if echo "$CHANGED_FILES" | grep -q "^crates/renderer/"; then
+            echo "renderer=true" >> $GITHUB_OUTPUT
+          else
+            echo "renderer=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "^crates/grib2-parser/"; then
+            echo "grib2-parser=true" >> $GITHUB_OUTPUT
+          else
+            echo "grib2-parser=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "^crates/projection/"; then
+            echo "projection=true" >> $GITHUB_OUTPUT
+          else
+            echo "projection=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "^crates/wms-common/"; then
+            echo "wms-common=true" >> $GITHUB_OUTPUT
+          else
+            echo "wms-common=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if any benchmarkable crate changed
+          if echo "$CHANGED_FILES" | grep -qE "^crates/(renderer|grib2-parser|projection|wms-common)/"; then
+            echo "any_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "any_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  benchmark:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
+
+      - name: Download baseline benchmarks
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: criterion-${{ runner.os }}-${{ github.base_ref || 'main' }}
+          restore-keys: |
+            criterion-${{ runner.os }}-main
+            criterion-${{ runner.os }}-
+
+      - name: Run renderer benchmarks
+        if: needs.detect-changes.outputs.renderer == 'true' || needs.detect-changes.outputs.wms-common == 'true' || needs.detect-changes.outputs.projection == 'true'
+        run: |
+          echo "## Renderer Benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Running benchmarks for: render_benchmarks, barbs_benchmarks, contour_benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cargo bench --package renderer -- --noplot 2>&1 | tee renderer_bench.txt
+          
+          # Extract timing info for summary
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "^(test |Benchmarking|time:)" renderer_bench.txt | head -100 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Save benchmark results
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: criterion-${{ runner.os }}-main-${{ github.sha }}
+
+      - name: Generate benchmark comparison
+        if: github.event_name == 'pull_request'
+        id: bench-compare
+        run: |
+          # Install critcmp for comparison
+          cargo install critcmp --force
+          
+          # Generate comparison report
+          echo "## Benchmark Comparison" >> comparison.md
+          echo "" >> comparison.md
+          echo "Comparing against baseline (main branch):" >> comparison.md
+          echo "" >> comparison.md
+          
+          if [ -d "target/criterion" ]; then
+            echo '```' >> comparison.md
+            critcmp target/criterion --threshold 5 2>&1 | head -100 >> comparison.md || echo "No baseline to compare against" >> comparison.md
+            echo '```' >> comparison.md
+          else
+            echo "No baseline benchmarks found for comparison." >> comparison.md
+          fi
+          
+          cat comparison.md >> $GITHUB_STEP_SUMMARY
+          
+          # Save for PR comment
+          {
+            echo 'COMPARISON<<EOF'
+            cat comparison.md
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Comment on PR with benchmark results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Read comparison file if it exists
+            let body = '## Benchmark Results\n\n';
+            
+            if (fs.existsSync('comparison.md')) {
+              body += fs.readFileSync('comparison.md', 'utf8');
+            }
+            
+            // Add changed crates info
+            body += '\n\n### Crates Benchmarked\n';
+            body += '| Crate | Changed | Benchmarked |\n';
+            body += '|-------|---------|-------------|\n';
+            
+            const renderer = '${{ needs.detect-changes.outputs.renderer }}' === 'true';
+            const grib2 = '${{ needs.detect-changes.outputs.grib2-parser }}' === 'true';
+            const projection = '${{ needs.detect-changes.outputs.projection }}' === 'true';
+            const wmsCommon = '${{ needs.detect-changes.outputs.wms-common }}' === 'true';
+            
+            // renderer benchmarks run if renderer, wms-common, or projection changed
+            const rendererBenched = renderer || wmsCommon || projection;
+            
+            body += `| renderer | ${renderer ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
+            body += `| grib2-parser | ${grib2 ? '✅' : '❌'} | ${grib2 ? '✅' : '❌'} |\n`;
+            body += `| projection | ${projection ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
+            body += `| wms-common | ${wmsCommon ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
+            
+            body += '\n\n<details><summary>How to interpret results</summary>\n\n';
+            body += '- **time:** Lower is better\n';
+            body += '- **thrpt:** Higher is better (throughput)\n';
+            body += '- **Change %:** Negative = improvement, Positive = regression\n';
+            body += '- Threshold for reporting: 5% change\n';
+            body += '\n</details>';
+            
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('## Benchmark Results')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+  # Summary job that always runs to report if benchmarks were skipped
+  summary:
+    needs: [detect-changes, benchmark]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## Benchmark Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.detect-changes.outputs.any_changed }}" != "true" ]]; then
+            echo "No benchmark-relevant crates were changed. Benchmarks skipped." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Benchmarks run when these paths change:" >> $GITHUB_STEP_SUMMARY
+            echo "- crates/renderer/**" >> $GITHUB_STEP_SUMMARY
+            echo "- crates/grib2-parser/**" >> $GITHUB_STEP_SUMMARY
+            echo "- crates/projection/**" >> $GITHUB_STEP_SUMMARY
+            echo "- crates/wms-common/**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Benchmarks completed. See job output for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changed Crates" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| renderer | ${{ needs.detect-changes.outputs.renderer == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| grib2-parser | ${{ needs.detect-changes.outputs.grib2-parser == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| projection | ${{ needs.detect-changes.outputs.projection == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| wms-common | ${{ needs.detect-changes.outputs.wms-common == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
