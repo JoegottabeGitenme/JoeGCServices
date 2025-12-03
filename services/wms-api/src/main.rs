@@ -214,6 +214,10 @@ async fn async_main(args: Args) -> Result<()> {
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route("/api/loadtest/results", get(handlers::loadtest_results_handler))
+        // Benchmark comparison API (for web/benchmarks.html - load test comparisons)
+        .route("/api/benchmarks", get(handlers::benchmarks_handler))
+        // Criterion microbenchmark results API
+        .route("/api/criterion", get(handlers::criterion_benchmarks_handler))
         .route("/api/loadtest/files", get(handlers::loadtest_files_handler))
         .route("/api/loadtest/file/:filename", get(handlers::loadtest_file_handler))
         // Admin dashboard

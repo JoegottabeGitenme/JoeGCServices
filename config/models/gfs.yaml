@@ -38,7 +38,11 @@ retention:
   hours: 12                          # Keep data for 12 hours
 
 parameters:
-  # Surface Temperature
+  # ==========================================================================
+  # Surface & Near-Surface Parameters
+  # ==========================================================================
+  
+  # Surface Temperature (2m)
   - name: TMP
     description: "Temperature"
     levels:
@@ -62,7 +66,19 @@ parameters:
     display_units: °C
     conversion: K_to_C
 
-  # U-component wind at 10m
+  # Dew Point Temperature (2m)
+  - name: DPT
+    description: "Dew Point Temperature"
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m above ground"
+    style: temperature
+    units: K
+    display_units: °C
+    conversion: K_to_C
+
+  # U-component wind at 10m and pressure levels
   - name: UGRD
     description: "U-Component of Wind"
     levels:
@@ -75,7 +91,7 @@ parameters:
     style: wind
     units: m/s
 
-  # V-component wind at 10m  
+  # V-component wind at 10m and pressure levels
   - name: VGRD
     description: "V-Component of Wind"
     levels:
@@ -109,7 +125,7 @@ parameters:
       - type: isobaric
         values: [1000, 925, 850, 700, 500, 300]
         display_template: "{value} mb"
-    style: default
+    style: humidity
     units: "%"
 
   # Geopotential height
@@ -130,6 +146,108 @@ parameters:
         display: "surface"
     style: wind
     units: m/s
+
+  # ==========================================================================
+  # Precipitation Parameters
+  # ==========================================================================
+  
+  # Total Precipitation (accumulated)
+  - name: APCP
+    description: "Total Precipitation"
+    levels:
+      - type: surface
+        display: "surface"
+    style: precipitation
+    units: kg/m^2
+    display_units: mm
+    accumulation: true
+
+  # Precipitable Water (entire atmosphere column)
+  - name: PWAT
+    description: "Precipitable Water"
+    levels:
+      - type: entire_atmosphere
+        display: "entire atmosphere"
+    style: precipitation
+    units: kg/m^2
+    display_units: mm
+
+  # ==========================================================================
+  # Convective/Stability Parameters
+  # ==========================================================================
+  
+  # Convective Available Potential Energy
+  - name: CAPE
+    description: "Convective Available Potential Energy"
+    levels:
+      - type: surface
+        display: "surface"
+    style: cape
+    units: J/kg
+
+  # Convective Inhibition
+  - name: CIN
+    description: "Convective Inhibition"
+    levels:
+      - type: surface
+        display: "surface"
+    style: cape
+    units: J/kg
+
+  # ==========================================================================
+  # Cloud Parameters
+  # ==========================================================================
+  
+  # Total Cloud Cover
+  - name: TCDC
+    description: "Total Cloud Cover"
+    levels:
+      - type: entire_atmosphere
+        display: "entire atmosphere"
+    style: cloud
+    units: "%"
+
+  # Low Cloud Cover
+  - name: LCDC
+    description: "Low Cloud Cover"
+    levels:
+      - type: low_cloud_layer
+        display: "low cloud layer"
+    style: cloud
+    units: "%"
+
+  # Middle Cloud Cover
+  - name: MCDC
+    description: "Middle Cloud Cover"
+    levels:
+      - type: middle_cloud_layer
+        display: "middle cloud layer"
+    style: cloud
+    units: "%"
+
+  # High Cloud Cover
+  - name: HCDC
+    description: "High Cloud Cover"
+    levels:
+      - type: high_cloud_layer
+        display: "high cloud layer"
+    style: cloud
+    units: "%"
+
+  # ==========================================================================
+  # Visibility
+  # ==========================================================================
+  
+  # Visibility
+  - name: VIS
+    description: "Visibility"
+    levels:
+      - type: surface
+        display: "surface"
+    style: visibility
+    units: m
+    display_units: km
+    conversion: m_to_km
 
 # Composite layers (derived from multiple parameters)
 composites:

@@ -256,6 +256,11 @@ async fn test_file_ingestion(
     // - 103 = Specified height above ground (value in meters)
     // - 104 = Sigma level
     // - 106 = Depth below land surface
+    // - 200 = Entire atmosphere (column)
+    // - 214 = Low cloud layer
+    // - 224 = Middle cloud layer
+    // - 234 = High cloud layer
+    // - 108 = Specified height level above ground (layer)
     
     // Standard pressure levels to ingest (in mb)
     let pressure_levels: HashSet<u32> = [
@@ -267,6 +272,9 @@ async fn test_file_ingestion(
     // Parameters and the level types we accept for each
     // Format: (param, Vec<(level_type, optional_specific_value)>)
     let target_params: Vec<(&str, Vec<(u8, Option<u32>)>)> = vec![
+        // ==========================================================================
+        // Existing Parameters
+        // ==========================================================================
         ("PRMSL", vec![(101, None)]),                    // Mean sea level pressure only
         ("TMP", vec![
             (103, Some(2)),                              // 2m above ground
@@ -288,6 +296,88 @@ async fn test_file_ingestion(
             (100, None),                                 // All pressure levels (geopotential height)
         ]),
         ("GUST", vec![(1, None)]),                       // Surface wind gust
+        
+        // ==========================================================================
+        // Phase 1: Surface & Near-Surface Parameters
+        // ==========================================================================
+        ("DPT", vec![
+            (103, Some(2)),                              // 2m dew point temperature
+        ]),
+        
+        // ==========================================================================
+        // Phase 1: Precipitation Parameters
+        // ==========================================================================
+        ("APCP", vec![
+            (1, None),                                   // Surface total precipitation (accumulated)
+        ]),
+        ("PWAT", vec![
+            (200, None),                                 // Entire atmosphere precipitable water
+        ]),
+        
+        // ==========================================================================
+        // Phase 1: Convective/Stability Parameters
+        // ==========================================================================
+        ("CAPE", vec![
+            (1, None),                                   // Surface-based CAPE
+            (108, None),                                 // CAPE in specified layer (for MUCAPE, SBCAPE)
+        ]),
+        ("CIN", vec![
+            (1, None),                                   // Surface-based CIN
+            (108, None),                                 // CIN in specified layer
+        ]),
+        
+        // ==========================================================================
+        // Phase 1: Cloud Parameters
+        // ==========================================================================
+        ("TCDC", vec![
+            (200, None),                                 // Total cloud cover (entire atmosphere)
+            (10, None),                                  // Entire atmosphere (alternative code)
+        ]),
+        ("LCDC", vec![
+            (214, None),                                 // Low cloud layer
+        ]),
+        ("MCDC", vec![
+            (224, None),                                 // Middle cloud layer
+        ]),
+        ("HCDC", vec![
+            (234, None),                                 // High cloud layer
+        ]),
+        
+        // ==========================================================================
+        // Phase 1: Visibility
+        // ==========================================================================
+        ("VIS", vec![
+            (1, None),                                   // Surface visibility
+        ]),
+        
+        // ==========================================================================
+        // HRRR-specific: Radar & Reflectivity
+        // ==========================================================================
+        ("REFC", vec![
+            (200, None),                                 // Composite reflectivity (entire atmosphere)
+            (10, None),                                  // Entire atmosphere (alternative)
+            (103, Some(1000)),                           // 1000m above ground (alternative)
+        ]),
+        ("RETOP", vec![
+            (3, None),                                   // Echo top (cloud top level)
+            (200, None),                                 // Entire atmosphere
+        ]),
+        
+        // ==========================================================================
+        // HRRR-specific: Severe Weather Parameters
+        // ==========================================================================
+        ("MXUPHL", vec![
+            (103, None),                                 // Height above ground layer (2-5km)
+            (108, None),                                 // Specified height layer
+        ]),
+        ("LTNG", vec![
+            (200, None),                                 // Lightning threat (entire atmosphere)
+            (10, None),                                  // Entire atmosphere (alternative)
+        ]),
+        ("HLCY", vec![
+            (106, None),                                 // Storm-relative helicity (0-1km, 0-3km layers)
+            (108, None),                                 // Specified height layer
+        ]),
     ];
 
     while let Some(message) = reader.next_message().ok().flatten() {

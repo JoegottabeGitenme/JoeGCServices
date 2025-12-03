@@ -1511,20 +1511,48 @@ fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
 /// Get human-readable name for a GRIB parameter code
 fn get_parameter_name(param: &str) -> String {
     match param {
+        // Core surface parameters
         "PRMSL" => "Mean Sea Level Pressure".to_string(),
         "TMP" => "Temperature".to_string(),
+        "DPT" => "Dew Point Temperature".to_string(),
         "RH" => "Relative Humidity".to_string(),
         "UGRD" => "U-Component Wind".to_string(),
         "VGRD" => "V-Component Wind".to_string(),
         "WIND_BARBS" => "Wind Barbs".to_string(),
-        "APCP" => "Accumulated Precipitation".to_string(),
-        "TCDC" => "Total Cloud Cover".to_string(),
         "GUST" => "Wind Gust Speed".to_string(),
         "HGT" => "Geopotential Height".to_string(),
+        
+        // Precipitation parameters
+        "APCP" => "Total Precipitation".to_string(),
+        "PWAT" => "Precipitable Water".to_string(),
+        
+        // Convective/stability parameters
+        "CAPE" => "Convective Available Potential Energy".to_string(),
+        "CIN" => "Convective Inhibition".to_string(),
+        
+        // Cloud parameters
+        "TCDC" => "Total Cloud Cover".to_string(),
+        "LCDC" => "Low Cloud Cover".to_string(),
+        "MCDC" => "Middle Cloud Cover".to_string(),
+        "HCDC" => "High Cloud Cover".to_string(),
+        
+        // Visibility
+        "VIS" => "Visibility".to_string(),
+        
+        // Radar/reflectivity (HRRR)
+        "REFC" => "Composite Reflectivity".to_string(),
+        "RETOP" => "Echo Top Height".to_string(),
+        
+        // Severe weather (HRRR)
+        "MXUPHL" => "Max Updraft Helicity".to_string(),
+        "LTNG" => "Lightning Threat".to_string(),
+        "HLCY" => "Storm-Relative Helicity".to_string(),
+        
         // GRIB2 Product 1 (Meteorological) parameters
         "P1_22" => "Cloud Mixing Ratio".to_string(),
         "P1_23" => "Ice Mixing Ratio".to_string(),
         "P1_24" => "Rain Mixing Ratio".to_string(),
+        
         // MRMS parameters
         "REFL" => "Radar Reflectivity".to_string(),
         "PRECIP_RATE" => "Precipitation Rate".to_string(),
@@ -1533,8 +1561,8 @@ fn get_parameter_name(param: &str) -> String {
         "QPE_03H" => "3-Hour Precipitation".to_string(),
         "QPE_06H" => "6-Hour Precipitation".to_string(),
         "QPE_24H" => "24-Hour Precipitation".to_string(),
+        
         // GOES parameters (ABI bands)
-        "VIS" => "Visible Imagery".to_string(),
         "IR" => "Infrared Imagery".to_string(),
         "WV" => "Water Vapor".to_string(),
         "CMI" => "Cloud and Moisture Imagery".to_string(),
@@ -1554,6 +1582,7 @@ fn get_parameter_name(param: &str) -> String {
         "CMI_C14" => "IR Longwave (11.2µm)".to_string(),
         "CMI_C15" => "Dirty IR (12.3µm)".to_string(),
         "CMI_C16" => "CO2 (13.3µm)".to_string(),
+        
         // Default: return the code itself
         _ => param.to_string(),
     }
@@ -1660,20 +1689,30 @@ fn build_wms_capabilities_xml(
                     
                     let all_dimensions = format!("{}{}", base_dimensions, elevation_dim);
                     
-                    // Add styles to each layer
-                    let styles = if p.contains("TMP") || p.contains("TEMP") {
+                    // Add styles to each layer based on parameter type
+                    let styles = if p.contains("TMP") || p.contains("TEMP") || p == "DPT" {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("WIND") || p.contains("GUST") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("PRES") || p.contains("PRMSL") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("RH") || p.contains("HUMID") {
+                    } else if p == "RH" || p.contains("HUMID") || p == "PWAT" {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>humidity</Name><Title>Humidity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("REFL") {
+                    } else if p == "CAPE" || p == "CIN" {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>cape</Name><Title>Convective Energy</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
+                    } else if p.contains("TCDC") || p.contains("LCDC") || p.contains("MCDC") || p.contains("HCDC") {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>cloud</Name><Title>Cloud Cover</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
+                    } else if p == "VIS" {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>visibility</Name><Title>Visibility</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
+                    } else if p == "LTNG" {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>lightning</Name><Title>Lightning Threat</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
+                    } else if p == "MXUPHL" || p == "HLCY" {
+                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>helicity</Name><Title>Storm Helicity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
+                    } else if p == "REFC" || p.contains("REFL") || p == "RETOP" {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>reflectivity</Name><Title>Radar Reflectivity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else if p.contains("PRECIP_RATE") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precip_rate</Name><Title>Precipitation Rate</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("QPE") || p.contains("PRECIP") {
+                    } else if p == "APCP" || p.contains("QPE") || p.contains("PRECIP") {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
                     } else {
                         "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
@@ -2762,7 +2801,310 @@ pub async fn loadtest_file_handler(
     }
 }
 
-/// Load test dashboard HTML page
+/// Criterion microbenchmark results API endpoint
+/// Reads benchmark data from target/criterion directory
+pub async fn criterion_benchmarks_handler() -> impl IntoResponse {
+    use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    
+    #[derive(Serialize)]
+    struct CriterionEstimate {
+        point_estimate: f64,
+        lower_bound: f64,
+        upper_bound: f64,
+        unit: String,
+    }
+    
+    #[derive(Serialize)]
+    struct CriterionBenchmark {
+        group_id: String,
+        function_id: String,
+        full_id: String,
+        mean_ns: f64,
+        mean_ms: f64,
+        median_ns: f64,
+        median_ms: f64,
+        std_dev_ns: f64,
+        throughput: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        change_pct: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        change_direction: Option<String>,
+    }
+    
+    #[derive(Serialize)]
+    struct CriterionGroup {
+        name: String,
+        benchmarks: Vec<CriterionBenchmark>,
+    }
+    
+    let criterion_dir = std::env::var("CRITERION_DIR")
+        .unwrap_or_else(|_| "./target/criterion".to_string());
+    
+    let criterion_path = PathBuf::from(&criterion_dir);
+    
+    if !criterion_path.exists() {
+        return Json(json!({
+            "error": "Criterion results directory not found",
+            "path": criterion_dir,
+            "groups": []
+        }));
+    }
+    
+    let mut groups: Vec<CriterionGroup> = Vec::new();
+    
+    // Walk through criterion directory to find benchmark results
+    if let Ok(entries) = fs::read_dir(&criterion_path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            
+            let group_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            
+            // Skip the 'report' directory
+            if group_name == "report" {
+                continue;
+            }
+            
+            let mut benchmarks: Vec<CriterionBenchmark> = Vec::new();
+            
+            // Look for benchmark subdirectories or direct estimates
+            fn collect_benchmarks(
+                dir: &PathBuf, 
+                group_id: &str, 
+                prefix: &str,
+                benchmarks: &mut Vec<CriterionBenchmark>
+            ) {
+                if let Ok(sub_entries) = fs::read_dir(dir) {
+                    for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                        let sub_path = sub_entry.path();
+                        if !sub_path.is_dir() {
+                            continue;
+                        }
+                        
+                        let sub_name = sub_path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown");
+                        
+                        // Skip special directories
+                        if sub_name == "report" || sub_name == "base" || sub_name == "change" {
+                            continue;
+                        }
+                        
+                        // Check if this directory has a 'new' subdirectory with estimates
+                        let new_estimates = sub_path.join("new").join("estimates.json");
+                        let benchmark_json = sub_path.join("new").join("benchmark.json");
+                        
+                        if new_estimates.exists() {
+                            // Parse estimates
+                            if let Ok(est_content) = fs::read_to_string(&new_estimates) {
+                                if let Ok(estimates) = serde_json::from_str::<serde_json::Value>(&est_content) {
+                                    let mean_ns = estimates["mean"]["point_estimate"].as_f64().unwrap_or(0.0);
+                                    let median_ns = estimates["median"]["point_estimate"].as_f64().unwrap_or(0.0);
+                                    let std_dev_ns = estimates["std_dev"]["point_estimate"].as_f64().unwrap_or(0.0);
+                                    
+                                    // Try to get throughput from benchmark.json
+                                    let throughput = if benchmark_json.exists() {
+                                        fs::read_to_string(&benchmark_json).ok()
+                                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                            .and_then(|b| b["throughput"]["Elements"].as_u64())
+                                    } else {
+                                        None
+                                    };
+                                    
+                                    // Check for change data (comparison with baseline)
+                                    let change_path = sub_path.join("change").join("estimates.json");
+                                    let (change_pct, change_direction) = if change_path.exists() {
+                                        fs::read_to_string(&change_path).ok()
+                                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                            .map(|change| {
+                                                let pct = change["mean"]["point_estimate"].as_f64().unwrap_or(0.0) * 100.0;
+                                                let direction = if pct < -5.0 {
+                                                    "improved".to_string()
+                                                } else if pct > 5.0 {
+                                                    "regressed".to_string()
+                                                } else {
+                                                    "unchanged".to_string()
+                                                };
+                                                (Some(pct), Some(direction))
+                                            })
+                                            .unwrap_or((None, None))
+                                    } else {
+                                        (None, None)
+                                    };
+                                    
+                                    let function_id = if prefix.is_empty() {
+                                        sub_name.to_string()
+                                    } else {
+                                        format!("{}/{}", prefix, sub_name)
+                                    };
+                                    
+                                    benchmarks.push(CriterionBenchmark {
+                                        group_id: group_id.to_string(),
+                                        function_id: function_id.clone(),
+                                        full_id: format!("{}/{}", group_id, function_id),
+                                        mean_ns,
+                                        mean_ms: mean_ns / 1_000_000.0,
+                                        median_ns,
+                                        median_ms: median_ns / 1_000_000.0,
+                                        std_dev_ns,
+                                        throughput,
+                                        change_pct,
+                                        change_direction,
+                                    });
+                                }
+                            }
+                        } else {
+                            // Recurse into subdirectory
+                            let new_prefix = if prefix.is_empty() {
+                                sub_name.to_string()
+                            } else {
+                                format!("{}/{}", prefix, sub_name)
+                            };
+                            collect_benchmarks(&sub_path, group_id, &new_prefix, benchmarks);
+                        }
+                    }
+                }
+            }
+            
+            collect_benchmarks(&path, &group_name, "", &mut benchmarks);
+            
+            if !benchmarks.is_empty() {
+                // Sort benchmarks by full_id for consistent ordering
+                benchmarks.sort_by(|a, b| a.full_id.cmp(&b.full_id));
+                
+                groups.push(CriterionGroup {
+                    name: group_name,
+                    benchmarks,
+                });
+            }
+        }
+    }
+    
+    // Sort groups by name
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    
+    // Count total benchmarks
+    let total_benchmarks: usize = groups.iter().map(|g| g.benchmarks.len()).sum();
+    
+    Json(json!({
+        "criterion_dir": criterion_dir,
+        "total_groups": groups.len(),
+        "total_benchmarks": total_benchmarks,
+        "groups": groups
+    }))
+}
+
+/// Benchmark results API endpoint - serves runs.jsonl with git metadata
+/// Used by web/benchmarks.html to compare benchmark results by commit
+pub async fn benchmarks_handler() -> impl IntoResponse {
+    use serde_json::json;
+    use std::fs;
+    
+    // Read JSONL file from validation/load-test/results/
+    let results_dir = std::env::var("LOAD_TEST_RESULTS_DIR")
+        .unwrap_or_else(|_| "./validation/load-test/results".to_string());
+    
+    let jsonl_path = format!("{}/runs.jsonl", results_dir);
+    
+    info!("Loading benchmark results from: {}", jsonl_path);
+    
+    /// Git repository information captured at test time
+    #[derive(Serialize, Deserialize, Clone)]
+    struct GitInfo {
+        commit_hash: String,
+        commit_short: String,
+        branch: String,
+        commit_message: String,
+        commit_author: String,
+        commit_date: String,
+        is_dirty: bool,
+    }
+    
+    /// System configuration captured at test time
+    #[derive(Serialize, Deserialize, Clone)]
+    struct SystemConfigInfo {
+        l1_cache_enabled: bool,
+        l1_cache_size: usize,
+        l1_cache_ttl_secs: u64,
+        grib_cache_enabled: bool,
+        grib_cache_size: usize,
+        prefetch_enabled: bool,
+        prefetch_rings: u32,
+        prefetch_min_zoom: u32,
+        prefetch_max_zoom: u32,
+        cache_warming_enabled: bool,
+    }
+    
+    #[derive(Serialize, Deserialize, Clone)]
+    struct BenchmarkRun {
+        timestamp: String,
+        scenario_name: String,
+        #[serde(default)]
+        config_name: String,
+        duration_secs: f64,
+        total_requests: u64,
+        successful_requests: u64,
+        failed_requests: u64,
+        requests_per_second: f64,
+        latency_p50: f64,
+        #[serde(default)]
+        latency_p75: f64,
+        latency_p90: f64,
+        latency_p95: f64,
+        latency_p99: f64,
+        latency_min: f64,
+        latency_max: f64,
+        latency_avg: f64,
+        cache_hit_rate: f64,
+        bytes_per_second: f64,
+        #[serde(default)]
+        tiles_per_second: f64,
+        #[serde(default)]
+        layers: Vec<String>,
+        #[serde(default)]
+        concurrency: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        system_config: Option<SystemConfigInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        git_info: Option<GitInfo>,
+    }
+    
+    let mut runs = Vec::new();
+    
+    if let Ok(content) = fs::read_to_string(&jsonl_path) {
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // Parse each line as JSON
+            if let Ok(run) = serde_json::from_str::<BenchmarkRun>(line) {
+                runs.push(run);
+            } else {
+                debug!("Failed to parse benchmark line: {}", line);
+            }
+        }
+    } else {
+        info!("No runs.jsonl file found at {}, returning empty results", jsonl_path);
+    }
+    
+    // Sort by timestamp descending (newest first)
+    runs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    
+    Json(json!({
+        "count": runs.len(),
+        "runs": runs,
+    }))
+}
+
+/// Load test dashboard HTML page with comparison features
 pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
     let html = r#"<!DOCTYPE html>
 <html lang="en">
@@ -2770,25 +3112,16 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Load Test Dashboard - Weather WMS</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
+        .container { max-width: 1600px; margin: 0 auto; }
         header {
             background: white;
             border-radius: 12px;
@@ -2799,61 +3132,162 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             justify-content: space-between;
             align-items: center;
         }
-        
-        h1 {
-            color: #2d3748;
-            font-size: 28px;
-            font-weight: 700;
-        }
-        
-        .back-link {
+        h1 { color: #2d3748; font-size: 28px; font-weight: 700; }
+        .header-actions { display: flex; gap: 12px; align-items: center; }
+        .back-link, .btn {
             color: #667eea;
             text-decoration: none;
             font-weight: 600;
             padding: 8px 16px;
             border-radius: 6px;
             transition: background 0.2s;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
         }
-        
-        .back-link:hover {
-            background: #edf2f7;
-        }
-        
+        .back-link:hover, .btn:hover { background: #edf2f7; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a67d8; }
         .summary-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
         }
-        
         .card {
             background: white;
             border-radius: 12px;
-            padding: 24px;
+            padding: 20px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
-        
         .card h3 {
             color: #718096;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
+        .stat { color: #2d3748; font-size: 28px; font-weight: 700; }
+        .stat-label { color: #a0aec0; font-size: 11px; margin-top: 4px; }
         
-        .stat {
+        /* Comparison Section */
+        .comparison-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .comparison-section h2 {
             color: #2d3748;
-            font-size: 36px;
+            font-size: 18px;
             font-weight: 700;
+            margin-bottom: 16px;
         }
-        
-        .stat-label {
-            color: #a0aec0;
+        .comparison-controls {
+            display: flex;
+            gap: 16px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .control-group { flex: 1; min-width: 250px; }
+        .control-group label {
+            display: block;
+            color: #4a5568;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .control-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #2d3748;
+            background: white;
+        }
+        .comparison-results { display: none; }
+        .comparison-results.visible { display: block; }
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 900px) { .comparison-grid { grid-template-columns: 1fr; } }
+        .result-card {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 16px;
+            border: 2px solid #e2e8f0;
+        }
+        .result-card.baseline { border-color: #4299e1; }
+        .result-card.comparison { border-color: #48bb78; }
+        .result-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .result-card-title { font-weight: 700; color: #2d3748; }
+        .result-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .result-badge.baseline { background: #bee3f8; color: #2b6cb0; }
+        .result-badge.comparison { background: #c6f6d5; color: #276749; }
+        .git-info {
+            background: #edf2f7;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 12px;
             font-size: 12px;
-            margin-top: 4px;
         }
+        .git-info .commit { font-family: monospace; color: #d69e2e; font-weight: 600; }
+        .git-info .branch { color: #4299e1; }
+        .git-info .dirty { color: #e53e3e; font-weight: 600; }
+        .git-info .message { color: #718096; font-style: italic; margin-top: 4px; }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+        .metric-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        .metric-label {
+            font-size: 10px;
+            color: #718096;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .metric-value { font-size: 18px; font-weight: 700; color: #2d3748; }
+        .metric-value.better { color: #48bb78; }
+        .metric-value.worse { color: #e53e3e; }
+        .metric-diff { font-size: 12px; margin-left: 6px; }
+        .metric-diff.positive { color: #48bb78; }
+        .metric-diff.negative { color: #e53e3e; }
+        .chart-container {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 20px;
+        }
+        .chart-container h3 { color: #4a5568; font-size: 14px; margin-bottom: 12px; }
+        .chart-wrapper { height: 250px; }
         
+        /* Table Section */
         .runs-table {
             background: white;
             border-radius: 12px;
@@ -2861,105 +3295,76 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             overflow-x: auto;
         }
-        
         .runs-table h2 {
             color: #2d3748;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             margin-bottom: 16px;
         }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
+        .filter-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
         }
-        
-        thead {
-            background: #f7fafc;
+        .filter-row select {
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #2d3748;
         }
-        
+        table { width: 100%; border-collapse: collapse; }
+        thead { background: #f7fafc; }
         th {
             text-align: left;
-            padding: 12px;
+            padding: 10px 12px;
             color: #4a5568;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 12px;
             border-bottom: 2px solid #e2e8f0;
         }
-        
         td {
-            padding: 12px;
+            padding: 10px 12px;
             color: #2d3748;
             border-bottom: 1px solid #e2e8f0;
+            font-size: 13px;
         }
-        
-        tbody tr:hover {
-            background: #f7fafc;
-        }
-        
-        .metric {
-            font-weight: 600;
-        }
-        
-        .excellent {
-            color: #48bb78;
-        }
-        
-        .good {
-            color: #4299e1;
-        }
-        
-        .ok {
-            color: #ed8936;
-        }
-        
-        .slow {
-            color: #f56565;
-        }
-        
+        tbody tr:hover { background: #f7fafc; }
+        tbody tr.selected { background: #ebf8ff; }
+        .metric { font-weight: 600; }
+        .excellent { color: #48bb78; }
+        .good { color: #4299e1; }
+        .ok { color: #ed8936; }
+        .slow { color: #f56565; }
         .badge {
             display: inline-block;
             padding: 2px 6px;
             border-radius: 4px;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 600;
             background: #e2e8f0;
             color: #4a5568;
             margin-right: 4px;
         }
-        
-        .badge.enabled {
-            background: #48bb78;
-            color: white;
+        .badge.enabled { background: #48bb78; color: white; }
+        .badge.disabled { background: #cbd5e0; color: #718096; }
+        .commit-badge {
+            font-family: monospace;
+            font-size: 11px;
+            background: #fef3c7;
+            color: #92400e;
+            padding: 2px 6px;
+            border-radius: 4px;
         }
-        
-        .badge.disabled {
-            background: #cbd5e0;
-            color: #718096;
-        }
-        
         .empty-state {
             text-align: center;
             padding: 60px 20px;
             color: #718096;
         }
-        
-        .empty-state h3 {
-            font-size: 18px;
-            margin-bottom: 8px;
-            color: #4a5568;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #718096;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
+        .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: #4a5568; }
+        .loading { text-align: center; padding: 40px; color: #718096; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .spinner {
             display: inline-block;
             width: 24px;
@@ -2969,13 +3374,18 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             border-top-color: #667eea;
             animation: spin 1s linear infinite;
         }
+        .select-cell { width: 30px; }
+        .select-cell input { cursor: pointer; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>⚡ Load Test Dashboard</h1>
-            <a href="/" class="back-link">← Back to Map</a>
+            <h1>Load Test Dashboard</h1>
+            <div class="header-actions">
+                <button class="btn" onclick="loadResults()">Refresh</button>
+                <a href="/" class="back-link">Back to Map</a>
+            </div>
         </header>
         
         <div class="summary-cards">
@@ -3001,8 +3411,62 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             </div>
         </div>
         
+        <!-- Comparison Section -->
+        <div class="comparison-section">
+            <h2>Compare Test Runs</h2>
+            <div class="comparison-controls">
+                <div class="control-group">
+                    <label>Baseline Run</label>
+                    <select id="baseline-select">
+                        <option value="">Select baseline...</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Comparison Run</label>
+                    <select id="comparison-select">
+                        <option value="">Select run to compare...</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="compareRuns()">Compare</button>
+            </div>
+            
+            <div id="comparison-results" class="comparison-results">
+                <div class="comparison-grid">
+                    <div class="result-card baseline">
+                        <div class="result-card-header">
+                            <span class="result-card-title">Baseline</span>
+                            <span class="result-badge baseline">Baseline</span>
+                        </div>
+                        <div id="baseline-content"></div>
+                    </div>
+                    <div class="result-card comparison">
+                        <div class="result-card-header">
+                            <span class="result-card-title">Comparison</span>
+                            <span class="result-badge comparison">Comparison</span>
+                        </div>
+                        <div id="comparison-content"></div>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>Latency Comparison (ms)</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="latency-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <div class="runs-table">
             <h2>Test Run History</h2>
+            <div class="filter-row">
+                <select id="scenario-filter">
+                    <option value="">All Scenarios</option>
+                </select>
+                <select id="branch-filter">
+                    <option value="">All Branches</option>
+                </select>
+            </div>
             <div id="loading" class="loading">
                 <div class="spinner"></div>
                 <p style="margin-top: 16px;">Loading test results...</p>
@@ -3013,13 +3477,13 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
                         <tr>
                             <th>Timestamp</th>
                             <th>Scenario</th>
-                            <th>Layers</th>
+                            <th>Commit</th>
                             <th>Concurrency</th>
-                            <th>Requests/sec</th>
-                            <th>p50 (ms)</th>
-                            <th>p99 (ms)</th>
-                            <th>Cache Hit %</th>
-                            <th>Optimizations</th>
+                            <th>Req/sec</th>
+                            <th>p50</th>
+                            <th>p99</th>
+                            <th>Cache Hit</th>
+                            <th>Config</th>
                         </tr>
                     </thead>
                     <tbody id="runs-tbody"></tbody>
@@ -3036,78 +3500,222 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
     </div>
     
     <script>
+        let allRuns = [];
+        let latencyChart = null;
+        
         async function loadResults() {
             try {
                 const response = await fetch('/api/loadtest/results');
                 const data = await response.json();
                 
                 document.getElementById('loading').style.display = 'none';
+                allRuns = data.runs || [];
                 
-                if (data.runs.length === 0) {
+                if (allRuns.length === 0) {
                     document.getElementById('empty-state').style.display = 'block';
                     document.getElementById('total-runs').textContent = '0';
                     return;
                 }
                 
                 document.getElementById('table-container').style.display = 'block';
-                
-                // Update summary cards
                 document.getElementById('total-runs').textContent = data.count;
                 
-                const bestRps = Math.max(...data.runs.map(r => r.requests_per_second));
-                const bestP99 = Math.min(...data.runs.map(r => r.latency_p99));
-                const avgCache = data.runs.reduce((sum, r) => sum + r.cache_hit_rate, 0) / data.runs.length;
+                const bestRps = Math.max(...allRuns.map(r => r.requests_per_second));
+                const bestP99 = Math.min(...allRuns.map(r => r.latency_p99));
+                const avgCache = allRuns.reduce((sum, r) => sum + r.cache_hit_rate, 0) / allRuns.length;
                 
                 document.getElementById('best-rps').textContent = bestRps.toFixed(1);
                 document.getElementById('best-p99').textContent = bestP99.toFixed(2) + 'ms';
                 document.getElementById('avg-cache').textContent = avgCache.toFixed(1) + '%';
                 
-                // Populate table
-                const tbody = document.getElementById('runs-tbody');
-                tbody.innerHTML = data.runs.slice().reverse().map(run => {
-                    const date = new Date(run.timestamp);
-                    const formattedDate = date.toLocaleString();
-                    
-                    // Format layers
-                    const layersText = run.layers && run.layers.length > 0 
-                        ? run.layers.join(', ') 
-                        : 'N/A';
-                    
-                    // Format optimization badges
-                    let optBadges = '';
-                    if (run.system_config) {
-                        const sc = run.system_config;
-                        if (sc.l1_cache_enabled) optBadges += '<span class="badge enabled" title="L1 Cache Enabled">L1</span> ';
-                        if (sc.grib_cache_enabled) optBadges += '<span class="badge enabled" title="GRIB Cache Enabled">GRIB</span> ';
-                        if (sc.prefetch_enabled) optBadges += `<span class="badge enabled" title="Prefetch: ${sc.prefetch_rings} rings">PF(${sc.prefetch_rings})</span> `;
-                        if (sc.cache_warming_enabled) optBadges += '<span class="badge enabled" title="Cache Warming Enabled">WARM</span> ';
-                        
-                        if (optBadges === '') {
-                            optBadges = '<span class="badge disabled">None</span>';
-                        }
-                    } else {
-                        optBadges = '<span class="badge">Unknown</span>';
-                    }
-                    
-                    return `
-                        <tr>
-                            <td>${formattedDate}</td>
-                            <td>${run.scenario_name}</td>
-                            <td>${layersText}</td>
-                            <td>${run.concurrency || 'N/A'}</td>
-                            <td class="metric ${getRpsClass(run.requests_per_second)}">${run.requests_per_second.toFixed(1)}</td>
-                            <td class="metric">${run.latency_p50.toFixed(2)}</td>
-                            <td class="metric ${getLatencyClass(run.latency_p99)}">${run.latency_p99.toFixed(2)}</td>
-                            <td class="metric ${getCacheClass(run.cache_hit_rate)}">${run.cache_hit_rate.toFixed(1)}%</td>
-                            <td>${optBadges}</td>
-                        </tr>
-                    `;
-                }).join('');
+                populateSelects();
+                populateFilters();
+                renderTable(allRuns);
                 
             } catch (error) {
                 console.error('Failed to load results:', error);
                 document.getElementById('loading').innerHTML = '<p style="color: #f56565;">Failed to load results</p>';
             }
+        }
+        
+        function populateSelects() {
+            const options = allRuns.map((run, idx) => {
+                const date = new Date(run.timestamp).toLocaleString();
+                const commit = run.git_info?.commit_short || 'unknown';
+                const dirty = run.git_info?.is_dirty ? ' *' : '';
+                return `<option value="${idx}">${run.scenario_name} - ${commit}${dirty} - ${date}</option>`;
+            }).join('');
+            
+            document.getElementById('baseline-select').innerHTML = '<option value="">Select baseline...</option>' + options;
+            document.getElementById('comparison-select').innerHTML = '<option value="">Select run to compare...</option>' + options;
+        }
+        
+        function populateFilters() {
+            const scenarios = [...new Set(allRuns.map(r => r.scenario_name))];
+            const branches = [...new Set(allRuns.map(r => r.git_info?.branch).filter(Boolean))];
+            
+            document.getElementById('scenario-filter').innerHTML = '<option value="">All Scenarios</option>' +
+                scenarios.map(s => `<option value="${s}">${s}</option>`).join('');
+            
+            document.getElementById('branch-filter').innerHTML = '<option value="">All Branches</option>' +
+                branches.map(b => `<option value="${b}">${b}</option>`).join('');
+        }
+        
+        document.getElementById('scenario-filter').addEventListener('change', filterRuns);
+        document.getElementById('branch-filter').addEventListener('change', filterRuns);
+        
+        function filterRuns() {
+            const scenario = document.getElementById('scenario-filter').value;
+            const branch = document.getElementById('branch-filter').value;
+            
+            let filtered = allRuns;
+            if (scenario) filtered = filtered.filter(r => r.scenario_name === scenario);
+            if (branch) filtered = filtered.filter(r => r.git_info?.branch === branch);
+            
+            renderTable(filtered);
+        }
+        
+        function renderTable(runs) {
+            const tbody = document.getElementById('runs-tbody');
+            tbody.innerHTML = runs.slice().reverse().map(run => {
+                const date = new Date(run.timestamp).toLocaleString();
+                const commit = run.git_info?.commit_short || '-';
+                const dirty = run.git_info?.is_dirty ? ' <span style="color:#e53e3e">*</span>' : '';
+                
+                let optBadges = '';
+                if (run.system_config) {
+                    const sc = run.system_config;
+                    if (sc.l1_cache_enabled) optBadges += '<span class="badge enabled">L1</span>';
+                    if (sc.grib_cache_enabled) optBadges += '<span class="badge enabled">GRIB</span>';
+                    if (sc.prefetch_enabled) optBadges += '<span class="badge enabled">PF</span>';
+                } else {
+                    optBadges = '<span class="badge">?</span>';
+                }
+                
+                return `<tr>
+                    <td>${date}</td>
+                    <td>${run.scenario_name}</td>
+                    <td><span class="commit-badge">${commit}</span>${dirty}</td>
+                    <td>${run.concurrency || '-'}</td>
+                    <td class="metric ${getRpsClass(run.requests_per_second)}">${run.requests_per_second.toFixed(1)}</td>
+                    <td class="metric">${run.latency_p50.toFixed(2)}</td>
+                    <td class="metric ${getLatencyClass(run.latency_p99)}">${run.latency_p99.toFixed(2)}</td>
+                    <td class="metric ${getCacheClass(run.cache_hit_rate)}">${run.cache_hit_rate.toFixed(1)}%</td>
+                    <td>${optBadges}</td>
+                </tr>`;
+            }).join('');
+        }
+        
+        function compareRuns() {
+            const baselineIdx = document.getElementById('baseline-select').value;
+            const comparisonIdx = document.getElementById('comparison-select').value;
+            
+            if (baselineIdx === '' || comparisonIdx === '') {
+                alert('Please select both baseline and comparison runs');
+                return;
+            }
+            
+            const baseline = allRuns[parseInt(baselineIdx)];
+            const comparison = allRuns[parseInt(comparisonIdx)];
+            
+            document.getElementById('baseline-content').innerHTML = renderRunDetails(baseline);
+            document.getElementById('comparison-content').innerHTML = renderRunDetails(comparison, baseline);
+            
+            renderLatencyChart(baseline, comparison);
+            document.getElementById('comparison-results').classList.add('visible');
+        }
+        
+        function renderRunDetails(run, baseline = null) {
+            const gitHtml = run.git_info ? `
+                <div class="git-info">
+                    <span class="commit">${run.git_info.commit_short}</span>
+                    on <span class="branch">${run.git_info.branch}</span>
+                    ${run.git_info.is_dirty ? '<span class="dirty">(dirty)</span>' : ''}
+                    <div class="message">"${run.git_info.commit_message || ''}"</div>
+                </div>
+            ` : '';
+            
+            return `
+                ${gitHtml}
+                <div class="metrics-grid">
+                    ${renderMetric('Req/sec', run.requests_per_second, baseline?.requests_per_second, true)}
+                    ${renderMetric('Total Req', run.total_requests, baseline?.total_requests)}
+                    ${renderMetric('p50', run.latency_p50, baseline?.latency_p50, false, 'ms')}
+                    ${renderMetric('p99', run.latency_p99, baseline?.latency_p99, false, 'ms')}
+                    ${renderMetric('Cache Hit', run.cache_hit_rate, baseline?.cache_hit_rate, true, '%')}
+                    ${renderMetric('Duration', run.duration_secs, null, false, 's')}
+                </div>
+            `;
+        }
+        
+        function renderMetric(label, value, baselineValue, higherIsBetter = true, unit = '') {
+            let diffHtml = '';
+            let valueClass = '';
+            
+            if (baselineValue !== null && baselineValue !== undefined) {
+                const diff = value - baselineValue;
+                const pctDiff = baselineValue !== 0 ? (diff / baselineValue) * 100 : 0;
+                const isPositive = higherIsBetter ? diff > 0 : diff < 0;
+                
+                if (Math.abs(pctDiff) > 1) {
+                    diffHtml = `<span class="metric-diff ${isPositive ? 'positive' : 'negative'}">
+                        ${diff > 0 ? '+' : ''}${pctDiff.toFixed(1)}%
+                    </span>`;
+                    valueClass = isPositive ? 'better' : 'worse';
+                }
+            }
+            
+            const displayValue = typeof value === 'number' ? 
+                (value > 1000 ? value.toLocaleString() : value.toFixed(2)) : value;
+            
+            return `
+                <div class="metric-item">
+                    <div class="metric-label">${label}</div>
+                    <div class="metric-value ${valueClass}">${displayValue}${unit}${diffHtml}</div>
+                </div>
+            `;
+        }
+        
+        function renderLatencyChart(baseline, comparison) {
+            const ctx = document.getElementById('latency-chart').getContext('2d');
+            
+            if (latencyChart) latencyChart.destroy();
+            
+            latencyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [
+                        {
+                            label: 'Baseline',
+                            data: [baseline.latency_p50, baseline.latency_p75 || 0, baseline.latency_p90, 
+                                   baseline.latency_p95, baseline.latency_p99],
+                            backgroundColor: 'rgba(66, 153, 225, 0.7)',
+                            borderColor: '#4299e1',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Comparison',
+                            data: [comparison.latency_p50, comparison.latency_p75 || 0, comparison.latency_p90,
+                                   comparison.latency_p95, comparison.latency_p99],
+                            backgroundColor: 'rgba(72, 187, 120, 0.7)',
+                            borderColor: '#48bb78',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Latency (ms)' }
+                        }
+                    }
+                }
+            });
         }
         
         function getRpsClass(rps) {
@@ -3131,11 +3739,8 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             return 'slow';
         }
         
-        // Load data on page load
         loadResults();
-        
-        // Auto-refresh every 30 seconds
-        setInterval(loadResults, 30000);
+        setInterval(loadResults, 60000);
     </script>
 </body>
 </html>

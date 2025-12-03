@@ -116,6 +116,7 @@ impl MetricsCollector {
             layers,
             concurrency,
             system_config,
+            git_info: GitInfo::capture(),
         }
     }
 }
@@ -162,6 +163,22 @@ pub struct TestResults {
     // System configuration at test time
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_config: Option<SystemConfig>,
+    
+    // Git metadata for tracking code changes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_info: Option<GitInfo>,
+}
+
+/// Git repository information captured at test time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitInfo {
+    pub commit_hash: String,
+    pub commit_short: String,
+    pub branch: String,
+    pub commit_message: String,
+    pub commit_author: String,
+    pub commit_date: String,
+    pub is_dirty: bool,
 }
 
 /// System configuration captured at test time
@@ -177,4 +194,75 @@ pub struct SystemConfig {
     pub prefetch_min_zoom: u32,
     pub prefetch_max_zoom: u32,
     pub cache_warming_enabled: bool,
+}
+
+impl GitInfo {
+    /// Capture current git repository state
+    pub fn capture() -> Option<Self> {
+        use std::process::Command;
+        
+        // Get commit hash
+        let commit_hash = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())?;
+        
+        let commit_short = commit_hash.chars().take(7).collect();
+        
+        // Get branch name
+        let branch = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        // Get commit message (first line)
+        let commit_message = Command::new("git")
+            .args(["log", "-1", "--pretty=%s"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "".to_string());
+        
+        // Get commit author
+        let commit_author = Command::new("git")
+            .args(["log", "-1", "--pretty=%an"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "".to_string());
+        
+        // Get commit date
+        let commit_date = Command::new("git")
+            .args(["log", "-1", "--pretty=%ci"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "".to_string());
+        
+        // Check if working directory is dirty
+        let is_dirty = Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .ok()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        
+        Some(GitInfo {
+            commit_hash,
+            commit_short,
+            branch,
+            commit_message,
+            commit_author,
+            commit_date,
+            is_dirty,
+        })
+    }
 }
