@@ -1,1 +1,80 @@
-# Environment Variables\n\nContent coming soon.
+# Environment Variables
+
+Complete reference of all environment variables used by Weather WMS services.
+
+## Core Services
+
+### Database
+```bash
+DATABASE_URL=postgresql://weatherwms:weatherwms@postgres:5432/weatherwms
+DATABASE_POOL_SIZE=50               # Connection pool size
+```
+
+### Redis
+```bash
+REDIS_URL=redis://redis:6379
+REDIS_TILE_TTL_SECS=3600           # L2 cache TTL (seconds)
+```
+
+### Object Storage (MinIO/S3)
+```bash
+S3_ENDPOINT=http://minio:9000
+S3_BUCKET=weather-data
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_REGION=us-east-1
+S3_ALLOW_HTTP=true                 # Disable for production
+```
+
+## Performance Tuning
+
+### Runtime
+```bash
+TOKIO_WORKER_THREADS=8             # Async runtime threads (default: CPU cores)
+RUST_LOG=info                      # Logging: trace, debug, info, warn, error
+RUST_BACKTRACE=1                   # Enable backtraces
+```
+
+### Caching
+```bash
+# L1 (In-Memory) Cache
+ENABLE_L1_CACHE=true
+TILE_CACHE_SIZE=10000              # Max tiles (~300 MB)
+TILE_CACHE_TTL_SECS=300            # TTL: 5 minutes
+
+# GRIB Data Cache
+ENABLE_GRIB_CACHE=true
+GRIB_CACHE_SIZE=500                # Max GRIB files (~2.5 GB)
+
+# Prefetching
+ENABLE_PREFETCH=true
+PREFETCH_RINGS=2                   # Surrounding tile rings (1=8, 2=24)
+PREFETCH_MIN_ZOOM=3
+PREFETCH_MAX_ZOOM=12
+
+# Cache Warming
+ENABLE_CACHE_WARMING=true
+CACHE_WARMING_MAX_ZOOM=4           # Warm zooms 0-4 (341 tiles)
+CACHE_WARMING_HOURS=0,3,6          # Forecast hours to warm
+CACHE_WARMING_LAYERS=gfs_TMP_2m:temperature;goes18_CMI_C13:goes_ir
+CACHE_WARMING_CONCURRENCY=10
+```
+
+## Monitoring
+
+```bash
+GF_SECURITY_ADMIN_PASSWORD=admin       # Grafana password
+GF_USERS_ALLOW_SIGN_UP=false
+PROMETHEUS_RETENTION_DAYS=15
+```
+
+## Development
+
+```bash
+# Uncomment for debugging
+# RUST_LOG=debug
+# RUST_BACKTRACE=full
+# ENABLE_CACHE_WARMING=false       # Faster startup
+```
+
+See `.env.example` for complete annotated configuration.
