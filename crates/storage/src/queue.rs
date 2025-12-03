@@ -94,13 +94,13 @@ impl JobQueue {
 
         // Store result with 5 minute expiry
         self.conn
-            .set_ex(&result_key, result, 300)
+            .set_ex::<_, _, ()>(&result_key, result, 300)
             .await
             .map_err(|e| WmsError::CacheError(format!("Store result failed: {}", e)))?;
 
         // Publish completion notification
         self.conn
-            .publish("render:complete", job_id.to_string())
+            .publish::<_, _, ()>("render:complete", job_id.to_string())
             .await
             .map_err(|e| WmsError::CacheError(format!("Publish failed: {}", e)))?;
 
@@ -113,12 +113,12 @@ impl JobQueue {
         let error_data = serde_json::json!({ "error": error }).to_string();
 
         self.conn
-            .set_ex(&result_key, error_data.as_bytes(), 300)
+            .set_ex::<_, _, ()>(&result_key, error_data.as_bytes(), 300)
             .await
             .map_err(|e| WmsError::CacheError(format!("Store error failed: {}", e)))?;
 
         self.conn
-            .publish("render:complete", job_id.to_string())
+            .publish::<_, _, ()>("render:complete", job_id.to_string())
             .await
             .map_err(|e| WmsError::CacheError(format!("Publish failed: {}", e)))?;
 

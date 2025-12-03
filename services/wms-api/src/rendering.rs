@@ -5,10 +5,10 @@ use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
 use renderer::numbers::{self, NumbersConfig};
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
-use storage::{Catalog, CatalogEntry, ObjectStorage, GribCache, GridDataCache, CachedGridData};
+use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 use projection::{LambertConformal, Geostationary};
 use crate::metrics::MetricsCollector;
 
@@ -2993,7 +2993,7 @@ pub async fn render_isolines_tile_with_level(
     catalog: &Catalog,
     model: &str,
     parameter: &str,
-    tile_coord: Option<wms_common::TileCoord>,
+    _tile_coord: Option<wms_common::TileCoord>,
     width: u32,
     height: u32,
     bbox: [f32; 4],
@@ -3002,7 +3002,7 @@ pub async fn render_isolines_tile_with_level(
     level: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    use wms_common::tile::crop_center_tile;
     
     // Load style configuration
     let style_config = ContourStyle::from_file(style_path)

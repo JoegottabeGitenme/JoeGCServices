@@ -246,7 +246,6 @@ async fn test_file_ingestion(
     let mut message_count = 0;
     let mut registered_params = HashSet::new();
     let mut grib_reference_time: Option<chrono::DateTime<Utc>> = None;
-    let mut total_shredded_size: u64 = 0;
 
     // Parameters to ingest with their accepted level types
     // GRIB2 Code Table 4.5 level type codes:
@@ -463,7 +462,6 @@ async fn test_file_ingestion(
             // Extract just this message's raw data and store it
             let shredded_data = message.raw_data.clone();
             let shredded_size = shredded_data.len() as u64;
-            total_shredded_size += shredded_size;
             
             // Store the shredded (individual parameter) GRIB2 file
             storage.put(&storage_path, shredded_data).await?;

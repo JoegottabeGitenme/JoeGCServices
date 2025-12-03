@@ -8,12 +8,12 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use bytes::Bytes;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use storage::{CatalogEntry, DatasetQuery};
+use storage::CatalogEntry;
 use wms_common::BoundingBox;
 
 use crate::state::AppState;

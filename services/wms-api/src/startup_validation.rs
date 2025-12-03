@@ -118,6 +118,7 @@ pub struct ValidationSummary {
 
 /// Model/layer configuration for validation.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ValidationTarget {
     model: String,
     parameter: String,

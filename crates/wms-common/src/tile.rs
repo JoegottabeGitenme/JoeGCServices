@@ -346,7 +346,6 @@ pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> Bou
 pub fn center_tile_crop_region(coord: &TileCoord, config: &ExpandedTileConfig) -> (u32, u32, u32, u32) {
     let expansion = config.expansion;
     let tile_size = config.tile_size;
-    let n = 2u32.pow(coord.z);
     
     // Calculate actual expansion used (may be less at edges)
     let actual_x_before = coord.x.min(expansion);
@@ -400,7 +399,7 @@ pub fn crop_center_tile(
     coord: &TileCoord,
     config: &ExpandedTileConfig,
 ) -> Vec<u8> {
-    let (x_offset, y_offset, width, height) = center_tile_crop_region(coord, config);
+    let (x_offset, y_offset, _width, _height) = center_tile_crop_region(coord, config);
     let tile_size = config.tile_size as usize;
     
     let mut result = vec![0u8; tile_size * tile_size * 4];

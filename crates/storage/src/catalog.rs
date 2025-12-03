@@ -94,25 +94,26 @@ impl Catalog {
 
     /// Find datasets matching query criteria.
     pub async fn find_datasets(&self, query: &DatasetQuery) -> WmsResult<Vec<CatalogEntry>> {
-        let mut sql = String::from(
+        // TODO: implement dynamic query building using these variables
+        let mut _sql = String::from(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size FROM datasets WHERE status = 'available'",
         );
 
-        let mut params: Vec<String> = Vec::new();
-        let mut param_idx = 1;
+        let mut _params: Vec<String> = Vec::new();
+        let mut _param_idx = 1;
 
         if let Some(model) = &query.model {
-            sql.push_str(&format!(" AND model = ${}", param_idx));
-            params.push(model.clone());
-            param_idx += 1;
+            _sql.push_str(&format!(" AND model = ${}", _param_idx));
+            _params.push(model.clone());
+            _param_idx += 1;
         }
 
         if let Some(parameter) = &query.parameter {
-            sql.push_str(&format!(" AND parameter = ${}", param_idx));
-            params.push(parameter.clone());
-            param_idx += 1;
+            _sql.push_str(&format!(" AND parameter = ${}", _param_idx));
+            _params.push(parameter.clone());
+            _param_idx += 1;
         }
 
         // For now, use a simpler approach - full query building would need runtime SQL

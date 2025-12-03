@@ -296,6 +296,7 @@ pub struct GribFilter {
 
 impl DataSource {
     /// Build the URL/path for a specific date and cycle.
+    #[allow(dead_code)]
     pub fn build_path(&self, date: &str, cycle: u32) -> String {
         match self {
             DataSource::NoaaAws {

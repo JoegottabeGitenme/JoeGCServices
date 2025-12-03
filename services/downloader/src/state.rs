@@ -58,6 +58,7 @@ pub struct DownloadRecord {
     pub status: DownloadStatus,
     pub retry_count: u32,
     pub created_at: DateTime<Utc>,
+    #[allow(dead_code)]
     pub updated_at: DateTime<Utc>,
     pub error_message: Option<String>,
 }
@@ -146,6 +147,7 @@ impl DownloadState {
     }
 
     /// Open an in-memory database (for testing).
+    #[allow(dead_code)]
     pub async fn open_memory() -> Result<Self> {
         let options = SqliteConnectOptions::new()
             .filename(":memory:")
@@ -301,6 +303,7 @@ impl DownloadState {
     }
 
     /// Set error message for a download.
+    #[allow(dead_code)]
     pub async fn set_error(&self, url: &str, error: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
@@ -453,6 +456,7 @@ impl DownloadState {
     }
 
     /// Clean up old completed downloads (older than retention_days).
+    #[allow(dead_code)]
     pub async fn cleanup_old_records(&self, retention_days: u32) -> Result<u64> {
         let cutoff = (Utc::now() - chrono::Duration::days(retention_days as i64)).to_rfc3339();
 

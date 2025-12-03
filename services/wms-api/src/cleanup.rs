@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 use crate::state::AppState;
 
 /// Retention configuration for a model.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ModelRetention {
     pub model_id: String,

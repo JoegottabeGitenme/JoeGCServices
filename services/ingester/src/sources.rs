@@ -4,11 +4,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
-use futures::stream::{self, StreamExt};
 use reqwest::Client;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
-use crate::config::{DataSource, ModelConfig};
+use crate::config::DataSource;
 
 /// Trait for data sources that can list and fetch files.
 #[async_trait]
@@ -20,10 +19,12 @@ pub trait DataSourceFetcher: Send + Sync {
     async fn fetch_file(&self, file: &RemoteFile) -> Result<Bytes>;
 
     /// Check if a file exists.
+    #[allow(dead_code)]
     async fn file_exists(&self, file: &RemoteFile) -> Result<bool>;
 }
 
 /// Information about a remote file.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RemoteFile {
     pub path: String,
@@ -32,6 +33,7 @@ pub struct RemoteFile {
 }
 
 /// AWS S3 data source fetcher (for NOAA Open Data).
+#[allow(dead_code)]
 pub struct AwsDataSource {
     client: Client,
     bucket: String,
@@ -363,6 +365,7 @@ pub fn create_fetcher(
 }
 
 /// Determine the most recent available model cycle.
+#[allow(dead_code)]
 pub fn latest_available_cycle(cycles: &[u32], delay_hours: u32) -> (String, u32) {
     let now = Utc::now() - Duration::hours(delay_hours as i64);
     let date = now.format("%Y%m%d").to_string();
