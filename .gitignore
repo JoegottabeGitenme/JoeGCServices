@@ -96,3 +96,4 @@ compile_commands.json
 /testdata/*.grb2
 *.png
 /data/
+*.grib2
