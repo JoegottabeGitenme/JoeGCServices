@@ -1,0 +1,92 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Visibility Styles",
+    "description": "Styles for visibility data, commonly used in aviation weather"
+  },
+  "styles": {
+    "default": {
+      "name": "Visibility",
+      "description": "Visibility in meters, colored from poor (red) to excellent (transparent)",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 50000
+      },
+      "stops": [
+        { "value": 0, "color": "#800000", "label": "0" },
+        { "value": 200, "color": "#CC0000", "label": "200m" },
+        { "value": 400, "color": "#FF0000", "label": "400m" },
+        { "value": 800, "color": "#FF6600", "label": "800m (LIFR)" },
+        { "value": 1600, "color": "#FFCC00", "label": "1600m (IFR)" },
+        { "value": 3200, "color": "#FFFF00", "label": "3.2km (MVFR)" },
+        { "value": 8000, "color": "#99FF99", "label": "8km (VFR)" },
+        { "value": 16000, "color": "#66FF66", "label": "16km" },
+        { "value": 32000, "color": "#CCFFCC40", "label": "32km" },
+        { "value": 50000, "color": "#FFFFFF00", "label": ">50km" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Visibility",
+        "labels": ["<800m", "1.6km", "3.2km", "8km", ">16km"],
+        "description": "LIFR (<800m), IFR (800-1600m), MVFR (1600-8km), VFR (>8km)"
+      }
+    },
+    "aviation": {
+      "name": "Aviation Visibility",
+      "description": "Visibility colored by FAA flight category (LIFR/IFR/MVFR/VFR)",
+      "type": "filled_contour",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 10000
+      },
+      "stops": [
+        { "value": 0, "color": "#FF00FF", "label": "LIFR" },
+        { "value": 800, "color": "#FF00FF", "label": "" },
+        { "value": 801, "color": "#FF0000", "label": "IFR" },
+        { "value": 1600, "color": "#FF0000", "label": "" },
+        { "value": 1601, "color": "#0000FF", "label": "MVFR" },
+        { "value": 8000, "color": "#0000FF", "label": "" },
+        { "value": 8001, "color": "#00FF00", "label": "VFR" },
+        { "value": 10000, "color": "#00FF00", "label": "" }
+      ],
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Flight Category",
+        "labels": ["LIFR (<800m)", "IFR (800-1600m)", "MVFR (1600-8km)", "VFR (>8km)"]
+      }
+    },
+    "km": {
+      "name": "Visibility (km)",
+      "description": "Visibility in kilometers",
+      "type": "gradient",
+      "units": "km",
+      "transform": {
+        "type": "m_to_km"
+      },
+      "range": {
+        "min": 0,
+        "max": 50
+      },
+      "stops": [
+        { "value": 0, "color": "#800000", "label": "0" },
+        { "value": 0.8, "color": "#FF0000", "label": "0.8km" },
+        { "value": 1.6, "color": "#FF6600", "label": "1.6km" },
+        { "value": 3.2, "color": "#FFCC00", "label": "3.2km" },
+        { "value": 8, "color": "#FFFF00", "label": "8km" },
+        { "value": 16, "color": "#99FF99", "label": "16km" },
+        { "value": 32, "color": "#66FF6640", "label": "32km" },
+        { "value": 50, "color": "#FFFFFF00", "label": ">50km" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Visibility (km)",
+        "labels": ["0", "1", "3", "8", "16", ">32"]
+      }
+    }
+  }
+}

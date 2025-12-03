@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Criterion Benchmarks - Weather WMS</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .benchmark-container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .benchmark-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .benchmark-header h1 {
+            font-size: 2rem;
+            color: #fff;
+            margin: 0;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .back-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .summary-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1.25rem;
+        }
+
+        .summary-card .label {
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .summary-card .value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .summary-card .subvalue {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            margin-top: 0.25rem;
+        }
+
+        .info-banner {
+            background: rgba(100, 181, 246, 0.1);
+            border: 1px solid rgba(100, 181, 246, 0.3);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .info-banner code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        .benchmark-groups {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .benchmark-group {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .group-header {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .group-header:hover {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .group-header h2 {
+            margin: 0;
+            font-size: 1.1rem;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .group-header .count {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .group-content {
+            padding: 1rem;
+        }
+
+        .group-content.collapsed {
+            display: none;
+        }
+
+        .benchmark-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .benchmark-table th,
+        .benchmark-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .benchmark-table th {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 600;
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .benchmark-table td {
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .benchmark-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .benchmark-name {
+            font-family: monospace;
+            color: #64b5f6;
+        }
+
+        .timing {
+            font-family: monospace;
+            font-weight: 600;
+        }
+
+        .timing.fast {
+            color: #4caf50;
+        }
+
+        .timing.medium {
+            color: #ffc107;
+        }
+
+        .timing.slow {
+            color: #f44336;
+        }
+
+        .change-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .change-badge.improved {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .change-badge.regressed {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .change-badge.unchanged {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .throughput {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .empty-state h3 {
+            margin-bottom: 1rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .empty-state code {
+            display: block;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 1rem;
+            font-family: monospace;
+        }
+
+        .std-dev {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.8rem;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-row input {
+            flex: 1;
+            min-width: 200px;
+            padding: 0.5rem 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .filter-row input:focus {
+            outline: none;
+            border-color: #64b5f6;
+        }
+
+        .filter-row input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .criterion-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            color: #64b5f6;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        .criterion-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="benchmark-container">
+        <div class="benchmark-header">
+            <h1>Criterion Microbenchmarks</h1>
+            <div class="header-actions">
+                <button class="btn btn-secondary" id="refresh-btn">Refresh</button>
+                <button class="btn btn-secondary" id="expand-all-btn">Expand All</button>
+                <a href="index.html" class="back-link">Back to Map</a>
+            </div>
+        </div>
+
+        <div class="info-banner">
+            <span>Run benchmarks with:</span>
+            <code>./scripts/run_benchmarks.sh</code>
+            <span>or save baseline:</span>
+            <code>./scripts/run_benchmarks.sh save</code>
+        </div>
+
+        <div class="summary-cards" id="summary-cards">
+            <div class="summary-card">
+                <div class="label">Benchmark Groups</div>
+                <div class="value" id="total-groups">--</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Total Benchmarks</div>
+                <div class="value" id="total-benchmarks">--</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Improved</div>
+                <div class="value" id="improved-count">--</div>
+                <div class="subvalue">vs baseline</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Regressed</div>
+                <div class="value" id="regressed-count">--</div>
+                <div class="subvalue">vs baseline</div>
+            </div>
+        </div>
+
+        <div class="filter-row">
+            <input type="text" id="search-filter" placeholder="Filter benchmarks by name...">
+        </div>
+
+        <div id="benchmark-content">
+            <div class="loading">Loading Criterion benchmark results...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
+        
+        let allGroups = [];
+        let expandedGroups = new Set();
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadBenchmarks();
+            
+            document.getElementById('refresh-btn').addEventListener('click', loadBenchmarks);
+            document.getElementById('expand-all-btn').addEventListener('click', toggleExpandAll);
+            document.getElementById('search-filter').addEventListener('input', filterBenchmarks);
+        });
+
+        async function loadBenchmarks() {
+            try {
+                const response = await fetch(`${API_BASE}/api/criterion`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    document.getElementById('benchmark-content').innerHTML = `
+                        <div class="empty-state">
+                            <h3>Criterion Results Not Found</h3>
+                            <p>${data.error}</p>
+                            <p>Run benchmarks first:</p>
+                            <code>./scripts/run_benchmarks.sh</code>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                allGroups = data.groups || [];
+                
+                // Update summary
+                document.getElementById('total-groups').textContent = data.total_groups || 0;
+                document.getElementById('total-benchmarks').textContent = data.total_benchmarks || 0;
+                
+                // Count improved/regressed
+                let improved = 0;
+                let regressed = 0;
+                allGroups.forEach(group => {
+                    group.benchmarks.forEach(b => {
+                        if (b.change_direction === 'improved') improved++;
+                        if (b.change_direction === 'regressed') regressed++;
+                    });
+                });
+                document.getElementById('improved-count').textContent = improved;
+                document.getElementById('regressed-count').textContent = regressed;
+                
+                renderGroups(allGroups);
+            } catch (error) {
+                console.error('Error loading benchmarks:', error);
+                document.getElementById('benchmark-content').innerHTML = `
+                    <div class="empty-state">
+                        <h3>Failed to Load Benchmarks</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderGroups(groups) {
+            if (groups.length === 0) {
+                document.getElementById('benchmark-content').innerHTML = `
+                    <div class="empty-state">
+                        <h3>No Benchmark Results Found</h3>
+                        <p>Run Criterion benchmarks to see results here:</p>
+                        <code>./scripts/run_benchmarks.sh</code>
+                    </div>
+                `;
+                return;
+            }
+            
+            const html = groups.map(group => `
+                <div class="benchmark-group" data-group="${group.name}">
+                    <div class="group-header" onclick="toggleGroup('${group.name}')">
+                        <h2>${group.name}</h2>
+                        <span class="count">${group.benchmarks.length} benchmarks</span>
+                    </div>
+                    <div class="group-content ${expandedGroups.has(group.name) ? '' : 'collapsed'}" id="group-${group.name}">
+                        <table class="benchmark-table">
+                            <thead>
+                                <tr>
+                                    <th>Benchmark</th>
+                                    <th>Mean</th>
+                                    <th>Median</th>
+                                    <th>Std Dev</th>
+                                    <th>Throughput</th>
+                                    <th>Change</th>
+                                    <th>Report</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${group.benchmarks.map(b => renderBenchmarkRow(b, group.name)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `).join('');
+            
+            document.getElementById('benchmark-content').innerHTML = `<div class="benchmark-groups">${html}</div>`;
+        }
+
+        function renderBenchmarkRow(benchmark, groupName) {
+            const timingClass = getTimingClass(benchmark.mean_ms);
+            const changeHtml = benchmark.change_pct !== null 
+                ? `<span class="change-badge ${benchmark.change_direction}">${benchmark.change_pct > 0 ? '+' : ''}${benchmark.change_pct.toFixed(1)}%</span>`
+                : '<span class="change-badge unchanged">No baseline</span>';
+            
+            const throughputHtml = benchmark.throughput 
+                ? `<span class="throughput">${formatNumber(benchmark.throughput)} elem</span>`
+                : '-';
+            
+            // Build report link path
+            const reportPath = `${API_BASE}/target/criterion/${benchmark.full_id}/report/index.html`;
+            
+            return `
+                <tr>
+                    <td><span class="benchmark-name">${benchmark.function_id}</span></td>
+                    <td><span class="timing ${timingClass}">${formatTime(benchmark.mean_ns)}</span></td>
+                    <td><span class="timing">${formatTime(benchmark.median_ns)}</span></td>
+                    <td><span class="std-dev">${formatTime(benchmark.std_dev_ns)}</span></td>
+                    <td>${throughputHtml}</td>
+                    <td>${changeHtml}</td>
+                    <td><a href="${reportPath}" target="_blank" class="criterion-link">View</a></td>
+                </tr>
+            `;
+        }
+
+        function formatTime(ns) {
+            if (ns >= 1_000_000_000) {
+                return (ns / 1_000_000_000).toFixed(2) + ' s';
+            } else if (ns >= 1_000_000) {
+                return (ns / 1_000_000).toFixed(2) + ' ms';
+            } else if (ns >= 1_000) {
+                return (ns / 1_000).toFixed(2) + ' us';
+            } else {
+                return ns.toFixed(0) + ' ns';
+            }
+        }
+
+        function formatNumber(n) {
+            return n.toLocaleString();
+        }
+
+        function getTimingClass(ms) {
+            if (ms < 1) return 'fast';
+            if (ms < 10) return 'medium';
+            return 'slow';
+        }
+
+        function toggleGroup(groupName) {
+            const content = document.getElementById(`group-${groupName}`);
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                expandedGroups.add(groupName);
+            } else {
+                content.classList.add('collapsed');
+                expandedGroups.delete(groupName);
+            }
+        }
+
+        function toggleExpandAll() {
+            const btn = document.getElementById('expand-all-btn');
+            const allCollapsed = expandedGroups.size === 0;
+            
+            if (allCollapsed) {
+                // Expand all
+                allGroups.forEach(g => expandedGroups.add(g.name));
+                btn.textContent = 'Collapse All';
+            } else {
+                // Collapse all
+                expandedGroups.clear();
+                btn.textContent = 'Expand All';
+            }
+            
+            renderGroups(allGroups);
+        }
+
+        function filterBenchmarks() {
+            const filter = document.getElementById('search-filter').value.toLowerCase();
+            
+            if (!filter) {
+                renderGroups(allGroups);
+                return;
+            }
+            
+            const filtered = allGroups.map(group => ({
+                ...group,
+                benchmarks: group.benchmarks.filter(b => 
+                    b.function_id.toLowerCase().includes(filter) ||
+                    b.full_id.toLowerCase().includes(filter)
+                )
+            })).filter(group => group.benchmarks.length > 0);
+            
+            renderGroups(filtered);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Humidity Styles",
+    "description": "Styles for relative humidity and moisture parameters"
+  },
+  "styles": {
+    "default": {
+      "name": "Relative Humidity",
+      "description": "Relative humidity from dry (brown) to saturated (blue)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#8B4513", "label": "0%" },
+        { "value": 10, "color": "#A0522D", "label": "10%" },
+        { "value": 20, "color": "#CD853F", "label": "20%" },
+        { "value": 30, "color": "#DEB887", "label": "30%" },
+        { "value": 40, "color": "#F5DEB3", "label": "40%" },
+        { "value": 50, "color": "#FFFFF0", "label": "50%" },
+        { "value": 60, "color": "#E0FFFF", "label": "60%" },
+        { "value": 70, "color": "#B0E0E6", "label": "70%" },
+        { "value": 80, "color": "#87CEEB", "label": "80%" },
+        { "value": 90, "color": "#4682B4", "label": "90%" },
+        { "value": 100, "color": "#0000CD", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Relative Humidity (%)",
+        "labels": ["0%", "25%", "50%", "75%", "100%"]
+      }
+    },
+    "high_rh": {
+      "name": "High Relative Humidity",
+      "description": "Highlights areas with high relative humidity (fog/mist potential)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 70,
+        "max": 100
+      },
+      "stops": [
+        { "value": 70, "color": "#FFFFFF00", "label": "<70%" },
+        { "value": 80, "color": "#B0E0E680", "label": "80%" },
+        { "value": 85, "color": "#87CEEB", "label": "85%" },
+        { "value": 90, "color": "#6495ED", "label": "90%" },
+        { "value": 95, "color": "#4169E1", "label": "95%" },
+        { "value": 100, "color": "#0000FF", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "transparent",
+      "legend": {
+        "title": "High RH Areas",
+        "labels": ["80%", "90%", "100%"],
+        "description": "Shows areas with RH > 80%"
+      }
+    },
+    "precipitable_water": {
+      "name": "Precipitable Water",
+      "description": "Total column precipitable water (mm)",
+      "type": "gradient",
+      "units": "mm",
+      "range": {
+        "min": 0,
+        "max": 75
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 5, "color": "#FFFFF0", "label": "5" },
+        { "value": 10, "color": "#E0FFFF", "label": "10" },
+        { "value": 15, "color": "#B0E0E6", "label": "15" },
+        { "value": 20, "color": "#87CEEB", "label": "20" },
+        { "value": 25, "color": "#6495ED", "label": "25" },
+        { "value": 30, "color": "#4682B4", "label": "30" },
+        { "value": 40, "color": "#0000CD", "label": "40" },
+        { "value": 50, "color": "#00008B", "label": "50" },
+        { "value": 60, "color": "#000066", "label": "60" },
+        { "value": 75, "color": "#4B0082", "label": "75+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Precipitable Water (mm)",
+        "labels": ["0", "15", "30", "45", "60", "75+"]
+      }
+    }
+  }
+}

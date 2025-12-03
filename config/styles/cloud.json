@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Cloud Cover Styles",
+    "description": "Styles for cloud cover visualization"
+  },
+  "styles": {
+    "default": {
+      "name": "Cloud Cover",
+      "description": "Cloud cover percentage from clear to overcast",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "Clear" },
+        { "value": 10, "color": "#F5F5F5", "label": "10%" },
+        { "value": 25, "color": "#E0E0E0", "label": "25%" },
+        { "value": 40, "color": "#C0C0C0", "label": "40%" },
+        { "value": 50, "color": "#A0A0A0", "label": "50%" },
+        { "value": 60, "color": "#808080", "label": "60%" },
+        { "value": 75, "color": "#606060", "label": "75%" },
+        { "value": 90, "color": "#404040", "label": "90%" },
+        { "value": 100, "color": "#303030", "label": "Overcast" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Cloud Cover (%)",
+        "labels": ["Clear", "25%", "50%", "75%", "Overcast"]
+      }
+    },
+    "satellite": {
+      "name": "Cloud Cover (Satellite Style)",
+      "description": "White clouds on blue background for satellite-like appearance",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#4A90D9", "label": "Clear" },
+        { "value": 20, "color": "#6BA8E5", "label": "20%" },
+        { "value": 40, "color": "#A0C4EB", "label": "40%" },
+        { "value": 60, "color": "#C8DCF0", "label": "60%" },
+        { "value": 80, "color": "#E8F0F8", "label": "80%" },
+        { "value": 100, "color": "#FFFFFF", "label": "Overcast" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Cloud Cover (%)",
+        "labels": ["Clear", "25%", "50%", "75%", "Overcast"]
+      }
+    },
+    "low_cloud": {
+      "name": "Low Cloud Cover",
+      "description": "Low cloud cover (below 2km)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "Clear" },
+        { "value": 20, "color": "#E8F4E8", "label": "20%" },
+        { "value": 40, "color": "#B8D8B8", "label": "40%" },
+        { "value": 60, "color": "#88BC88", "label": "60%" },
+        { "value": 80, "color": "#589058", "label": "80%" },
+        { "value": 100, "color": "#286428", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "mid_cloud": {
+      "name": "Middle Cloud Cover",
+      "description": "Middle cloud cover (2-6km)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "Clear" },
+        { "value": 20, "color": "#FFF8E0", "label": "20%" },
+        { "value": 40, "color": "#FFE8A0", "label": "40%" },
+        { "value": 60, "color": "#FFD860", "label": "60%" },
+        { "value": 80, "color": "#FFC020", "label": "80%" },
+        { "value": 100, "color": "#E0A000", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    },
+    "high_cloud": {
+      "name": "High Cloud Cover",
+      "description": "High cloud cover (above 6km, cirrus)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "Clear" },
+        { "value": 20, "color": "#E8E8F8", "label": "20%" },
+        { "value": 40, "color": "#C0C0E8", "label": "40%" },
+        { "value": 60, "color": "#9898D8", "label": "60%" },
+        { "value": 80, "color": "#7070C8", "label": "80%" },
+        { "value": 100, "color": "#4848B8", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp"
+    }
+  }
+}
