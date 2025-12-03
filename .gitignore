@@ -58,6 +58,9 @@ charts/
 *.profdata
 /coverage/
 
+# Load test results
+/validation/load-test/results/
+
 # Logs
 *.log
 logs/
