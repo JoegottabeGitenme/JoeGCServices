@@ -9,6 +9,42 @@ Deploy Weather WMS to Kubernetes with a single command using Helm.
 - kubectl configured
 - Storage class available
 
+## Local Development with Minikube
+
+For local development and testing, use the `start.sh` script which automates the entire Kubernetes setup:
+
+```bash
+# Start full Kubernetes stack with minikube
+./scripts/start.sh --k8s
+
+# Restart port-forwards for existing cluster
+./scripts/start.sh --forward
+
+# Stop port-forwards (cluster keeps running)  
+./scripts/start.sh --stop-k8s
+
+# Delete cluster and start fresh
+./scripts/start.sh --clean
+```
+
+The script automatically:
+- Creates a minikube cluster (`weather-wms` profile)
+- Builds and loads Docker images into minikube
+- Deploys PostgreSQL, Redis, MinIO (standalone)
+- Deploys Prometheus and Grafana for monitoring
+- Installs the Weather WMS Helm chart
+- Sets up port-forwards to access services locally
+
+**Services available after deployment:**
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Web Dashboard | http://localhost:8000 | - |
+| WMS API | http://localhost:8080 | - |
+| Grafana | http://localhost:3000 | admin/admin |
+| Prometheus | http://localhost:9090 | - |
+| MinIO Console | http://localhost:9001 | minioadmin/minioadmin |
+
 ## Quick Deploy
 
 ```bash

@@ -37,6 +37,12 @@ spec:
             - "/data/downloader"
             - "--output-dir"
             - "/data/downloads"
+            - "--config-dir"
+            - "/app/config/models"
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
           envFrom:
             - configMapRef:
                 name: {{ include "weather-wms.fullname" . }}-config
@@ -47,11 +53,30 @@ spec:
               value: {{ .Values.downloader.env.LOG_LEVEL | quote }}
             - name: INGESTER_URL
               value: "http://{{ include "weather-wms.fullname" . }}-api:{{ .Values.api.service.port }}/admin/ingest"
+            - name: STATUS_PORT
+              value: "8081"
+            - name: CONFIG_DIR
+              value: "/app/config/models"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
           volumeMounts:
             - name: downloads
               mountPath: /data/downloads
             - name: state
               mountPath: /data/downloader
+            - name: models-config
+              mountPath: /app/config/models
+              readOnly: true
           resources:
             {{- toYaml .Values.downloader.resources | nindent 12 }}
       volumes:
@@ -69,6 +94,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: models-config
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-models-config
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -118,6 +146,8 @@ spec:
                 - "/data/downloader"
                 - "--output-dir"
                 - "/data/downloads"
+                - "--config-dir"
+                - "/app/config/models"
               envFrom:
                 - configMapRef:
                     name: {{ include "weather-wms.fullname" . }}-config
@@ -128,11 +158,16 @@ spec:
                   value: {{ .Values.downloader.env.LOG_LEVEL | quote }}
                 - name: INGESTER_URL
                   value: "http://{{ include "weather-wms.fullname" . }}-api:{{ .Values.api.service.port }}/admin/ingest"
+                - name: CONFIG_DIR
+                  value: "/app/config/models"
               volumeMounts:
                 - name: downloads
                   mountPath: /data/downloads
                 - name: state
                   mountPath: /data/downloader
+                - name: models-config
+                  mountPath: /app/config/models
+                  readOnly: true
               resources:
                 {{- toYaml .Values.downloader.resources | nindent 16 }}
           volumes:
@@ -150,6 +185,9 @@ spec:
               {{- else }}
               emptyDir: {}
               {{- end }}
+            - name: models-config
+              configMap:
+                name: {{ include "weather-wms.fullname" . }}-models-config
           {{- with .Values.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}

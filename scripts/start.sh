@@ -524,6 +524,7 @@ build_k8s_images() {
     build_single_image "wms-api" "services/wms-api/Dockerfile" "." || failed=1
     build_single_image "ingester" "services/ingester/Dockerfile" "." || failed=1
     build_single_image "renderer-worker" "services/renderer-worker/Dockerfile" "." || failed=1
+    build_single_image "downloader" "services/downloader/Dockerfile" "." || failed=1
     
     if [ $failed -eq 1 ]; then
         log_error "One or more image builds failed!"
@@ -544,6 +545,7 @@ build_k8s_images() {
     load_single_image "wms-api" || failed=1
     load_single_image "ingester" || failed=1
     load_single_image "renderer-worker" || failed=1
+    load_single_image "downloader" || failed=1
     
     if [ $failed -eq 1 ]; then
         log_error "Failed to load some images into minikube!"
@@ -832,7 +834,7 @@ EOF
 
     # Create dashboard ConfigMap from the JSON file
     kubectl create configmap grafana-dashboards \
-        --from-file=wms-performance.json="$PROJECT_ROOT/grafana-enhanced-dashboard.json" \
+        --from-file=wms-performance.json="$PROJECT_ROOT/deploy/grafana/provisioning/dashboards/wms-performance.json" \
         -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
     
     # Deploy Grafana with volume mounts
@@ -948,6 +950,41 @@ enable_k8s_dashboard() {
     log_success "Kubernetes Dashboard enabled!"
 }
 
+create_config_configmaps() {
+    echo ""
+    log_info "╔═══════════════════════════════════════════════════════════════╗"
+    log_info "║           Creating Config ConfigMaps                          ║"
+    log_info "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    cd "$PROJECT_ROOT"
+    
+    # Create ConfigMap from config/models/*.yaml files
+    echo -n "  [1/2] Models config...... "
+    if kubectl create configmap "$HELM_RELEASE-weather-wms-models-config" \
+        --from-file=config/models/ \
+        -n "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1; then
+        echo "✓"
+    else
+        echo "✗"
+    fi
+    
+    # Create ConfigMap from config/styles/*.json files
+    echo -n "  [2/2] Styles config...... "
+    if kubectl create configmap "$HELM_RELEASE-weather-wms-styles-config" \
+        --from-file=config/styles/ \
+        -n "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1; then
+        echo "✓"
+    else
+        echo "✗"
+    fi
+    
+    echo ""
+    log_success "Config ConfigMaps created from local files!"
+}
+
 deploy_weather_wms() {
     echo ""
     log_info "╔═══════════════════════════════════════════════════════════════╗"
@@ -956,6 +993,9 @@ deploy_weather_wms() {
     echo ""
     
     cd "$PROJECT_ROOT"
+    
+    # Create ConfigMaps from local config files first
+    create_config_configmaps
     
     log_info "Installing Helm chart..."
     
@@ -977,6 +1017,7 @@ deploy_weather_wms() {
         --set ingester.image.pullPolicy=Never \
         --set renderer.image.pullPolicy=Never \
         --set dashboard.image.pullPolicy=Never \
+        --set downloader.image.pullPolicy=Never \
         --set api.ingress.enabled=false \
         --wait --timeout 10m 2>&1 | grep -E 'STATUS|REVISION|deployed|failed|error' | head -5; then
         echo ""

@@ -50,6 +50,9 @@ ingester:
 # Dashboard
 dashboard:
   enabled: true
+  service:
+    type: ClusterIP
+    port: 8000
   resources:
     limits:
       cpu: 50m
@@ -57,6 +60,20 @@ dashboard:
     requests:
       cpu: 25m
       memory: 32Mi
+
+# Downloader - enabled for dev
+downloader:
+  enabled: true
+  mode: deployment
+  persistence:
+    enabled: false  # Use emptyDir for dev
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
 
 # Redis - minimal (using standalone deployment, not subchart)
 redis:
