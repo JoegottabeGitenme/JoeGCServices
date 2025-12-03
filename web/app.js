@@ -1,7 +1,10 @@
 // WMS Dashboard Application
 
-const API_BASE = 'http://localhost:8080';
-const REDIS_URL = 'http://localhost:8080/api/ingestion'; // Placeholder - would need API endpoint
+// Smart API URL detection:
+// - localhost:8000 (docker-compose) -> use localhost:8080
+// - Otherwise (K8s ingress) -> use relative URLs (same origin)
+const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
+const REDIS_URL = `${API_BASE}/api/ingestion`;
 
 // External service URLs - can be customized for different environments
 const EXTERNAL_URLS = {

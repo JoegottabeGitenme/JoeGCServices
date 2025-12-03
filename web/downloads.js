@@ -1,8 +1,10 @@
 // Downloads Dashboard JavaScript
 // Handles loading and displaying downloader status data
 
-// Configurable URLs - downloader runs on port 8081
-const DOWNLOADER_URL = 'http://localhost:8081';
+// Smart URL detection:
+// - localhost:8000 (docker-compose) -> use localhost:8081
+// - Otherwise (K8s ingress) -> use /downloader prefix (routed via ingress)
+const DOWNLOADER_URL = window.location.port === '8000' ? 'http://localhost:8081' : '/downloader';
 const REFRESH_INTERVAL = 5000; // 5 seconds
 
 let refreshIntervalId = null;

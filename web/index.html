@@ -486,7 +486,20 @@
 
     <!-- Leaflet JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    
+
+    <!-- Dynamic URL rewriting for K8s/docker-compose compatibility -->
+    <script>
+        (function() {
+            // In docker-compose (port 8000), keep localhost:8080 links
+            // In K8s (any other port), rewrite to relative URLs
+            if (window.location.port !== '8000') {
+                document.querySelectorAll('a[href*="localhost:8080"]').forEach(function(link) {
+                    link.href = link.href.replace('http://localhost:8080', '');
+                });
+            }
+        })();
+    </script>
+
     <!-- Application JS -->
     <script src="app.js"></script>
 </body>

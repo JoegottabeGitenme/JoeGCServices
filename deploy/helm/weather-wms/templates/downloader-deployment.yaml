@@ -197,4 +197,25 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
 {{- end }}
+---
+# Service for downloader (deployment mode only - exposes status API)
+{{- if eq .Values.downloader.mode "deployment" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "weather-wms.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: downloader
+{{- end }}
 {{- end }}

@@ -2,13 +2,15 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "weather-wms.fullname" . }}-api
+  name: {{ include "weather-wms.fullname" . }}
   labels:
     {{- include "weather-wms.labels" . | nindent 4 }}
-  {{- with .Values.api.ingress.annotations }}
   annotations:
+    {{- with .Values.api.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    # Ensure proper routing with nginx ingress
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   {{- if .Values.api.ingress.className }}
   ingressClassName: {{ .Values.api.ingress.className }}
@@ -28,9 +30,86 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
-          {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          # API routes - these go to the WMS API service (port 8080)
+          - path: /wms
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /wmts
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /tiles
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /loadtest
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /cache
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+          # Downloader API routes (if downloader is exposed via ingress)
+          {{- if $.Values.downloader.enabled }}
+          - path: /downloader
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-downloader
+                port:
+                  number: 8081
+          {{- end }}
+          # Dashboard routes - everything else goes to the dashboard (port 8000)
+          {{- if $.Values.dashboard.enabled }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" $ }}-dashboard
+                port:
+                  number: {{ $.Values.dashboard.service.port }}
+          {{- else }}
+          # If dashboard is disabled, route / to API
+          - path: /
+            pathType: Prefix
             backend:
               service:
                 name: {{ include "weather-wms.fullname" $ }}-api

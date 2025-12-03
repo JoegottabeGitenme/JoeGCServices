@@ -1,7 +1,10 @@
 // Admin Dashboard JavaScript
 // Handles loading and displaying admin data from the WMS API
 
-const API_BASE_URL = 'http://localhost:8080';
+// Smart API URL detection:
+// - localhost:8000 (docker-compose) -> use localhost:8080
+// - Otherwise (K8s ingress) -> use relative URLs (same origin)
+const API_BASE_URL = window.location.port === '8000' ? 'http://localhost:8080' : '';
 const REFRESH_INTERVAL = 10000; // 10 seconds
 
 let refreshIntervalId = null;

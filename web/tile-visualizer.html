@@ -460,8 +460,10 @@
         const serverFiles = document.getElementById('serverFiles');
         const loadServerFileBtn = document.getElementById('loadServerFile');
 
-        // API base URL - use WMS API server (port 8080)
-        const API_BASE = window.location.port === '8080' ? '' : 'http://localhost:8080';
+        // Smart API URL detection:
+        // - localhost:8000 (docker-compose) -> use localhost:8080
+        // - Otherwise (K8s ingress) -> use relative URLs (same origin)
+        const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
 
         // Fetch available log files from server
         async function loadFileList() {
