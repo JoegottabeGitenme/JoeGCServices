@@ -151,6 +151,16 @@ impl GridDataCache {
     pub fn capacity(&self) -> usize {
         self.capacity
     }
+
+    /// Get current number of entries in cache.
+    pub async fn len(&self) -> usize {
+        self.cache.read().await.len()
+    }
+
+    /// Check if cache is empty.
+    pub async fn is_empty(&self) -> bool {
+        self.cache.read().await.is_empty()
+    }
 }
 
 #[cfg(test)]

@@ -2174,6 +2174,31 @@ pub async fn validation_run_handler(
     Ok(Json(status))
 }
 
+/// Run startup-style validation to test data ingestion and rendering.
+/// This validates each available model's data by rendering test tiles.
+#[instrument(skip(state))]
+pub async fn startup_validation_run_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use crate::startup_validation::{StartupValidator, StartupValidationConfig};
+    
+    info!("Startup validation run requested");
+    
+    let config = StartupValidationConfig::from_env();
+    let validator = StartupValidator::new(state, config);
+    let summary = validator.validate().await;
+    
+    info!(
+        total = summary.total_tests,
+        passed = summary.passed,
+        failed = summary.failed,
+        models = ?summary.models_available,
+        "Startup validation completed"
+    );
+    
+    Json(summary)
+}
+
 // ============================================================================
 // Tile Prefetching
 // ============================================================================
@@ -2425,6 +2450,51 @@ async fn prefetch_single_tile(
     }
 }
 
+/// Clear all in-memory caches (L1 tile cache, GRIB cache, Grid cache)
+/// POST /api/cache/clear
+/// 
+/// This endpoint is useful for:
+/// - Benchmarking: ensures cold cache state between test runs
+/// - Development: clearing stale cached data after code changes
+/// - Testing: isolating cache behavior
+/// 
+/// Note: This does NOT clear the Redis L2 cache. Use reset_test_state.sh for full cache reset.
+#[instrument(skip(state))]
+pub async fn cache_clear_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    info!("Clearing all in-memory caches");
+    
+    // Get stats before clearing
+    let l1_before = state.tile_memory_cache.len().await;
+    let grib_before = state.grib_cache.len().await;
+    let grid_before = state.grid_cache.len().await;
+    
+    // Clear all caches
+    state.tile_memory_cache.clear().await;
+    state.grib_cache.clear().await;
+    state.grid_cache.clear().await;
+    
+    info!(
+        l1_cleared = l1_before,
+        grib_cleared = grib_before,
+        grid_cleared = grid_before,
+        "In-memory caches cleared"
+    );
+    
+    Json(json!({
+        "success": true,
+        "cleared": {
+            "l1_tile_cache": l1_before,
+            "grib_cache": grib_before,
+            "grid_cache": grid_before,
+        },
+        "message": "All in-memory caches cleared. Redis L2 cache was not affected."
+    }))
+}
+
 /// Cache viewer - list all cached tiles
 pub async fn cache_list_handler(
     Extension(state): Extension<Arc<AppState>>,
@@ -2606,6 +2676,9 @@ pub async fn config_handler(
 ) -> impl IntoResponse {
     use serde_json::json;
     
+    // L2 cache (Redis) is always enabled when connected
+    let l2_cache_enabled = true;
+    
     Json(json!({
         "optimizations": {
             "l1_cache": {
@@ -2613,9 +2686,16 @@ pub async fn config_handler(
                 "size": state.optimization_config.l1_cache_size,
                 "ttl_secs": state.optimization_config.l1_cache_ttl_secs,
             },
+            "l2_cache": {
+                "enabled": l2_cache_enabled,
+            },
             "grib_cache": {
                 "enabled": state.optimization_config.grib_cache_enabled,
                 "size": state.optimization_config.grib_cache_size,
+            },
+            "grid_cache": {
+                "enabled": state.optimization_config.grid_cache_enabled,
+                "size": state.optimization_config.grid_cache_size,
             },
             "prefetch": {
                 "enabled": state.optimization_config.prefetch_enabled,
@@ -2678,8 +2758,14 @@ pub async fn loadtest_results_handler() -> impl IntoResponse {
         l1_cache_enabled: bool,
         l1_cache_size: usize,
         l1_cache_ttl_secs: u64,
+        #[serde(default)]
+        l2_cache_enabled: bool,
         grib_cache_enabled: bool,
         grib_cache_size: usize,
+        #[serde(default)]
+        grid_cache_enabled: bool,
+        #[serde(default)]
+        grid_cache_size: usize,
         prefetch_enabled: bool,
         prefetch_rings: u32,
         prefetch_min_zoom: u32,
@@ -3033,8 +3119,14 @@ pub async fn benchmarks_handler() -> impl IntoResponse {
         l1_cache_enabled: bool,
         l1_cache_size: usize,
         l1_cache_ttl_secs: u64,
+        #[serde(default)]
+        l2_cache_enabled: bool,
         grib_cache_enabled: bool,
         grib_cache_size: usize,
+        #[serde(default)]
+        grid_cache_enabled: bool,
+        #[serde(default)]
+        grid_cache_size: usize,
         prefetch_enabled: bool,
         prefetch_rings: u32,
         prefetch_min_zoom: u32,
@@ -3586,8 +3678,10 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
                 if (run.system_config) {
                     const sc = run.system_config;
                     if (sc.l1_cache_enabled) optBadges += '<span class="badge enabled">L1</span>';
+                    if (sc.l2_cache_enabled) optBadges += '<span class="badge enabled">L2</span>';
                     if (sc.grib_cache_enabled) optBadges += '<span class="badge enabled">GRIB</span>';
-                    if (sc.prefetch_enabled) optBadges += '<span class="badge enabled">PF</span>';
+                    if (sc.prefetch_enabled) optBadges += '<span class="badge enabled">PF(' + (sc.prefetch_rings || '?') + ')</span>';
+                    if (sc.cache_warming_enabled) optBadges += '<span class="badge enabled">WARM</span>';
                 } else {
                     optBadges = '<span class="badge">?</span>';
                 }

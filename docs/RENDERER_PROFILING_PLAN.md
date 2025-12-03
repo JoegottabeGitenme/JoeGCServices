@@ -500,4 +500,4 @@ cargo bench --package renderer -- --baseline baseline
 - [Criterion User Guide](https://bheisler.github.io/criterion.rs/book/)
 - [Flamegraph](https://github.com/flamegraph-rs/flamegraph)
 - [Rust Performance Book](https://nnethercote.github.io/perf-book/)
-- [PROFILING_IMPLEMENTATION.md](./PROFILING_IMPLEMENTATION.md) - Existing metrics setup
+- [PROFILING_IMPLEMENTATION.md](PROFILING_IMPLEMENTATION.md) - Existing metrics setup

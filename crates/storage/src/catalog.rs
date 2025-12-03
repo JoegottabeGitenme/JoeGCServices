@@ -570,6 +570,47 @@ impl Catalog {
         
         Ok(BoundingBox::new(result.0, result.1, result.2, result.3))
     }
+    
+    /// Get list of models that have available data (alias for list_models).
+    pub async fn get_available_models(&self) -> WmsResult<Vec<String>> {
+        self.list_models().await
+    }
+    
+    /// Get the latest dataset for a model, optionally filtering by parameter.
+    pub async fn get_latest_dataset(
+        &self,
+        model: &str,
+        parameter: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = if let Some(param) = parameter {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND status = 'available' \
+                 ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
+            )
+            .bind(model)
+            .bind(param)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size FROM datasets \
+                 WHERE model = $1 AND status = 'available' \
+                 ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
+            )
+            .bind(model)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        };
+
+        Ok(row.map(|r| r.into()))
+    }
 }
 
 /// A catalog entry representing an ingested dataset.

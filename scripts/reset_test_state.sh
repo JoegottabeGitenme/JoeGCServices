@@ -3,13 +3,14 @@
 # Reset system to consistent state for benchmarking and testing
 #
 # This script:
-# 1. Flushes Redis tile cache
-# 2. Clears any pending render jobs
-# 3. Optionally restarts WMS API service
+# 1. Clears L1 in-memory caches (tile cache, GRIB cache, grid cache)
+# 2. Flushes Redis tile cache (L2)
+# 3. Clears any pending render jobs
+# 4. Optionally restarts WMS API service
 #
 # Usage:
-#   ./reset_test_state.sh           # Clear cache only
-#   ./reset_test_state.sh --restart # Clear cache and restart API
+#   ./reset_test_state.sh           # Clear all caches
+#   ./reset_test_state.sh --restart # Clear caches and restart API
 
 set -e
 
@@ -48,39 +49,57 @@ log_info "Resetting System Test State"
 log_info "====================================="
 echo ""
 
-# Check if Redis is running
-if ! docker-compose ps redis 2>/dev/null | grep -q "Up"; then
+# Get Redis container name and check if running
+REDIS_CONTAINER=$(docker-compose ps -q redis 2>/dev/null)
+if [ -z "$REDIS_CONTAINER" ]; then
     log_error "Redis is not running. Please start services first:"
     echo "  ./start.sh"
     exit 1
 fi
 
-# 1. Flush Redis cache
-log_info "Step 1/3: Flushing Redis tile cache..."
-KEYS_BEFORE=$(docker-compose exec -T redis redis-cli DBSIZE 2>/dev/null | tr -d '\r')
+# 1. Clear L1 in-memory caches via API
+log_info "Step 1/4: Clearing L1 in-memory caches..."
+# Use timeout command as extra safeguard against curl hangs, plus connect-timeout for fast fail
+L1_RESPONSE=$(timeout 10 curl -s --connect-timeout 2 --max-time 5 -X POST "http://localhost:8080/api/cache/clear" 2>/dev/null || echo "")
+if echo "$L1_RESPONSE" | grep -q '"success":true'; then
+    L1_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"l1_tile_cache":[0-9]*' | cut -d: -f2)
+    GRIB_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"grib_cache":[0-9]*' | cut -d: -f2)
+    GRID_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"grid_cache":[0-9]*' | cut -d: -f2)
+    log_success "  L1 tile cache cleared: ${L1_CLEARED:-0} entries"
+    log_success "  GRIB cache cleared: ${GRIB_CLEARED:-0} entries"
+    log_success "  Grid cache cleared: ${GRID_CLEARED:-0} entries"
+else
+    log_warn "  Could not clear L1 cache (API may not be running or timed out)"
+    log_warn "  Continuing with Redis cache clear..."
+fi
+
+# 2. Flush Redis cache (L2)
+# Use docker exec directly instead of docker-compose exec to avoid TTY issues in loops
+log_info "Step 2/4: Flushing Redis tile cache (L2)..."
+KEYS_BEFORE=$(timeout 5 docker exec "$REDIS_CONTAINER" redis-cli DBSIZE 2>/dev/null | tr -d '\r' | grep -oE '[0-9]+' || echo "0")
 log_info "  Cache keys before: ${KEYS_BEFORE:-0}"
 
-if docker-compose exec -T redis redis-cli FLUSHALL &>/dev/null; then
-    KEYS_AFTER=$(docker-compose exec -T redis redis-cli DBSIZE 2>/dev/null | tr -d '\r')
-    log_success "  Cache cleared! Keys remaining: ${KEYS_AFTER:-0}"
+if timeout 5 docker exec "$REDIS_CONTAINER" redis-cli FLUSHALL >/dev/null 2>&1; then
+    KEYS_AFTER=$(timeout 5 docker exec "$REDIS_CONTAINER" redis-cli DBSIZE 2>/dev/null | tr -d '\r' | grep -oE '[0-9]+' || echo "0")
+    log_success "  Redis cache cleared! Keys remaining: ${KEYS_AFTER:-0}"
 else
-    log_error "Failed to flush Redis cache"
+    log_error "Failed to flush Redis cache (timeout or connection error)"
     exit 1
 fi
 
-# 2. Clear any pending render jobs (if using a job queue)
-log_info "Step 2/3: Clearing render queue..."
-QUEUE_LEN=$(docker-compose exec -T redis redis-cli LLEN render:queue 2>/dev/null | tr -d '\r' || echo "0")
-if [ "$QUEUE_LEN" != "0" ]; then
-    docker-compose exec -T redis redis-cli DEL render:queue &>/dev/null || true
+# 3. Clear any pending render jobs (if using a job queue)
+log_info "Step 3/4: Clearing render queue..."
+QUEUE_LEN=$(timeout 5 docker exec "$REDIS_CONTAINER" redis-cli LLEN render:queue 2>/dev/null | tr -d '\r' | grep -oE '[0-9]+' || echo "0")
+if [ "$QUEUE_LEN" != "0" ] && [ "$QUEUE_LEN" != "" ]; then
+    timeout 5 docker exec "$REDIS_CONTAINER" redis-cli DEL render:queue >/dev/null 2>&1 || true
     log_success "  Cleared ${QUEUE_LEN} pending render jobs"
 else
     log_info "  No pending jobs in queue"
 fi
 
-# 3. Optional: Restart WMS API to clear in-memory state
+# 4. Optional: Restart WMS API to clear in-memory state
 if [ "$1" = "--restart" ]; then
-    log_info "Step 3/3: Restarting WMS API service..."
+    log_info "Step 4/4: Restarting WMS API service..."
     docker-compose restart wms-api
     
     # Wait for API to be healthy
@@ -102,7 +121,7 @@ if [ "$1" = "--restart" ]; then
         log_warn "  API may not be fully ready yet"
     fi
 else
-    log_info "Step 3/3: Skipping API restart (use --restart to enable)"
+    log_info "Step 4/4: Skipping API restart (use --restart to enable)"
 fi
 
 echo ""

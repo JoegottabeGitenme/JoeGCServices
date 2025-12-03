@@ -7,6 +7,7 @@ mod cleanup;
 mod handlers;
 pub mod metrics;
 mod rendering;
+mod startup_validation;
 mod state;
 mod validation;
 mod warming;
@@ -152,6 +153,43 @@ async fn async_main(args: Args) -> Result<()> {
         }
     }
 
+    // Run startup validation to verify data ingestion and warm caches
+    {
+        let validation_config = startup_validation::StartupValidationConfig::from_env();
+        
+        if validation_config.enabled {
+            info!("Running startup validation...");
+            let validator = startup_validation::StartupValidator::new(state.clone(), validation_config.clone());
+            let summary = validator.validate().await;
+            
+            // Log available models prominently
+            if !summary.models_available.is_empty() {
+                info!(
+                    models = ?summary.models_available,
+                    "Data available for models"
+                );
+            }
+            
+            if !summary.models_missing.is_empty() {
+                info!(
+                    models = ?summary.models_missing,
+                    "No data for models (run ingestion scripts to populate)"
+                );
+            }
+            
+            // Check if we should fail on validation errors
+            if validation_config.fail_on_error && summary.failed > 0 {
+                return Err(anyhow::anyhow!(
+                    "Startup validation failed: {} tests failed out of {}",
+                    summary.failed,
+                    summary.total_tests
+                ));
+            }
+        } else {
+            info!("Startup validation disabled (set ENABLE_STARTUP_VALIDATION=true to enable)");
+        }
+    }
+
     // Start data cleanup background task
     {
         let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
@@ -200,6 +238,8 @@ async fn async_main(args: Args) -> Result<()> {
         // Validation API
         .route("/api/validation/status", get(handlers::validation_status_handler))
         .route("/api/validation/run", get(handlers::validation_run_handler))
+        // Startup validation API (test renders + cache warming)
+        .route("/api/validation/startup", get(handlers::startup_validation_run_handler))
         // Storage stats API
         .route("/api/storage/stats", get(handlers::storage_stats_handler))
         // Container/pod resource stats API
@@ -211,6 +251,7 @@ async fn async_main(args: Args) -> Result<()> {
         // Cache viewer (Phase 7 - cache inspection tool)
         .route("/cache", get(handlers::cache_viewer_handler))
         .route("/api/cache/list", get(handlers::cache_list_handler))
+        .route("/api/cache/clear", post(handlers::cache_clear_handler))
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route("/api/loadtest/results", get(handlers::loadtest_results_handler))

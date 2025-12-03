@@ -49,7 +49,7 @@ This document provides an overview of all documentation in the weather-wms proje
 - Use: `kubectl logs` commands from [MONITORING.md](MONITORING.md)
 
 **...set up git**
-- Use [.gitignore](.gitignore) - Already configured
+- Use [.gitignore](../.gitignore) - Already configured
 - See [AGENTS.md](AGENTS.md) - Code style before committing
 
 ## 📋 Documentation Files
@@ -114,7 +114,7 @@ This document provides an overview of all documentation in the weather-wms proje
   - Development info
   - OGC CITE testing info
 
-### [docker-compose.yml](docker-compose.yml) - Local Dev Stack
+### [docker-compose.yml](../docker-compose.yml) - Local Dev Stack
 - **Purpose:** Local development without Kubernetes
 - **Includes:**
   - PostgreSQL database
@@ -122,7 +122,7 @@ This document provides an overview of all documentation in the weather-wms proje
   - MinIO object storage
   - Health checks for all services
 
-### [.gitignore](.gitignore) - Git Configuration
+### [.gitignore](../.gitignore) - Git Configuration
 - **Size:** ~70 lines
 - **Purpose:** Ignore build artifacts and development files
 - **Includes:**
