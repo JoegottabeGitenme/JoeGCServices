@@ -449,9 +449,39 @@ impl IngestionPipeline {
         let expired = self.catalog.mark_expired(cutoff).await?;
         if expired > 0 {
             info!(count = expired, "Marked expired datasets");
-        }
 
-        // TODO: Actually delete files from object storage for expired datasets
+            // Get storage paths for expired datasets
+            let paths = self.catalog.get_expired_storage_paths().await?;
+            if !paths.is_empty() {
+                info!(count = paths.len(), "Deleting expired files from object storage");
+
+                // Delete files from object storage
+                let mut deleted = 0;
+                let mut failed = 0;
+                for path in paths {
+                    match self.storage.delete(&path).await {
+                        Ok(_) => {
+                            debug!(path = %path, "Deleted expired file");
+                            deleted += 1;
+                        }
+                        Err(e) => {
+                            warn!(path = %path, error = %e, "Failed to delete expired file");
+                            failed += 1;
+                        }
+                    }
+                }
+
+                info!(
+                    deleted = deleted,
+                    failed = failed,
+                    "Completed deletion of expired files"
+                );
+
+                // Delete expired dataset records from database
+                let deleted_records = self.catalog.delete_expired().await?;
+                info!(count = deleted_records, "Deleted expired dataset records from catalog");
+            }
+        }
 
         Ok(())
     }
