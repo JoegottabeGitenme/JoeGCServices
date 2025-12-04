@@ -6,19 +6,26 @@ Weather WMS employs a sophisticated two-tier caching system to minimize latency 
 
 ```mermaid
 graph TB
-    Client[Client Request]
+    Client["Client Request"]
     
-    subgraph "WMS API Instance 1"
-        L1A[L1 Cache<br/>In-Memory LRU<br/>~300 MB]
+    subgraph Instance1["WMS API Instance 1"]
+        L1A["L1 Cache
+        In-Memory LRU
+        ~300 MB"]
     end
     
-    subgraph "WMS API Instance 2"
-        L1B[L1 Cache<br/>In-Memory LRU<br/>~300 MB]
+    subgraph Instance2["WMS API Instance 2"]
+        L1B["L1 Cache
+        In-Memory LRU
+        ~300 MB"]
     end
     
-    L2[L2 Cache<br/>Redis<br/>~4 GB]
+    L2["L2 Cache
+    Redis
+    ~4 GB"]
     
-    Source[Source Data<br/>PostgreSQL + MinIO]
+    Source["Source Data
+    PostgreSQL + MinIO"]
     
     Client -->|1. Check| L1A
     L1A -->|2. Miss| L2

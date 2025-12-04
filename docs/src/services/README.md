@@ -6,22 +6,26 @@ Weather WMS is built as a microservices architecture with four main services, ea
 
 ```mermaid
 graph TB
-    subgraph "External"
-        NOAA[NOAA Data Sources]
-        Client[Map Clients]
+    subgraph External
+        NOAA["NOAA Data Sources"]
+        Client["Map Clients"]
     end
     
-    subgraph "Weather WMS Services"
-        DL[Downloader<br/>Port 8081]
-        ING[Ingester<br/>No Port]
-        API[WMS API<br/>Port 8080]
-        WORKER[Renderer Worker<br/>No Port]
+    subgraph Services["Weather WMS Services"]
+        DL["Downloader
+        Port 8081"]
+        ING["Ingester
+        No Port"]
+        API["WMS API
+        Port 8080"]
+        WORKER["Renderer Worker
+        No Port"]
     end
     
-    subgraph "Infrastructure"
-        PG[(PostgreSQL)]
-        MINIO[(MinIO)]
-        REDIS[(Redis)]
+    subgraph Infrastructure
+        PG[("PostgreSQL")]
+        MINIO[("MinIO")]
+        REDIS[("Redis")]
     end
     
     NOAA -->|HTTP| DL

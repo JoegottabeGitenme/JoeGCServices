@@ -23,26 +23,28 @@ The WMS API service is the primary HTTP server that implements OGC Web Map Servi
 
 ```mermaid
 graph TB
-    Client[HTTP Client]
-    Router[Axum Router]
+    Client["HTTP Client"]
+    Router["Axum Router"]
     
-    subgraph "Request Handlers"
-        WMS[WMS Handler]
-        WMTS[WMTS Handler]
-        Admin[Admin Handler]
+    subgraph Handlers["Request Handlers"]
+        WMS["WMS Handler"]
+        WMTS["WMTS Handler"]
+        Admin["Admin Handler"]
     end
     
-    subgraph "Caching Layer"
-        L1[L1 Cache<br/>In-Memory]
-        L2[L2 Cache<br/>Redis]
+    subgraph Caching["Caching Layer"]
+        L1["L1 Cache
+        In-Memory"]
+        L2["L2 Cache
+        Redis"]
     end
     
-    subgraph "Data Layer"
-        PG[(PostgreSQL)]
-        MINIO[(MinIO)]
+    subgraph Data["Data Layer"]
+        PG[("PostgreSQL")]
+        MINIO[("MinIO")]
     end
     
-    Renderer[Tile Renderer]
+    Renderer["Tile Renderer"]
     
     Client --> Router
     Router --> WMS

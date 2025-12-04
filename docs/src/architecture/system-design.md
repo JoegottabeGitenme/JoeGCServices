@@ -6,31 +6,42 @@ Weather WMS is built as a distributed system optimized for high-throughput weath
 
 ```mermaid
 graph TB
-    subgraph "External"
-        NOAA[NOAA Data Sources<br/>GFS, HRRR, MRMS, GOES]
-        Client[Map Clients<br/>Leaflet, OpenLayers, QGIS]
+    subgraph External
+        NOAA["NOAA Data Sources
+        GFS, HRRR, MRMS, GOES"]
+        Client["Map Clients
+        Leaflet, OpenLayers, QGIS"]
     end
     
-    subgraph "Ingestion Pipeline"
-        DL[Downloader Service<br/>Port 8081]
-        ING[Ingester Service]
+    subgraph Ingestion["Ingestion Pipeline"]
+        DL["Downloader Service
+        Port 8081"]
+        ING["Ingester Service"]
     end
     
-    subgraph "Storage Layer"
-        PG[(PostgreSQL 15<br/>Grid Catalog)]
-        MINIO[(MinIO<br/>S3-Compatible Storage)]
-        REDIS[(Redis 7<br/>Distributed Cache)]
+    subgraph Storage["Storage Layer"]
+        PG[("PostgreSQL 15
+        Grid Catalog")]
+        MINIO[("MinIO
+        S3-Compatible Storage")]
+        REDIS[("Redis 7
+        Distributed Cache")]
     end
     
-    subgraph "Serving Layer"
-        API[WMS API Service<br/>Port 8080]
-        L1[L1 Memory Cache<br/>Per-Instance]
-        WORKER[Renderer Workers<br/>Background Jobs]
+    subgraph Serving["Serving Layer"]
+        API["WMS API Service
+        Port 8080"]
+        L1["L1 Memory Cache
+        Per-Instance"]
+        WORKER["Renderer Workers
+        Background Jobs"]
     end
     
-    subgraph "Monitoring"
-        PROM[Prometheus<br/>Port 9090]
-        GRAF[Grafana<br/>Port 3001]
+    subgraph Monitoring
+        PROM["Prometheus
+        Port 9090"]
+        GRAF["Grafana
+        Port 3001"]
     end
     
     NOAA -->|HTTP GET| DL

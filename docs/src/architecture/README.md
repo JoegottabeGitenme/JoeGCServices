@@ -37,26 +37,29 @@ Weather data is split into small chunks ("shreds") for:
 
 ```mermaid
 graph TB
-    subgraph "External"
-        NOAA[NOAA Data Sources]
-        Client[Map Clients]
+    subgraph External
+        NOAA["NOAA Data Sources"]
+        Client["Map Clients"]
     end
     
-    subgraph "Ingestion Pipeline"
-        DL[Downloader]
-        ING[Ingester]
+    subgraph Ingestion["Ingestion Pipeline"]
+        DL["Downloader"]
+        ING["Ingester"]
     end
     
-    subgraph "Storage Layer"
-        PG[(PostgreSQL<br/>Catalog)]
-        MINIO[(MinIO/S3<br/>Grid Data)]
-        REDIS[(Redis<br/>Tile Cache)]
+    subgraph Storage["Storage Layer"]
+        PG[("PostgreSQL
+        Catalog")]
+        MINIO[("MinIO/S3
+        Grid Data")]
+        REDIS[("Redis
+        Tile Cache")]
     end
     
-    subgraph "Serving Layer"
-        API[WMS API]
-        L1[L1 Memory Cache]
-        WORKER[Renderer Workers]
+    subgraph Serving["Serving Layer"]
+        API["WMS API"]
+        L1["L1 Memory Cache"]
+        WORKER["Renderer Workers"]
     end
     
     NOAA --> DL

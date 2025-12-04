@@ -21,24 +21,28 @@ The Renderer Worker is a background service that consumes render jobs from a Red
 
 ```mermaid
 graph TB
-    subgraph "Job Queue (Redis)"
-        Queue[Render Job Queue<br/>FIFO]
-        Processing[Processing List]
+    subgraph JobQueue["Job Queue - Redis"]
+        Queue["Render Job Queue
+        FIFO"]
+        Processing["Processing List"]
     end
     
-    subgraph "Worker Pool"
-        W1[Worker 1]
-        W2[Worker 2]
-        W3[Worker 3]
+    subgraph WorkerPool["Worker Pool"]
+        W1["Worker 1"]
+        W2["Worker 2"]
+        W3["Worker 3"]
     end
     
-    subgraph "Data Sources"
-        PG[(PostgreSQL<br/>Catalog)]
-        MINIO[(MinIO<br/>Grid Data)]
+    subgraph DataSources["Data Sources"]
+        PG[("PostgreSQL
+        Catalog")]
+        MINIO[("MinIO
+        Grid Data")]
     end
     
-    subgraph "Output"
-        L2[L2 Cache<br/>Redis]
+    subgraph Output
+        L2["L2 Cache
+        Redis"]
     end
     
     Queue -->|BRPOPLPUSH| W1

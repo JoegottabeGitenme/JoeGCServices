@@ -22,21 +22,22 @@ The Downloader service fetches weather data files from NOAA sources with robust 
 
 ```mermaid
 graph TB
-    Scheduler[Cron Scheduler]
-    Manager[Download Manager]
+    Scheduler["Cron Scheduler"]
+    Manager["Download Manager"]
     
-    subgraph "Download Workers"
-        W1[Worker 1]
-        W2[Worker 2]
-        W3[Worker 3]
-        W4[Worker 4]
+    subgraph Workers["Download Workers"]
+        W1["Worker 1"]
+        W2["Worker 2"]
+        W3["Worker 3"]
+        W4["Worker 4"]
     end
     
-    State[(SQLite State DB)]
-    NOAA[NOAA Sources]
-    FS[File System]
-    API[WMS API]
-    HTTP[HTTP Status Server<br/>Port 8081]
+    State[("SQLite State DB")]
+    NOAA["NOAA Sources"]
+    FS["File System"]
+    API["WMS API"]
+    HTTP["HTTP Status Server
+    Port 8081"]
     
     Scheduler --> Manager
     HTTP --> Manager

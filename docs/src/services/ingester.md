@@ -50,23 +50,24 @@ The Ingester service parses weather data files (GRIB2 and NetCDF), extracts para
 
 ```mermaid
 graph TB
-    Input[Data File<br/>GRIB2 or NetCDF]
+    Input["Data File
+    GRIB2 or NetCDF"]
     
-    subgraph "Parsing"
-        Parse[File Parser]
-        Extract[Extract Messages]
-        Decode[Decode Grids]
+    subgraph Parsing
+        Parse["File Parser"]
+        Extract["Extract Messages"]
+        Decode["Decode Grids"]
     end
     
-    subgraph "Processing"
-        Shard[Grid Shredding]
-        Compress[Optional Compression]
+    subgraph Processing
+        Shard["Grid Shredding"]
+        Compress["Optional Compression"]
     end
     
-    subgraph "Storage"
-        Upload[Upload to MinIO]
-        Catalog[Register in PostgreSQL]
-        Invalidate[Invalidate Caches]
+    subgraph StorageLayer["Storage"]
+        Upload["Upload to MinIO"]
+        Catalog["Register in PostgreSQL"]
+        Invalidate["Invalidate Caches"]
     end
     
     Input --> Parse
