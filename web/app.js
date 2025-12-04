@@ -722,8 +722,15 @@ function setIngestionStatus(status) {
     statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-// Add entry to ingestion log
+// Add entry to ingestion log (optional - only if log element exists)
 function addLogEntry(message, type = 'info') {
+    const ingestLogEl = document.getElementById('ingest-log');
+    if (!ingestLogEl) {
+        // Log element doesn't exist in the current UI, just log to console
+        console.log(`[${type.toUpperCase()}] ${message}`);
+        return;
+    }
+    
     const timestamp = new Date().toLocaleTimeString();
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
@@ -792,17 +799,18 @@ async function fetchBackendMetrics() {
             metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms ?? 0);
         }
         
-        // Update Redis cache stats
+        // Update Redis cache stats (L2 cache)
+        const l2Cache = data.l2_cache || {};
         if (metricCacheStatusEl) {
-            const connected = cache.connected ?? false;
+            const connected = l2Cache.connected ?? false;
             metricCacheStatusEl.textContent = connected ? 'Connected' : 'Disconnected';
             metricCacheStatusEl.className = 'metric-value ' + (connected ? 'good' : 'bad');
         }
         if (metricCacheKeysEl) {
-            metricCacheKeysEl.textContent = cache.key_count ?? '--';
+            metricCacheKeysEl.textContent = l2Cache.key_count ?? '--';
         }
         if (metricCacheMemoryEl) {
-            metricCacheMemoryEl.textContent = cache.memory_used ? formatBytes(cache.memory_used) : '--';
+            metricCacheMemoryEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '--';
         }
         
         // Update system stats

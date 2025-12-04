@@ -27,6 +27,7 @@ pub struct StyleDefinition {
     pub units: Option<String>,
     pub range: Option<ValueRange>,
     pub transform: Option<Transform>,
+    #[serde(default)]
     pub stops: Vec<ColorStop>,
     pub interpolation: Option<String>,
     pub out_of_range: Option<String>,

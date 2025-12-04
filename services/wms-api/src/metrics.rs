@@ -30,6 +30,9 @@ pub struct MetricsCollector {
     /// Per-layer-type timing stats
     layer_type_times: RwLock<HashMap<LayerType, TimingStats>>,
     
+    /// Per-data-source parsing stats (for GRIB2 vs NetCDF comparison)
+    data_source_parse_times: RwLock<HashMap<String, DataSourceParseStats>>,
+    
     /// Detailed pipeline timing stats
     grib_load_times: RwLock<TimingStats>,
     grib_parse_times: RwLock<TimingStats>,
@@ -49,6 +52,50 @@ pub enum LayerType {
     Isolines,
 }
 
+/// Data source type for per-layer parsing metrics
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DataSourceType {
+    Grib2Gfs,
+    Grib2Hrrr,
+    Grib2Mrms,
+    NetcdfGoes,
+    Other(String),
+}
+
+impl DataSourceType {
+    /// Classify data source type based on model name
+    pub fn from_model(model: &str) -> Self {
+        match model.to_lowercase().as_str() {
+            "gfs" => DataSourceType::Grib2Gfs,
+            "hrrr" => DataSourceType::Grib2Hrrr,
+            "mrms" => DataSourceType::Grib2Mrms,
+            "goes16" | "goes18" | "goes" => DataSourceType::NetcdfGoes,
+            other => DataSourceType::Other(other.to_string()),
+        }
+    }
+    
+    /// Get a string label for metrics
+    pub fn label(&self) -> &str {
+        match self {
+            DataSourceType::Grib2Gfs => "gfs",
+            DataSourceType::Grib2Hrrr => "hrrr",
+            DataSourceType::Grib2Mrms => "mrms",
+            DataSourceType::NetcdfGoes => "goes",
+            DataSourceType::Other(name) => name.as_str(),
+        }
+    }
+    
+    /// Check if this is a GRIB2 source
+    pub fn is_grib2(&self) -> bool {
+        matches!(self, DataSourceType::Grib2Gfs | DataSourceType::Grib2Hrrr | DataSourceType::Grib2Mrms)
+    }
+    
+    /// Check if this is a NetCDF source
+    pub fn is_netcdf(&self) -> bool {
+        matches!(self, DataSourceType::NetcdfGoes)
+    }
+}
+
 impl LayerType {
     /// Classify layer type based on layer name and style
     pub fn from_layer_and_style(layer: &str, style: &str) -> Self {
@@ -64,6 +111,61 @@ impl LayerType {
         
         // Everything else is gradient (temperature, pressure, satellite, radar, etc.)
         LayerType::Gradient
+    }
+}
+
+/// Per-data-source parsing statistics
+#[derive(Debug, Default, Clone)]
+pub struct DataSourceParseStats {
+    /// Total parse operations
+    pub parse_count: u64,
+    /// Cache hits (parsed data reused)
+    pub cache_hits: u64,
+    /// Cache misses (had to parse)
+    pub cache_misses: u64,
+    /// Total parse time in microseconds
+    pub total_parse_us: u64,
+    /// Minimum parse time
+    pub min_parse_us: u64,
+    /// Maximum parse time
+    pub max_parse_us: u64,
+    /// Last parse time
+    pub last_parse_us: u64,
+}
+
+impl DataSourceParseStats {
+    pub fn record_parse(&mut self, duration_us: u64) {
+        self.parse_count += 1;
+        self.cache_misses += 1;
+        self.total_parse_us += duration_us;
+        self.last_parse_us = duration_us;
+        if self.min_parse_us == 0 || duration_us < self.min_parse_us {
+            self.min_parse_us = duration_us;
+        }
+        if duration_us > self.max_parse_us {
+            self.max_parse_us = duration_us;
+        }
+    }
+    
+    pub fn record_cache_hit(&mut self) {
+        self.cache_hits += 1;
+    }
+    
+    pub fn avg_parse_ms(&self) -> f64 {
+        if self.cache_misses == 0 {
+            0.0
+        } else {
+            (self.total_parse_us as f64 / self.cache_misses as f64) / 1000.0
+        }
+    }
+    
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total = self.cache_hits + self.cache_misses;
+        if total == 0 {
+            0.0
+        } else {
+            (self.cache_hits as f64 / total as f64) * 100.0
+        }
     }
 }
 
@@ -124,6 +226,7 @@ impl MetricsCollector {
             render_times: RwLock::new(TimingStats::default()),
             minio_times: RwLock::new(TimingStats::default()),
             layer_type_times: RwLock::new(HashMap::new()),
+            data_source_parse_times: RwLock::new(HashMap::new()),
             grib_load_times: RwLock::new(TimingStats::default()),
             grib_parse_times: RwLock::new(TimingStats::default()),
             resample_times: RwLock::new(TimingStats::default()),
@@ -280,6 +383,29 @@ impl MetricsCollector {
         histogram!("grib_parse_duration_ms").record(duration_us as f64 / 1000.0);
     }
     
+    /// Record per-data-source parsing time (for admin dashboard)
+    pub async fn record_data_source_parse(&self, source_type: &DataSourceType, duration_us: u64) {
+        let label = source_type.label().to_string();
+        let mut stats = self.data_source_parse_times.write().await;
+        let entry = stats.entry(label.clone()).or_insert_with(DataSourceParseStats::default);
+        entry.record_parse(duration_us);
+        
+        // Also record to prometheus with label
+        histogram!("data_source_parse_duration_ms", "source" => label)
+            .record(duration_us as f64 / 1000.0);
+        counter!("data_source_parse_total", "source" => source_type.label().to_string()).increment(1);
+    }
+    
+    /// Record a grid cache hit for a data source
+    pub async fn record_data_source_cache_hit(&self, source_type: &DataSourceType) {
+        let label = source_type.label().to_string();
+        let mut stats = self.data_source_parse_times.write().await;
+        let entry = stats.entry(label.clone()).or_insert_with(DataSourceParseStats::default);
+        entry.record_cache_hit();
+        
+        counter!("data_source_cache_hits_total", "source" => label).increment(1);
+    }
+    
     /// Record grid resampling time (projection + interpolation)
     pub async fn record_resample(&self, duration_us: u64) {
         let mut times = self.resample_times.write().await;
@@ -352,6 +478,23 @@ impl MetricsCollector {
             });
         }
         
+        // Build per-data-source stats
+        let data_source_times = self.data_source_parse_times.read().await;
+        let mut data_source_stats = HashMap::new();
+        for (source_name, stats) in data_source_times.iter() {
+            data_source_stats.insert(source_name.clone(), DataSourceSnapshotStats {
+                source_type: source_name.clone(),
+                parse_count: stats.parse_count,
+                cache_hits: stats.cache_hits,
+                cache_misses: stats.cache_misses,
+                cache_hit_rate: stats.cache_hit_rate(),
+                avg_parse_ms: stats.avg_parse_ms(),
+                min_parse_ms: stats.min_parse_us as f64 / 1000.0,
+                max_parse_ms: stats.max_parse_us as f64 / 1000.0,
+                last_parse_ms: stats.last_parse_us as f64 / 1000.0,
+            });
+        }
+        
         MetricsSnapshot {
             uptime_secs: self.start_time.elapsed().as_secs(),
             
@@ -375,6 +518,7 @@ impl MetricsCollector {
             render_max_ms: render_times.max_ms(),
             
             layer_type_stats,
+            data_source_stats,
             
             // Pipeline metrics
             grib_load_avg_ms: grib_load_times.avg_ms(),
@@ -413,6 +557,7 @@ impl MetricsCollector {
         *self.render_times.write().await = TimingStats::default();
         *self.minio_times.write().await = TimingStats::default();
         self.layer_type_times.write().await.clear();
+        self.data_source_parse_times.write().await.clear();
         *self.grib_load_times.write().await = TimingStats::default();
         *self.grib_parse_times.write().await = TimingStats::default();
         *self.resample_times.write().await = TimingStats::default();
@@ -458,6 +603,9 @@ pub struct MetricsSnapshot {
     // Per-layer-type stats
     pub layer_type_stats: HashMap<LayerType, LayerTypeStats>,
     
+    // Per-data-source parsing stats
+    pub data_source_stats: HashMap<String, DataSourceSnapshotStats>,
+    
     // Pipeline timing breakdown
     pub grib_load_avg_ms: f64,
     pub grib_load_last_ms: f64,
@@ -488,6 +636,20 @@ pub struct LayerTypeStats {
     pub min_ms: f64,
     pub max_ms: f64,
     pub last_ms: f64,
+}
+
+/// Per-data-source parsing statistics for JSON serialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSourceSnapshotStats {
+    pub source_type: String,
+    pub parse_count: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_hit_rate: f64,
+    pub avg_parse_ms: f64,
+    pub min_parse_ms: f64,
+    pub max_parse_ms: f64,
+    pub last_parse_ms: f64,
 }
 
 /// Timer guard for measuring operation duration.

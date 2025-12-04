@@ -60,7 +60,8 @@ async function loadAllData() {
         loadCatalogSummary(),
         loadModelConfigs(),
         loadIngestionLog(),
-        loadCleanupStatus()
+        loadCleanupStatus(),
+        loadParsingMetrics()
     ]);
 }
 
@@ -302,6 +303,135 @@ function renderCleanupStatus(data) {
     `;
     
     container.innerHTML = overviewHtml + tableHtml + actionsHtml;
+}
+
+// Load parsing metrics from the API
+async function loadParsingMetrics() {
+    const container = document.getElementById('parsing-metrics-container');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/metrics`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        renderParsingMetrics(data);
+        
+    } catch (error) {
+        console.error('Error loading parsing metrics:', error);
+        container.innerHTML = `<div class="error-message">Failed to load parsing metrics: ${error.message}</div>`;
+    }
+}
+
+// Render parsing metrics table
+function renderParsingMetrics(data) {
+    const container = document.getElementById('parsing-metrics-container');
+    const metrics = data.metrics || {};
+    const dataSourceStats = metrics.data_source_stats || {};
+    
+    // Check if we have any data
+    const sources = Object.keys(dataSourceStats);
+    if (sources.length === 0) {
+        container.innerHTML = `
+            <div class="no-data-message">
+                No parsing data available yet. Request some tiles to generate metrics.
+            </div>
+        `;
+        return;
+    }
+    
+    // Build table
+    let tableHtml = `
+        <table class="parsing-table">
+            <thead>
+                <tr>
+                    <th>Data Source</th>
+                    <th>Type</th>
+                    <th>Parse Count</th>
+                    <th>Cache Hits</th>
+                    <th>Cache Misses</th>
+                    <th>Cache Hit Rate</th>
+                    <th>Avg Parse Time</th>
+                    <th>Min / Max</th>
+                    <th>Last Parse</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    // Sort sources alphabetically
+    sources.sort();
+    
+    for (const sourceName of sources) {
+        const stats = dataSourceStats[sourceName];
+        
+        // Determine source type badge
+        const isNetCDF = sourceName.toLowerCase().includes('goes');
+        const sourceType = isNetCDF ? 'NetCDF' : 'GRIB2';
+        const badgeClass = isNetCDF ? 'netcdf' : 'grib2';
+        
+        // Determine cache rate class
+        const cacheRate = stats.cache_hit_rate || 0;
+        const cacheRateClass = cacheRate >= 80 ? 'excellent' : 
+                               cacheRate >= 50 ? 'good' : 
+                               cacheRate >= 20 ? 'fair' : 'poor';
+        
+        // Determine parse time class (in ms)
+        const avgParseMs = stats.avg_parse_ms || 0;
+        const parseTimeClass = avgParseMs < 10 ? 'fast' : 
+                               avgParseMs < 50 ? 'medium' : 'slow';
+        
+        tableHtml += `
+            <tr>
+                <td><strong>${sourceName.toUpperCase()}</strong></td>
+                <td><span class="source-badge ${badgeClass}">${sourceType}</span></td>
+                <td>${stats.parse_count || 0}</td>
+                <td>${stats.cache_hits || 0}</td>
+                <td>${stats.cache_misses || 0}</td>
+                <td><span class="cache-rate ${cacheRateClass}">${cacheRate.toFixed(1)}%</span></td>
+                <td><span class="parse-time ${parseTimeClass}">${avgParseMs.toFixed(2)} ms</span></td>
+                <td class="parse-time">${(stats.min_parse_ms || 0).toFixed(2)} / ${(stats.max_parse_ms || 0).toFixed(2)} ms</td>
+                <td class="parse-time">${(stats.last_parse_ms || 0).toFixed(2)} ms</td>
+            </tr>
+        `;
+    }
+    
+    tableHtml += `
+            </tbody>
+        </table>
+    `;
+    
+    // Add summary
+    const totalParses = sources.reduce((sum, s) => sum + (dataSourceStats[s].parse_count || 0), 0);
+    const totalCacheHits = sources.reduce((sum, s) => sum + (dataSourceStats[s].cache_hits || 0), 0);
+    const totalCacheMisses = sources.reduce((sum, s) => sum + (dataSourceStats[s].cache_misses || 0), 0);
+    const overallCacheRate = totalCacheHits + totalCacheMisses > 0 
+        ? (totalCacheHits / (totalCacheHits + totalCacheMisses) * 100) 
+        : 0;
+    
+    const summaryHtml = `
+        <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+            <div class="stat-box" style="flex: 1;">
+                <div class="stat-value">${sources.length}</div>
+                <div class="stat-label">Data Sources</div>
+            </div>
+            <div class="stat-box" style="flex: 1;">
+                <div class="stat-value">${totalParses}</div>
+                <div class="stat-label">Total Parses</div>
+            </div>
+            <div class="stat-box" style="flex: 1;">
+                <div class="stat-value">${totalCacheHits}</div>
+                <div class="stat-label">Grid Cache Hits</div>
+            </div>
+            <div class="stat-box" style="flex: 1;">
+                <div class="stat-value ${overallCacheRate >= 50 ? '' : 'warning'}">${overallCacheRate.toFixed(1)}%</div>
+                <div class="stat-label">Overall Cache Rate</div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = summaryHtml + tableHtml;
 }
 
 // Run manual cleanup

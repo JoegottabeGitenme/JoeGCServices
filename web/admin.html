@@ -640,6 +640,99 @@
             display: flex;
             gap: 0.5rem;
         }
+
+        /* Parsing Metrics Styles */
+        .parsing-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+        }
+
+        .parsing-table th,
+        .parsing-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .parsing-table th {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .parsing-table td {
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .parsing-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .source-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .source-badge.grib2 {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196f3;
+        }
+
+        .source-badge.netcdf {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .cache-rate {
+            font-weight: 600;
+        }
+
+        .cache-rate.excellent {
+            color: #4caf50;
+        }
+
+        .cache-rate.good {
+            color: #8bc34a;
+        }
+
+        .cache-rate.fair {
+            color: #ff9800;
+        }
+
+        .cache-rate.poor {
+            color: #f44336;
+        }
+
+        .parse-time {
+            font-family: monospace;
+        }
+
+        .parse-time.fast {
+            color: #4caf50;
+        }
+
+        .parse-time.medium {
+            color: #ff9800;
+        }
+
+        .parse-time.slow {
+            color: #f44336;
+        }
+
+        .no-data-message {
+            text-align: center;
+            padding: 2rem;
+            color: rgba(255, 255, 255, 0.5);
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -713,6 +806,14 @@
                         <div class="stat-label">Shredded Files</div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Data Source Parsing Metrics -->
+        <div class="admin-card full-width">
+            <h2><span class="card-icon">⚡</span> Data Source Parsing Performance</h2>
+            <div id="parsing-metrics-container">
+                <div class="loading">Loading parsing metrics...</div>
             </div>
         </div>
 

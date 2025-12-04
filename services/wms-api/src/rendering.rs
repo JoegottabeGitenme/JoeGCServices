@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::{info, debug};
 use projection::{LambertConformal, Geostationary};
-use crate::metrics::MetricsCollector;
+use crate::metrics::{MetricsCollector, DataSourceType};
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -1394,6 +1394,9 @@ struct GoesProjectionParams {
 /// 
 /// For GRIB2 files, searches for the matching parameter and level.
 /// For NetCDF (GOES) files, reads the CMI variable directly with caching.
+/// 
+/// When `cache_grib2` is true and `grid_cache` is provided, parsed GRIB2 grids
+/// will also be cached to avoid redundant decompression for adjacent tiles.
 async fn load_grid_data(
     grib_cache: &GribCache,
     grid_cache: Option<&GridDataCache>,
@@ -1401,17 +1404,59 @@ async fn load_grid_data(
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
+    load_grid_data_with_options(grib_cache, grid_cache, metrics, entry, parameter, true).await
+}
+
+/// Load grid data with explicit control over GRIB2 caching
+async fn load_grid_data_with_options(
+    grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
+    metrics: &MetricsCollector,
+    entry: &CatalogEntry,
+    parameter: &str,
+    cache_grib2: bool,
+) -> Result<GridData, String> {
+    use std::sync::Arc;
+    
     // Check file type by extension or magic bytes
     let is_netcdf = entry.storage_path.ends_with(".nc") || 
                     entry.parameter.starts_with("CMI_") ||
                     entry.model.starts_with("goes");
     
+    // Determine data source type for per-layer metrics
+    let source_type = DataSourceType::from_model(&entry.model);
+    
     if is_netcdf {
         // Handle NetCDF (GOES) data - use grid cache if available
-        load_netcdf_grid_data(grib_cache, grid_cache, entry).await
+        load_netcdf_grid_data(grib_cache, grid_cache, metrics, entry, &source_type).await
     } else {
         // Handle GRIB2 data
-        // Load file from cache (or storage on cache miss)
+        // Build cache key: storage_path + level (to handle multi-level files)
+        let cache_key = format!("{}:{}", entry.storage_path, entry.level);
+        
+        // Check grid cache first if GRIB2 caching is enabled
+        if cache_grib2 {
+            if let Some(cache) = grid_cache {
+                if let Some(cached) = cache.get(&cache_key).await {
+                    info!(
+                        storage_path = %entry.storage_path,
+                        level = %entry.level,
+                        "Grid cache HIT for GRIB2 data"
+                    );
+                    // Record cache hit for this data source
+                    metrics.record_data_source_cache_hit(&source_type).await;
+                    
+                    return Ok(GridData {
+                        data: (*cached.data).clone(),
+                        width: cached.width,
+                        height: cached.height,
+                        goes_projection: None, // GRIB2 doesn't use GOES projection
+                    });
+                }
+            }
+        }
+        
+        // Cache miss - load and parse GRIB2 file
         let file_data = grib_cache
             .get(&entry.storage_path)
             .await
@@ -1440,9 +1485,34 @@ async fn load_grid_data(
             .map_err(|e| format!("Unpacking failed: {}", e))?;
         
         let parse_duration = start.elapsed();
-        metrics.record_grib_parse(parse_duration.as_micros() as u64).await;
+        let parse_us = parse_duration.as_micros() as u64;
+        
+        // Record both global and per-source parse times
+        metrics.record_grib_parse(parse_us).await;
+        metrics.record_data_source_parse(&source_type, parse_us).await;
         
         let (grid_height, grid_width) = msg.grid_dims();
+        
+        // Store in grid cache if GRIB2 caching is enabled
+        if cache_grib2 {
+            if let Some(cache) = grid_cache {
+                let cached_data = CachedGridData {
+                    data: Arc::new(grid_data.clone()),
+                    width: grid_width as usize,
+                    height: grid_height as usize,
+                    goes_projection: None,
+                };
+                cache.insert(cache_key.clone(), cached_data).await;
+                info!(
+                    storage_path = %entry.storage_path,
+                    level = %entry.level,
+                    width = grid_width,
+                    height = grid_height,
+                    parse_ms = parse_us as f64 / 1000.0,
+                    "Cached parsed GRIB2 grid data"
+                );
+            }
+        }
         
         Ok(GridData {
             data: grid_data,
@@ -1463,7 +1533,9 @@ async fn load_grid_data(
 async fn load_netcdf_grid_data(
     grib_cache: &GribCache,
     grid_cache: Option<&GridDataCache>,
+    metrics: &MetricsCollector,
     entry: &CatalogEntry,
+    source_type: &DataSourceType,
 ) -> Result<GridData, String> {
     use std::sync::Arc;
     
@@ -1475,6 +1547,9 @@ async fn load_netcdf_grid_data(
                 storage_path = %entry.storage_path,
                 "Grid cache HIT for GOES data"
             );
+            // Record cache hit for this data source
+            metrics.record_data_source_cache_hit(source_type).await;
+            
             // Convert from CachedGridData back to GridData
             return Ok(GridData {
                 data: (*cached.data).clone(),
@@ -1512,9 +1587,14 @@ async fn load_netcdf_grid_data(
     );
     
     // Use native netcdf library to parse the file (5-10x faster than ncdump)
+    let parse_start = Instant::now();
     let (data, width, height, projection, x_offset, y_offset, x_scale, y_scale) = 
         netcdf_parser::load_goes_netcdf_from_bytes(&file_data)
             .map_err(|e| format!("Failed to parse NetCDF: {}", e))?;
+    let parse_us = parse_start.elapsed().as_micros() as u64;
+    
+    // Record per-source parse time
+    metrics.record_data_source_parse(source_type, parse_us).await;
     
     info!(
         width = width,
@@ -2233,7 +2313,9 @@ pub async fn render_wind_barbs_layer(
 ///
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving GRIB2 files
+/// - `grid_cache`: Optional grid data cache for parsed grids
 /// - `catalog`: Catalog for finding datasets
+/// - `metrics`: Metrics collector for performance tracking
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `parameter`: Parameter name (e.g., "TMP")
 /// - `width`: Output image width
@@ -2248,7 +2330,9 @@ pub async fn render_wind_barbs_layer(
 /// PNG image data as bytes
 pub async fn render_numbers_tile(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     width: u32,
@@ -2304,9 +2388,12 @@ pub async fn render_numbers_tile(
     // Determine if this is NetCDF or GRIB2 data
     let is_netcdf = entry.storage_path.ends_with(".nc");
     
+    // Determine the data source type for metrics tracking
+    let source_type = DataSourceType::from_model(&entry.model);
+    
     let (grid_data, grid_width, grid_height) = if is_netcdf {
         // Load NetCDF data
-        let grid_result = load_netcdf_grid_data(grib_cache, None, &entry).await?;
+        let grid_result = load_netcdf_grid_data(grib_cache, grid_cache, metrics, &entry, &source_type).await?;
         (grid_result.data, grid_result.width, grid_result.height)
     } else {
         // Load GRIB2 file from cache

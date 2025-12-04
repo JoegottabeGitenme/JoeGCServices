@@ -25,6 +25,9 @@ pub struct OptimizationConfig {
     pub grid_cache_enabled: bool,
     pub grid_cache_size: usize,
     
+    // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
+    pub grib_grid_cache_enabled: bool,
+    
     // Prefetch
     pub prefetch_enabled: bool,
     pub prefetch_rings: u32,
@@ -79,6 +82,10 @@ impl OptimizationConfig {
             // Grid Data Cache (for parsed GOES/NetCDF data)
             grid_cache_enabled: parse_bool("ENABLE_GRID_CACHE", true),
             grid_cache_size: parse_usize("GRID_CACHE_SIZE", 100),
+            
+            // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
+            // This can significantly reduce CPU usage for adjacent tile requests
+            grib_grid_cache_enabled: parse_bool("ENABLE_GRIB_GRID_CACHE", true),
             
             // Prefetch
             prefetch_enabled: parse_bool("ENABLE_PREFETCH", true),
@@ -168,5 +175,15 @@ impl AppState {
             prefetch_rings,
             optimization_config,
         })
+    }
+    
+    /// Get the grid cache reference if GRIB grid caching is enabled.
+    /// Returns None if caching is disabled via ENABLE_GRIB_GRID_CACHE=false
+    pub fn grid_cache_if_enabled(&self) -> Option<&GridDataCache> {
+        if self.optimization_config.grib_grid_cache_enabled {
+            Some(&self.grid_cache)
+        } else {
+            None
+        }
     }
 }

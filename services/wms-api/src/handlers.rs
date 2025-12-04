@@ -762,7 +762,9 @@ async fn wmts_get_tile(
         
         crate::rendering::render_numbers_tile(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             256,  // tile width
@@ -779,7 +781,7 @@ async fn wmts_get_tile(
         // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
         crate::rendering::render_weather_data_with_time(
             &state.grib_cache,
-            Some(&state.grid_cache),
+            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
             model,
@@ -1321,7 +1323,9 @@ async fn render_weather_data(
         
         return crate::rendering::render_numbers_tile(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             width,
@@ -1338,7 +1342,7 @@ async fn render_weather_data(
     // Use shared rendering logic with support for observation time
     crate::rendering::render_weather_data_with_time(
         &state.grib_cache,
-        Some(&state.grid_cache),
+        state.grid_cache_if_enabled(),
         &state.catalog,
         &state.metrics,
         model,
@@ -2417,7 +2421,9 @@ async fn prefetch_single_tile(
         
         crate::rendering::render_numbers_tile(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             256,
