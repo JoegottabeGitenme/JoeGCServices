@@ -37,13 +37,13 @@ schedule:
   cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]  # Hourly
   forecast_hours: 
     start: 0
-    end: 48                          # 48 hours
+    end: 3                          # 48 hours
     step: 1                          # Every hour
   poll_interval_secs: 3600           # Check every hour
   delay_hours: 2                     # Data typically available 2 hours after cycle
 
 retention:
-  hours: 12                          # Keep data for 12 hours
+  hours: 2                          # Keep data for 12 hours
 
 parameters:
   # ==========================================================================

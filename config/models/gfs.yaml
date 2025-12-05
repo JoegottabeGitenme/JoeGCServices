@@ -29,13 +29,13 @@ schedule:
   cycles: [0, 6, 12, 18]              # UTC hours (00z, 06z, 12z, 18z)
   forecast_hours: 
     start: 0
-    end: 240                          # 10 days
+    end: 15                          # 10 days
     step: 3                           # Every 3 hours
   poll_interval_secs: 3600            # Check for new data every hour
   delay_hours: 4                      # Data typically available 4 hours after cycle time
 
 retention:
-  hours: 12                          # Keep data for 12 hours
+  hours: 6                          # Keep data for 12 hours
 
 parameters:
   # ==========================================================================
