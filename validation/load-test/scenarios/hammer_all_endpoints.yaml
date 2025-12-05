@@ -1,0 +1,193 @@
+name: hammer_all_endpoints
+description: |
+  Aggressive "hammering" test that hits ALL layers with moderate concurrency.
+  This test verifies the system can handle sustained load across all endpoints.
+  Unlike verify_all_layers (which is correctness-focused), this is stress-focused.
+base_url: http://localhost:8080
+duration_secs: 300
+concurrency: 25
+warmup_secs: 15
+log_requests: true
+seed: 12345
+
+layers:
+  # ==========================================
+  # GFS Layers - All parameters with styles
+  # ==========================================
+  - name: gfs_TMP
+    style: temperature
+    weight: 2.0  # Higher weight for common layers
+  - name: gfs_TMP
+    style: isolines
+    weight: 1.5
+  - name: gfs_TMP
+    style: numbers
+    weight: 0.5
+  - name: gfs_DPT
+    style: default
+    weight: 1.0
+  - name: gfs_UGRD
+    style: default
+    weight: 0.8
+  - name: gfs_VGRD
+    style: default
+    weight: 0.8
+  - name: gfs_WIND_BARBS
+    style: wind_barbs
+    weight: 2.0
+  - name: gfs_PRMSL
+    style: atmospheric
+    weight: 1.5
+  - name: gfs_PRMSL
+    style: isolines
+    weight: 1.0
+  - name: gfs_RH
+    style: humidity
+    weight: 1.0
+  - name: gfs_HGT
+    style: default
+    weight: 0.8
+  - name: gfs_GUST
+    style: wind
+    weight: 1.0
+  - name: gfs_APCP
+    style: precipitation
+    weight: 1.0
+  - name: gfs_PWAT
+    style: default
+    weight: 0.8
+  - name: gfs_CAPE
+    style: cape
+    weight: 1.5
+  - name: gfs_CIN
+    style: default
+    weight: 0.8
+  - name: gfs_TCDC
+    style: cloud
+    weight: 1.0
+  - name: gfs_LCDC
+    style: cloud
+    weight: 0.5
+  - name: gfs_MCDC
+    style: cloud
+    weight: 0.5
+  - name: gfs_HCDC
+    style: cloud
+    weight: 0.5
+  - name: gfs_VIS
+    style: visibility
+    weight: 0.8
+
+  # ==========================================
+  # HRRR Layers - All parameters with styles
+  # ==========================================
+  - name: hrrr_TMP
+    style: temperature
+    weight: 2.0
+  - name: hrrr_TMP
+    style: isolines
+    weight: 1.0
+  - name: hrrr_DPT
+    style: default
+    weight: 1.0
+  - name: hrrr_UGRD
+    style: default
+    weight: 0.8
+  - name: hrrr_VGRD
+    style: default
+    weight: 0.8
+  - name: hrrr_WIND_BARBS
+    style: wind_barbs
+    weight: 2.0
+  - name: hrrr_RH
+    style: humidity
+    weight: 1.0
+  - name: hrrr_GUST
+    style: wind
+    weight: 1.0
+  - name: hrrr_REFC
+    style: reflectivity
+    weight: 2.5  # High weight - very common layer
+  - name: hrrr_RETOP
+    style: default
+    weight: 0.8
+  - name: hrrr_APCP
+    style: precipitation
+    weight: 1.0
+  - name: hrrr_CAPE
+    style: cape
+    weight: 1.5
+  - name: hrrr_CIN
+    style: default
+    weight: 0.8
+  - name: hrrr_MXUPHL
+    style: helicity
+    weight: 1.2
+  - name: hrrr_LTNG
+    style: lightning
+    weight: 1.0
+  - name: hrrr_VIS
+    style: visibility
+    weight: 0.8
+  - name: hrrr_HGT
+    style: default
+    weight: 0.5
+
+  # ==========================================
+  # MRMS Layers - Radar products
+  # ==========================================
+  - name: mrms_REFL
+    style: reflectivity
+    weight: 2.5  # High weight - very common
+  - name: mrms_PRECIP_RATE
+    style: precip_rate
+    weight: 1.5
+  - name: mrms_QPE_01H
+    style: precipitation
+    weight: 1.0
+  - name: mrms_QPE_24H
+    style: precipitation
+    weight: 0.8
+
+  # ==========================================
+  # GOES-16 Layers - Satellite imagery
+  # ==========================================
+  - name: goes16_CMI_C01
+    style: goes_visible
+    weight: 0.8
+  - name: goes16_CMI_C02
+    style: goes_visible
+    weight: 2.0  # High weight - most common visible band
+  - name: goes16_CMI_C08
+    style: goes_ir
+    weight: 1.0
+  - name: goes16_CMI_C13
+    style: goes_ir
+    weight: 1.5
+
+  # ==========================================
+  # GOES-18 Layers - Satellite imagery
+  # ==========================================
+  - name: goes18_CMI_C01
+    style: goes_visible
+    weight: 0.5
+  - name: goes18_CMI_C02
+    style: goes_visible
+    weight: 1.5
+  - name: goes18_CMI_C08
+    style: goes_ir
+    weight: 0.8
+  - name: goes18_CMI_C13
+    style: goes_ir
+    weight: 1.2
+
+# Random tiles across CONUS with various zoom levels
+# This ensures cache misses and exercises the full rendering pipeline
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
