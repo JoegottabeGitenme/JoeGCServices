@@ -9,8 +9,9 @@ use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, debug};
-use projection::{LambertConformal, Geostationary};
+use projection::{LambertConformal, Geostationary, resample_with_lut};
 use crate::metrics::{MetricsCollector, DataSourceType};
+use crate::state::ProjectionLuts;
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -145,16 +146,73 @@ pub async fn render_weather_data_with_time(
     style_name: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
+    // Call the LUT-aware version without tile coords or LUT
+    render_weather_data_with_lut(
+        grib_cache, grid_cache, catalog, metrics, model, parameter,
+        forecast_hour, observation_time, level, width, height, bbox,
+        style_name, use_mercator, None, None,
+    ).await
+}
+
+/// Render weather data with optional projection LUT for fast GOES rendering.
+///
+/// This is the full-featured rendering function that supports:
+/// - Forecast models (GFS, HRRR): Use `forecast_hour` parameter
+/// - Observation data (MRMS, GOES): Use `observation_time` parameter
+/// - Pre-computed projection LUTs for fast GOES tile rendering
+///
+/// # Arguments
+/// - `grib_cache`: GRIB cache for retrieving files
+/// - `catalog`: Catalog for finding datasets
+/// - `model`: Weather model name
+/// - `parameter`: Parameter name
+/// - `forecast_hour`: Optional forecast hour for forecast models
+/// - `observation_time`: Optional observation time (ISO8601) for observation data
+/// - `level`: Optional vertical level
+/// - `width`: Output image width
+/// - `height`: Output image height
+/// - `bbox`: Optional bounding box
+/// - `style_name`: Optional style name
+/// - `use_mercator`: Use Web Mercator projection
+/// - `tile_coords`: Optional tile coordinates (z, x, y) for LUT lookup
+/// - `projection_luts`: Optional pre-computed projection LUTs
+pub async fn render_weather_data_with_lut(
+    grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
+    catalog: &Catalog,
+    metrics: &MetricsCollector,
+    model: &str,
+    parameter: &str,
+    forecast_hour: Option<u32>,
+    observation_time: Option<chrono::DateTime<chrono::Utc>>,
+    level: Option<&str>,
+    width: u32,
+    height: u32,
+    bbox: Option<[f32; 4]>,
+    style_name: Option<&str>,
+    use_mercator: bool,
+    tile_coords: Option<(u32, u32, u32)>,  // (z, x, y) for LUT lookup
+    projection_luts: Option<&ProjectionLuts>,
+) -> Result<Vec<u8>, String> {
     // Get dataset based on time specification
     let entry = {
         if let Some(obs_time) = observation_time {
             // Observation mode: find dataset closest to requested observation time
             info!(model = model, parameter = parameter, observation_time = ?obs_time, "Looking up observation data by time");
-            catalog
+            let entry = catalog
                 .find_by_time(model, parameter, obs_time)
                 .await
                 .map_err(|e| format!("Catalog query failed: {}", e))?
-                .ok_or_else(|| format!("No observation data found for {}/{} at time {:?}", model, parameter, obs_time))?
+                .ok_or_else(|| format!("No observation data found for {}/{} at time {:?}", model, parameter, obs_time))?;
+            info!(
+                model = model, 
+                parameter = parameter, 
+                requested_time = ?obs_time,
+                found_time = ?entry.reference_time,
+                storage_path = %entry.storage_path,
+                "Found observation dataset"
+            );
+            entry
         } else {
         // Forecast mode: use forecast_hour and level
         match (forecast_hour, level) {
@@ -244,20 +302,33 @@ pub async fn render_weather_data_with_time(
     let start = Instant::now();
     let resampled_data = {
         if let Some(output_bbox) = bbox {
-            // Resample from data grid to output bbox
-            // Use Mercator projection when rendering for Web Mercator display
-            resample_grid_for_bbox_with_proj(
+            // Try to use LUT for GOES models if available
+            let lut_result = try_resample_with_lut(
+                model,
+                tile_coords,
+                projection_luts,
                 &grid_data,
                 grid_width,
-                grid_height,
-                rendered_width,
-                rendered_height,
-                output_bbox,
-                data_bounds,
-                use_mercator,
-                model,
-                goes_projection.as_ref(),
-            )
+            );
+            
+            if let Some(resampled) = lut_result {
+                debug!(model = model, "Used projection LUT for fast resampling");
+                resampled
+            } else {
+                // Fall back to computing projection on-the-fly
+                resample_grid_for_bbox_with_proj(
+                    &grid_data,
+                    grid_width,
+                    grid_height,
+                    rendered_width,
+                    rendered_height,
+                    output_bbox,
+                    data_bounds,
+                    use_mercator,
+                    model,
+                    goes_projection.as_ref(),
+                )
+            }
         } else {
             // No bbox - resample entire data grid
             if grid_width != rendered_width || grid_height != rendered_height {
@@ -879,6 +950,58 @@ fn resample_grid_for_bbox_with_proj(
             resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
         }
     }
+}
+
+/// Try to resample GOES data using a pre-computed LUT.
+/// 
+/// Returns Some(resampled_data) if a LUT is available for this tile,
+/// or None if we should fall back to computing the projection.
+/// 
+/// NOTE: LUT is currently disabled due to a mismatch between hardcoded projection
+/// parameters in the pre-computed LUTs and the actual dynamic parameters from
+/// NetCDF files. The hardcoded values (x_origin: -0.101360, y_origin: 0.128226)
+/// differ from actual file values (x_offset: -0.101353, y_offset: 0.128233),
+/// causing visible pixel misalignment between zoom levels 0-7 (LUT) and 8+ (on-the-fly).
+/// 
+/// TODO: Regenerate LUTs using actual projection parameters from NetCDF files,
+/// or implement on-demand LUT generation with caching per unique projection params.
+fn try_resample_with_lut(
+    _model: &str,
+    _tile_coords: Option<(u32, u32, u32)>,
+    _projection_luts: Option<&ProjectionLuts>,
+    _data: &[f32],
+    _data_width: usize,
+) -> Option<Vec<f32>> {
+    // DISABLED: LUT projection parameters don't match actual NetCDF file parameters,
+    // causing pixel misalignment at zoom level boundaries. Using on-the-fly projection
+    // computation ensures consistent results across all zoom levels.
+    // 
+    // The mismatch is:
+    // - LUT hardcoded:  x_origin=-0.101360, y_origin=0.128226, dx=0.000028
+    // - NetCDF actual:  x_offset=-0.101353, y_offset=0.128233, x_scale=1.4e-05
+    //
+    // To re-enable, the LUT generation must use the exact same projection parameters
+    // as the NetCDF files being rendered.
+    None
+    
+    // Original code (disabled):
+    // // Only applicable for GOES models
+    // if model != "goes16" && model != "goes18" && model != "goes" {
+    //     return None;
+    // }
+    // 
+    // // Need both tile coords and LUT cache
+    // let (z, x, y) = tile_coords?;
+    // let luts = projection_luts?;
+    // 
+    // // Get the LUT cache for this satellite
+    // let cache = luts.get(model)?;
+    // 
+    // // Check if we have a pre-computed LUT for this tile
+    // let lut = cache.get(z, x, y)?;
+    // 
+    // // Use the LUT for fast resampling
+    // Some(resample_with_lut(data, data_width, lut))
 }
 
 /// Resample from Lambert Conformal grid (HRRR) to geographic output
@@ -1540,11 +1663,14 @@ async fn load_netcdf_grid_data(
     use std::sync::Arc;
     
     // Check grid cache first (if available)
-    let cache_key = entry.storage_path.clone();
+    // Include reference_time in cache key to ensure different observation times don't collide
+    let cache_key = format!("{}:{}", entry.storage_path, entry.reference_time.timestamp());
     if let Some(cache) = grid_cache {
         if let Some(cached) = cache.get(&cache_key).await {
             info!(
                 storage_path = %entry.storage_path,
+                reference_time = ?entry.reference_time,
+                cache_key = %cache_key,
                 "Grid cache HIT for GOES data"
             );
             // Record cache hit for this data source
@@ -1636,9 +1762,11 @@ async fn load_netcdf_grid_data(
                 longitude_origin: projection.longitude_origin,
             }),
         };
-        cache.insert(cache_key, cached_data).await;
+        cache.insert(cache_key.clone(), cached_data).await;
         info!(
             storage_path = %entry.storage_path,
+            reference_time = ?entry.reference_time,
+            cache_key = %cache_key,
             width = width,
             height = height,
             "Cached parsed GOES grid data"

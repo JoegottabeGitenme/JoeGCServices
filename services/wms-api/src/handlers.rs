@@ -779,7 +779,8 @@ async fn wmts_get_tile(
     } else {
         // Render the tile with spatial subsetting and optional time/level
         // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
-        crate::rendering::render_weather_data_with_time(
+        // Use LUT for fast GOES rendering when available
+        crate::rendering::render_weather_data_with_lut(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
@@ -794,6 +795,8 @@ async fn wmts_get_tile(
             Some(bbox_array),
             None,  // style_name
             true,  // use_mercator for WMTS
+            Some((z, x, y)),  // tile coords for LUT lookup
+            Some(&state.projection_luts),  // projection LUT cache
         )
         .await
     };
@@ -1514,6 +1517,18 @@ fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
         .unwrap()
 }
 
+/// Get human-readable display name for a model/data source
+fn get_model_display_name(model: &str) -> String {
+    match model {
+        "goes16" => "GOES-16 East".to_string(),
+        "goes18" => "GOES-18 West".to_string(),
+        "gfs" => "GFS".to_string(),
+        "hrrr" => "HRRR".to_string(),
+        "mrms" => "MRMS".to_string(),
+        _ => model.to_uppercase(),
+    }
+}
+
 /// Get human-readable name for a GRIB parameter code
 fn get_parameter_name(param: &str) -> String {
     match param {
@@ -1568,26 +1583,26 @@ fn get_parameter_name(param: &str) -> String {
         "QPE_06H" => "6-Hour Precipitation".to_string(),
         "QPE_24H" => "24-Hour Precipitation".to_string(),
         
-        // GOES parameters (ABI bands)
+        // GOES parameters (ABI bands) - User-friendly titles with band info
         "IR" => "Infrared Imagery".to_string(),
         "WV" => "Water Vapor".to_string(),
         "CMI" => "Cloud and Moisture Imagery".to_string(),
-        "CMI_C01" => "Visible Blue (0.47µm)".to_string(),
-        "CMI_C02" => "Visible Red (0.64µm)".to_string(),
-        "CMI_C03" => "Vegetation (0.86µm)".to_string(),
-        "CMI_C04" => "Cirrus (1.37µm)".to_string(),
-        "CMI_C05" => "Snow/Ice (1.6µm)".to_string(),
-        "CMI_C06" => "Cloud Particle (2.2µm)".to_string(),
-        "CMI_C07" => "Shortwave IR (3.9µm)".to_string(),
-        "CMI_C08" => "Upper Water Vapor (6.2µm)".to_string(),
-        "CMI_C09" => "Mid Water Vapor (6.9µm)".to_string(),
-        "CMI_C10" => "Lower Water Vapor (7.3µm)".to_string(),
-        "CMI_C11" => "Cloud Phase (8.4µm)".to_string(),
-        "CMI_C12" => "Ozone (9.6µm)".to_string(),
-        "CMI_C13" => "Clean IR (10.3µm)".to_string(),
-        "CMI_C14" => "IR Longwave (11.2µm)".to_string(),
-        "CMI_C15" => "Dirty IR (12.3µm)".to_string(),
-        "CMI_C16" => "CO2 (13.3µm)".to_string(),
+        "CMI_C01" => "Visible Blue - Band 1 (0.47µm)".to_string(),
+        "CMI_C02" => "Visible Red - Band 2 (0.64µm)".to_string(),
+        "CMI_C03" => "Veggie - Band 3 (0.86µm)".to_string(),
+        "CMI_C04" => "Cirrus - Band 4 (1.37µm)".to_string(),
+        "CMI_C05" => "Snow/Ice - Band 5 (1.6µm)".to_string(),
+        "CMI_C06" => "Cloud Particle Size - Band 6 (2.2µm)".to_string(),
+        "CMI_C07" => "Shortwave Window IR - Band 7 (3.9µm)".to_string(),
+        "CMI_C08" => "Upper-Level Water Vapor - Band 8 (6.2µm)".to_string(),
+        "CMI_C09" => "Mid-Level Water Vapor - Band 9 (6.9µm)".to_string(),
+        "CMI_C10" => "Lower-Level Water Vapor - Band 10 (7.3µm)".to_string(),
+        "CMI_C11" => "Cloud-Top Phase - Band 11 (8.4µm)".to_string(),
+        "CMI_C12" => "Ozone - Band 12 (9.6µm)".to_string(),
+        "CMI_C13" => "Clean Longwave IR - Band 13 (10.3µm)".to_string(),
+        "CMI_C14" => "Longwave IR - Band 14 (11.2µm)".to_string(),
+        "CMI_C15" => "Dirty Longwave IR - Band 15 (12.3µm)".to_string(),
+        "CMI_C16" => "CO2 Longwave IR - Band 16 (13.3µm)".to_string(),
         
         // Default: return the code itself
         _ => param.to_string(),
@@ -1726,7 +1741,7 @@ fn build_wms_capabilities_xml(
                     
                     format!(
                         r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/>{}{}</Layer>"#,
-                        model, p, model.to_uppercase(), get_parameter_name(p),
+                        model, p, get_model_display_name(model), get_parameter_name(p),
                         west, east, south, north,
                         west, south, east, north,
                         styles, all_dimensions
@@ -1759,7 +1774,7 @@ fn build_wms_capabilities_xml(
              let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
                  format!(
                      r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}{}</Layer>"#,
-                     model, model.to_uppercase(),
+                     model, get_model_display_name(model),
                      west, east, south, north,
                      west, south, east, north,
                      base_dimensions, wind_elevation_dim
@@ -1771,7 +1786,7 @@ fn build_wms_capabilities_xml(
              format!(
                  r#"<Layer><Name>{}</Name><Title>{}</Title>{}{}</Layer>"#,
                  model,
-                 model.to_uppercase(),
+                 get_model_display_name(model),
                  param_layers,
                  wind_barbs_layer
              )
@@ -1856,7 +1871,7 @@ fn build_wmts_capabilities_xml(
             
             params.iter().map(move |param| {
                 let layer_id = format!("{}_{}", model, param);
-                let layer_title = format!("{} - {}", model.to_uppercase(), param);
+                let layer_title = format!("{} - {}", get_model_display_name(model), get_parameter_name(param));
                 
                 // Determine available styles based on parameter type
                 let styles = if param.contains("TMP") || param.contains("TEMP") {
@@ -1973,7 +1988,7 @@ fn build_wmts_capabilities_xml(
         
         if has_ugrd && has_vgrd {
             let layer_id = format!("{}_WIND_BARBS", model);
-            let layer_title = format!("{} - Wind Barbs", model.to_uppercase());
+            let layer_title = format!("{} - Wind Barbs", get_model_display_name(model));
             
             let forecast_default = forecasts.first().unwrap_or(&0);
             // Convert to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
@@ -2688,6 +2703,11 @@ pub async fn config_handler(
     // L2 cache (Redis) is always enabled when connected
     let l2_cache_enabled = true;
     
+    // Check projection LUT status
+    let lut_goes16_loaded = state.projection_luts.goes16.is_some();
+    let lut_goes18_loaded = state.projection_luts.goes18.is_some();
+    let lut_memory_mb = state.projection_luts.memory_usage() as f64 / 1024.0 / 1024.0;
+    
     Json(json!({
         "optimizations": {
             "l1_cache": {
@@ -2714,6 +2734,13 @@ pub async fn config_handler(
             },
             "cache_warming": {
                 "enabled": state.optimization_config.cache_warming_enabled,
+            },
+            "projection_lut": {
+                "enabled": state.optimization_config.projection_lut_enabled,
+                "dir": state.optimization_config.projection_lut_dir,
+                "goes16_loaded": lut_goes16_loaded,
+                "goes18_loaded": lut_goes18_loaded,
+                "memory_mb": lut_memory_mb,
             }
         },
         "version": env!("CARGO_PKG_VERSION"),

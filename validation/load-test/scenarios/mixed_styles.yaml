@@ -9,13 +9,13 @@ layers:
     style: temperature
     weight: 1.0
   - name: gfs_TMP
-    style: temperature_isolines
+    style: isolines
     weight: 0.8
   - name: gfs_WIND_BARBS
     style: wind_barbs
     weight: 0.6
   - name: hrrr_TMP
-    style: temperature_isolines:fine
+    style: isolines
     weight: 0.5
 tile_selection:
   type: random

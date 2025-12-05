@@ -1,12 +1,12 @@
 name: quick
 description: Quick smoke test (10 seconds, 1 concurrent request)
 base_url: http://localhost:8080
-duration_secs: 10
+duration_secs: 60
 concurrency: 1
 warmup_secs: 0
 layers:
   - name: gfs_TMP
 tile_selection:
   type: random
-  zoom_range: [4, 12]
+  zoom_range: [4, 14]
 seed: 123456

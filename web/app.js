@@ -75,6 +75,7 @@ const metricUptimeEl = document.getElementById('metric-uptime');
 let availableLayers = [];
 let layerStyles = {}; // Map of layer name -> array of styles
 let layerBounds = {}; // Map of layer name -> {west, south, east, north}
+let layerTitles = {}; // Map of layer name -> human-readable title from capabilities
 let selectedProtocol = 'wmts';
 let selectedStyle = 'default';
 let queryEnabled = true;
@@ -258,13 +259,14 @@ async function loadAvailableLayers() {
         const parser = new DOMParser();
         const xml = parser.parseFromString(text, 'text/xml');
 
-        // Extract layer names, styles, and bounds
+        // Extract layer names, styles, bounds, and titles
         const layers = [];
         layerStyles = {}; // Reset styles map
         layerBounds = {}; // Reset bounds map
+        layerTitles = {}; // Reset titles map
         
         if (selectedProtocol === 'wmts') {
-            // WMTS uses <ows:Identifier> for layer names
+            // WMTS uses <ows:Identifier> for layer names and <ows:Title> for display
             const layerElements = xml.querySelectorAll('Contents > Layer');
             layerElements.forEach(layerEl => {
                 const identifierEl = layerEl.querySelector('Identifier');
@@ -272,14 +274,22 @@ async function loadAvailableLayers() {
                     const layerName = identifierEl.textContent;
                     layers.push(layerName);
                     
+                    // Extract title for this layer (use ows:Title)
+                    const titleEl = layerEl.querySelector('Title');
+                    if (titleEl && titleEl.textContent) {
+                        layerTitles[layerName] = titleEl.textContent;
+                    }
+                    
                     // Extract styles for this layer
                     const styles = [];
-                    const styleElements = layerEl.querySelectorAll('Style > Identifier');
+                    const styleElements = layerEl.querySelectorAll('Style');
                     styleElements.forEach(styleEl => {
-                        if (styleEl.textContent) {
+                        const styleId = styleEl.querySelector('Identifier');
+                        const styleTitle = styleEl.querySelector('Title');
+                        if (styleId && styleId.textContent) {
                             styles.push({
-                                name: styleEl.textContent,
-                                title: styleEl.textContent
+                                name: styleId.textContent,
+                                title: styleTitle ? styleTitle.textContent : styleId.textContent
                             });
                         }
                     });
@@ -299,13 +309,19 @@ async function loadAvailableLayers() {
                 }
             });
         } else {
-            // WMS uses <Name> for queryable layers
+            // WMS uses <Name> for queryable layers and <Title> for display
             const layerElements = xml.querySelectorAll('Layer[queryable="1"]');
             layerElements.forEach(layerEl => {
                 const nameEl = layerEl.querySelector('Name');
                 if (nameEl && nameEl.textContent) {
                     const layerName = nameEl.textContent;
                     layers.push(layerName);
+                    
+                    // Extract title for this layer
+                    const titleEl = layerEl.querySelector('Title');
+                    if (titleEl && titleEl.textContent) {
+                        layerTitles[layerName] = titleEl.textContent;
+                    }
                     
                     // Extract styles for this layer
                     const styles = [];
@@ -335,7 +351,14 @@ async function loadAvailableLayers() {
             });
         }
 
-        availableLayers = layers.sort();
+        availableLayers = layers;
+        
+        // Sort layers by their display title for better UX
+        availableLayers.sort((a, b) => {
+            const titleA = layerTitles[a] || a;
+            const titleB = layerTitles[b] || b;
+            return titleA.localeCompare(titleB);
+        });
         
         // Populate layer select
         layerSelectEl.innerHTML = '<option value="">Select a layer...</option>';
@@ -366,7 +389,14 @@ function onLoadLayer() {
 }
 
 // Format layer name for display
+// Uses title from WMS/WMTS capabilities if available, falls back to parsing layer name
 function formatLayerName(layerName) {
+    // First, check if we have a title from capabilities
+    if (layerTitles[layerName]) {
+        return layerTitles[layerName];
+    }
+    
+    // Fallback: parse layer name to create display name
     const names = {
         'TMP': 'Temperature',
         'PRMSL': 'Mean Sea Level Pressure',
@@ -378,15 +408,26 @@ function formatLayerName(layerName) {
         'P1_22': 'Cloud Mixing Ratio',
         'P1_23': 'Ice Mixing Ratio',
         'P1_24': 'Rain Mixing Ratio',
-        'WIND_BARBS': 'Wind Barbs'
+        'WIND_BARBS': 'Wind Barbs',
+        'CMI_C01': 'Visible Blue - Band 1',
+        'CMI_C02': 'Visible Red - Band 2',
+        'CMI_C08': 'Upper-Level Water Vapor - Band 8',
+        'CMI_C13': 'Clean Longwave IR - Band 13'
     };
     
     // Extract parameter from layer name (e.g., "gfs_PRMSL" -> "PRMSL")
     const parts = layerName.split('_');
     if (parts.length >= 2) {
-        const param = parts[1];
+        // Check for multi-part parameter names like CMI_C01
+        const param = parts.slice(1).join('_');
+        if (names[param]) {
+            return `${parts[0].toUpperCase()} - ${names[param]}`;
+        }
+        
+        // Check single part
+        const singleParam = parts[1];
         for (const [key, name] of Object.entries(names)) {
-            if (param.includes(key)) {
+            if (singleParam.includes(key)) {
                 return `${parts[0].toUpperCase()} - ${name}`;
             }
         }
@@ -1419,6 +1460,7 @@ function updateLayerTime() {
     // Recreate the layer with current time/elevation settings
     if (selectedProtocol === 'wmts') {
         const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
+        console.log('Creating new WMTS layer with URL:', wmtsUrl);
         wmsLayer = L.tileLayer(wmtsUrl, {
             attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
             maxZoom: 18,

@@ -2,9 +2,14 @@
 
 use anyhow::Result;
 use std::env;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{info, warn};
 
+use projection::ProjectionLutCache;
 use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::metrics::MetricsCollector;
 
@@ -36,6 +41,10 @@ pub struct OptimizationConfig {
     
     // Cache Warming
     pub cache_warming_enabled: bool,
+    
+    // Projection LUT
+    pub projection_lut_enabled: bool,
+    pub projection_lut_dir: String,
 }
 
 impl OptimizationConfig {
@@ -95,7 +104,106 @@ impl OptimizationConfig {
             
             // Cache Warming
             cache_warming_enabled: parse_bool("ENABLE_CACHE_WARMING", true),
+            
+            // Projection LUT
+            projection_lut_enabled: parse_bool("ENABLE_PROJECTION_LUT", true),
+            projection_lut_dir: env::var("PROJECTION_LUT_DIR")
+                .unwrap_or_else(|_| "/app/data/luts".to_string()),
         }
+    }
+}
+
+/// Holds pre-computed projection LUTs for fast GOES tile rendering.
+pub struct ProjectionLuts {
+    pub goes16: Option<ProjectionLutCache>,
+    pub goes18: Option<ProjectionLutCache>,
+}
+
+impl ProjectionLuts {
+    /// Load LUTs from the specified directory.
+    pub fn load(lut_dir: &str) -> Self {
+        let dir = PathBuf::from(lut_dir);
+        
+        let goes16 = Self::load_satellite_lut(&dir, "goes16");
+        let goes18 = Self::load_satellite_lut(&dir, "goes18");
+        
+        Self { goes16, goes18 }
+    }
+    
+    fn load_satellite_lut(dir: &PathBuf, satellite: &str) -> Option<ProjectionLutCache> {
+        // Try different file name patterns
+        let patterns = [
+            format!("{}_conus_z0-7.lut", satellite),
+            format!("{}_conus_z0-8.lut", satellite),
+            format!("{}.lut", satellite),
+        ];
+        
+        for pattern in &patterns {
+            let path = dir.join(pattern);
+            if path.exists() {
+                match File::open(&path) {
+                    Ok(file) => {
+                        let reader = BufReader::new(file);
+                        match ProjectionLutCache::load(reader) {
+                            Ok(cache) => {
+                                info!(
+                                    satellite = satellite,
+                                    path = %path.display(),
+                                    tiles = cache.len(),
+                                    max_zoom = cache.max_zoom,
+                                    memory_mb = cache.memory_usage() as f64 / 1024.0 / 1024.0,
+                                    "Loaded projection LUT"
+                                );
+                                return Some(cache);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    satellite = satellite,
+                                    path = %path.display(),
+                                    error = %e,
+                                    "Failed to parse projection LUT"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            satellite = satellite,
+                            path = %path.display(),
+                            error = %e,
+                            "Failed to open projection LUT file"
+                        );
+                    }
+                }
+            }
+        }
+        
+        info!(
+            satellite = satellite,
+            dir = %dir.display(),
+            "No projection LUT found (will compute transforms on-the-fly)"
+        );
+        None
+    }
+    
+    /// Get the LUT for a satellite, if available.
+    pub fn get(&self, satellite: &str) -> Option<&ProjectionLutCache> {
+        match satellite {
+            "goes16" | "goes" => self.goes16.as_ref(),
+            "goes18" => self.goes18.as_ref(),
+            _ => None,
+        }
+    }
+    
+    /// Check if any LUTs are loaded.
+    pub fn is_empty(&self) -> bool {
+        self.goes16.is_none() && self.goes18.is_none()
+    }
+    
+    /// Get total memory usage of all loaded LUTs.
+    pub fn memory_usage(&self) -> usize {
+        self.goes16.as_ref().map(|c| c.memory_usage()).unwrap_or(0)
+            + self.goes18.as_ref().map(|c| c.memory_usage()).unwrap_or(0)
     }
 }
 
@@ -109,6 +217,7 @@ pub struct AppState {
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,
     pub grid_cache: GridDataCache,  // Cache for parsed grid data (GOES/NetCDF)
+    pub projection_luts: ProjectionLuts,  // Pre-computed projection LUTs for GOES
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
@@ -163,6 +272,27 @@ impl AppState {
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
 
+        // Load projection LUTs for fast GOES rendering
+        let projection_luts = if optimization_config.projection_lut_enabled {
+            info!(
+                lut_dir = %optimization_config.projection_lut_dir,
+                "Loading projection LUTs for GOES rendering..."
+            );
+            let luts = ProjectionLuts::load(&optimization_config.projection_lut_dir);
+            if luts.is_empty() {
+                info!("No projection LUTs loaded - GOES rendering will use on-the-fly projection");
+            } else {
+                info!(
+                    memory_mb = luts.memory_usage() as f64 / 1024.0 / 1024.0,
+                    "Projection LUTs loaded successfully"
+                );
+            }
+            luts
+        } else {
+            info!("Projection LUTs disabled (set ENABLE_PROJECTION_LUT=true to enable)");
+            ProjectionLuts { goes16: None, goes18: None }
+        };
+
         Ok(Self {
             catalog,
             cache: Mutex::new(cache),
@@ -171,6 +301,7 @@ impl AppState {
             storage,
             grib_cache,
             grid_cache,
+            projection_luts,
             metrics,
             prefetch_rings,
             optimization_config,
