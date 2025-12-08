@@ -75,7 +75,7 @@ impl ObjectStorage {
         debug!(size = data.len(), "Writing object");
 
         self.store
-            .put(&location, data.into())
+            .put(&location, data)
             .await
             .map_err(|e| WmsError::StorageError(format!("Failed to write {}: {}", path, e)))?;
 
@@ -174,7 +174,7 @@ impl ObjectStorage {
         let mut total_size: u64 = 0;
         let mut object_count: u64 = 0;
 
-        let prefix_path = prefix.map(|p| object_store::path::Path::from(p));
+        let prefix_path = prefix.map(object_store::path::Path::from);
         let mut stream = self.store.list(prefix_path.as_ref());
         while let Some(meta) = stream
             .try_next()

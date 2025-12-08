@@ -245,7 +245,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     let info_format = params
         .info_format
         .as_deref()
-        .and_then(|f| InfoFormat::from_mime(f))
+        .and_then(InfoFormat::from_mime)
         .unwrap_or(InfoFormat::Html);
     
     // Parse BBOX
@@ -805,7 +805,7 @@ async fn wmts_get_tile(
     {
         Ok(png_data) => {
             // Classify layer type and record metrics
-            let layer_type = crate::metrics::LayerType::from_layer_and_style(&layer, &style);
+            let layer_type = crate::metrics::LayerType::from_layer_and_style(layer, style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
             
             // Store in L1 cache immediately (synchronous - it's in-memory) - if enabled
@@ -1041,7 +1041,7 @@ fn read_container_stats() -> serde_json::Value {
         "memory": {
             "total_bytes": effective_limit,
             "used_bytes": effective_used,
-            "available_bytes": if effective_limit > effective_used { effective_limit - effective_used } else { 0 },
+            "available_bytes": effective_limit.saturating_sub(effective_used),
             "percent_used": memory_percent,
             "cgroup_limit_bytes": cgroup_limit,
             "cgroup_usage_bytes": cgroup_usage,
@@ -1075,7 +1075,7 @@ fn read_proc_meminfo() -> (u64, u64, u64) {
         }
     }
     
-    let used = if total > available { total - available } else { 0 };
+    let used = total.saturating_sub(available);
     (total, available, used)
 }
 

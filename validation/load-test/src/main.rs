@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
             println!("  Expected misses from new tiles:  ~{}", expected_misses);
             println!();
 
-            if only_second.len() > 0 {
+            if !only_second.is_empty() {
                 println!("Why aren't you seeing 100% cache hits?");
                 println!("  The second run made {} more requests than the first run,", 
                     second_requests.len() as i64 - first_requests.len() as i64);

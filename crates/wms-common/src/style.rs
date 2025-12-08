@@ -237,7 +237,7 @@ impl Color {
         match self {
             Color::Hex(s) => parse_hex_color(s),
             Color::Array(arr) => {
-                let r = arr.get(0).copied().unwrap_or(0);
+                let r = arr.first().copied().unwrap_or(0);
                 let g = arr.get(1).copied().unwrap_or(0);
                 let b = arr.get(2).copied().unwrap_or(0);
                 let a = arr.get(3).copied().unwrap_or(255);

@@ -53,14 +53,12 @@ fn parse_time_dimension(xml: &str, layer_name: &str) -> Result<Vec<String>> {
                     }
                     b"Dimension" if in_target_layer => {
                         // Check if this is the TIME dimension
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"name" {
-                                    let name = String::from_utf8_lossy(&attr.value);
-                                    if name == "TIME" {
-                                        in_dimension = true;
-                                        dimension_content.clear();
-                                    }
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"name" {
+                                let name = String::from_utf8_lossy(&attr.value);
+                                if name == "TIME" {
+                                    in_dimension = true;
+                                    dimension_content.clear();
                                 }
                             }
                         }

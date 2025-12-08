@@ -44,7 +44,7 @@ impl TileGridLut {
     pub fn new() -> Self {
         Self {
             indices: vec![(f32::NAN, f32::NAN); PIXELS_PER_TILE],
-            valid_bitmap: vec![0u64; (PIXELS_PER_TILE + 63) / 64],
+            valid_bitmap: vec![0u64; PIXELS_PER_TILE.div_ceil(64)],
         }
     }
 
@@ -100,7 +100,7 @@ impl TileGridLut {
 
     /// Deserialize from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, LutError> {
-        let expected_size = PIXELS_PER_TILE * 8 + ((PIXELS_PER_TILE + 63) / 64) * 8;
+        let expected_size = PIXELS_PER_TILE * 8 + PIXELS_PER_TILE.div_ceil(64) * 8;
         if bytes.len() != expected_size {
             return Err(LutError::InvalidSize {
                 expected: expected_size,
@@ -130,7 +130,7 @@ impl TileGridLut {
         }
 
         // Read validity bitmap
-        let bitmap_words = (PIXELS_PER_TILE + 63) / 64;
+        let bitmap_words = PIXELS_PER_TILE.div_ceil(64);
         let mut valid_bitmap = Vec::with_capacity(bitmap_words);
         for _ in 0..bitmap_words {
             let word = u64::from_le_bytes([
@@ -155,7 +155,7 @@ impl TileGridLut {
 
     /// Size in bytes when serialized.
     pub fn byte_size() -> usize {
-        PIXELS_PER_TILE * 8 + ((PIXELS_PER_TILE + 63) / 64) * 8
+        PIXELS_PER_TILE * 8 + PIXELS_PER_TILE.div_ceil(64) * 8
     }
 }
 

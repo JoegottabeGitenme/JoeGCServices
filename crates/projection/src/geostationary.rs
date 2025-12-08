@@ -299,12 +299,12 @@ mod tests {
 
             // Should be within the grid (5000 x 3000)
             assert!(
-                i >= 0.0 && i < 5000.0,
+                (0.0..5000.0).contains(&i),
                 "i should be in grid [0, 5000), got {}",
                 i
             );
             assert!(
-                j >= 0.0 && j < 3000.0,
+                (0.0..3000.0).contains(&j),
                 "j should be in grid [0, 3000), got {}",
                 j
             );
@@ -399,9 +399,9 @@ mod tests {
             if let Some((lat, lon)) = proj.grid_to_geo(i, j) {
                 println!("Corner ({}, {}) -> lat={:.2}, lon={:.2}", i, j, lat, lon);
                 // All corners should be on Earth (valid coordinates)
-                assert!(lat >= -90.0 && lat <= 90.0, "Invalid latitude: {}", lat);
+                assert!((-90.0..=90.0).contains(&lat), "Invalid latitude: {}", lat);
                 assert!(
-                    lon >= -180.0 && lon <= 180.0,
+                    (-180.0..=180.0).contains(&lon),
                     "Invalid longitude: {}",
                     lon
                 );

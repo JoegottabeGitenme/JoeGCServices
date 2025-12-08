@@ -884,6 +884,6 @@ mod tests {
             0.0, 0.0, 0.0,
         ];
         let segments = march_squares(&data, 3, 3, 5.0);
-        assert!(segments.len() > 0); // Should generate contour around peak
+        assert!(!segments.is_empty()); // Should generate contour around peak
     }
 }

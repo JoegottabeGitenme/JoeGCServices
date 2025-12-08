@@ -287,7 +287,7 @@ async fn downloads_handler(
             params
                 .model
                 .as_ref()
-                .map_or(true, |m| r.model.as_ref() == Some(m))
+                .is_none_or(|m| r.model.as_ref() == Some(m))
         })
         .take(limit)
         .map(record_to_active)
@@ -303,7 +303,7 @@ async fn downloads_handler(
             params
                 .model
                 .as_ref()
-                .map_or(true, |m| r.model.as_ref() == Some(m))
+                .is_none_or(|m| r.model.as_ref() == Some(m))
         })
         .take(limit)
         .map(record_to_active)
@@ -319,7 +319,7 @@ async fn downloads_handler(
             params
                 .model
                 .as_ref()
-                .map_or(true, |m| r.model.as_ref() == Some(m))
+                .is_none_or(|m| r.model.as_ref() == Some(m))
         })
         .take(limit)
         .map(record_to_active)
@@ -335,7 +335,7 @@ async fn downloads_handler(
             params
                 .model
                 .as_ref()
-                .map_or(true, |m| r.model.as_ref() == Some(m))
+                .is_none_or(|m| r.model.as_ref() == Some(m))
         })
         .map(|r| CompletedDownloadResponse {
             url: r.url,

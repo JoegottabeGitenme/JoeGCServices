@@ -265,8 +265,8 @@ mod tests {
         // 100x100 grid, 256x256 image, want 60px spacing
         let (step_y, step_x) = calculate_grid_sampling(100, 100, 256, 256, 60);
         // Each grid cell is ~2.56 pixels, so we need ~24 cells to get 60 pixels
-        assert!(step_x >= 23 && step_x <= 25);
-        assert!(step_y >= 23 && step_y <= 25);
+        assert!((23..=25).contains(&step_x));
+        assert!((23..=25).contains(&step_y));
     }
 
     #[test]

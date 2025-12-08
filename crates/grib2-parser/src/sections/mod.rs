@@ -276,7 +276,7 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         };
         
         Ok(GridDefinition {
-            grid_shape: gd.get(0).copied().unwrap_or(0),
+            grid_shape: gd.first().copied().unwrap_or(0),
             num_points_latitude: nj,
             num_points_longitude: ni,
             first_latitude_millidegrees: 0,

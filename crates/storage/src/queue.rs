@@ -49,7 +49,7 @@ impl JobQueue {
             .arg(STREAM_KEY)
             .arg("*")
             .arg("job_id")
-            .arg(&job.id.to_string())
+            .arg(job.id.to_string())
             .arg("data")
             .arg(&job_json)
             .query_async(&mut self.conn)

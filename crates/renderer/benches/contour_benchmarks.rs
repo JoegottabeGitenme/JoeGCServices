@@ -38,15 +38,15 @@ fn generate_noisy_field(width: usize, height: usize) -> Vec<f32> {
 }
 
 /// Generate a simple linear gradient field.
-fn generate_linear_field(width: usize, height: usize) -> Vec<f32> {
-    let mut data = vec![0.0f32; width * height];
-    for y in 0..height {
-        for x in 0..width {
-            data[y * width + x] = (x as f32 / width as f32) * 100.0;
-        }
-    }
-    data
-}
+// fn generate_linear_field(width: usize, height: usize) -> Vec<f32> {
+//     let mut data = vec![0.0f32; width * height];
+//     for y in 0..height {
+//         for x in 0..width {
+//             data[y * width + x] = (x as f32 / width as f32) * 100.0;
+//         }
+//     }
+//     data
+// }
 
 // =============================================================================
 // CONTOUR LEVEL GENERATION BENCHMARKS

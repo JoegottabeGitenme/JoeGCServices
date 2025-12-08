@@ -187,13 +187,13 @@ impl ProjectionLuts {
     }
     
     /// Get the LUT for a satellite, if available.
-    pub fn get(&self, satellite: &str) -> Option<&ProjectionLutCache> {
-        match satellite {
-            "goes16" | "goes" => self.goes16.as_ref(),
-            "goes18" => self.goes18.as_ref(),
-            _ => None,
-        }
-    }
+    // pub fn get(&self, satellite: &str) -> Option<&ProjectionLutCache> {
+    //     match satellite {
+    //         "goes16" | "goes" => self.goes16.as_ref(),
+    //         "goes18" => self.goes18.as_ref(),
+    //         _ => None,
+    //     }
+    // }
     
     /// Check if any LUTs are loaded.
     pub fn is_empty(&self) -> bool {

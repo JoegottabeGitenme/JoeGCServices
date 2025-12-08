@@ -373,9 +373,9 @@ impl Scheduler {
                                                 if key.ends_with(".grib2.gz") && key.contains(product) {
                                                     // Extract timestamp from filename
                                                     // Example: CONUS/MergedReflectivityQC_00.50/20251202/MRMS_MergedReflectivityQC_00.50_20251202-005440.grib2.gz
-                                                    if let Some(filename) = key.split('/').last() {
+                                                    if let Some(filename) = key.split('/').next_back() {
                                                         // Parse timestamp from filename (YYYYMMDD-HHMMSS)
-                                                        if let Some(timestamp_part) = filename.split('_').last() {
+                                                        if let Some(timestamp_part) = filename.split('_').next_back() {
                                                             let timestamp_str = timestamp_part.replace(".grib2.gz", "");
                                                             // Format: 20251202-175037 (YYYYMMDD-HHMMSS, total 15 chars including hyphen)
                                                             // Remove hyphen for easier parsing
@@ -458,8 +458,7 @@ impl Scheduler {
             let hours_to_check = (lookback / 60).max(1);
             
             // Get configured bands from source
-            let bands = model.source.bands.as_ref()
-                .map(|b| b.clone())
+            let bands = model.source.bands.clone()
                 .unwrap_or_else(|| vec![2, 8, 13]); // Default: Red, WV, IR
             
             for hours_ago in 0..hours_to_check {
@@ -468,8 +467,7 @@ impl Scheduler {
                 
                 for band in &bands {
                     // S3 path pattern: ABI-L2-CMIPC/{year}/{day_of_year:03}/{hour:02}/
-                    let product = model.source.product.as_ref()
-                        .map(|s| s.as_str())
+                    let product = model.source.product.as_deref()
                         .unwrap_or("ABI-L2-CMIPC");
                     
                     let prefix = format!("{}/{}/{:03}/{:02}/", product, year, doy, hour);
@@ -499,7 +497,7 @@ impl Scheduler {
                                     
                                     // Extract timestamp from filename for output filename
                                     // Example: OR_ABI-L2-CMIPC-M6C02_G16_s20242350000000_e20242350009308_c20242350009356.nc
-                                    let filename = key.split('/').last().unwrap_or(&key);
+                                    let filename = key.split('/').next_back().unwrap_or(&key);
                                     let output_filename = format!("goes{}_{}", satellite_num, filename);
                                     
                                     debug!(

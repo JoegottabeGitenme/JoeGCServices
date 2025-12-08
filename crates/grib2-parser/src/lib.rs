@@ -155,7 +155,7 @@ impl Grib2Message {
             .map_err(|e| Grib2Error::UnpackingError(format!("Failed to parse with grib crate: {}", e)))?;
         
         // Get the first (and should be only) submessage and decode immediately
-        for (_index, submessage) in grib_file.iter() {
+        if let Some((_index, submessage)) = grib_file.iter().next() {
             // Create decoder and dispatch
             let decoder = grib::Grib2SubmessageDecoder::from(submessage)
                 .map_err(|e| Grib2Error::UnpackingError(format!("Failed to create decoder: {}", e)))?;

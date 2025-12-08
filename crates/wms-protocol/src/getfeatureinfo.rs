@@ -32,12 +32,14 @@ pub struct GetFeatureInfoRequest {
 
 /// Supported GetFeatureInfo response formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Default)]
 pub enum InfoFormat {
     /// application/json - Machine-readable JSON
     #[serde(rename = "application/json")]
     Json,
     /// text/html - Human-readable HTML for popups
     #[serde(rename = "text/html")]
+    #[default]
     Html,
     /// text/xml - OGC-compliant XML
     #[serde(rename = "text/xml")]
@@ -70,11 +72,6 @@ impl InfoFormat {
     }
 }
 
-impl Default for InfoFormat {
-    fn default() -> Self {
-        InfoFormat::Html
-    }
-}
 
 /// Feature information for a single layer at a point
 #[derive(Debug, Clone, Serialize, Deserialize)]

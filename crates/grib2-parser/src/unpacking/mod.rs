@@ -53,7 +53,7 @@ pub fn unpack_simple(
         }
 
         // Extract bits from data
-        let packed_value = extract_bits(&packed_data, bit_position, bits_per_value)
+        let packed_value = extract_bits(packed_data, bit_position, bits_per_value)
             .map_err(|e| Grib2Error::UnpackingError(format!("Failed to extract bits: {}", e)))?;
 
         bit_position += bits_per_value;

@@ -528,94 +528,6 @@ fn validate_model_config(config: &ModelConfig) -> Result<()> {
 }
 
 // ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_expand_env_vars_simple() {
-        std::env::set_var("TEST_VAR", "test_value");
-        let result = expand_env_vars("prefix_${TEST_VAR}_suffix").unwrap();
-        assert_eq!(result, "prefix_test_value_suffix");
-    }
-    
-    #[test]
-    fn test_expand_env_vars_with_default() {
-        std::env::remove_var("NONEXISTENT_VAR");
-        let result = expand_env_vars("value_${NONEXISTENT_VAR:-default}_end").unwrap();
-        assert_eq!(result, "value_default_end");
-    }
-    
-    #[test]
-    fn test_expand_env_vars_missing_required() {
-        std::env::remove_var("REQUIRED_VAR");
-        let result = expand_env_vars("${REQUIRED_VAR}");
-        assert!(result.is_err());
-    }
-    
-    #[test]
-    fn test_resolve_var_expr_with_default() {
-        std::env::remove_var("UNSET_VAR");
-        let result = resolve_var_expr("UNSET_VAR:-5432").unwrap();
-        assert_eq!(result, "5432");
-    }
-    
-    #[test]
-    fn test_resolve_var_expr_override_default() {
-        std::env::set_var("SET_VAR", "custom");
-        let result = resolve_var_expr("SET_VAR:-default").unwrap();
-        assert_eq!(result, "custom");
-    }
-    
-    #[test]
-    #[ignore] // Run with: cargo test --package ingester -- --ignored --nocapture
-    fn test_load_real_yaml_configs() {
-        use std::env;
-        
-        // Set required env vars
-        env::set_var("POSTGRES_HOST", "localhost");
-        env::set_var("POSTGRES_PORT", "5432");
-        env::set_var("POSTGRES_DB", "weather");
-        env::set_var("POSTGRES_USER", "test");
-        env::set_var("POSTGRES_PASSWORD", "testpass");
-        env::set_var("REDIS_HOST", "localhost");
-        env::set_var("REDIS_PORT", "6379");
-        env::set_var("REDIS_PASSWORD", "");
-        env::set_var("DATA_DIR", "/tmp/data");
-        env::set_var("S3_ENDPOINT", "http://minio:9000");
-        env::set_var("S3_BUCKET", "weather");
-        env::set_var("S3_ACCESS_KEY", "test");
-        env::set_var("S3_SECRET_KEY", "test");
-        
-        // Load all configs (from workspace root)
-        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let workspace_root = std::path::Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
-        let all_configs = load_all_configs(workspace_root).expect("Failed to load configs");
-        
-        println!("\nLoaded configs:");
-        println!("  Models: {}", all_configs.models.len());
-        println!("  Parameter tables: {}", all_configs.parameter_tables.len());
-        
-        assert!(all_configs.models.contains_key("gfs"), "GFS model not loaded");
-        assert!(all_configs.models.contains_key("hrrr"), "HRRR model not loaded");
-        
-        // Convert to runtime config
-        let runtime_cfg = all_configs.to_runtime_config()
-            .expect("Failed to convert to runtime config");
-        
-        println!("\nRuntime config:");
-        println!("  Models: {}", runtime_cfg.models.len());
-        println!("  Parallel downloads: {}", runtime_cfg.parallel_downloads);
-        
-        assert!(!runtime_cfg.models.is_empty(), "No runtime models loaded");
-        assert!(runtime_cfg.models.contains_key("gfs"), "GFS not in runtime models");
-    }
-}
-
-// ============================================================================
 // Conversion to Runtime Config
 // ============================================================================
 
@@ -708,7 +620,7 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
             // Use prefix_template or fall back to path_pattern for MRMS
             prefix_template: cfg.source.prefix_template.clone()
                 .or_else(|| cfg.source.path_template.clone())
-                .unwrap_or_else(|| String::new()),
+                .unwrap_or_default(),
         },
         "aws_s3_goes" => {
             // GOES satellite data on AWS
@@ -793,4 +705,92 @@ fn sanitize_level(level: &str) -> String {
         .replace(" ", "_")
         .replace(".", "")
         .replace("-", "_")
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_expand_env_vars_simple() {
+        std::env::set_var("TEST_VAR", "test_value");
+        let result = expand_env_vars("prefix_${TEST_VAR}_suffix").unwrap();
+        assert_eq!(result, "prefix_test_value_suffix");
+    }
+    
+    #[test]
+    fn test_expand_env_vars_with_default() {
+        std::env::remove_var("NONEXISTENT_VAR");
+        let result = expand_env_vars("value_${NONEXISTENT_VAR:-default}_end").unwrap();
+        assert_eq!(result, "value_default_end");
+    }
+    
+    #[test]
+    fn test_expand_env_vars_missing_required() {
+        std::env::remove_var("REQUIRED_VAR");
+        let result = expand_env_vars("${REQUIRED_VAR}");
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_resolve_var_expr_with_default() {
+        std::env::remove_var("UNSET_VAR");
+        let result = resolve_var_expr("UNSET_VAR:-5432").unwrap();
+        assert_eq!(result, "5432");
+    }
+    
+    #[test]
+    fn test_resolve_var_expr_override_default() {
+        std::env::set_var("SET_VAR", "custom");
+        let result = resolve_var_expr("SET_VAR:-default").unwrap();
+        assert_eq!(result, "custom");
+    }
+    
+    #[test]
+    #[ignore] // Run with: cargo test --package ingester -- --ignored --nocapture
+    fn test_load_real_yaml_configs() {
+        use std::env;
+        
+        // Set required env vars
+        env::set_var("POSTGRES_HOST", "localhost");
+        env::set_var("POSTGRES_PORT", "5432");
+        env::set_var("POSTGRES_DB", "weather");
+        env::set_var("POSTGRES_USER", "test");
+        env::set_var("POSTGRES_PASSWORD", "testpass");
+        env::set_var("REDIS_HOST", "localhost");
+        env::set_var("REDIS_PORT", "6379");
+        env::set_var("REDIS_PASSWORD", "");
+        env::set_var("DATA_DIR", "/tmp/data");
+        env::set_var("S3_ENDPOINT", "http://minio:9000");
+        env::set_var("S3_BUCKET", "weather");
+        env::set_var("S3_ACCESS_KEY", "test");
+        env::set_var("S3_SECRET_KEY", "test");
+        
+        // Load all configs (from workspace root)
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let workspace_root = std::path::Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
+        let all_configs = load_all_configs(workspace_root).expect("Failed to load configs");
+        
+        println!("\nLoaded configs:");
+        println!("  Models: {}", all_configs.models.len());
+        println!("  Parameter tables: {}", all_configs.parameter_tables.len());
+        
+        assert!(all_configs.models.contains_key("gfs"), "GFS model not loaded");
+        assert!(all_configs.models.contains_key("hrrr"), "HRRR model not loaded");
+        
+        // Convert to runtime config
+        let runtime_cfg = all_configs.to_runtime_config()
+            .expect("Failed to convert to runtime config");
+        
+        println!("\nRuntime config:");
+        println!("  Models: {}", runtime_cfg.models.len());
+        println!("  Parallel downloads: {}", runtime_cfg.parallel_downloads);
+        
+        assert!(!runtime_cfg.models.is_empty(), "No runtime models loaded");
+        assert!(runtime_cfg.models.contains_key("gfs"), "GFS not in runtime models");
+    }
 }

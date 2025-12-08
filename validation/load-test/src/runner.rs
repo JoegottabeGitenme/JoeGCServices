@@ -141,11 +141,7 @@ impl LoadRunner {
         let mut warmup_complete = false;
 
         // Rate limiting setup
-        let request_interval = if let Some(rps) = self.config.requests_per_second {
-            Some(Duration::from_secs_f64(1.0 / rps))
-        } else {
-            None
-        };
+        let request_interval = self.config.requests_per_second.map(|rps| Duration::from_secs_f64(1.0 / rps));
         let mut last_request_time = Instant::now();
 
         // Main request loop

@@ -184,7 +184,7 @@ impl StartupValidator {
         let failed = results.iter().filter(|r| !r.success && r.error.is_some()).count();
         let skipped = results.iter().filter(|r| !r.success && r.error.is_none()).count();
         
-        let all_known_models = vec!["gfs", "hrrr", "goes16", "goes18", "mrms"];
+        let all_known_models = ["gfs", "hrrr", "goes16", "goes18", "mrms"];
         let models_missing: Vec<String> = all_known_models
             .iter()
             .filter(|m| !available_models.contains(&m.to_string()))

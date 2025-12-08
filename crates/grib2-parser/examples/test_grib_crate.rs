@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(values) => {
                             let vals: Vec<_> = values.collect();
                             println!("✓ Successfully decoded {} values!", vals.len());
-                            if vals.len() > 0 {
+                            if !vals.is_empty() {
                                 println!("  First 10 values: {:?}", &vals[0..10.min(vals.len())]);
                                 // Calculate some stats
                                 let min = vals.iter().cloned().fold(f32::INFINITY, f32::min);

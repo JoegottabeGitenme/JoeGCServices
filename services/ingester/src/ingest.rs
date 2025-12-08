@@ -70,7 +70,7 @@ impl IngestionPipeline {
 
     /// Ingest all configured models.
     pub async fn ingest_all(&self) -> Result<()> {
-        for (model_id, _model_config) in &self.config.models {
+        for model_id in self.config.models.keys() {
             if let Err(e) = self.ingest_model(model_id).await {
                 error!(model = %model_id, error = %e, "Model ingestion failed");
             }
@@ -200,7 +200,7 @@ impl IngestionPipeline {
             model_id,
             date,
             cycle,
-            file.path.split('/').last().unwrap_or(&file.path)
+            file.path.split('/').next_back().unwrap_or(&file.path)
         );
 
         if self.storage.exists(&storage_path).await? {
@@ -281,7 +281,7 @@ impl IngestionPipeline {
         file_size: u64,
     ) -> Result<()> {
         // Parse filename to extract band and time info
-        let filename = file.path.split('/').last().unwrap_or(&file.path);
+        let filename = file.path.split('/').next_back().unwrap_or(&file.path);
         
         // Extract band number from filename (e.g., "C02" from "...M6C02_G16...")
         let band = filename

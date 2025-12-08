@@ -9,7 +9,7 @@ use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, debug};
-use projection::{LambertConformal, Geostationary, resample_with_lut};
+use projection::{LambertConformal, Geostationary};
 use crate::metrics::{MetricsCollector, DataSourceType};
 use crate::state::ProjectionLuts;
 

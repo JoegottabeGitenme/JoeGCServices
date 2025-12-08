@@ -11,3 +11,6 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 nom = "7"
 grib = { workspace = true }
+
+[dev-dependencies]
+renderer = { path = "../renderer" }

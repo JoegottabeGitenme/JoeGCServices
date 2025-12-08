@@ -106,7 +106,7 @@ impl CleanupConfig {
         if let Ok(entries) = std::fs::read_dir(&models_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+                if path.extension().is_some_and(|e| e == "yaml" || e == "yml") {
                     if let Ok(contents) = std::fs::read_to_string(&path) {
                         match serde_yaml::from_str::<ModelConfigFile>(&contents) {
                             Ok(config) => {

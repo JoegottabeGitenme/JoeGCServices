@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_calculate_barb_positions() {
         let positions = calculate_barb_positions(200, 200, 50);
-        assert!(positions.len() > 0, "Should generate some positions");
+        assert!(!positions.is_empty(), "Should generate some positions");
         
         // Check that positions are reasonably spaced
         if positions.len() >= 2 {

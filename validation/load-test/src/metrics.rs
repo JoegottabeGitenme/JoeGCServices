@@ -233,7 +233,7 @@ impl GitInfo {
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
         
         // Get commit author
         let commit_author = Command::new("git")
@@ -242,7 +242,7 @@ impl GitInfo {
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
         
         // Get commit date
         let commit_date = Command::new("git")
@@ -251,7 +251,7 @@ impl GitInfo {
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
         
         // Check if working directory is dirty
         let is_dirty = Command::new("git")

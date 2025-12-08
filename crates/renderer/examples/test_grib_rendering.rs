@@ -40,7 +40,7 @@ fn main() {
                 }
             }
         }
-        let (speed, dir) = uv_to_speed_direction(*u, *v);
+        let (_, dir) = uv_to_speed_direction(*u, *v);
         println!("{:4} wind at ({:3},{:3}): U={:5.1}, V={:5.1} -> dir={:5.1}°", 
             name, cx, cy, u, v, dir.to_degrees());
     }

@@ -7,11 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Scanning for GRIB2 sections...\n");
     
     // GRIB2 format: sections are preceded by a 4-byte length field and 1-byte section number
-    let mut offset = 0;
-    
     // Skip GRIB header (should be first 16 bytes)
     println!("Header (0-16): {:?}", String::from_utf8_lossy(&grib_data[0..16]));
-    offset = 16;
+    let mut offset = 16;
     
     let mut section_num = 0;
     while offset < grib_data.len().min(offset + 5000) && section_num < 10 {

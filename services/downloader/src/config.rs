@@ -247,7 +247,7 @@ pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
         let entry = entry?;
         let path = entry.path();
         
-        if path.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
+        if path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
             match ModelConfig::load(&path) {
                 Ok(config) => {
                     if config.model.enabled {

@@ -443,8 +443,7 @@ async fn test_file_ingestion(
             
             // Create a sanitized level string for the path (replace spaces and special chars)
             let level_sanitized = level
-                .replace(' ', "_")
-                .replace('/', "_")
+                .replace([' ', '/'], "_")
                 .to_lowercase();
             
             // New shredded storage path structure:

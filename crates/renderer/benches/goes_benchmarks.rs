@@ -20,6 +20,7 @@ use projection::{compute_tile_lut, resample_with_lut};
 use rand::Rng;
 use renderer::png;
 use std::io::{Read, Write};
+use std::path::Path;
 
 // =============================================================================
 // TEMP FILE I/O BENCHMARKS (PRIMARY BOTTLENECK)

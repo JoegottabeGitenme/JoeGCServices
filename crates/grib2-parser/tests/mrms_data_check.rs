@@ -1,7 +1,6 @@
 use grib2_parser::Grib2Reader;
 use std::fs;
 use bytes::Bytes;
-use std::collections::HashMap;
 
 #[test]
 fn test_mrms_data_distribution() {

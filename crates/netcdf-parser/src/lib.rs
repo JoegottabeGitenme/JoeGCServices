@@ -487,42 +487,6 @@ fn parse_float_from_ncdump<P: AsRef<Path>>(path: P, var: &str) -> NetCdfResult<f
     Err(NetCdfError::MissingData(var.to_string()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_goes_projection_roundtrip() {
-        let proj = GoesProjection::goes16();
-        
-        // Test a point near the center of CONUS
-        let (lon, lat) = (-95.0, 35.0);
-        
-        if let Some((x, y)) = proj.from_geographic(lon, lat) {
-            if let Some((lon2, lat2)) = proj.to_geographic(x, y) {
-                // Allow ~0.1 degree tolerance due to float precision and projection approximations
-                assert!((lon - lon2).abs() < 0.15, "Longitude mismatch: {} vs {}", lon, lon2);
-                assert!((lat - lat2).abs() < 0.15, "Latitude mismatch: {} vs {}", lat, lat2);
-            } else {
-                panic!("Failed to convert back to geographic");
-            }
-        } else {
-            panic!("Failed to convert to geostationary");
-        }
-    }
-
-    #[test]
-    fn test_goes_projection_off_earth() {
-        let proj = GoesProjection::goes16();
-        
-        // A point that should be off Earth (large scan angle)
-        let result = proj.to_geographic(0.5, 0.5);  // ~28 degrees
-        // This might or might not be visible depending on exact geometry
-        // The important thing is it doesn't panic
-        println!("Off-earth test result: {:?}", result);
-    }
-}
-
 /// Get the optimal temp directory for NetCDF file operations.
 /// 
 /// On Linux, uses /dev/shm (memory-backed tmpfs) if available for faster I/O.
@@ -659,4 +623,40 @@ fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
 fn get_i16_attr(var: &netcdf::Variable, name: &str) -> Option<i16> {
     let attr_value = var.attribute_value(name)?.ok()?;
     i16::try_from(attr_value).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_goes_projection_roundtrip() {
+        let proj = GoesProjection::goes16();
+        
+        // Test a point near the center of CONUS
+        let (lon, lat) = (-95.0, 35.0);
+        
+        if let Some((x, y)) = proj.from_geographic(lon, lat) {
+            if let Some((lon2, lat2)) = proj.to_geographic(x, y) {
+                // Allow ~0.1 degree tolerance due to float precision and projection approximations
+                assert!((lon - lon2).abs() < 0.15, "Longitude mismatch: {} vs {}", lon, lon2);
+                assert!((lat - lat2).abs() < 0.15, "Latitude mismatch: {} vs {}", lat, lat2);
+            } else {
+                panic!("Failed to convert back to geographic");
+            }
+        } else {
+            panic!("Failed to convert to geostationary");
+        }
+    }
+
+    #[test]
+    fn test_goes_projection_off_earth() {
+        let proj = GoesProjection::goes16();
+        
+        // A point that should be off Earth (large scan angle)
+        let result = proj.to_geographic(0.5, 0.5);  // ~28 degrees
+        // This might or might not be visible depending on exact geometry
+        // The important thing is it doesn't panic
+        println!("Off-earth test result: {:?}", result);
+    }
 }

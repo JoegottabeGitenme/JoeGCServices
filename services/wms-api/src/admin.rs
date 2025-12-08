@@ -403,7 +403,7 @@ pub async fn ingestion_log_handler(
                 .into_iter()
                 .filter(|d| {
                     // Filter by model if specified
-                    params.model.as_ref().map_or(true, |m| &d.model == m)
+                    params.model.as_ref().is_none_or(|m| &d.model == m)
                 })
                 .take(limit)
                 .map(|d| IngestionLogEntry {
@@ -652,8 +652,7 @@ async fn ingest_file(
             
             // Sanitize level for path
             let level_sanitized = level
-                .replace(' ', "_")
-                .replace('/', "_")
+                .replace([' ', '/'], "_")
                 .to_lowercase();
             
             // Storage path: shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
@@ -937,7 +936,7 @@ fn extract_forecast_hour_from_filename(file_path: &str) -> Option<u32> {
     // Pattern: z_f### at end (our download naming)
     if let Some(pos) = filename.find("z_f") {
         let rest = &filename[pos + 3..];
-        if let Some(hour) = rest.parse::<u32>().ok() {
+        if let Ok(hour) = rest.parse::<u32>() {
             return Some(hour);
         }
     }
