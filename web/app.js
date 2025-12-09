@@ -71,6 +71,58 @@ const metricMemoryEl = document.getElementById('metric-memory');
 const metricThreadsEl = document.getElementById('metric-threads');
 const metricUptimeEl = document.getElementById('metric-uptime');
 
+// Info Bar Cache Elements - L1
+const infoL1HitsEl = document.getElementById('info-l1-hits');
+const infoL1RateEl = document.getElementById('info-l1-rate');
+const infoL1TilesEl = document.getElementById('info-l1-tiles');
+const infoL1SizeEl = document.getElementById('info-l1-size');
+// Info Bar Cache Elements - L2
+const infoL2HitsEl = document.getElementById('info-l2-hits');
+const infoL2RateEl = document.getElementById('info-l2-rate');
+const infoL2TilesEl = document.getElementById('info-l2-tiles');
+const infoL2SizeEl = document.getElementById('info-l2-size');
+
+// Info Bar Grid Cache Elements
+const infoGridParsesEl = document.getElementById('info-grid-parses');
+const infoGridHitsEl = document.getElementById('info-grid-hits');
+const infoGridRateEl = document.getElementById('info-grid-rate');
+
+// Info Bar System Stats Elements
+const infoSysCpusEl = document.getElementById('info-sys-cpus');
+const infoSysLoad1El = document.getElementById('info-sys-load1');
+const infoSysLoad5El = document.getElementById('info-sys-load5');
+const infoSysRamUsedEl = document.getElementById('info-sys-ram-used');
+const infoSysRamTotalEl = document.getElementById('info-sys-ram-total');
+const infoSysRamPctEl = document.getElementById('info-sys-ram-pct');
+const infoSysStorageEl = document.getElementById('info-sys-storage');
+const infoSysFilesEl = document.getElementById('info-sys-files');
+const infoSysUptimeEl = document.getElementById('info-sys-uptime');
+
+// Info Bar Request Stats Elements
+const infoWmsTotalEl = document.getElementById('info-wms-total');
+const infoWms1mEl = document.getElementById('info-wms-1m');
+const infoWms5mEl = document.getElementById('info-wms-5m');
+const infoWmtsTotalEl = document.getElementById('info-wmts-total');
+const infoWmts1mEl = document.getElementById('info-wmts-1m');
+const infoWmts5mEl = document.getElementById('info-wmts-5m');
+const infoRenderTotalEl = document.getElementById('info-render-total');
+const infoRender1mEl = document.getElementById('info-render-1m');
+const infoRender5mEl = document.getElementById('info-render-5m');
+const infoRenderAvgEl = document.getElementById('info-render-avg');
+const infoRenderMinMaxEl = document.getElementById('info-render-minmax');
+
+// Info Bar Data Stats Elements
+const infoDataFilesEl = document.getElementById('info-data-files');
+const infoDataSizeEl = document.getElementById('info-data-size');
+const infoDataDatasetsEl = document.getElementById('info-data-datasets');
+const infoDataParamsEl = document.getElementById('info-data-params');
+const infoDataModelsEl = document.getElementById('info-data-models');
+const infoDataRawEl = document.getElementById('info-data-raw');
+const infoDataShreddedEl = document.getElementById('info-data-shredded');
+const infoRedisStatusEl = document.getElementById('info-redis-status');
+const infoRedisKeysEl = document.getElementById('info-redis-keys');
+const infoRedisMemoryEl = document.getElementById('info-redis-memory');
+
 // State for layer selection
 let availableLayers = [];
 let layerStyles = {}; // Map of layer name -> array of styles
@@ -1322,6 +1374,7 @@ function initIngestionStatus() {
     checkIngestionStatus();
     fetchBackendMetrics();
     fetchContainerStats();
+    fetchDataStats();
     // Refresh ingestion status every 10 seconds
     ingestionStatusInterval = setInterval(() => {
         checkIngestionStatus();
@@ -1330,6 +1383,41 @@ function initIngestionStatus() {
     setInterval(fetchBackendMetrics, 2000);
     // Refresh container stats every 5 seconds
     setInterval(fetchContainerStats, 5000);
+    // Refresh data stats every 30 seconds
+    setInterval(fetchDataStats, 30000);
+}
+
+// Fetch data/ingestion stats from admin API
+async function fetchDataStats() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/ingestion/status`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const catalog = data.catalog_summary || {};
+        const models = data.models || [];
+        
+        // Update Info Bar data stats
+        if (infoDataDatasetsEl) {
+            infoDataDatasetsEl.textContent = (catalog.total_datasets ?? 0).toLocaleString();
+        }
+        if (infoDataParamsEl) {
+            infoDataParamsEl.textContent = (catalog.total_parameters ?? 0).toLocaleString();
+        }
+        if (infoDataModelsEl) {
+            // Count active models
+            const activeModels = models.filter(m => m.status === 'active').length;
+            infoDataModelsEl.textContent = activeModels.toLocaleString();
+        }
+        if (infoDataRawEl) {
+            infoDataRawEl.textContent = (catalog.raw_object_count ?? 0).toLocaleString();
+        }
+        if (infoDataShreddedEl) {
+            infoDataShreddedEl.textContent = (catalog.shredded_object_count ?? 0).toLocaleString();
+        }
+    } catch (error) {
+        console.error('Error fetching data stats:', error);
+    }
 }
 
 // Check ingestion status from catalog database
@@ -1442,6 +1530,22 @@ async function fetchStorageStats() {
         if (response.ok) {
             const stats = await response.json();
             storageSizeEl.textContent = `${formatBytes(stats.total_size)} (${stats.object_count} files)`;
+            
+            // Update Info Bar storage stats
+            if (infoSysStorageEl) {
+                infoSysStorageEl.textContent = formatBytes(stats.total_size);
+            }
+            if (infoSysFilesEl) {
+                infoSysFilesEl.textContent = stats.object_count.toLocaleString();
+            }
+            
+            // Update Info Bar data stats
+            if (infoDataFilesEl) {
+                infoDataFilesEl.textContent = stats.object_count.toLocaleString();
+            }
+            if (infoDataSizeEl) {
+                infoDataSizeEl.textContent = formatBytes(stats.total_size);
+            }
         }
     } catch (error) {
         console.error('Error fetching storage stats:', error);
@@ -1460,11 +1564,11 @@ async function fetchBackendMetrics() {
         const system = data.system || {};
         const cache = data.cache || {};
         
-        // Update request counts
+        // Update request counts (sidebar)
         if (metricWmsRequestsEl) metricWmsRequestsEl.textContent = metrics.wms_requests ?? 0;
         if (metricWmtsRequestsEl) metricWmtsRequestsEl.textContent = metrics.wmts_requests ?? 0;
         
-        // Update render stats
+        // Update render stats (sidebar)
         if (metricRendersEl) {
             const errors = (metrics.render_errors ?? 0) > 0 ? ` (${metrics.render_errors} err)` : '';
             metricRendersEl.textContent = (metrics.renders_total ?? 0) + errors;
@@ -1478,6 +1582,43 @@ async function fetchBackendMetrics() {
             const lastMs = (metrics.render_last_ms ?? 0).toFixed(0);
             metricRenderLastEl.textContent = `${lastMs}ms`;
             metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms ?? 0);
+        }
+        
+        // Update Info Bar request stats
+        if (infoWmsTotalEl) {
+            infoWmsTotalEl.textContent = (metrics.wms_requests ?? 0).toLocaleString();
+        }
+        if (infoWms1mEl) {
+            infoWms1mEl.textContent = (metrics.wms_count_1m ?? 0).toLocaleString();
+        }
+        if (infoWms5mEl) {
+            infoWms5mEl.textContent = (metrics.wms_count_5m ?? 0).toLocaleString();
+        }
+        if (infoWmtsTotalEl) {
+            infoWmtsTotalEl.textContent = (metrics.wmts_requests ?? 0).toLocaleString();
+        }
+        if (infoWmts1mEl) {
+            infoWmts1mEl.textContent = (metrics.wmts_count_1m ?? 0).toLocaleString();
+        }
+        if (infoWmts5mEl) {
+            infoWmts5mEl.textContent = (metrics.wmts_count_5m ?? 0).toLocaleString();
+        }
+        if (infoRenderTotalEl) {
+            infoRenderTotalEl.textContent = (metrics.renders_total ?? 0).toLocaleString();
+        }
+        if (infoRender1mEl) {
+            infoRender1mEl.textContent = (metrics.render_count_1m ?? 0).toLocaleString();
+        }
+        if (infoRender5mEl) {
+            infoRender5mEl.textContent = (metrics.render_count_5m ?? 0).toLocaleString();
+        }
+        if (infoRenderAvgEl) {
+            infoRenderAvgEl.textContent = (metrics.render_avg_ms ?? 0).toFixed(0) + 'ms';
+        }
+        if (infoRenderMinMaxEl) {
+            const min = (metrics.render_min_ms ?? 0).toFixed(0);
+            const max = (metrics.render_max_ms ?? 0).toFixed(0);
+            infoRenderMinMaxEl.textContent = `${min}/${max}ms`;
         }
         
         // Update Redis cache stats (L2 cache)
@@ -1494,7 +1635,91 @@ async function fetchBackendMetrics() {
             metricCacheMemoryEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '--';
         }
         
-        // Update system stats
+        // Update Info Bar Redis stats
+        if (infoRedisStatusEl) {
+            const connected = l2Cache.connected ?? false;
+            infoRedisStatusEl.textContent = connected ? 'OK' : 'Down';
+            infoRedisStatusEl.style.color = connected ? '#10b981' : '#ef4444';
+        }
+        if (infoRedisKeysEl) {
+            infoRedisKeysEl.textContent = (l2Cache.key_count ?? 0).toLocaleString();
+        }
+        if (infoRedisMemoryEl) {
+            infoRedisMemoryEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
+        }
+        
+        // Update Info Bar L1 cache stats
+        const l1Cache = data.l1_cache || {};
+        if (infoL1HitsEl) {
+            infoL1HitsEl.textContent = (l1Cache.hits ?? 0).toLocaleString();
+        }
+        if (infoL1RateEl) {
+            infoL1RateEl.textContent = (l1Cache.hit_rate ?? 0).toFixed(1) + '%';
+        }
+        if (infoL1TilesEl) {
+            // Estimate tile count from hits + misses that weren't evicted
+            const l1Tiles = (l1Cache.hits ?? 0) + (l1Cache.misses ?? 0) - (l1Cache.evictions ?? 0) - (l1Cache.expired ?? 0);
+            infoL1TilesEl.textContent = Math.max(0, l1Tiles).toLocaleString();
+        }
+        if (infoL1SizeEl) {
+            infoL1SizeEl.textContent = formatBytes(l1Cache.size_bytes ?? 0);
+        }
+        
+        // Update Info Bar L2 cache stats
+        if (infoL2HitsEl) {
+            infoL2HitsEl.textContent = (metrics.cache_hits ?? 0).toLocaleString();
+        }
+        if (infoL2RateEl) {
+            infoL2RateEl.textContent = (metrics.cache_hit_rate ?? 0).toFixed(1) + '%';
+        }
+        if (infoL2TilesEl) {
+            infoL2TilesEl.textContent = (l2Cache.key_count ?? 0).toLocaleString();
+        }
+        if (infoL2SizeEl) {
+            infoL2SizeEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
+        }
+        
+        // Update Info Bar grid cache stats
+        const dataSourceStats = metrics.data_source_stats || {};
+        let totalParses = 0;
+        let totalHits = 0;
+        let totalMisses = 0;
+        
+        for (const [source, stats] of Object.entries(dataSourceStats)) {
+            totalParses += stats.parse_count || 0;
+            totalHits += stats.cache_hits || 0;
+            totalMisses += stats.cache_misses || 0;
+            
+            // Update per-source stats
+            const sourceEl = document.getElementById(`info-src-${source}`);
+            if (sourceEl) {
+                const rateEl = sourceEl.querySelector('.info-source-rate');
+                const timeEl = sourceEl.querySelector('.info-source-time');
+                
+                if (rateEl) {
+                    const rate = stats.cache_hit_rate || 0;
+                    rateEl.textContent = rate.toFixed(0) + '%';
+                    rateEl.className = 'info-source-rate' + (rate === 0 ? ' none' : rate < 20 ? ' low' : '');
+                }
+                if (timeEl) {
+                    const avgMs = stats.avg_parse_ms || 0;
+                    timeEl.textContent = avgMs < 1 ? '<1ms' : avgMs.toFixed(0) + 'ms';
+                }
+            }
+        }
+        
+        if (infoGridParsesEl) {
+            infoGridParsesEl.textContent = totalParses.toLocaleString();
+        }
+        if (infoGridHitsEl) {
+            infoGridHitsEl.textContent = totalHits.toLocaleString();
+        }
+        if (infoGridRateEl) {
+            const overallRate = totalParses > 0 ? (totalHits / (totalHits + totalMisses)) * 100 : 0;
+            infoGridRateEl.textContent = overallRate.toFixed(1) + '%';
+        }
+        
+        // Update system stats (sidebar)
         if (metricMemoryEl) {
             metricMemoryEl.textContent = system.memory_used_bytes ? formatBytes(system.memory_used_bytes) : '--';
         }
@@ -1503,6 +1728,11 @@ async function fetchBackendMetrics() {
         }
         if (metricUptimeEl) {
             metricUptimeEl.textContent = metrics.uptime_secs ? formatUptime(metrics.uptime_secs) : '--';
+        }
+        
+        // Update Info Bar system stats - uptime from metrics
+        if (infoSysUptimeEl) {
+            infoSysUptimeEl.textContent = metrics.uptime_secs ? formatUptime(metrics.uptime_secs) : '-';
         }
     } catch (error) {
         console.error('Error fetching backend metrics:', error);
@@ -1598,6 +1828,26 @@ function updateContainerStatsUI(data) {
     if (hostnameEl) {
         hostnameEl.textContent = container.hostname;
         hostnameEl.title = container.hostname;
+    }
+    
+    // Update Info Bar system stats
+    if (infoSysCpusEl) {
+        infoSysCpusEl.textContent = cpu.count;
+    }
+    if (infoSysLoad1El) {
+        infoSysLoad1El.textContent = cpu.load_1m.toFixed(2);
+    }
+    if (infoSysLoad5El) {
+        infoSysLoad5El.textContent = cpu.load_5m.toFixed(2);
+    }
+    if (infoSysRamUsedEl) {
+        infoSysRamUsedEl.textContent = formatBytes(process.rss_bytes);
+    }
+    if (infoSysRamTotalEl) {
+        infoSysRamTotalEl.textContent = formatBytes(memory.host_total_bytes);
+    }
+    if (infoSysRamPctEl) {
+        infoSysRamPctEl.textContent = memory.percent_used.toFixed(1) + '%';
     }
 }
 
@@ -1873,14 +2123,20 @@ async function checkValidationStatus() {
     }
 }
 
-// Run validation manually
+// Run validation manually (triggered by compliance badge click)
 async function runValidation() {
-    const button = document.getElementById('run-validation-btn');
-    const originalText = button.innerHTML;
+    const wmsBtn = document.getElementById('wms-compliance-btn');
+    const wmtsBtn = document.getElementById('wmts-compliance-btn');
     
-    // Disable button and show loading state
-    button.disabled = true;
-    button.innerHTML = '⏳ Running...';
+    // Disable buttons and show loading state
+    if (wmsBtn) {
+        wmsBtn.disabled = true;
+        wmsBtn.querySelector('.compliance-text').textContent = 'Checking...';
+    }
+    if (wmtsBtn) {
+        wmtsBtn.disabled = true;
+        wmtsBtn.querySelector('.compliance-text').textContent = 'Checking...';
+    }
     
     try {
         const response = await fetch(`${API_BASE}/api/validation/run`);
@@ -1892,107 +2148,62 @@ async function runValidation() {
         updateValidationUI(data);
     } catch (error) {
         console.error('Error running validation:', error);
-        alert(`Failed to run validation: ${error.message}`);
+        // Show error state
+        if (wmsBtn) {
+            wmsBtn.querySelector('.compliance-text').textContent = 'Error';
+        }
+        if (wmtsBtn) {
+            wmtsBtn.querySelector('.compliance-text').textContent = 'Error';
+        }
     } finally {
-        // Re-enable button
-        button.disabled = false;
-        button.innerHTML = originalText;
+        // Re-enable buttons
+        if (wmsBtn) wmsBtn.disabled = false;
+        if (wmtsBtn) wmtsBtn.disabled = false;
     }
 }
 
 // Update validation UI with results
 function updateValidationUI(data) {
-    // Update WMS status
-    updateServiceStatus('wms', data.wms);
-    updateChecks('wms', data.wms.checks);
+    // Update WMS compliance badge in header
+    updateComplianceBadge('wms', data.wms);
     
-    // Update WMTS status
-    updateServiceStatus('wmts', data.wmts);
-    updateChecks('wmts', data.wmts.checks);
-    
-    // Update timestamp
-    const timestamp = new Date(data.timestamp);
-    const now = new Date();
-    const diffMs = now - timestamp;
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    let timeAgo;
-    if (diffMins < 1) {
-        timeAgo = 'Just now';
-    } else if (diffMins === 1) {
-        timeAgo = '1 minute ago';
-    } else if (diffMins < 60) {
-        timeAgo = `${diffMins} minutes ago`;
-    } else {
-        const diffHours = Math.floor(diffMins / 60);
-        timeAgo = diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
-    }
-    
-    const lastChecked = document.getElementById('validation-last-checked');
-    if (lastChecked) {
-        lastChecked.textContent = `Last checked: ${timeAgo}`;
-    }
+    // Update WMTS compliance badge in header
+    updateComplianceBadge('wmts', data.wmts);
 }
 
-// Update service status badge
-function updateServiceStatus(service, serviceData) {
-    const badge = document.getElementById(`${service}-validation-badge`);
-    if (!badge) return;
+// Update compliance badge in header
+function updateComplianceBadge(service, serviceData) {
+    const btn = document.getElementById(`${service}-compliance-btn`);
+    if (!btn) return;
     
-    const dot = badge.querySelector('.status-dot');
-    const text = badge.querySelector('.status-text');
+    const dot = btn.querySelector('.status-dot');
+    const text = btn.querySelector('.compliance-text');
     
     // Remove all status classes
-    badge.classList.remove('status-compliant', 'status-non-compliant', 'status-partial', 'status-checking');
+    btn.classList.remove('compliant', 'non-compliant', 'partial');
     
     if (serviceData.status === 'compliant') {
-        badge.classList.add('status-compliant');
-        dot.style.backgroundColor = '#22c55e';
+        btn.classList.add('compliant');
         text.textContent = 'Compliant';
     } else if (serviceData.status === 'non-compliant') {
-        badge.classList.add('status-non-compliant');
-        dot.style.backgroundColor = '#ef4444';
+        btn.classList.add('non-compliant');
         text.textContent = 'Non-Compliant';
-    } else {
-        badge.classList.add('status-partial');
-        dot.style.backgroundColor = '#f59e0b';
+    } else if (serviceData.status === 'partial') {
+        btn.classList.add('partial');
         text.textContent = 'Partial';
+    } else {
+        text.textContent = 'Unknown';
     }
+    
+    // Update tooltip with check details
+    const checks = serviceData.checks || {};
+    const checkNames = Object.keys(checks);
+    const passed = checkNames.filter(c => checks[c] && checks[c].status === 'pass').length;
+    const total = checkNames.length;
+    btn.title = `OGC ${service.toUpperCase()} Compliance: ${passed}/${total} checks passed\nClick to revalidate`;
 }
 
-// Update individual checks
-function updateChecks(service, checks) {
-    const container = document.getElementById(`${service}-checks`);
-    if (!container) return;
-    
-    const checkItems = container.querySelectorAll('.check-item');
-    const checkNames = ['capabilities', 'getmap', 'getfeatureinfo', 'exceptions', 'crs_support'];
-    const wmtsCheckNames = ['capabilities', 'gettile_rest', 'gettile_kvp', 'tilematrixset'];
-    
-    const names = service === 'wms' ? checkNames : wmtsCheckNames;
-    
-    names.forEach((name, index) => {
-        const check = checks[name];
-        if (!check || index >= checkItems.length) return;
-        
-        const item = checkItems[index];
-        const icon = item.querySelector('.check-icon');
-        
-        if (check.status === 'pass') {
-            icon.textContent = '✓';
-            icon.style.color = '#22c55e';
-            item.title = check.message;
-        } else if (check.status === 'fail') {
-            icon.textContent = '✗';
-            icon.style.color = '#ef4444';
-            item.title = check.message;
-        } else {
-            icon.textContent = '⊘';
-            icon.style.color = '#94a3b8';
-            item.title = check.message;
-        }
-    });
-}
+
 
 // Start auto-refresh for validation status
 function startValidationAutoRefresh() {
@@ -2011,11 +2222,16 @@ function stopValidationAutoRefresh() {
     }
 }
 
-// Add event listener for manual validation button
+// Add event listener for compliance badge buttons
 document.addEventListener('DOMContentLoaded', () => {
-    const runButton = document.getElementById('run-validation-btn');
-    if (runButton) {
-        runButton.addEventListener('click', runValidation);
+    const wmsComplianceBtn = document.getElementById('wms-compliance-btn');
+    const wmtsComplianceBtn = document.getElementById('wmts-compliance-btn');
+    
+    if (wmsComplianceBtn) {
+        wmsComplianceBtn.addEventListener('click', runValidation);
+    }
+    if (wmtsComplianceBtn) {
+        wmtsComplianceBtn.addEventListener('click', runValidation);
     }
     
     // Start auto-refresh

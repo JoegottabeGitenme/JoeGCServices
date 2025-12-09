@@ -277,8 +277,7 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/metrics", get(handlers::api_metrics_handler))
         // Configuration API - shows optimization settings
         .route("/api/config", get(handlers::config_handler))
-        // Cache viewer (Phase 7 - cache inspection tool)
-        .route("/cache", get(handlers::cache_viewer_handler))
+        // Cache API endpoints
         .route("/api/cache/list", get(handlers::cache_list_handler))
         .route("/api/cache/clear", post(handlers::cache_clear_handler))
         // Load test dashboard

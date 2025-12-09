@@ -40,6 +40,11 @@ pub struct MetricsCollector {
     png_encode_times: RwLock<TimingStats>,
     cache_lookup_times: RwLock<TimingStats>,
     
+    /// Request rate tracking for 1min/5min windows
+    wms_rate_tracker: RwLock<RateTracker>,
+    wmts_rate_tracker: RwLock<RateTracker>,
+    render_rate_tracker: RwLock<RateTracker>,
+    
     /// Start time for uptime calculation
     start_time: Instant,
 }
@@ -228,6 +233,70 @@ impl DataSourceParseStats {
     }
 }
 
+/// Tracks request timestamps for calculating rates over time windows
+#[derive(Debug)]
+struct RateTracker {
+    /// Timestamps of requests (as seconds since start)
+    timestamps: Vec<u64>,
+    /// Reference start time
+    start: Instant,
+}
+
+impl Default for RateTracker {
+    fn default() -> Self {
+        Self {
+            timestamps: Vec::with_capacity(10000),
+            start: Instant::now(),
+        }
+    }
+}
+
+impl RateTracker {
+    fn new(start: Instant) -> Self {
+        Self {
+            timestamps: Vec::with_capacity(10000),
+            start,
+        }
+    }
+    
+    fn record(&mut self) {
+        let now = self.start.elapsed().as_secs();
+        self.timestamps.push(now);
+        
+        // Prune old entries (older than 5 minutes) periodically
+        if self.timestamps.len() > 5000 {
+            let cutoff = now.saturating_sub(300); // 5 minutes
+            self.timestamps.retain(|&t| t >= cutoff);
+        }
+    }
+    
+    fn rate_1m(&self) -> f64 {
+        let now = self.start.elapsed().as_secs();
+        let cutoff = now.saturating_sub(60);
+        let count = self.timestamps.iter().filter(|&&t| t >= cutoff).count();
+        count as f64 / 60.0 // requests per second
+    }
+    
+    fn rate_5m(&self) -> f64 {
+        let now = self.start.elapsed().as_secs();
+        let cutoff = now.saturating_sub(300);
+        let count = self.timestamps.iter().filter(|&&t| t >= cutoff).count();
+        count as f64 / 300.0 // requests per second
+    }
+    
+    fn count_1m(&self) -> u64 {
+        let now = self.start.elapsed().as_secs();
+        let cutoff = now.saturating_sub(60);
+        self.timestamps.iter().filter(|&&t| t >= cutoff).count() as u64
+    }
+    
+    fn count_5m(&self) -> u64 {
+        let now = self.start.elapsed().as_secs();
+        let cutoff = now.saturating_sub(300);
+        self.timestamps.iter().filter(|&&t| t >= cutoff).count() as u64
+    }
+}
+
 #[derive(Debug, Default)]
 struct TimingStats {
     count: u64,
@@ -273,6 +342,7 @@ impl TimingStats {
 
 impl MetricsCollector {
     pub fn new() -> Self {
+        let start_time = Instant::now();
         Self {
             wms_requests: AtomicU64::new(0),
             wmts_requests: AtomicU64::new(0),
@@ -291,7 +361,10 @@ impl MetricsCollector {
             resample_times: RwLock::new(TimingStats::default()),
             png_encode_times: RwLock::new(TimingStats::default()),
             cache_lookup_times: RwLock::new(TimingStats::default()),
-            start_time: Instant::now(),
+            wms_rate_tracker: RwLock::new(RateTracker::new(start_time)),
+            wmts_rate_tracker: RwLock::new(RateTracker::new(start_time)),
+            render_rate_tracker: RwLock::new(RateTracker::new(start_time)),
+            start_time,
         }
     }
     
@@ -299,12 +372,20 @@ impl MetricsCollector {
     pub fn record_wms_request(&self) {
         self.wms_requests.fetch_add(1, Ordering::Relaxed);
         counter!("wms_requests_total").increment(1);
+        // Track for rate calculation (non-blocking)
+        if let Ok(mut tracker) = self.wms_rate_tracker.try_write() {
+            tracker.record();
+        }
     }
     
     /// Record a WMTS request
     pub fn record_wmts_request(&self) {
         self.wmts_requests.fetch_add(1, Ordering::Relaxed);
         counter!("wmts_requests_total").increment(1);
+        // Track for rate calculation (non-blocking)
+        if let Ok(mut tracker) = self.wmts_rate_tracker.try_write() {
+            tracker.record();
+        }
     }
     
     /// Record a cache hit (L2 Redis cache)
@@ -404,6 +485,11 @@ impl MetricsCollector {
         
         let mut times = self.render_times.write().await;
         times.record(duration_us);
+        
+        // Track for rate calculation (non-blocking)
+        if let Ok(mut tracker) = self.render_rate_tracker.try_write() {
+            tracker.record();
+        }
     }
     
     /// Record a render operation with layer type classification
@@ -704,6 +790,11 @@ impl MetricsCollector {
         let png_encode_times = self.png_encode_times.read().await;
         let cache_lookup_times = self.cache_lookup_times.read().await;
         
+        // Get rate tracking data
+        let wms_rate = self.wms_rate_tracker.read().await;
+        let wmts_rate = self.wmts_rate_tracker.read().await;
+        let render_rate = self.render_rate_tracker.read().await;
+        
         let cache_hits = self.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.cache_misses.load(Ordering::Relaxed);
         let cache_total = cache_hits + cache_misses;
@@ -748,6 +839,16 @@ impl MetricsCollector {
             wms_requests: self.wms_requests.load(Ordering::Relaxed),
             wmts_requests: self.wmts_requests.load(Ordering::Relaxed),
             
+            // Request rates
+            wms_rate_1m: wms_rate.rate_1m(),
+            wms_rate_5m: wms_rate.rate_5m(),
+            wms_count_1m: wms_rate.count_1m(),
+            wms_count_5m: wms_rate.count_5m(),
+            wmts_rate_1m: wmts_rate.rate_1m(),
+            wmts_rate_5m: wmts_rate.rate_5m(),
+            wmts_count_1m: wmts_rate.count_1m(),
+            wmts_count_5m: wmts_rate.count_5m(),
+            
             cache_hits,
             cache_misses,
             cache_hit_rate,
@@ -763,6 +864,10 @@ impl MetricsCollector {
             render_last_ms: render_times.last_ms(),
             render_min_ms: render_times.min_ms(),
             render_max_ms: render_times.max_ms(),
+            render_rate_1m: render_rate.rate_1m(),
+            render_rate_5m: render_rate.rate_5m(),
+            render_count_1m: render_rate.count_1m(),
+            render_count_5m: render_rate.count_5m(),
             
             layer_type_stats,
             data_source_stats,
@@ -828,6 +933,16 @@ pub struct MetricsSnapshot {
     pub wms_requests: u64,
     pub wmts_requests: u64,
     
+    // Request rates (requests per second)
+    pub wms_rate_1m: f64,
+    pub wms_rate_5m: f64,
+    pub wms_count_1m: u64,
+    pub wms_count_5m: u64,
+    pub wmts_rate_1m: f64,
+    pub wmts_rate_5m: f64,
+    pub wmts_count_1m: u64,
+    pub wmts_count_5m: u64,
+    
     // Cache stats
     pub cache_hits: u64,
     pub cache_misses: u64,
@@ -846,6 +961,10 @@ pub struct MetricsSnapshot {
     pub render_last_ms: f64,
     pub render_min_ms: f64,
     pub render_max_ms: f64,
+    pub render_rate_1m: f64,
+    pub render_rate_5m: f64,
+    pub render_count_1m: u64,
+    pub render_count_5m: u64,
     
     // Per-layer-type stats
     pub layer_type_stats: HashMap<LayerType, LayerTypeStats>,
