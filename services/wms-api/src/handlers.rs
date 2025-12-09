@@ -163,6 +163,24 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
 
     info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, elevation = ?elevation, "GetMap request");
     
+    // Record bbox for heatmap visualization (parse and convert to WGS84 if needed)
+    if let Some(bbox_str) = bbox {
+        let coords: Vec<f64> = bbox_str.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if coords.len() == 4 {
+            let crs_str = crs.unwrap_or("EPSG:4326");
+            let bbox_array = if crs_str.contains("3857") {
+                let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
+                let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
+                [min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32]
+            } else {
+                [coords[0] as f32, coords[1] as f32, coords[2] as f32, coords[3] as f32]
+            };
+            state.metrics.record_tile_request_location(&bbox_array);
+        }
+    }
+    
     // Time the rendering
     let timer = Timer::start();
     
@@ -657,6 +675,9 @@ async fn wmts_get_tile(
         latlon_bbox.max_y as f32,
     ];
     
+    // Record tile request location for heatmap visualization
+    state.metrics.record_tile_request_location(&bbox_array);
+    
     info!(
         z = z,
         x = x, 
@@ -999,6 +1020,22 @@ pub async fn storage_stats_handler(
 pub async fn container_stats_handler() -> impl IntoResponse {
     let stats = read_container_stats();
     Json(stats)
+}
+
+/// Tile request heatmap endpoint - returns geographic distribution of tile requests
+pub async fn tile_heatmap_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    let snapshot = state.metrics.get_tile_heatmap().await;
+    Json(snapshot)
+}
+
+/// Clear the tile request heatmap
+pub async fn tile_heatmap_clear_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    state.metrics.clear_tile_heatmap().await;
+    Json(serde_json::json!({"status": "cleared"}))
 }
 
 /// Read container resource statistics from /proc and cgroup filesystems

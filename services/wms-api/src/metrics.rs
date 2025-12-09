@@ -45,6 +45,9 @@ pub struct MetricsCollector {
     wmts_rate_tracker: RwLock<RateTracker>,
     render_rate_tracker: RwLock<RateTracker>,
     
+    /// Tile request heatmap for geographic visualization
+    tile_heatmap: RwLock<TileRequestHeatmap>,
+    
     /// Start time for uptime calculation
     start_time: Instant,
 }
@@ -242,6 +245,86 @@ struct RateTracker {
     start: Instant,
 }
 
+/// Tracks tile request locations for heatmap visualization
+#[derive(Debug)]
+pub struct TileRequestHeatmap {
+    /// Map of "lat,lng" (rounded to 1 decimal) -> request count
+    /// Uses aggregated lat/lng to reduce memory usage
+    cells: HashMap<String, TileHeatmapCell>,
+    /// Maximum number of cells to track (prevents unbounded growth)
+    max_cells: usize,
+    /// Timestamp of last clear
+    last_clear: Instant,
+}
+
+/// A single cell in the tile heatmap
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TileHeatmapCell {
+    pub lat: f32,
+    pub lng: f32,
+    pub count: u64,
+}
+
+/// Snapshot of heatmap data for JSON serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TileHeatmapSnapshot {
+    pub cells: Vec<TileHeatmapCell>,
+    pub total_requests: u64,
+}
+
+impl TileRequestHeatmap {
+    pub fn new() -> Self {
+        Self {
+            cells: HashMap::new(),
+            max_cells: 10000, // Limit to prevent memory bloat
+            last_clear: Instant::now(),
+        }
+    }
+    
+    /// Record a tile request at the given bounding box center
+    pub fn record(&mut self, bbox: &[f32; 4]) {
+        // Calculate center of bbox [min_lon, min_lat, max_lon, max_lat]
+        let center_lat = (bbox[1] + bbox[3]) / 2.0;
+        let center_lng = (bbox[0] + bbox[2]) / 2.0;
+        
+        // Round to 1 decimal place for aggregation
+        let lat = (center_lat * 10.0).round() / 10.0;
+        let lng = (center_lng * 10.0).round() / 10.0;
+        
+        let key = format!("{:.1},{:.1}", lat, lng);
+        
+        // Update or insert cell
+        if let Some(cell) = self.cells.get_mut(&key) {
+            cell.count += 1;
+        } else if self.cells.len() < self.max_cells {
+            self.cells.insert(key, TileHeatmapCell { lat, lng, count: 1 });
+        }
+        // If at max capacity, just ignore new cells (existing cells still get incremented)
+    }
+    
+    /// Get a snapshot of the current heatmap state
+    pub fn snapshot(&self) -> TileHeatmapSnapshot {
+        let cells: Vec<TileHeatmapCell> = self.cells.values().cloned().collect();
+        let total_requests: u64 = cells.iter().map(|c| c.count).sum();
+        TileHeatmapSnapshot {
+            cells,
+            total_requests,
+        }
+    }
+    
+    /// Clear all heatmap data
+    pub fn clear(&mut self) {
+        self.cells.clear();
+        self.last_clear = Instant::now();
+    }
+}
+
+impl Default for TileRequestHeatmap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Default for RateTracker {
     fn default() -> Self {
         Self {
@@ -364,6 +447,7 @@ impl MetricsCollector {
             wms_rate_tracker: RwLock::new(RateTracker::new(start_time)),
             wmts_rate_tracker: RwLock::new(RateTracker::new(start_time)),
             render_rate_tracker: RwLock::new(RateTracker::new(start_time)),
+            tile_heatmap: RwLock::new(TileRequestHeatmap::new()),
             start_time,
         }
     }
@@ -408,6 +492,24 @@ impl MetricsCollector {
     /// Record L1 cache miss
     pub fn record_l1_cache_miss(&self) {
         counter!("tile_memory_cache_misses_total").increment(1);
+    }
+    
+    /// Record a tile request location for heatmap visualization
+    /// bbox format: [min_lon, min_lat, max_lon, max_lat]
+    pub fn record_tile_request_location(&self, bbox: &[f32; 4]) {
+        if let Ok(mut heatmap) = self.tile_heatmap.try_write() {
+            heatmap.record(bbox);
+        }
+    }
+    
+    /// Get a snapshot of the tile request heatmap
+    pub async fn get_tile_heatmap(&self) -> TileHeatmapSnapshot {
+        self.tile_heatmap.read().await.snapshot()
+    }
+    
+    /// Clear the tile request heatmap
+    pub async fn clear_tile_heatmap(&self) {
+        self.tile_heatmap.write().await.clear();
     }
     
     /// Update L1 cache statistics from TileMemoryCache
