@@ -107,6 +107,82 @@ GET /metrics
 
 Returns Prometheus-format metrics for monitoring.
 
+### Application Metrics (JSON)
+```http
+GET /api/metrics
+```
+
+Returns JSON-formatted metrics for the web dashboard including:
+- Request counts and rates (WMS/WMTS)
+- Cache statistics (L1/L2 hits, misses, hit rates)
+- Render statistics (count, avg/min/max times)
+- Per-data-source parsing stats (GFS, HRRR, GOES, MRMS)
+- Pipeline timing breakdown
+
+Response:
+```json
+{
+  "uptime_secs": 3600,
+  "wms_requests": 15234,
+  "wmts_requests": 89234,
+  "wms_rate_1m": 12.5,
+  "wms_count_1m": 750,
+  "cache_hits": 95000,
+  "cache_misses": 5000,
+  "cache_hit_rate": 95.0,
+  "render_avg_ms": 45.2,
+  "render_count_1m": 125,
+  "data_source_stats": {
+    "gfs": {"cache_hit_rate": 92.5, "avg_parse_ms": 12.3},
+    "goes": {"cache_hit_rate": 88.0, "avg_parse_ms": 8.5}
+  }
+}
+```
+
+### Container Stats
+```http
+GET /api/container/stats
+```
+
+Returns container/pod resource statistics:
+- CPU count and load averages (1m, 5m, 15m)
+- Memory usage (used, total, percentage)
+- Process RSS and VMS
+
+## Tile Request Heatmap
+
+Geographic visualization of tile request distribution. Useful for monitoring load test patterns and identifying hot spots.
+
+### Get Heatmap Data
+```http
+GET /api/tile-heatmap
+```
+
+Returns aggregated tile request locations (rounded to 0.1° for efficiency).
+
+Response:
+```json
+{
+  "cells": [
+    {"lat": 38.5, "lng": -95.5, "count": 42},
+    {"lat": 39.0, "lng": -94.0, "count": 15}
+  ],
+  "total_requests": 57
+}
+```
+
+### Clear Heatmap
+```http
+POST /api/tile-heatmap/clear
+```
+
+Clears all heatmap data. Useful when starting a new load test.
+
+Response:
+```json
+{"status": "cleared"}
+```
+
 ## See Also
 
 - [WMS API Service](../services/wms-api.md) - Implementation

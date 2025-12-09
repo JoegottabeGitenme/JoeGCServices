@@ -79,6 +79,7 @@
 # Reference
 
 - [Overview](./reference/README.md)
+  - [Web Dashboard](./reference/web-dashboard.md)
   - [pgAdmin Database Console](./reference/pgadmin.md)
   - [Scripts](./reference/scripts.md)
   - [Troubleshooting](./reference/troubleshooting.md)

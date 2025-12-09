@@ -79,20 +79,30 @@ process_cpu_seconds_total 1234.5
 
 ## Grafana Dashboards
 
-### Pre-built Dashboard
+### Pre-built Dashboards
 
-A Grafana dashboard is included at `deploy/grafana/dashboards/weather-wms.json`.
+Grafana dashboards are included in `deploy/grafana/provisioning/dashboards/`:
 
-**Panels**:
-1. Request Rate (requests/sec)
-2. Request Latency (p50, p95, p99)
-3. Cache Hit Rate (L1, L2, Total)
-4. Error Rate
-5. Active Connections
-6. Memory Usage
-7. CPU Usage
-8. Ingestion Rate
-9. Storage Usage
+**Main Performance Dashboard** (`wms-performance.json`):
+- Request Rate (WMS, WMTS, Renders)
+- Request Latency (p50, p95, p99)
+- Cache Hit Rates (L1, L2, Total)
+- Error Rate
+- Memory Usage
+- CPU Usage
+- Per-source parsing stats
+
+**Per-Model Pipeline Dashboards**:
+- `gfs-pipeline.json` - GFS model metrics
+- `hrrr-pipeline.json` - HRRR model metrics  
+- `goes-pipeline.json` - GOES satellite metrics
+- `mrms-pipeline.json` - MRMS radar metrics
+
+Each pipeline dashboard shows:
+- Parse times and cache hit rates
+- Request distribution by layer
+- Grid cache efficiency
+- Render performance
 
 ### Import Dashboard
 
@@ -100,9 +110,23 @@ A Grafana dashboard is included at `deploy/grafana/dashboards/weather-wms.json`.
 # Via Grafana UI
 1. Login to Grafana
 2. Click "+" → "Import"
-3. Upload deploy/grafana/dashboards/weather-wms.json
+3. Upload deploy/grafana/provisioning/dashboards/*.json
 4. Select Prometheus data source
 5. Click "Import"
+```
+
+### Auto-Provisioning
+
+Dashboards are auto-provisioned on startup via:
+```yaml
+# deploy/grafana/provisioning/dashboards/default.yaml
+apiVersion: 1
+providers:
+- name: default
+  folder: ''
+  type: file
+  options:
+    path: /var/lib/grafana/dashboards
 ```
 
 ## Alerting

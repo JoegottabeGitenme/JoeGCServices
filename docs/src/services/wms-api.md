@@ -337,6 +337,52 @@ Returns current service configuration.
 
 ---
 
+#### Application Metrics (JSON)
+```http
+GET /api/metrics
+```
+
+Returns detailed metrics for the web dashboard including request rates, cache stats, and per-data-source parsing statistics.
+
+---
+
+#### Container Stats
+```http
+GET /api/container/stats
+```
+
+Returns CPU, memory, and load average statistics for the container/process.
+
+---
+
+#### Tile Request Heatmap
+```http
+GET /api/tile-heatmap
+```
+
+Returns geographic distribution of tile requests for visualization. Each WMS/WMTS tile request is recorded and aggregated by location (0.1° resolution).
+
+**Response**:
+```json
+{
+  "cells": [
+    {"lat": 38.5, "lng": -95.5, "count": 42}
+  ],
+  "total_requests": 42
+}
+```
+
+---
+
+#### Clear Heatmap
+```http
+POST /api/tile-heatmap/clear
+```
+
+Clears tile request heatmap data.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -460,17 +506,56 @@ wms_cache_misses_total 5000
 wms_active_connections 42
 ```
 
-### Grafana Dashboard
+### Request Rate Tracking
 
-Pre-configured dashboard available at: http://localhost:3001
+The API tracks request rates over 1-minute and 5-minute windows for:
+- WMS requests
+- WMTS requests  
+- Tile renders
 
-Panels include:
+Available via `/api/metrics` as `wms_rate_1m`, `wmts_rate_1m`, etc.
+
+### Per-Data-Source Metrics
+
+Parsing statistics are tracked per data source type:
+- **GFS** (GRIB2): Global forecast model
+- **HRRR** (GRIB2): High-resolution regional model
+- **MRMS** (GRIB2): Radar composite
+- **GOES** (NetCDF): Satellite imagery
+
+Each source tracks:
+- Parse count and cache hit rate
+- Average, min, max parse times
+- Last parse time
+
+### Tile Request Heatmap
+
+Geographic distribution of tile requests is tracked in real-time for visualization in the web dashboard minimap. Useful for:
+- Monitoring load test geographic patterns
+- Identifying request hot spots
+- Debugging tile distribution issues
+
+### Grafana Dashboards
+
+Pre-configured dashboards available at: http://localhost:3000
+
+**Main Dashboard (wms-performance)**:
 - Request rate by endpoint
 - Latency percentiles (p50, p95, p99)
 - Cache hit rates (L1, L2, total)
 - Error rates
-- Active connections
 - Memory usage
+
+**Per-Model Dashboards**:
+- GFS Pipeline (`gfs-pipeline`)
+- HRRR Pipeline (`hrrr-pipeline`)
+- GOES Pipeline (`goes-pipeline`)
+- MRMS Pipeline (`mrms-pipeline`)
+
+Each model dashboard shows:
+- Parse times and cache efficiency
+- Request distribution
+- Render performance
 
 ## Troubleshooting
 
