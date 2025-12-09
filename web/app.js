@@ -228,6 +228,9 @@ function startPlayback() {
     
     isPlaying = true;
     
+    // Lock map zoom and pan during animation
+    lockMap();
+    
     // Update button appearance
     if (playBtn) {
         playBtn.classList.add('playing');
@@ -287,15 +290,18 @@ function startPlaybackInterval() {
 
 // Stop playback
 function stopPlayback() {
-    const playBtn = document.getElementById('time-slider-play-btn');
-    const slider = document.getElementById('map-time-slider');
-    
-    isPlaying = false;
-    
+    // Clear interval first to stop any pending callbacks
     if (playbackInterval) {
         clearInterval(playbackInterval);
         playbackInterval = null;
     }
+    
+    // Only proceed with cleanup if we were actually playing
+    const wasPlaying = isPlaying;
+    isPlaying = false;
+    
+    // Unlock map zoom and pan
+    unlockMap();
     
     // Clear preloaded layers and restore main layer
     if (selectedProtocol === 'wmts') {
@@ -306,10 +312,16 @@ function stopPlayback() {
     }
     
     // Update button appearance
+    const playBtn = document.getElementById('time-slider-play-btn');
     if (playBtn) {
         playBtn.classList.remove('playing');
-        playBtn.querySelector('.play-icon').textContent = '▶';
+        const playIcon = playBtn.querySelector('.play-icon');
+        if (playIcon) {
+            playIcon.textContent = '▶';
+        }
     }
+    
+    console.log('Playback stopped, wasPlaying:', wasPlaying);
 }
 
 // Handle elevation slider change
@@ -653,6 +665,42 @@ function formatShortTimestamp(date) {
     });
 }
 
+// Lock map interactions (zoom, pan, etc.) during animation
+function lockMap() {
+    if (!map) return;
+    
+    map.dragging.disable();
+    map.touchZoom.disable();
+    map.doubleClickZoom.disable();
+    map.scrollWheelZoom.disable();
+    map.boxZoom.disable();
+    map.keyboard.disable();
+    if (map.tap) map.tap.disable();
+    
+    // Add visual indicator that map is locked
+    document.getElementById('map').classList.add('map-locked');
+    
+    console.log('Map interactions locked for animation');
+}
+
+// Unlock map interactions after animation stops
+function unlockMap() {
+    if (!map) return;
+    
+    map.dragging.enable();
+    map.touchZoom.enable();
+    map.doubleClickZoom.enable();
+    map.scrollWheelZoom.enable();
+    map.boxZoom.enable();
+    map.keyboard.enable();
+    if (map.tap) map.tap.enable();
+    
+    // Remove visual indicator
+    document.getElementById('map').classList.remove('map-locked');
+    
+    console.log('Map interactions unlocked');
+}
+
 // Initialize Leaflet map
 function initMap() {
     map = L.map('map').setView([39, -98], 4); // Center on US
@@ -890,8 +938,19 @@ function createLayerControl() {
             const noneSpan = L.DomUtil.create('span', '', noneLabel);
             noneSpan.textContent = ' None';
             
-            L.DomEvent.on(noneInput, 'change', function() {
+            const clearLayer = function(e) {
+                if (e) {
+                    L.DomEvent.stopPropagation(e);
+                }
+                noneInput.checked = true;
                 clearWeatherLayer();
+            };
+            
+            L.DomEvent.on(noneInput, 'change', clearLayer);
+            L.DomEvent.on(noneLabel, 'click', function(e) {
+                if (e.target !== noneInput) {
+                    clearLayer(e);
+                }
             });
             
             // Group layers by model
@@ -911,9 +970,20 @@ function createLayerControl() {
                     const span = L.DomUtil.create('span', '', label);
                     span.textContent = ' ' + layer.displayName.replace(model + ' - ', '');
                     
-                    L.DomEvent.on(input, 'change', function() {
-                        if (this.checked) {
-                            loadLayerOnMap(layer.name);
+                    // Use both change and click events for better reliability
+                    const selectLayer = function(e) {
+                        if (e) {
+                            L.DomEvent.stopPropagation(e);
+                        }
+                        input.checked = true;
+                        loadLayerOnMap(layer.name);
+                    };
+                    
+                    L.DomEvent.on(input, 'change', selectLayer);
+                    L.DomEvent.on(label, 'click', function(e) {
+                        // Only handle if clicking the label text, not the input itself
+                        if (e.target !== input) {
+                            selectLayer(e);
                         }
                     });
                 });
@@ -2112,11 +2182,5 @@ async function fetchAvailableTimes() {
 
 
 
-// Stop any active playback animation
-function stopPlayback() {
-    if (playbackInterval) {
-        clearInterval(playbackInterval);
-        playbackInterval = null;
-    }
-    isPlaying = false;
-}
+// Note: stopPlayback() is defined earlier in this file (around line 289)
+// with full implementation including button state updates
