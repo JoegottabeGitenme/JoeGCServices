@@ -28,6 +28,11 @@ let currentObservationTime = null; // Selected observation time
 let layerTimeMode = 'forecast'; // 'forecast' (RUN+FORECAST) or 'observation' (TIME only)
 let playbackInterval = null;
 let isPlaying = false;
+let playbackSpeed = 1; // 0.5 = slow, 1 = medium, 2 = fast, 3 = very fast
+const PLAYBACK_SPEEDS = [0.5, 1, 2, 3];
+const SPEED_LABELS = ['0.5x', '1x', '2x', '3x'];
+let layerControl = null; // Leaflet layer control
+let preloadedLayers = {}; // Cache of preloaded tile layers for animation
 
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
@@ -37,12 +42,7 @@ const datasetCountEl = document.getElementById('dataset-count');
 const modelsListEl = document.getElementById('models-list');
 const storageSizeEl = document.getElementById('storage-size');
 
-// Layer Selection Elements
-const protocolRadios = document.querySelectorAll('input[name="protocol"]');
-const layerSelectEl = document.getElementById('layer-select');
-const styleSelectEl = document.getElementById('style-select');
-const styleGroupEl = document.getElementById('style-group');
-const loadLayerBtnEl = document.getElementById('load-layer-btn');
+
 
 // Performance Tracking
 const performanceStats = {
@@ -78,7 +78,7 @@ let layerBounds = {}; // Map of layer name -> {west, south, east, north}
 let layerTitles = {}; // Map of layer name -> human-readable title from capabilities
 let selectedProtocol = 'wmts';
 let selectedStyle = 'default';
-let queryEnabled = true;
+
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
@@ -90,119 +90,602 @@ document.addEventListener('DOMContentLoaded', () => {
     setupMapClickHandler();
 });
 
-// Setup event listeners for protocol and layer selection
+// Setup event listeners
 function setupEventListeners() {
-    // Protocol radio buttons
-    protocolRadios.forEach(radio => {
-        radio.addEventListener('change', onProtocolChange);
-    });
-    
-    layerSelectEl.addEventListener('change', onLayerChange);
-    loadLayerBtnEl.addEventListener('click', onLoadLayer);
-    
-    // Query toggle
-    const queryToggle = document.getElementById('enable-query');
-    if (queryToggle) {
-        queryToggle.addEventListener('change', (e) => {
-            queryEnabled = e.target.checked;
-            updateQueryHint();
-        });
-    }
-    
     // Time control listeners
     setupTimeControls();
 }
 
 // Setup time control event listeners
 function setupTimeControls() {
-    const timeSlider = document.getElementById('time-slider');
-    const runSelect = document.getElementById('run-select');
-    const elevationSelect = document.getElementById('elevation-select');
-    const obsTimeSelect = document.getElementById('observation-time-select');
+    const mapTimeSlider = document.getElementById('map-time-slider');
+    const elevationSlider = document.getElementById('elevation-slider');
+    const playBtn = document.getElementById('time-slider-play-btn');
     
-    if (timeSlider) {
-        timeSlider.addEventListener('input', (e) => {
-            // Slider value is an index into availableForecastHours array
+    if (mapTimeSlider) {
+        mapTimeSlider.addEventListener('input', (e) => {
             const index = parseInt(e.target.value);
-            if (index >= 0 && index < availableForecastHours.length) {
-                currentForecastHour = availableForecastHours[index];
-                console.log('Forecast hour changed to:', currentForecastHour, '(index:', index, ')');
-                updateTimeDisplay();
-                updateLayerTime();
-            }
+            onTimeSliderChange(index);
+            updateSliderProgress();
         });
     }
     
-    if (runSelect) {
-        runSelect.addEventListener('change', (e) => {
-            currentRun = e.target.value;
-            console.log('Model run changed to:', currentRun);
-            updateLayerTime();
+    if (elevationSlider) {
+        elevationSlider.addEventListener('input', (e) => {
+            const index = parseInt(e.target.value);
+            onElevationSliderChange(index);
         });
     }
     
-    if (elevationSelect) {
-        elevationSelect.addEventListener('change', (e) => {
-            currentElevation = e.target.value;
-            console.log('Elevation changed to:', currentElevation);
-            updateLayerTime();
-        });
+    if (playBtn) {
+        playBtn.addEventListener('click', togglePlayback);
     }
     
-    // Observation time selector (for GOES, MRMS)
-    if (obsTimeSelect) {
-        obsTimeSelect.addEventListener('change', onObservationTimeChange);
+    const speedBtn = document.getElementById('time-slider-speed-btn');
+    if (speedBtn) {
+        speedBtn.addEventListener('click', cyclePlaybackSpeed);
     }
 }
 
-// Handle protocol selection change
-function onProtocolChange() {
-    // Get selected radio button value
-    const selectedRadio = document.querySelector('input[name="protocol"]:checked');
-    selectedProtocol = selectedRadio ? selectedRadio.value : 'wmts';
-    console.log('Protocol changed to:', selectedProtocol);
-    // Reload layers for the new protocol
-    loadAvailableLayers();
+// Cycle through playback speeds
+function cyclePlaybackSpeed() {
+    const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+    const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length;
+    playbackSpeed = PLAYBACK_SPEEDS[nextIndex];
+    
+    // Update button label
+    const speedBtn = document.getElementById('time-slider-speed-btn');
+    if (speedBtn) {
+        speedBtn.querySelector('.speed-label').textContent = SPEED_LABELS[nextIndex];
+    }
+    
+    // If currently playing, restart with new speed
+    if (isPlaying) {
+        clearInterval(playbackInterval);
+        startPlaybackInterval();
+    }
 }
 
-// Handle layer selection change
-function onLayerChange() {
-    const layerName = layerSelectEl.value;
-    console.log('Layer changed to:', layerName);
+// Get playback interval in ms based on speed
+function getPlaybackInterval() {
+    // Base interval is 1000ms, divide by speed
+    return Math.round(1000 / playbackSpeed);
+}
+
+// Toggle playback of time steps
+function togglePlayback() {
+    if (isPlaying) {
+        stopPlayback();
+    } else {
+        startPlayback();
+    }
+}
+
+// Preload all time step layers for smooth animation
+function preloadAllLayers() {
+    if (selectedProtocol !== 'wmts' || !selectedLayer) return;
     
-    if (!layerName) {
-        styleGroupEl.style.display = 'none';
+    // Clear old preloaded layers
+    clearPreloadedLayers();
+    
+    const timeSteps = layerTimeMode === 'observation' 
+        ? availableObservationTimes 
+        : availableForecastHours;
+    
+    console.log(`Preloading ${timeSteps.length} layers for animation...`);
+    
+    timeSteps.forEach((timeStep, index) => {
+        // Temporarily set the time to build the URL
+        const originalTime = layerTimeMode === 'observation' ? currentObservationTime : currentForecastHour;
+        
+        if (layerTimeMode === 'observation') {
+            // For observation mode, we need to reverse the index like in onTimeSliderChange
+            const reversedIndex = availableObservationTimes.length - 1 - index;
+            currentObservationTime = availableObservationTimes[reversedIndex];
+        } else {
+            currentForecastHour = timeStep;
+        }
+        
+        const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
+        
+        const layer = L.tileLayer(wmtsUrl, {
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+            maxZoom: 18,
+            tileSize: 256,
+            opacity: 0,  // Start invisible
+            pane: 'weatherPane'
+        });
+        
+        // Add to map (invisible) to trigger tile loading
+        layer.addTo(map);
+        preloadedLayers[index] = layer;
+        
+        // Restore original time
+        if (layerTimeMode === 'observation') {
+            currentObservationTime = originalTime;
+        } else {
+            currentForecastHour = originalTime;
+        }
+    });
+}
+
+// Clear all preloaded layers
+function clearPreloadedLayers() {
+    Object.values(preloadedLayers).forEach(layer => {
+        if (layer) {
+            map.removeLayer(layer);
+        }
+    });
+    preloadedLayers = {};
+}
+
+// Start playback
+function startPlayback() {
+    const slider = document.getElementById('map-time-slider');
+    const playBtn = document.getElementById('time-slider-play-btn');
+    
+    if (!slider) return;
+    
+    isPlaying = true;
+    
+    // Update button appearance
+    if (playBtn) {
+        playBtn.classList.add('playing');
+        playBtn.querySelector('.play-icon').textContent = '❚❚';
+    }
+    
+    // Preload all layers for smooth animation
+    if (selectedProtocol === 'wmts') {
+        preloadAllLayers();
+        
+        // Hide the main layer during animation
+        if (wmsLayer) {
+            wmsLayer.setOpacity(0);
+        }
+        
+        // Show the current frame
+        const currentIndex = parseInt(slider.value);
+        if (preloadedLayers[currentIndex]) {
+            preloadedLayers[currentIndex].setOpacity(0.7);
+        }
+    }
+    
+    // Start the animation loop
+    startPlaybackInterval();
+}
+
+// Start the playback interval (separated so we can restart with new speed)
+function startPlaybackInterval() {
+    const slider = document.getElementById('map-time-slider');
+    if (!slider) return;
+    
+    playbackInterval = setInterval(() => {
+        let currentIndex = parseInt(slider.value);
+        const maxIndex = parseInt(slider.max);
+        
+        // Hide current frame
+        if (selectedProtocol === 'wmts' && preloadedLayers[currentIndex]) {
+            preloadedLayers[currentIndex].setOpacity(0);
+        }
+        
+        // Move to next step, loop back to start if at end
+        currentIndex++;
+        if (currentIndex > maxIndex) {
+            currentIndex = 0;
+        }
+        
+        // Show next frame
+        if (selectedProtocol === 'wmts' && preloadedLayers[currentIndex]) {
+            preloadedLayers[currentIndex].setOpacity(0.7);
+        }
+        
+        slider.value = currentIndex;
+        onTimeSliderChange(currentIndex);
+        updateSliderProgress();
+    }, getPlaybackInterval());
+}
+
+// Stop playback
+function stopPlayback() {
+    const playBtn = document.getElementById('time-slider-play-btn');
+    const slider = document.getElementById('map-time-slider');
+    
+    isPlaying = false;
+    
+    if (playbackInterval) {
+        clearInterval(playbackInterval);
+        playbackInterval = null;
+    }
+    
+    // Clear preloaded layers and restore main layer
+    if (selectedProtocol === 'wmts') {
+        clearPreloadedLayers();
+        if (wmsLayer) {
+            wmsLayer.setOpacity(0.7);
+        }
+    }
+    
+    // Update button appearance
+    if (playBtn) {
+        playBtn.classList.remove('playing');
+        playBtn.querySelector('.play-icon').textContent = '▶';
+    }
+}
+
+// Handle elevation slider change
+function onElevationSliderChange(index) {
+    if (index >= 0 && index < availableElevations.length) {
+        currentElevation = availableElevations[index];
+        console.log('Elevation changed to:', currentElevation);
+        updateElevationSliderDisplay();
+        updateLayerTime();
+    }
+}
+
+// Update elevation slider display
+function updateElevationSliderDisplay() {
+    const label = document.getElementById('elevation-label');
+    const bubble = document.getElementById('elevation-slider-current');
+    const slider = document.getElementById('elevation-slider');
+    
+    if (label && currentElevation) {
+        // Format the elevation label (e.g., "850 hPa" or "10 m")
+        label.textContent = currentElevation;
+    } else if (label) {
+        label.textContent = 'Sfc';
+    }
+    
+    // Position the bubble to match the slider thumb
+    if (bubble && slider) {
+        const percent = slider.max > 0 ? (slider.value / slider.max) * 100 : 0;
+        // Invert because slider goes bottom (high value) to top (low value)
+        bubble.style.top = (100 - percent) + '%';
+    }
+}
+
+// Show the elevation slider
+function showElevationSlider() {
+    const container = document.getElementById('elevation-slider-container');
+    if (container) {
+        container.style.display = 'flex';
+    }
+}
+
+// Hide the elevation slider
+function hideElevationSlider() {
+    const container = document.getElementById('elevation-slider-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+// Show the style selector
+function showStyleSelector() {
+    const container = document.getElementById('style-selector-container');
+    if (container) {
+        container.style.display = 'flex';
+    }
+}
+
+// Hide the style selector
+function hideStyleSelector() {
+    const container = document.getElementById('style-selector-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+// Populate the style selector
+function populateStyleSelector() {
+    const container = document.getElementById('style-selector-options');
+    if (!container || !selectedLayer) return;
+    
+    const styles = layerStyles[selectedLayer] || [];
+    
+    // Only show if we have multiple styles
+    if (styles.length <= 1) {
+        hideStyleSelector();
         return;
     }
     
-    // Load styles for this layer
-    const styles = layerStyles[layerName] || [];
+    container.innerHTML = '';
     
-    if (styles.length > 1) {
-        // Show style dropdown if layer has multiple styles
-        styleSelectEl.innerHTML = '';
-        styles.forEach(style => {
-            const option = document.createElement('option');
-            option.value = style.name;
-            option.textContent = style.title;
-            styleSelectEl.appendChild(option);
+    styles.forEach((style, index) => {
+        const option = document.createElement('label');
+        option.className = 'style-option' + (style.name === selectedStyle || (index === 0 && !selectedStyle) ? ' active' : '');
+        option.dataset.style = style.name;
+        
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'map-style';
+        radio.value = style.name;
+        radio.checked = style.name === selectedStyle || (index === 0 && !selectedStyle);
+        
+        const radioVisual = document.createElement('span');
+        radioVisual.className = 'style-option-radio';
+        
+        const label = document.createElement('span');
+        label.className = 'style-option-label';
+        label.textContent = style.title || style.name;
+        label.title = style.title || style.name;
+        
+        option.appendChild(radio);
+        option.appendChild(radioVisual);
+        option.appendChild(label);
+        
+        option.addEventListener('click', () => {
+            // Update active state
+            container.querySelectorAll('.style-option').forEach(opt => opt.classList.remove('active'));
+            option.classList.add('active');
+            radio.checked = true;
+            
+            // Update style and reload layer (use updateLayerTime to avoid re-fetching capabilities)
+            selectedStyle = style.name;
+            console.log('Style changed to:', selectedStyle);
+            updateLayerTime();
         });
-        styleGroupEl.style.display = 'block';
-    } else {
-        // Hide style dropdown if only one style
-        styleGroupEl.style.display = 'none';
+        
+        container.appendChild(option);
+    });
+    
+    showStyleSelector();
+}
+
+// Populate the elevation slider
+function populateElevationSlider() {
+    const slider = document.getElementById('elevation-slider');
+    const labelsContainer = document.getElementById('elevation-slider-labels');
+    
+    if (!slider || !labelsContainer) return;
+    
+    // Only show if we have multiple elevations
+    if (availableElevations.length <= 1) {
+        hideElevationSlider();
+        return;
     }
+    
+    labelsContainer.innerHTML = '';
+    
+    slider.min = 0;
+    slider.max = availableElevations.length - 1;
+    
+    // Find index of current elevation, default to 0 (surface)
+    let currentIndex = availableElevations.indexOf(currentElevation);
+    if (currentIndex === -1) currentIndex = 0;
+    slider.value = currentIndex;
+    
+    // Create labels for top and bottom
+    const topLabel = document.createElement('span');
+    topLabel.textContent = availableElevations[0];
+    labelsContainer.appendChild(topLabel);
+    
+    const bottomLabel = document.createElement('span');
+    bottomLabel.textContent = availableElevations[availableElevations.length - 1];
+    labelsContainer.appendChild(bottomLabel);
+    
+    updateElevationSliderDisplay();
+    showElevationSlider();
+}
+
+// Handle time slider change
+function onTimeSliderChange(index) {
+    if (layerTimeMode === 'observation') {
+        // Observation mode - availableObservationTimes is sorted newest first,
+        // but slider goes oldest (left) to newest (right), so reverse the index
+        const reversedIndex = availableObservationTimes.length - 1 - index;
+        if (reversedIndex >= 0 && reversedIndex < availableObservationTimes.length) {
+            currentObservationTime = availableObservationTimes[reversedIndex];
+            updateTimeSliderDisplay();
+            // Only update layer if not playing (during playback we use preloaded layers)
+            if (!isPlaying) {
+                updateLayerTime();
+            }
+        }
+    } else {
+        // Forecast mode - index into availableForecastHours (already in ascending order)
+        if (index >= 0 && index < availableForecastHours.length) {
+            currentForecastHour = availableForecastHours[index];
+            updateTimeSliderDisplay();
+            // Only update layer if not playing (during playback we use preloaded layers)
+            if (!isPlaying) {
+                updateLayerTime();
+            }
+        }
+    }
+}
+
+// Update the slider progress bar and bubble position
+function updateSliderProgress() {
+    const slider = document.getElementById('map-time-slider');
+    const progress = document.getElementById('time-slider-progress');
+    const bubble = document.getElementById('time-slider-current');
+    
+    if (slider && progress) {
+        const percent = (slider.value / slider.max) * 100;
+        progress.style.width = percent + '%';
+    }
+    
+    // Position the bubble to follow the slider thumb
+    if (slider && bubble) {
+        const percent = (slider.value / slider.max) * 100;
+        bubble.style.left = percent + '%';
+    }
+}
+
+// Update the time slider display (current time label)
+function updateTimeSliderDisplay() {
+    const label = document.getElementById('current-time-label');
+    if (!label) return;
+    
+    if (layerTimeMode === 'observation') {
+        if (currentObservationTime) {
+            const date = new Date(currentObservationTime);
+            // Format: "Dec 9, 2:30 PM"
+            label.textContent = date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+        } else {
+            label.textContent = '--';
+        }
+    } else {
+        // Forecast mode - show valid time
+        if (availableRuns.length > 0 && currentForecastHour !== undefined) {
+            const runDate = new Date(availableRuns[0]); // Latest run
+            const validDate = new Date(runDate.getTime() + currentForecastHour * 60 * 60 * 1000);
+            // Format: "Dec 9, 2 PM" with forecast indicator
+            const timeStr = validDate.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                hour: 'numeric'
+            });
+            label.textContent = `${timeStr} (F+${currentForecastHour}h)`;
+        } else {
+            label.textContent = `F+${currentForecastHour}h`;
+        }
+    }
+}
+
+// Show the time slider and populate it with times
+function showTimeSlider() {
+    const container = document.getElementById('time-slider-container');
+    if (container) {
+        container.style.display = 'flex';
+    }
+}
+
+// Hide the time slider
+function hideTimeSlider() {
+    const container = document.getElementById('time-slider-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+// Populate the time slider with available times
+function populateTimeSlider() {
+    const slider = document.getElementById('map-time-slider');
+    const labelsContainer = document.getElementById('time-slider-labels');
+    const layerNameEl = document.getElementById('time-slider-layer-name');
+    
+    if (!slider || !labelsContainer) return;
+    
+    // Set the layer name
+    if (layerNameEl && selectedLayer) {
+        layerNameEl.textContent = formatLayerName(selectedLayer);
+    }
+    
+    labelsContainer.innerHTML = '';
+    
+    if (layerTimeMode === 'observation') {
+        // Observation mode - use availableObservationTimes
+        const times = availableObservationTimes;
+        if (times.length === 0) {
+            hideTimeSlider();
+            return;
+        }
+        
+        // Reverse the array so oldest is first (left) and newest is last (right)
+        const timesReversed = [...times].reverse();
+        
+        slider.min = 0;
+        slider.max = timesReversed.length - 1;
+        slider.value = timesReversed.length - 1; // Start at latest (last in reversed array)
+        
+        // Create labels (show ~5 evenly spaced)
+        const numLabels = Math.min(5, timesReversed.length);
+        for (let i = 0; i < numLabels; i++) {
+            const idx = Math.floor(i * (timesReversed.length - 1) / (numLabels - 1));
+            const date = new Date(timesReversed[idx]);
+            const span = document.createElement('span');
+            span.textContent = formatShortTimestamp(date);
+            labelsContainer.appendChild(span);
+        }
+        
+    } else {
+        // Forecast mode - use availableForecastHours
+        const hours = availableForecastHours;
+        if (hours.length === 0) {
+            hideTimeSlider();
+            return;
+        }
+        
+        slider.min = 0;
+        slider.max = hours.length - 1;
+        
+        // Find index of current forecast hour, default to 0
+        let currentIndex = hours.indexOf(currentForecastHour);
+        if (currentIndex === -1) currentIndex = 0;
+        slider.value = currentIndex;
+        
+        // Create labels (show ~5 evenly spaced)
+        const numLabels = Math.min(5, hours.length);
+        for (let i = 0; i < numLabels; i++) {
+            const idx = Math.floor(i * (hours.length - 1) / (numLabels - 1));
+            const hour = hours[idx];
+            const span = document.createElement('span');
+            
+            // Format with valid time if we have run info
+            if (availableRuns.length > 0) {
+                const runDate = new Date(availableRuns[0]);
+                const validDate = new Date(runDate.getTime() + hour * 60 * 60 * 1000);
+                span.textContent = formatShortTimestamp(validDate);
+            } else {
+                span.textContent = `+${hour}h`;
+            }
+            labelsContainer.appendChild(span);
+        }
+    }
+    
+    updateSliderProgress();
+    updateTimeSliderDisplay();
+    showTimeSlider();
+}
+
+// Format a date as short timestamp (e.g., "Dec 9, 2 PM")
+function formatShortTimestamp(date) {
+    return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        hour: 'numeric'
+    });
 }
 
 // Initialize Leaflet map
 function initMap() {
-    map = L.map('map').setView([20, 0], 3);
+    map = L.map('map').setView([39, -98], 4); // Center on US
 
-    // Add base layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
+    // Create a custom pane for weather overlays that sits above the tile pane
+    map.createPane('weatherPane');
+    map.getPane('weatherPane').style.zIndex = 450; // Above tilePane (200) but below popups (700)
+
+    // Define base layers
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19
-    }).addTo(map);
+    });
+    
+    const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        maxZoom: 19
+    });
+    
+    const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        maxZoom: 19
+    });
+
+    // Add default base layer
+    cartoLight.addTo(map);
+
+    // Store base layers for layer control
+    window.baseLayers = {
+        'CartoDB Light': cartoLight,
+        'CartoDB Dark': cartoDark,
+        'OpenStreetMap': osmLayer
+    };
 
     // Add attribution for weather data
     map.attributionControl.addAttribution('Weather Data: WMS Service');
@@ -245,14 +728,12 @@ function setStatusIndicator(service, status) {
     statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-// Load available layers from WMS/WMTS capabilities
+// Load available layers from WMS/WMTS capabilities and create layer control
 async function loadAvailableLayers() {
     try {
-        const service = selectedProtocol === 'wmts' ? 'WMTS' : 'WMS';
-        const endpoint = selectedProtocol === 'wmts' ? 'wmts' : 'wms';
-        
+        // Always fetch from WMTS for layer list (protocol selection is per-layer now)
         const response = await fetch(
-            `${API_BASE}/${endpoint}?SERVICE=${service}&REQUEST=GetCapabilities`,
+            `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities`,
             { mode: 'cors' }
         );
         const text = await response.text();
@@ -265,91 +746,48 @@ async function loadAvailableLayers() {
         layerBounds = {}; // Reset bounds map
         layerTitles = {}; // Reset titles map
         
-        if (selectedProtocol === 'wmts') {
-            // WMTS uses <ows:Identifier> for layer names and <ows:Title> for display
-            const layerElements = xml.querySelectorAll('Contents > Layer');
-            layerElements.forEach(layerEl => {
-                const identifierEl = layerEl.querySelector('Identifier');
-                if (identifierEl && identifierEl.textContent) {
-                    const layerName = identifierEl.textContent;
-                    layers.push(layerName);
-                    
-                    // Extract title for this layer (use ows:Title)
-                    const titleEl = layerEl.querySelector('Title');
-                    if (titleEl && titleEl.textContent) {
-                        layerTitles[layerName] = titleEl.textContent;
-                    }
-                    
-                    // Extract styles for this layer
-                    const styles = [];
-                    const styleElements = layerEl.querySelectorAll('Style');
-                    styleElements.forEach(styleEl => {
-                        const styleId = styleEl.querySelector('Identifier');
-                        const styleTitle = styleEl.querySelector('Title');
-                        if (styleId && styleId.textContent) {
-                            styles.push({
-                                name: styleId.textContent,
-                                title: styleTitle ? styleTitle.textContent : styleId.textContent
-                            });
-                        }
-                    });
-                    layerStyles[layerName] = styles;
-                    
-                    // Extract bounding box for WMTS (use WGS84BoundingBox)
-                    const bboxEl = layerEl.querySelector('WGS84BoundingBox');
-                    if (bboxEl) {
-                        const lowerCorner = bboxEl.querySelector('LowerCorner');
-                        const upperCorner = bboxEl.querySelector('UpperCorner');
-                        if (lowerCorner && upperCorner) {
-                            const [west, south] = lowerCorner.textContent.split(' ').map(Number);
-                            const [east, north] = upperCorner.textContent.split(' ').map(Number);
-                            layerBounds[layerName] = { west, south, east, north };
-                        }
-                    }
+        // WMTS uses <ows:Identifier> for layer names and <ows:Title> for display
+        const layerElements = xml.querySelectorAll('Contents > Layer');
+        layerElements.forEach(layerEl => {
+            const identifierEl = layerEl.querySelector('Identifier');
+            if (identifierEl && identifierEl.textContent) {
+                const layerName = identifierEl.textContent;
+                layers.push(layerName);
+                
+                // Extract title for this layer (use ows:Title)
+                const titleEl = layerEl.querySelector('Title');
+                if (titleEl && titleEl.textContent) {
+                    layerTitles[layerName] = titleEl.textContent;
                 }
-            });
-        } else {
-            // WMS uses <Name> for queryable layers and <Title> for display
-            const layerElements = xml.querySelectorAll('Layer[queryable="1"]');
-            layerElements.forEach(layerEl => {
-                const nameEl = layerEl.querySelector('Name');
-                if (nameEl && nameEl.textContent) {
-                    const layerName = nameEl.textContent;
-                    layers.push(layerName);
-                    
-                    // Extract title for this layer
-                    const titleEl = layerEl.querySelector('Title');
-                    if (titleEl && titleEl.textContent) {
-                        layerTitles[layerName] = titleEl.textContent;
+                
+                // Extract styles for this layer
+                const styles = [];
+                const styleElements = layerEl.querySelectorAll('Style');
+                styleElements.forEach(styleEl => {
+                    const styleId = styleEl.querySelector('Identifier');
+                    const styleTitle = styleEl.querySelector('Title');
+                    if (styleId && styleId.textContent) {
+                        styles.push({
+                            name: styleId.textContent,
+                            title: styleTitle ? styleTitle.textContent : styleId.textContent
+                        });
                     }
-                    
-                    // Extract styles for this layer
-                    const styles = [];
-                    const styleElements = layerEl.querySelectorAll('Style');
-                    styleElements.forEach(styleEl => {
-                        const styleName = styleEl.querySelector('Name');
-                        const styleTitle = styleEl.querySelector('Title');
-                        if (styleName && styleName.textContent) {
-                            styles.push({
-                                name: styleName.textContent,
-                                title: styleTitle ? styleTitle.textContent : styleName.textContent
-                            });
-                        }
-                    });
-                    layerStyles[layerName] = styles;
-                    
-                    // Extract bounding box for WMS
-                    const bboxEl = layerEl.querySelector('EX_GeographicBoundingBox');
-                    if (bboxEl) {
-                        const west = parseFloat(bboxEl.querySelector('westBoundLongitude')?.textContent || '-180');
-                        const east = parseFloat(bboxEl.querySelector('eastBoundLongitude')?.textContent || '180');
-                        const south = parseFloat(bboxEl.querySelector('southBoundLatitude')?.textContent || '-90');
-                        const north = parseFloat(bboxEl.querySelector('northBoundLatitude')?.textContent || '90');
+                });
+                layerStyles[layerName] = styles;
+                
+                // Extract bounding box for WMTS (use WGS84BoundingBox)
+                const bboxEl = layerEl.querySelector('WGS84BoundingBox');
+                if (bboxEl) {
+                    const lowerCorner = bboxEl.querySelector('LowerCorner');
+                    const upperCorner = bboxEl.querySelector('UpperCorner');
+                    if (lowerCorner && upperCorner) {
+                        const [west, south] = lowerCorner.textContent.split(' ').map(Number);
+                        const [east, north] = upperCorner.textContent.split(' ').map(Number);
                         layerBounds[layerName] = { west, south, east, north };
                     }
                 }
-            });
-        }
+            }
+        });
 
         availableLayers = layers;
         
@@ -360,32 +798,168 @@ async function loadAvailableLayers() {
             return titleA.localeCompare(titleB);
         });
         
-        // Populate layer select
-        layerSelectEl.innerHTML = '<option value="">Select a layer...</option>';
-        availableLayers.forEach(layerName => {
-            const option = document.createElement('option');
-            option.value = layerName;
-            option.textContent = formatLayerName(layerName);
-            layerSelectEl.appendChild(option);
-        });
+        // Create the Leaflet layer control
+        createLayerControl();
         
-        console.log(`Loaded ${availableLayers.length} layers for ${service}`);
+        console.log(`Loaded ${availableLayers.length} layers`);
     } catch (error) {
         console.error('Failed to load available layers:', error);
-        layerSelectEl.innerHTML = '<option value="">Error loading layers</option>';
     }
 }
 
-// Handle load layer button click
-function onLoadLayer() {
-    const layerName = layerSelectEl.value;
-    
-    if (!layerName) {
-        alert('Please select a layer');
-        return;
+// Create custom layer control with radio buttons for weather layers
+function createLayerControl() {
+    // Remove existing control if any
+    if (layerControl) {
+        map.removeControl(layerControl);
     }
     
-    loadLayerOnMap(layerName);
+    // Group layers by model (gfs, hrrr, mrms, goes16, goes18)
+    const overlayGroups = {};
+    
+    availableLayers.forEach(layerName => {
+        const parts = layerName.split('_');
+        const model = parts[0].toUpperCase();
+        
+        if (!overlayGroups[model]) {
+            overlayGroups[model] = [];
+        }
+        
+        overlayGroups[model].push({
+            name: layerName,
+            displayName: formatLayerName(layerName)
+        });
+    });
+    
+    // Create custom control
+    const CustomLayerControl = L.Control.extend({
+        options: {
+            position: 'topright',
+            collapsed: true
+        },
+        
+        onAdd: function(map) {
+            const container = L.DomUtil.create('div', 'leaflet-control-layers leaflet-control');
+            
+            // Prevent map clicks when interacting with control
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
+            
+            // Toggle button
+            const toggle = L.DomUtil.create('a', 'leaflet-control-layers-toggle', container);
+            toggle.href = '#';
+            toggle.title = 'Layers';
+            
+            // Content container
+            const content = L.DomUtil.create('div', 'leaflet-control-layers-list', container);
+            
+            // Base layers section
+            const baseSection = L.DomUtil.create('div', 'leaflet-control-layers-base', content);
+            Object.keys(window.baseLayers).forEach((name, idx) => {
+                const label = L.DomUtil.create('label', '', baseSection);
+                const input = L.DomUtil.create('input', 'leaflet-control-layers-selector', label);
+                input.type = 'radio';
+                input.name = 'leaflet-base-layers';
+                input.checked = idx === 0; // First one is default
+                input.dataset.layerName = name;
+                
+                const span = L.DomUtil.create('span', '', label);
+                span.textContent = ' ' + name;
+                
+                L.DomEvent.on(input, 'change', function() {
+                    // Remove all base layers, add selected one
+                    Object.values(window.baseLayers).forEach(layer => map.removeLayer(layer));
+                    window.baseLayers[name].addTo(map);
+                });
+            });
+            
+            // Separator
+            L.DomUtil.create('div', 'leaflet-control-layers-separator', content);
+            
+            // Weather layers section with radio buttons
+            const overlaySection = L.DomUtil.create('div', 'leaflet-control-layers-overlays', content);
+            
+            // "None" option
+            const noneLabel = L.DomUtil.create('label', '', overlaySection);
+            const noneInput = L.DomUtil.create('input', 'leaflet-control-layers-selector', noneLabel);
+            noneInput.type = 'radio';
+            noneInput.name = 'leaflet-weather-layers';
+            noneInput.checked = true;
+            noneInput.value = '';
+            
+            const noneSpan = L.DomUtil.create('span', '', noneLabel);
+            noneSpan.textContent = ' None';
+            
+            L.DomEvent.on(noneInput, 'change', function() {
+                clearWeatherLayer();
+            });
+            
+            // Group layers by model
+            Object.keys(overlayGroups).sort().forEach(model => {
+                // Model header
+                const header = L.DomUtil.create('div', 'layer-group-header', overlaySection);
+                header.textContent = model;
+                
+                // Layers in this model
+                overlayGroups[model].forEach(layer => {
+                    const label = L.DomUtil.create('label', '', overlaySection);
+                    const input = L.DomUtil.create('input', 'leaflet-control-layers-selector', label);
+                    input.type = 'radio';
+                    input.name = 'leaflet-weather-layers';
+                    input.value = layer.name;
+                    
+                    const span = L.DomUtil.create('span', '', label);
+                    span.textContent = ' ' + layer.displayName.replace(model + ' - ', '');
+                    
+                    L.DomEvent.on(input, 'change', function() {
+                        if (this.checked) {
+                            loadLayerOnMap(layer.name);
+                        }
+                    });
+                });
+            });
+            
+            // Expand/collapse behavior
+            let expanded = false;
+            
+            L.DomEvent.on(toggle, 'click', function(e) {
+                L.DomEvent.preventDefault(e);
+                expanded = !expanded;
+                container.classList.toggle('leaflet-control-layers-expanded', expanded);
+            });
+            
+            // Expand on hover (desktop)
+            L.DomEvent.on(container, 'mouseenter', function() {
+                container.classList.add('leaflet-control-layers-expanded');
+                expanded = true;
+            });
+            
+            L.DomEvent.on(container, 'mouseleave', function() {
+                container.classList.remove('leaflet-control-layers-expanded');
+                expanded = false;
+            });
+            
+            return container;
+        }
+    });
+    
+    layerControl = new CustomLayerControl();
+    map.addControl(layerControl);
+}
+
+// Clear the current weather layer
+function clearWeatherLayer() {
+    stopPlayback();
+    clearPreloadedLayers();
+    if (wmsLayer) {
+        map.removeLayer(wmsLayer);
+        map.off('moveend', onMapMoveEnd);
+        wmsLayer = null;
+    }
+    selectedLayer = null;
+    hideTimeSlider();
+    hideElevationSlider();
+    hideStyleSelector();
 }
 
 // Format layer name for display
@@ -439,15 +1013,18 @@ function formatLayerName(layerName) {
 
 // Load a specific layer on the map
 function loadLayerOnMap(layerName) {
+    // Stop any active playback
+    stopPlayback();
+    
     // Remove existing layer and cleanup event listeners
     if (wmsLayer) {
         map.removeLayer(wmsLayer);
         map.off('moveend', onMapMoveEnd); // Remove moveend listener from previous WMS layer
     }
 
-    // Store current layer and style
+    // Store current layer and reset style to default for new layer
     selectedLayer = layerName;
-    selectedStyle = styleSelectEl.value || 'default';
+    selectedStyle = 'default';
 
     // Reset performance tracking
     performanceStats.currentLayer = layerName;
@@ -461,6 +1038,7 @@ function loadLayerOnMap(layerName) {
     layerTimeMode = 'forecast';
     currentObservationTime = null;
     currentForecastHour = 0;
+    currentElevation = ''; // Reset elevation - will be populated from capabilities
 
     if (selectedProtocol === 'wmts') {
         // Create WMTS layer using Leaflet TileLayer with direct URL pattern
@@ -471,7 +1049,8 @@ function loadLayerOnMap(layerName) {
             attribution: `${formatLayerName(layerName)} (WMTS - ${selectedStyle})`,
             maxZoom: 18,
             tileSize: 256,
-            opacity: 0.7
+            opacity: 0.7,
+            pane: 'weatherPane' // Custom pane above base layers
         });
         
         // Hook into tile load events for performance tracking
@@ -507,7 +1086,6 @@ function loadLayerOnMap(layerName) {
     // Update current layer display
     currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
     updatePerformanceDisplay();
-    updateQueryHint();
     
     // Fetch available times and update time controls (this detects observation vs forecast mode)
     fetchAvailableTimes();
@@ -523,6 +1101,7 @@ function createWmsImageOverlay(layerName, style) {
     
     const overlay = L.imageOverlay(url, bounds, {
         opacity: 0.7,
+        pane: 'weatherPane', // Custom pane above base layers
         interactive: false,
         attribution: `${formatLayerName(layerName)} (WMS - ${style})`
     });
@@ -667,15 +1246,6 @@ function onMapMoveEnd() {
     wmsLayer = createWmsImageOverlay(selectedLayer, selectedStyle);
     wmsLayer.addTo(map);
 }
-
-function updateQueryHint() {
-    const hint = document.getElementById('query-hint');
-    if (hint) {
-        hint.style.display = (selectedLayer && queryEnabled) ? 'block' : 'none';
-    }
-}
-
-
 
 // Initialize ingestion status monitoring
 function initIngestionStatus() {
@@ -1058,7 +1628,7 @@ function setupMapClickHandler() {
 }
 
 async function onMapClick(e) {
-    if (!queryEnabled || !selectedLayer) {
+    if (!selectedLayer) {
         return;
     }
     
@@ -1392,131 +1962,45 @@ window.addEventListener('beforeunload', () => {
 // Time Control Functions
 // ============================================================================
 
-// Update time display
-function updateTimeDisplay() {
-    if (layerTimeMode === 'observation') {
-        // Observation mode display
-        const obsTimeDisplay = document.getElementById('current-obs-time-display');
-        const obsCountDisplay = document.getElementById('obs-time-count');
-        
-        if (obsTimeDisplay) {
-            if (currentObservationTime) {
-                // Format ISO8601 timestamp for display
-                const date = new Date(currentObservationTime);
-                const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
-                obsTimeDisplay.textContent = formatted;
-            } else {
-                obsTimeDisplay.textContent = '--';
-            }
-        }
-        
-        if (obsCountDisplay) {
-            obsCountDisplay.textContent = `${availableObservationTimes.length} times`;
-        }
-    } else {
-        // Forecast mode display
-        const timeDisplay = document.getElementById('current-time-display');
-        const validTimeDisplay = document.getElementById('valid-time-display');
-        
-        if (timeDisplay) {
-            // Format as F+000, F+003, etc. (standard meteorological notation)
-            const formatted = `F+${String(currentForecastHour).padStart(3, '0')}`;
-            timeDisplay.textContent = formatted;
-            timeDisplay.style.opacity = '1';
-        }
-        
-        // Calculate and display valid time (run + forecast hour)
-        if (validTimeDisplay) {
-            const runTime = currentRun === 'latest' ? 
-                (availableRuns.length > 0 ? availableRuns[0] : null) : 
-                currentRun;
-            
-            if (runTime) {
-                const runDate = new Date(runTime);
-                const validDate = new Date(runDate.getTime() + currentForecastHour * 60 * 60 * 1000);
-                
-                // Format as: "2025-11-27 20:50Z"
-                const formatted = validDate.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
-                validTimeDisplay.textContent = formatted;
-            } else {
-                validTimeDisplay.textContent = '--';
-            }
-        }
-    }
-}
-
 // Update layer with new time/elevation (without refetching capabilities)
 function updateLayerTime() {
-    if (!selectedLayer || !wmsLayer) {
+    if (!selectedLayer) {
         return;
     }
     
-    // Remove existing layer
-    if (wmsLayer) {
-        map.removeLayer(wmsLayer);
-        map.off('moveend', onMapMoveEnd);
-    }
-    
-    // Recreate the layer with current time/elevation settings
     if (selectedProtocol === 'wmts') {
         const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
-        console.log('Creating new WMTS layer with URL:', wmtsUrl);
-        wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
-            maxZoom: 18,
-            tileSize: 256,
-            opacity: 0.7
-        });
-        wmsLayer.addTo(map);
+        
+        if (wmsLayer) {
+            // Use setUrl to update tiles without recreating the layer (smoother animation)
+            wmsLayer.setUrl(wmtsUrl);
+        } else {
+            // Create new layer if none exists
+            wmsLayer = L.tileLayer(wmtsUrl, {
+                attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+                maxZoom: 18,
+                tileSize: 256,
+                opacity: 0.7,
+                pane: 'weatherPane'
+            });
+            wmsLayer.addTo(map);
+        }
     } else {
+        // For WMS, we need to recreate the overlay
+        if (wmsLayer) {
+            map.removeLayer(wmsLayer);
+            map.off('moveend', onMapMoveEnd);
+        }
         wmsLayer = createWmsImageOverlay(selectedLayer, selectedStyle);
         wmsLayer.addTo(map);
         map.on('moveend', onMapMoveEnd);
     }
-    
-    // Update displays
-    updateTimeDisplay();
     
     // Log appropriate time info based on mode
     if (layerTimeMode === 'observation') {
         console.log('Layer updated with TIME (observation):', currentObservationTime, 'ELEVATION:', currentElevation || 'default');
     } else {
         console.log('Layer updated with TIME (forecast):', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
-    }
-}
-
-
-
-// Show/hide time controls based on protocol and layer time mode
-function updateTimeControlsVisibility() {
-    const timeControlSection = document.getElementById('time-control-section');
-    const forecastControls = document.getElementById('forecast-controls');
-    const observationControls = document.getElementById('observation-controls');
-    const sectionTitle = document.getElementById('time-section-title');
-    
-    if (timeControlSection) {
-        // Show time controls when a layer is selected
-        if (selectedLayer) {
-            timeControlSection.style.display = 'block';
-            
-            // Toggle between forecast and observation controls based on layer type
-            if (layerTimeMode === 'observation') {
-                // Observation mode (GOES, MRMS)
-                if (forecastControls) forecastControls.style.display = 'none';
-                if (observationControls) observationControls.style.display = 'block';
-                if (sectionTitle) sectionTitle.textContent = 'Observation Time';
-            } else {
-                // Forecast mode (GFS, HRRR)
-                if (forecastControls) forecastControls.style.display = 'block';
-                if (observationControls) observationControls.style.display = 'none';
-                if (sectionTitle) sectionTitle.textContent = 'Model Run & Forecast';
-            }
-            
-            updateTimeDisplay();
-        } else {
-            timeControlSection.style.display = 'none';
-            stopPlayback();
-        }
     }
 }
 
@@ -1531,6 +2015,8 @@ async function fetchAvailableTimes() {
         // Reset state
         availableElevations = [];
         availableObservationTimes = [];
+        availableForecastHours = [];
+        availableRuns = [];
         layerTimeMode = 'forecast'; // Default to forecast mode
         
         // Find the current layer
@@ -1551,6 +2037,8 @@ async function fetchAvailableTimes() {
                         hasTimeDimension = true;
                         const timeText = dim.textContent.trim();
                         availableObservationTimes = timeText.split(',').filter(t => t && t !== 'latest');
+                        // Sort by date descending (latest first)
+                        availableObservationTimes.sort((a, b) => new Date(b) - new Date(a));
                         // Set default to latest observation time
                         currentObservationTime = availableObservationTimes.length > 0 
                             ? availableObservationTimes[0] 
@@ -1561,7 +2049,9 @@ async function fetchAvailableTimes() {
                         hasRunDimension = true;
                         const runsText = dim.textContent.trim();
                         availableRuns = runsText.split(',');
-                        updateRunSelector();
+                        // Sort descending (latest first)
+                        availableRuns.sort((a, b) => new Date(b) - new Date(a));
+                        console.log('Layer has RUN dimension:', availableRuns.length, 'runs, latest:', availableRuns[0]);
                     }
                     if (dimName === 'FORECAST') {
                         const forecastText = dim.textContent.trim();
@@ -1577,19 +2067,21 @@ async function fetchAvailableTimes() {
                             const parsed = parseInt(h);
                             return isNaN(parsed) ? 0 : parsed;
                         }).filter(h => !isNaN(h));
-                        updateForecastSlider();
+                        // Sort ascending
+                        availableForecastHours.sort((a, b) => a - b);
+                        // Default to first (earliest) forecast hour
+                        currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
+                        console.log('Layer has FORECAST dimension:', availableForecastHours.length, 'hours');
                     }
                     if (dimName === 'ELEVATION') {
                         const elevationText = dim.textContent.trim();
                         availableElevations = elevationText.split(',');
-                        updateElevationSelector();
                     }
                 }
                 
                 // Determine layer time mode
                 if (hasTimeDimension && !hasRunDimension) {
                     layerTimeMode = 'observation';
-                    updateObservationTimeSelector();
                 } else {
                     layerTimeMode = 'forecast';
                 }
@@ -1599,181 +2091,26 @@ async function fetchAvailableTimes() {
             }
         }
         
-        // Update UI visibility based on time mode
-        updateTimeControlsVisibility();
-        updateElevationVisibility();
+        // Populate and show the time slider
+        populateTimeSlider();
+        
+        // Populate and show the elevation slider if available
+        populateElevationSlider();
+        
+        // Populate and show the style selector if available
+        populateStyleSelector();
         
         // Reload the layer with the correct time parameters now that we know the time mode
         updateLayerTime();
         
     } catch (error) {
         console.error('Failed to fetch available times:', error);
+        hideTimeSlider();
+        hideElevationSlider();
     }
 }
 
-// Update run selector dropdown
-function updateRunSelector() {
-    const runSelect = document.getElementById('run-select');
-    if (!runSelect) return;
-    
-    runSelect.innerHTML = '<option value="latest">Latest Available Run</option>';
-    
-    availableRuns.forEach((run, index) => {
-        const option = document.createElement('option');
-        option.value = run;
-        const date = new Date(run);
-        
-        // Format as: "2025-11-26 20:50Z" (meteorological standard)
-        const formatted = date.toISOString().replace('T', ' ').substring(0, 16) + 'Z';
-        
-        // Add label for latest run
-        const label = index === 0 ? ' (Latest)' : '';
-        option.textContent = formatted + label;
-        runSelect.appendChild(option);
-    });
-}
 
-// Update forecast hour slider
-// Uses index-based slider for non-uniform forecast hour intervals
-function updateForecastSlider() {
-    const timeSlider = document.getElementById('time-slider');
-    if (!timeSlider || availableForecastHours.length === 0) return;
-    
-    // Sort forecast hours
-    availableForecastHours.sort((a, b) => a - b);
-    
-    // Use index-based slider (0 to length-1) for non-uniform intervals
-    timeSlider.min = 0;
-    timeSlider.max = availableForecastHours.length - 1;
-    timeSlider.step = 1;
-    
-    // Find index of current forecast hour, or default to last (latest)
-    let currentIndex = availableForecastHours.indexOf(currentForecastHour);
-    if (currentIndex === -1) {
-        // Current hour not available, default to latest
-        currentIndex = availableForecastHours.length - 1;
-        currentForecastHour = availableForecastHours[currentIndex];
-    }
-    
-    timeSlider.value = currentIndex;
-    
-    updateTimeDisplay();
-    updateSliderLabels();
-}
-
-// Update slider labels to match available hours
-function updateSliderLabels() {
-    const labelsContainer = document.querySelector('.slider-labels');
-    if (!labelsContainer) return;
-    
-    labelsContainer.innerHTML = '';
-    
-    // Show 5 evenly distributed labels in F+NNN format
-    const numLabels = Math.min(5, availableForecastHours.length);
-    const step = Math.floor(availableForecastHours.length / (numLabels - 1));
-    
-    for (let i = 0; i < numLabels; i++) {
-        const idx = i === numLabels - 1 ? availableForecastHours.length - 1 : i * step;
-        const hour = availableForecastHours[idx];
-        const label = document.createElement('span');
-        label.textContent = `F+${String(hour).padStart(3, '0')}`;
-        labelsContainer.appendChild(label);
-    }
-}
-
-// Update elevation selector dropdown
-function updateElevationSelector() {
-    const elevationSelect = document.getElementById('elevation-select');
-    if (!elevationSelect) return;
-    
-    // Clear and rebuild options
-    elevationSelect.innerHTML = '<option value="">Surface / Default</option>';
-    
-    availableElevations.forEach(level => {
-        const option = document.createElement('option');
-        option.value = level;
-        option.textContent = level;
-        elevationSelect.appendChild(option);
-    });
-    
-    // Restore current selection if still available, otherwise reset
-    if (currentElevation && availableElevations.includes(currentElevation)) {
-        elevationSelect.value = currentElevation;
-    } else {
-        currentElevation = '';
-        elevationSelect.value = '';
-    }
-    
-    console.log('Elevation selector updated:', availableElevations.length, 'levels, current:', currentElevation || 'default');
-}
-
-// Show/hide elevation selector based on available levels
-function updateElevationVisibility() {
-    const elevationGroup = document.getElementById('elevation-group');
-    if (!elevationGroup) return;
-    
-    // Show only if there are multiple elevations available
-    if (availableElevations.length > 1) {
-        elevationGroup.style.display = 'block';
-    } else {
-        elevationGroup.style.display = 'none';
-        currentElevation = ''; // Reset to default
-    }
-}
-
-// Update observation time selector dropdown
-function updateObservationTimeSelector() {
-    const obsTimeSelect = document.getElementById('observation-time-select');
-    if (!obsTimeSelect) return;
-    
-    obsTimeSelect.innerHTML = '';
-    
-    if (availableObservationTimes.length === 0) {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = 'No times available';
-        obsTimeSelect.appendChild(option);
-        return;
-    }
-    
-    // Sort times descending (most recent first)
-    const sortedTimes = [...availableObservationTimes].sort((a, b) => {
-        return new Date(b) - new Date(a);
-    });
-    
-    sortedTimes.forEach((time, index) => {
-        const option = document.createElement('option');
-        option.value = time;
-        
-        // Format for display: "2025-11-27 14:30:00Z (Latest)"
-        const date = new Date(time);
-        const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
-        const label = index === 0 ? ' (Latest)' : '';
-        option.textContent = formatted + label;
-        
-        obsTimeSelect.appendChild(option);
-    });
-    
-    // Select the first (latest) time by default
-    if (sortedTimes.length > 0 && !currentObservationTime) {
-        currentObservationTime = sortedTimes[0];
-    }
-    
-    // Set the current selection
-    if (currentObservationTime) {
-        obsTimeSelect.value = currentObservationTime;
-    }
-    
-    console.log('Observation time selector updated:', availableObservationTimes.length, 'times, current:', currentObservationTime);
-}
-
-// Handle observation time selection change
-function onObservationTimeChange(e) {
-    currentObservationTime = e.target.value;
-    console.log('Observation time changed to:', currentObservationTime);
-    updateTimeDisplay();
-    updateLayerTime();
-}
 
 // Stop any active playback animation
 function stopPlayback() {

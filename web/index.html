@@ -95,131 +95,52 @@
         </header>
 
         <div class="main-content">
-            <!-- Left Sidebar - Layer Controls -->
-            <aside class="sidebar sidebar-left">
-                <div class="sidebar-section">
-                    <h2>Layer Selection</h2>
-                    <div class="control-group">
-                        <label>Protocol:</label>
-                        <div class="radio-group">
-                            <label class="radio-label">
-                                <input type="radio" name="protocol" value="wms" class="radio-input">
-                                <span class="radio-text">WMS</span>
-                            </label>
-                            <label class="radio-label">
-                                <input type="radio" name="protocol" value="wmts" class="radio-input" checked>
-                                <span class="radio-text">WMTS</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="control-group">
-                        <label for="layer-select">Layer:</label>
-                        <select id="layer-select" class="control-input">
-                            <option value="">Select a layer...</option>
-                        </select>
-                    </div>
-
-                    <div class="control-group" id="style-group" style="display: none;">
-                        <label for="style-select">Style:</label>
-                        <select id="style-select" class="control-input">
-                            <option value="default">Default</option>
-                        </select>
-                    </div>
-
-                    <button id="load-layer-btn" class="control-button">Load Layer</button>
-
-                    <div class="control-group" style="margin-top: 1rem;">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="enable-query" checked>
-                            <span>Enable click-to-query</span>
-                        </label>
-                    </div>
-
-                    <div id="query-hint" class="query-hint" style="display: none;">
-                        💡 Click on the map to query data values
-                    </div>
-                </div>
-
-                <!-- Model Run & Forecast Controls (for forecast models like GFS, HRRR) -->
-                <div class="sidebar-section time-control-section" id="time-control-section" style="display: none;">
-                    <h2 id="time-section-title">Model Run & Forecast</h2>
-                    <div class="protocol-note" id="time-protocol-note" style="display: none; padding: 0.5rem; background: rgba(255,255,255,0.2); border-radius: 4px; font-size: 0.85rem; color: rgba(255,255,255,0.9); margin-bottom: 0.75rem;">
-                        Note: Time controls work with both WMS and WMTS protocols
-                    </div>
-                    
-                    <!-- Forecast Mode Controls (GFS, HRRR) -->
-                    <div class="time-controls" id="forecast-controls">
-                        <!-- Model Run Selector -->
-                        <div class="control-group">
-                            <label for="run-select">Model Run (Initialization):</label>
-                            <select id="run-select" class="control-input">
-                                <option value="latest">Latest Available</option>
-                            </select>
-                            <div class="help-text">Choose when the model was initialized</div>
-                        </div>
-                        
-                        <!-- Forecast Hour Controls -->
-                        <div class="forecast-section">
-                            <div class="section-header">
-                                <span class="section-label">Forecast Hour</span>
-                                <span class="forecast-value" id="current-time-display">F+024</span>
-                            </div>
-                            <div class="slider-container">
-                                <input type="range" id="time-slider" class="time-slider" min="0" max="24" step="3" value="24">
-                                <div class="slider-labels">
-                                    <span>F+000</span>
-                                    <span>F+006</span>
-                                    <span>F+012</span>
-                                    <span>F+018</span>
-                                    <span>F+024</span>
-                                </div>
-                            </div>
-                            <div class="valid-time-display">
-                                <span class="valid-time-label">Valid Time:</span>
-                                <span class="valid-time-value" id="valid-time-display">--</span>
-                            </div>
-                            <div class="help-text">Hours into the future from model run</div>
-                        </div>
-                        
-                        <!-- Elevation/Level Selector -->
-                        <div class="control-group" id="elevation-group" style="display: none;">
-                            <label for="elevation-select">Vertical Level:</label>
-                            <select id="elevation-select" class="control-input">
-                                <option value="">Surface / Default</option>
-                            </select>
-                            <div class="help-text">Pressure level or height above ground</div>
-                        </div>
-                    </div>
-                    
-                    <!-- Observation Mode Controls (GOES, MRMS) -->
-                    <div class="time-controls" id="observation-controls" style="display: none;">
-                        <div class="control-group">
-                            <label for="observation-time-select">Observation Time:</label>
-                            <select id="observation-time-select" class="control-input">
-                                <option value="">Select time...</option>
-                            </select>
-                            <div class="help-text">Time when observation was captured</div>
-                        </div>
-                        
-                        <div class="observation-info">
-                            <div class="obs-time-display">
-                                <span class="obs-time-label">Current:</span>
-                                <span class="obs-time-value" id="current-obs-time-display">--</span>
-                            </div>
-                            <div class="obs-count">
-                                <span class="obs-count-label">Available:</span>
-                                <span class="obs-count-value" id="obs-time-count">0 times</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </aside>
-
             <!-- Map -->
             <main class="map-container">
                 <div id="map"></div>
+                
+                <!-- Layer Options (Style + Elevation) - positioned under layer control -->
+                <div class="layer-options-map" id="layer-options-map">
+                    <!-- Style Selector -->
+                    <div id="style-selector-container" class="style-selector-container" style="display: none;">
+                        <div class="style-selector-label">Style</div>
+                        <div class="style-selector-options" id="style-selector-options"></div>
+                    </div>
+                    
+                    <!-- Vertical Level Slider -->
+                    <div id="elevation-slider-container" class="elevation-slider-container" style="display: none;">
+                        <div class="elevation-slider-label">Level</div>
+                        <div class="elevation-slider-track">
+                            <input type="range" id="elevation-slider" class="elevation-slider" min="0" max="10" value="0" orient="vertical">
+                            <div class="elevation-slider-current" id="elevation-slider-current">
+                                <span id="elevation-label">--</span>
+                            </div>
+                        </div>
+                        <div class="elevation-slider-labels" id="elevation-slider-labels"></div>
+                    </div>
+                </div>
+                
+                <!-- Time Slider -->
+                <div id="time-slider-container" class="time-slider-container" style="display: none;">
+                    <div class="time-slider-layer-name" id="time-slider-layer-name">--</div>
+                    <div class="time-slider-controls">
+                        <button class="time-slider-play-btn" id="time-slider-play-btn" title="Play/Pause">
+                            <span class="play-icon">▶</span>
+                        </button>
+                        <button class="time-slider-speed-btn" id="time-slider-speed-btn" title="Playback Speed">
+                            <span class="speed-label">1x</span>
+                        </button>
+                    </div>
+                    <div class="time-slider-track">
+                        <div class="map-time-slider-bg"></div>
+                        <div class="time-slider-progress" id="time-slider-progress"></div>
+                        <div class="time-slider-current" id="time-slider-current">
+                            <span class="current-time-label" id="current-time-label">--</span>
+                        </div>
+                        <input type="range" id="map-time-slider" class="map-time-slider" min="0" max="100" value="0">
+                        <div class="time-slider-labels" id="time-slider-labels"></div>
+                    </div>
+                </div>
             </main>
 
             <!-- Right Sidebar - Status & Validation -->
