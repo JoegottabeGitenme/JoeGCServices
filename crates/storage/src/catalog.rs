@@ -577,6 +577,30 @@ impl Catalog {
         self.list_models().await
     }
     
+    /// Get recent entries for a model (for cache warming).
+    /// Returns the N most recent unique observations, ordered by reference_time DESC.
+    pub async fn get_recent_entries(
+        &self,
+        model: &str,
+        limit: usize,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY reference_time DESC, parameter ASC \
+             LIMIT $2",
+        )
+        .bind(model)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     /// Get the latest dataset for a model, optionally filtering by parameter.
     pub async fn get_latest_dataset(
         &self,

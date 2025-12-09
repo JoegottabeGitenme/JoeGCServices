@@ -4,6 +4,7 @@
 
 mod admin;
 mod cleanup;
+mod grid_warming;
 mod handlers;
 pub mod metrics;
 mod rendering;
@@ -212,6 +213,26 @@ async fn async_main(args: Args) -> Result<()> {
         } else {
             info!("Data cleanup disabled (set ENABLE_CLEANUP=true to enable)");
         }
+    }
+
+    // Start grid warming background task (proactive cache warming for GOES/observation data)
+    {
+        let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
+        let grid_warmer = Arc::new(grid_warming::GridWarmer::new(state.clone(), &config_dir));
+        
+        // Store warmer in state for use by ingestion handler
+        {
+            let mut warmer_lock = state.grid_warmer.write().await;
+            *warmer_lock = Some(grid_warmer.clone());
+        }
+        
+        // Spawn background task
+        let warmer_clone = grid_warmer.clone();
+        tokio::spawn(async move {
+            warmer_clone.run_forever().await;
+        });
+        
+        info!("Grid warming background task started");
     }
 
     // Build router

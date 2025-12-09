@@ -32,7 +32,15 @@ schedule:
   lookback_minutes: 30                   # Check last 30 minutes
 
 retention:
-  hours: 1                              # Keep 6 hours of radar data
+  hours: 1                              # Keep 1 hour of radar data
+
+# Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
+precaching:
+  enabled: false
+  keep_recent: 3
+  warm_on_ingest: false
+  poll_interval_secs: 120
+  parameters: []
 
 parameters:
   # Composite Reflectivity at 0.5° elevation

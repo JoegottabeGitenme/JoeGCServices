@@ -607,20 +607,35 @@ pub fn load_goes_netcdf_from_bytes(data: &[u8]) -> NetCdfResult<(Vec<f32>, usize
     Ok((data, width, height, projection, x_offset, y_offset, x_scale, y_scale))
 }
 
+/// Check if a variable has an attribute with the given name.
+/// This avoids HDF5 error spam when checking for optional attributes.
+fn has_attr(var: &netcdf::Variable, name: &str) -> bool {
+    var.attributes().any(|attr| attr.name() == name)
+}
+
 // Helper to get f32 attribute using TryInto
 fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
+    if !has_attr(var, name) {
+        return None;
+    }
     let attr_value = var.attribute_value(name)?.ok()?;
     f32::try_from(attr_value).ok()
 }
 
 // Helper to get f64 attribute using TryInto
 fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
+    if !has_attr(var, name) {
+        return None;
+    }
     let attr_value = var.attribute_value(name)?.ok()?;
     f64::try_from(attr_value).ok()
 }
 
 // Helper to get i16 attribute using TryInto
 fn get_i16_attr(var: &netcdf::Variable, name: &str) -> Option<i16> {
+    if !has_attr(var, name) {
+        return None;
+    }
     let attr_value = var.attribute_value(name)?.ok()?;
     i16::try_from(attr_value).ok()
 }

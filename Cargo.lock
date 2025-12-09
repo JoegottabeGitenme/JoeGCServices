@@ -1809,11 +1809,8 @@ dependencies = [
  "bytes",
  "chrono",
  "grib",
- "nom",
  "renderer",
  "thiserror 1.0.69",
- "tracing",
- "wms-common",
 ]
 
 [[package]]

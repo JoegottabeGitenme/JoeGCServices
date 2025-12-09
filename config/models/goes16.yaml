@@ -35,7 +35,15 @@ schedule:
   lookback_minutes: 60                   # Check last hour of data
 
 retention:
-  hours: 2                              # Keep 12 hours of imagery
+  hours: 2                              # Keep 2 hours of imagery
+
+# Precaching configuration - proactively warm GridDataCache
+precaching:
+  enabled: true
+  keep_recent: 10                       # Keep 10 most recent observations (~50 min)
+  warm_on_ingest: true                  # Immediately warm when new data ingested
+  poll_interval_secs: 60                # Background poll every 60s for missed data
+  parameters: []                        # Empty = all parameters
 
 parameters:
   # Blue Visible (0.47µm)

@@ -880,6 +880,30 @@ async fn ingest_netcdf_file(
         }
     }
     
+    // Trigger cache warming if enabled for this model
+    {
+        let warmer_guard = state.grid_warmer.read().await;
+        if let Some(warmer) = warmer_guard.as_ref() {
+            if warmer.should_warm_on_ingest(&model) {
+                let warmer = warmer.clone();
+                let model_clone = model.clone();
+                let parameter_clone = parameter.to_string();
+                let storage_path_clone = storage_path.clone();
+                let observation_time_clone = observation_time;
+                
+                // Spawn warming task in background so we don't block the response
+                tokio::spawn(async move {
+                    warmer.warm_dataset(
+                        &model_clone,
+                        &parameter_clone,
+                        &storage_path_clone,
+                        observation_time_clone,
+                    ).await;
+                });
+            }
+        }
+    }
+    
     Ok(IngestResponse {
         success: true,
         message: format!("Ingested GOES {} band {}", satellite, band),

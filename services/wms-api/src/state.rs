@@ -221,6 +221,7 @@ pub struct AppState {
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
+    pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
 }
 
 impl AppState {
@@ -305,6 +306,7 @@ impl AppState {
             metrics,
             prefetch_rings,
             optimization_config,
+            grid_warmer: tokio::sync::RwLock::new(None),
         })
     }
     

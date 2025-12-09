@@ -4,13 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wms-common = { path = "../wms-common" }
-bytes = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 chrono = { workspace = true }
-nom = "7"
 grib = { workspace = true }
+bytes = "1.11.0"
 
 [dev-dependencies]
 renderer = { path = "../renderer" }

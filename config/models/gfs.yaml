@@ -35,7 +35,16 @@ schedule:
   delay_hours: 4                      # Data typically available 4 hours after cycle time
 
 retention:
-  hours: 6                          # Keep data for 12 hours
+  hours: 6                          # Keep data for 6 hours
+
+# Precaching configuration - disabled for now (focus on observation data first)
+precaching:
+  enabled: false
+  keep_recent_cycles: 1               # Only most recent model cycle
+  forecast_hours: [0, 3, 6, 9, 12]    # Key forecast hours
+  warm_on_ingest: false
+  poll_interval_secs: 300
+  parameters: ["TMP", "UGRD", "VGRD"] # Most requested parameters
 
 parameters:
   # ==========================================================================

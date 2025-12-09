@@ -43,7 +43,15 @@ schedule:
   delay_hours: 2                     # Data typically available 2 hours after cycle
 
 retention:
-  hours: 2                          # Keep data for 12 hours
+  hours: 2                          # Keep data for 2 hours
+
+# Precaching configuration - disabled for now (focus on observation data first)
+precaching:
+  enabled: false
+  keep_recent: 6                    # 6 most recent forecasts
+  warm_on_ingest: false
+  poll_interval_secs: 300
+  parameters: ["TMP", "REFC"]       # Most requested parameters
 
 parameters:
   # ==========================================================================
