@@ -1,0 +1,825 @@
+{
+  "uid": "mrms-pipeline",
+  "title": "MRMS Radar Pipeline - Complete Analysis",
+  "tags": [
+    "mrms",
+    "radar",
+    "grib2",
+    "observation",
+    "performance"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 40,
+  "version": 1,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview - MRMS Request & Throughput",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "opacity"
+          },
+          "color": {"mode": "palette-classic"}
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 1},
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(model_requests_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "Total Requests",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(model_requests_total{model=\"mrms\"}[$__rate_interval])) by (parameter)",
+          "legendFormat": "{{parameter}}",
+          "refId": "B"
+        }
+      ],
+      "title": "MRMS Requests/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 1},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(model_renders_total{model=\"mrms\", success=\"true\"}[$__rate_interval]))",
+          "legendFormat": "Successful",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(model_renders_total{model=\"mrms\", success=\"false\"}[$__rate_interval]))",
+          "legendFormat": "Failed",
+          "refId": "B"
+        }
+      ],
+      "title": "MRMS Renders/sec (Success vs Failed)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 30,
+            "gradientMode": "opacity"
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 1},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(model_fetch_bytes_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "Data Throughput",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Data Throughput (bytes/sec)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Cache Performance",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 8},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 80}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 9},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(model_cache_hits_total{model=\"mrms\"}[$__rate_interval])) / (sum(rate(model_cache_hits_total{model=\"mrms\"}[$__rate_interval])) + sum(rate(model_cache_misses_total{model=\"mrms\"}[$__rate_interval]))) * 100",
+          "legendFormat": "GRIB File Cache",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(model_grid_cache_hits_total{model=\"mrms\"}[$__rate_interval])) / (sum(rate(model_grid_cache_hits_total{model=\"mrms\"}[$__rate_interval])) + sum(rate(model_grid_cache_misses_total{model=\"mrms\"}[$__rate_interval]))) * 100",
+          "legendFormat": "Parsed Grid Cache",
+          "refId": "B"
+        }
+      ],
+      "title": "MRMS Cache Hit Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 9},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(rate(model_cache_hits_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "GRIB Hits",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(model_cache_misses_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "GRIB Misses",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(model_grid_cache_hits_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "Grid Hits",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(rate(model_grid_cache_misses_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "Grid Misses",
+          "refId": "D"
+        }
+      ],
+      "title": "MRMS Cache Hits vs Misses",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 80}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 9},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(data_source_cache_hits_total{source=\"mrms\"}[$__rate_interval])) / (sum(rate(data_source_cache_hits_total{source=\"mrms\"}[$__rate_interval])) + sum(rate(data_source_parse_total{source=\"mrms\"}[$__rate_interval]))) * 100",
+          "legendFormat": "Data Source Cache",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Data Source Cache Hit Rate",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Pipeline Latency Breakdown",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 16},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "stacking": {"mode": "normal"}
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "model_fetch_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "Fetch (p50)",
+          "refId": "A"
+        },
+        {
+          "expr": "model_parse_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "Parse (p50)",
+          "refId": "B"
+        },
+        {
+          "expr": "model_resample_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "Resample (p50)",
+          "refId": "C"
+        },
+        {
+          "expr": "model_png_encode_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "PNG Encode (p50)",
+          "refId": "D"
+        }
+      ],
+      "title": "MRMS Pipeline Stages - p50 Latency (Stacked)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+      "id": 8,
+      "targets": [
+        {
+          "expr": "model_render_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "model_render_duration_ms{model=\"mrms\",quantile=\"0.95\"}",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "model_render_duration_ms{model=\"mrms\",quantile=\"0.99\"}",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "MRMS Total Render Time (p50/p95/p99)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Per-Stage Detailed Metrics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 26},
+      "id": 9,
+      "targets": [
+        {
+          "expr": "model_fetch_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "model_fetch_duration_ms{model=\"mrms\",quantile=\"0.95\"}",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "model_fetch_duration_ms{model=\"mrms\",quantile=\"0.99\"}",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "MRMS File Fetch Time (from MinIO/Cache)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 26},
+      "id": 10,
+      "targets": [
+        {
+          "expr": "data_source_parse_duration_ms{source=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"mrms\",quantile=\"0.95\"}",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"mrms\",quantile=\"0.99\"}",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "MRMS GRIB2 Parse Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 26},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "model_resample_duration_ms{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "model_resample_duration_ms{model=\"mrms\",quantile=\"0.95\"}",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "MRMS Resample/Projection Time",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "File & Data Characteristics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 34},
+      "id": 12,
+      "targets": [
+        {
+          "expr": "model_file_size_bytes{model=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "model_file_size_bytes{model=\"mrms\",quantile=\"0.95\"}",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "MRMS GRIB2 File Sizes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 34},
+      "id": 13,
+      "targets": [
+        {
+          "expr": "model_grid_points{model=\"mrms\"}",
+          "legendFormat": "Grid Points",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Grid Size (1km Resolution)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 300},
+              {"color": "red", "value": 600}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 34},
+      "id": 14,
+      "targets": [
+        {
+          "expr": "model_data_age_minutes{model=\"mrms\"} * 60",
+          "legendFormat": "Data Age",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Data Age (Observation Latency)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Cumulative Stats & Counters",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 42},
+      "id": 15,
+      "targets": [
+        {
+          "expr": "sum(model_requests_total{model=\"mrms\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Total MRMS Requests",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 42},
+      "id": 16,
+      "targets": [
+        {
+          "expr": "sum(model_renders_total{model=\"mrms\", success=\"true\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Successful Renders",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 42},
+      "id": 17,
+      "targets": [
+        {
+          "expr": "sum(model_renders_total{model=\"mrms\", success=\"false\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Renders",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "purple", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 42},
+      "id": 18,
+      "targets": [
+        {
+          "expr": "sum(model_fetch_bytes_total{model=\"mrms\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Bytes Fetched",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 42},
+      "id": 19,
+      "targets": [
+        {
+          "expr": "sum(model_cache_hits_total{model=\"mrms\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Hits",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "orange", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 42},
+      "id": 20,
+      "targets": [
+        {
+          "expr": "sum(model_cache_misses_total{model=\"mrms\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Misses",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "type": "row",
+      "title": "Radar Products Analysis",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 46},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 47},
+      "id": 21,
+      "targets": [
+        {
+          "expr": "sum(rate(model_requests_total{model=\"mrms\"}[$__rate_interval])) by (parameter)",
+          "legendFormat": "{{parameter}}",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Products by Request Rate",
+      "description": "Reflectivity, Precipitation Rate, QPE, etc.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 47},
+      "id": 22,
+      "targets": [
+        {
+          "expr": "topk(5, model_render_duration_ms{model=\"mrms\",quantile=\"0.5\"})",
+          "legendFormat": "{{parameter}} p50",
+          "refId": "A"
+        }
+      ],
+      "title": "Render Time by Radar Product",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Comparison: MRMS vs Other Observational Data",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 55},
+      "id": 23,
+      "targets": [
+        {
+          "expr": "data_source_parse_duration_ms{source=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "MRMS (Radar) p50",
+          "refId": "A"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"goes\",quantile=\"0.5\"}",
+          "legendFormat": "GOES (Satellite) p50",
+          "refId": "B"
+        }
+      ],
+      "title": "Parse Time: MRMS (GRIB2) vs GOES (NetCDF)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 55},
+      "id": 24,
+      "targets": [
+        {
+          "expr": "sum(rate(model_requests_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "MRMS (Radar)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(goes_requests_total[$__rate_interval]))",
+          "legendFormat": "GOES (Satellite)",
+          "refId": "B"
+        }
+      ],
+      "title": "Request Rate: Observational Data Sources",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Ingestion Stats",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 62},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 63},
+      "id": 25,
+      "targets": [
+        {
+          "expr": "sum(increase(model_ingestion_total{model=\"mrms\"}[$__rate_interval])) by (parameter)",
+          "legendFormat": "{{parameter}}",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Files Ingested by Product",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 63},
+      "id": 26,
+      "targets": [
+        {
+          "expr": "sum(increase(model_ingestion_bytes_total{model=\"mrms\"}[$__rate_interval]))",
+          "legendFormat": "Bytes Ingested",
+          "refId": "A"
+        }
+      ],
+      "title": "MRMS Bytes Ingested",
+      "type": "timeseries"
+    }
+  ]
+}

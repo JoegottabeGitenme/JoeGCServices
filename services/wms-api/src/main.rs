@@ -41,6 +41,10 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    // Silence HDF5's verbose stderr error messages before any NetCDF operations
+    // This must be called early, before any HDF5/NetCDF libraries are initialized
+    netcdf_parser::silence_hdf5_errors();
+    
     // Load environment variables from .env file
     dotenvy::dotenv().ok();
     
@@ -297,6 +301,9 @@ async fn async_main(args: Args) -> Result<()> {
         // Cleanup/retention endpoints
         .route("/api/admin/cleanup/status", get(admin::cleanup_status_handler))
         .route("/api/admin/cleanup/run", post(admin::cleanup_run_handler))
+        // Database/storage sync endpoints
+        .route("/api/admin/sync/status", get(admin::sync_status_handler))
+        .route("/api/admin/sync/run", post(admin::sync_run_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

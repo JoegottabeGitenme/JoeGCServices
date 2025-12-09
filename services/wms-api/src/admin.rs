@@ -1659,3 +1659,113 @@ pub async fn cleanup_run_handler(
         }
     }
 }
+
+// ============================================================================
+// Database/Storage Sync Types and Handlers
+// ============================================================================
+
+/// Response for sync status/dry-run endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncStatusResponse {
+    pub db_records_checked: u64,
+    pub minio_objects_checked: u64,
+    pub orphan_db_records: u64,
+    pub orphan_minio_objects: u64,
+    pub orphan_db_deleted: u64,
+    pub orphan_minio_deleted: u64,
+    pub errors: Vec<String>,
+    pub dry_run: bool,
+    pub message: String,
+}
+
+/// GET /api/admin/sync/status - Preview sync status (dry run)
+pub async fn sync_status_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting sync status (dry run)");
+    
+    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    
+    match sync_task.dry_run().await {
+        Ok(stats) => {
+            let message = if stats.orphan_db_records == 0 && stats.orphan_minio_objects == 0 {
+                "Database and storage are in sync".to_string()
+            } else {
+                format!(
+                    "Found {} orphan DB records and {} orphan MinIO objects",
+                    stats.orphan_db_records, stats.orphan_minio_objects
+                )
+            };
+            
+            Json(SyncStatusResponse {
+                db_records_checked: stats.db_records_checked,
+                minio_objects_checked: stats.minio_objects_checked,
+                orphan_db_records: stats.orphan_db_records,
+                orphan_minio_objects: stats.orphan_minio_objects,
+                orphan_db_deleted: 0,
+                orphan_minio_deleted: 0,
+                errors: stats.errors,
+                dry_run: true,
+                message,
+            })
+        }
+        Err(e) => {
+            error!(error = %e, "Sync status check failed");
+            Json(SyncStatusResponse {
+                db_records_checked: 0,
+                minio_objects_checked: 0,
+                orphan_db_records: 0,
+                orphan_minio_objects: 0,
+                orphan_db_deleted: 0,
+                orphan_minio_deleted: 0,
+                errors: vec![format!("Sync check failed: {}", e)],
+                dry_run: true,
+                message: format!("Failed to check sync status: {}", e),
+            })
+        }
+    }
+}
+
+/// POST /api/admin/sync/run - Run sync and delete orphans
+pub async fn sync_run_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Running sync to clean up orphans");
+    
+    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    
+    match sync_task.run().await {
+        Ok(stats) => {
+            let message = format!(
+                "Sync complete: deleted {} orphan DB records and {} orphan MinIO objects",
+                stats.orphan_db_deleted, stats.orphan_minio_deleted
+            );
+            
+            Json(SyncStatusResponse {
+                db_records_checked: stats.db_records_checked,
+                minio_objects_checked: stats.minio_objects_checked,
+                orphan_db_records: stats.orphan_db_records,
+                orphan_minio_objects: stats.orphan_minio_objects,
+                orphan_db_deleted: stats.orphan_db_deleted,
+                orphan_minio_deleted: stats.orphan_minio_deleted,
+                errors: stats.errors,
+                dry_run: false,
+                message,
+            })
+        }
+        Err(e) => {
+            error!(error = %e, "Sync run failed");
+            Json(SyncStatusResponse {
+                db_records_checked: 0,
+                minio_objects_checked: 0,
+                orphan_db_records: 0,
+                orphan_minio_objects: 0,
+                orphan_db_deleted: 0,
+                orphan_minio_deleted: 0,
+                errors: vec![format!("Sync failed: {}", e)],
+                dry_run: false,
+                message: format!("Sync failed: {}", e),
+            })
+        }
+    }
+}

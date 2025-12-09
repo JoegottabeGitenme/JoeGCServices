@@ -636,6 +636,78 @@ impl Catalog {
 
         Ok(row.map(|r| r.into()))
     }
+
+    // ========== Sync/Orphan Detection Methods ==========
+
+    /// Get all storage paths from the database (for sync validation).
+    pub async fn get_all_storage_paths(&self) -> WmsResult<Vec<String>> {
+        let paths = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT storage_path FROM datasets WHERE status = 'available'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(paths)
+    }
+
+    /// Delete database records for paths that no longer exist in storage.
+    /// Returns the number of records deleted.
+    pub async fn delete_orphan_records(&self, orphan_paths: &[String]) -> WmsResult<u64> {
+        if orphan_paths.is_empty() {
+            return Ok(0);
+        }
+
+        // Delete in batches to avoid query size limits
+        let mut total_deleted = 0u64;
+        for chunk in orphan_paths.chunks(100) {
+            let placeholders: Vec<String> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", i + 1))
+                .collect();
+            let sql = format!(
+                "DELETE FROM datasets WHERE storage_path IN ({})",
+                placeholders.join(", ")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for path in chunk {
+                query = query.bind(path);
+            }
+
+            let result = query
+                .execute(&self.pool)
+                .await
+                .map_err(|e| WmsError::DatabaseError(format!("Delete failed: {}", e)))?;
+
+            total_deleted += result.rows_affected();
+        }
+
+        Ok(total_deleted)
+    }
+
+    /// Get count of available datasets.
+    pub async fn count_available(&self) -> WmsResult<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM datasets WHERE status = 'available'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Get total database record count (all statuses).
+    pub async fn count_all(&self) -> WmsResult<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM datasets")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(count)
+    }
 }
 
 /// A catalog entry representing an ingested dataset.

@@ -194,6 +194,13 @@ pub async fn render_weather_data_with_lut(
     tile_coords: Option<(u32, u32, u32)>,  // (z, x, y) for LUT lookup
     projection_luts: Option<&ProjectionLuts>,
 ) -> Result<Vec<u8>, String> {
+    // Record model-specific request
+    let render_start = Instant::now();
+    let weather_model = crate::metrics::WeatherModel::from_model(model);
+    if let Some(wm) = weather_model {
+        metrics.record_model_request(wm, parameter);
+    }
+    
     // Get dataset based on time specification
     let entry = {
         if let Some(obs_time) = observation_time {
@@ -264,6 +271,15 @@ pub async fn render_weather_data_with_lut(
     let grid_result = load_grid_data(grib_cache, grid_cache, metrics, &entry, parameter).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
+    
+    // Record model-specific fetch metrics
+    if let Some(wm) = weather_model {
+        metrics.record_model_fetch(wm, entry.file_size, load_duration.as_micros() as u64);
+        if let Some(fhr) = forecast_hour {
+            metrics.record_model_forecast_hour(wm, fhr);
+        }
+    }
+    
     let grid_data = grid_result.data;
     let grid_width = grid_result.width;
     let grid_height = grid_result.height;
@@ -339,7 +355,13 @@ pub async fn render_weather_data_with_lut(
         }
     };
     let resample_duration = start.elapsed();
-    metrics.record_resample(resample_duration.as_micros() as u64).await;
+    let resample_us = resample_duration.as_micros() as u64;
+    metrics.record_resample(resample_us).await;
+    
+    // Record model-specific resample timing
+    if let Some(wm) = weather_model {
+        metrics.record_model_resample(wm, resample_us);
+    }
 
     // Apply color rendering (gradient/wind barbs/etc)
     let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
@@ -400,6 +422,13 @@ pub async fn render_weather_data_with_lut(
     };
     let png_duration = start.elapsed();
     metrics.record_png_encode(png_duration.as_micros() as u64).await;
+    
+    // Record model-specific render completion metrics
+    let total_render_duration = render_start.elapsed();
+    if let Some(wm) = weather_model {
+        metrics.record_model_render(wm, parameter, total_render_duration.as_micros() as u64, true);
+        metrics.record_model_png_encode(wm, png_duration.as_micros() as u64);
+    }
 
     Ok(png)
 }
@@ -1569,6 +1598,11 @@ async fn load_grid_data_with_options(
                     // Record cache hit for this data source
                     metrics.record_data_source_cache_hit(&source_type).await;
                     
+                    // Record model-specific grid cache hit
+                    if let Some(wm) = crate::metrics::WeatherModel::from_model(&entry.model) {
+                        metrics.record_model_grid_cache_hit(wm);
+                    }
+                    
                     return Ok(GridData {
                         data: (*cached.data).clone(),
                         width: cached.width,
@@ -1579,11 +1613,27 @@ async fn load_grid_data_with_options(
             }
         }
         
-        // Cache miss - load and parse GRIB2 file
-        let file_data = grib_cache
-            .get(&entry.storage_path)
+        // Cache miss - record grid cache miss for model
+        if let Some(wm) = crate::metrics::WeatherModel::from_model(&entry.model) {
+            metrics.record_model_grid_cache_miss(wm);
+        }
+        
+        // Load GRIB2 file from cache/storage with hit/miss status
+        let cache_result = grib_cache
+            .get_with_status(&entry.storage_path)
             .await
             .map_err(|e| format!("Failed to load file: {}", e))?;
+        
+        // Record model-specific file cache hit/miss
+        if let Some(wm) = crate::metrics::WeatherModel::from_model(&entry.model) {
+            if cache_result.was_cache_hit {
+                metrics.record_model_cache_hit(wm);
+            } else {
+                metrics.record_model_cache_miss(wm);
+            }
+        }
+        
+        let file_data = cache_result.data;
         
         // For MRMS (shredded single-message files), just read the first message
         // since each file contains only one parameter
@@ -1615,6 +1665,12 @@ async fn load_grid_data_with_options(
         metrics.record_data_source_parse(&source_type, parse_us).await;
         
         let (grid_height, grid_width) = msg.grid_dims();
+        let grid_points = (grid_width as u64) * (grid_height as u64);
+        
+        // Record model-specific parse time and grid size
+        if let Some(wm) = crate::metrics::WeatherModel::from_model(&entry.model) {
+            metrics.record_model_parse(wm, parse_us, grid_points);
+        }
         
         // Store in grid cache if GRIB2 caching is enabled
         if cache_grib2 {
@@ -1676,6 +1732,11 @@ async fn load_netcdf_grid_data(
             // Record cache hit for this data source
             metrics.record_data_source_cache_hit(source_type).await;
             
+            // Record GOES-specific cache hit
+            if let Some(sat) = crate::metrics::GoesSatellite::from_model(&entry.model) {
+                metrics.record_goes_cache_hit(sat);
+            }
+            
             // Convert from CachedGridData back to GridData
             return Ok(GridData {
                 data: (*cached.data).clone(),
@@ -1701,14 +1762,30 @@ async fn load_netcdf_grid_data(
         "Loading GOES NetCDF data from cache/storage (grid cache MISS)"
     );
     
+    // Determine GOES satellite for metrics
+    let goes_satellite = crate::metrics::GoesSatellite::from_model(&entry.model);
+    
+    // Record GOES cache miss
+    if let Some(sat) = goes_satellite {
+        metrics.record_goes_cache_miss(sat);
+    }
+    
     // Load file from cache (or storage on cache miss)
+    let fetch_start = Instant::now();
     let file_data = grib_cache
         .get(&entry.storage_path)
         .await
         .map_err(|e| format!("Failed to load NetCDF file from cache/storage: {}", e))?;
+    let fetch_us = fetch_start.elapsed().as_micros() as u64;
+    
+    // Record GOES fetch metrics
+    if let Some(sat) = goes_satellite {
+        metrics.record_goes_fetch(sat, file_data.len() as u64, fetch_us);
+    }
     
     info!(
         size = file_data.len(),
+        fetch_ms = fetch_us as f64 / 1000.0,
         "Loaded NetCDF file from cache/storage"
     );
     
@@ -1722,6 +1799,11 @@ async fn load_netcdf_grid_data(
     // Record per-source parse time
     metrics.record_data_source_parse(source_type, parse_us).await;
     
+    // Record GOES-specific parse metrics
+    if let Some(sat) = goes_satellite {
+        metrics.record_goes_parse(sat, parse_us, width as u32, height as u32);
+    }
+    
     info!(
         width = width,
         height = height,
@@ -1730,6 +1812,7 @@ async fn load_netcdf_grid_data(
         y_scale = y_scale,
         y_offset = y_offset,
         longitude_origin = projection.longitude_origin,
+        parse_ms = parse_us as f64 / 1000.0,
         "Parsed NetCDF using native library"
     );
     

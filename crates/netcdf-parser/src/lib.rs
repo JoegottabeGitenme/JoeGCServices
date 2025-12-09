@@ -525,6 +525,40 @@ fn generate_temp_filename() -> String {
     format!("goes_native_{}_{:?}_{}.nc", pid, tid, count)
 }
 
+/// Silence HDF5's automatic error printing to stderr.
+///
+/// The HDF5 C library prints verbose error messages to stderr even when errors
+/// are handled gracefully by the Rust code (e.g., when checking for optional
+/// attributes that don't exist). This creates confusing log spam like:
+///
+/// ```text
+/// HDF5-DIAG: Error detected in HDF5 (1.10.8) thread 3:
+///   #003: ../../../src/H5Adense.c line 397 in H5A__dense_open(): can't locate attribute in name index
+/// ```
+///
+/// This function disables that output by calling H5Eset_auto2 with null handlers.
+/// It only needs to be called once per process, but is safe to call multiple times.
+///
+/// **Important**: Call this function early in your program's startup (e.g., in main())
+/// before any HDF5/NetCDF operations occur. If HDF5 is initialized before this is called,
+/// the error silencing may not take effect for all operations.
+pub fn silence_hdf5_errors() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    
+    INIT.call_once(|| {
+        // SAFETY: H5Eset_auto2 is thread-safe and we're passing null pointers
+        // to disable error output, which is a documented valid use.
+        unsafe {
+            hdf5_metno_sys::h5e::H5Eset_auto2(
+                hdf5_metno_sys::h5e::H5E_DEFAULT,
+                None,
+                std::ptr::null_mut(),
+            );
+        }
+    });
+}
+
 /// Load GOES NetCDF data directly from bytes using native netcdf library.
 /// This is much faster than using ncdump subprocess.
 ///
@@ -539,6 +573,9 @@ fn generate_temp_filename() -> String {
 /// Returns (data, width, height, projection, x_offset, y_offset, x_scale, y_scale)
 pub fn load_goes_netcdf_from_bytes(data: &[u8]) -> NetCdfResult<(Vec<f32>, usize, usize, GoesProjection, f32, f32, f32, f32)> {
     use std::io::Write;
+    
+    // Silence HDF5's verbose stderr output for missing attributes
+    silence_hdf5_errors();
     
     // Use memory-backed filesystem on Linux for faster I/O
     let temp_dir = get_optimal_temp_dir();

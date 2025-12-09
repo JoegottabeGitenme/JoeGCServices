@@ -62,6 +62,65 @@ pub enum DataSourceType {
     Other(String),
 }
 
+/// GOES satellite identifier for per-satellite metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GoesSatellite {
+    Goes16,
+    Goes18,
+}
+
+impl GoesSatellite {
+    pub fn from_model(model: &str) -> Option<Self> {
+        match model.to_lowercase().as_str() {
+            "goes16" => Some(GoesSatellite::Goes16),
+            "goes18" => Some(GoesSatellite::Goes18),
+            _ => None,
+        }
+    }
+    
+    pub fn label(&self) -> &'static str {
+        match self {
+            GoesSatellite::Goes16 => "goes16",
+            GoesSatellite::Goes18 => "goes18",
+        }
+    }
+}
+
+/// Weather model identifier for per-model metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WeatherModel {
+    Gfs,
+    Hrrr,
+    Mrms,
+}
+
+impl WeatherModel {
+    pub fn from_model(model: &str) -> Option<Self> {
+        match model.to_lowercase().as_str() {
+            "gfs" => Some(WeatherModel::Gfs),
+            "hrrr" => Some(WeatherModel::Hrrr),
+            "mrms" => Some(WeatherModel::Mrms),
+            _ => None,
+        }
+    }
+    
+    pub fn label(&self) -> &'static str {
+        match self {
+            WeatherModel::Gfs => "gfs",
+            WeatherModel::Hrrr => "hrrr",
+            WeatherModel::Mrms => "mrms",
+        }
+    }
+    
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            WeatherModel::Gfs => "GFS",
+            WeatherModel::Hrrr => "HRRR",
+            WeatherModel::Mrms => "MRMS",
+        }
+    }
+}
+
 impl DataSourceType {
     /// Classify data source type based on model name
     pub fn from_model(model: &str) -> Self {
@@ -404,6 +463,194 @@ impl MetricsCollector {
         entry.record_cache_hit();
         
         counter!("data_source_cache_hits_total", "source" => label).increment(1);
+    }
+    
+    // ==================== GOES-Specific Metrics ====================
+    
+    /// Record a GOES tile request
+    pub fn record_goes_request(&self, satellite: GoesSatellite, band: &str) {
+        counter!("goes_requests_total", 
+            "satellite" => satellite.label().to_string(),
+            "band" => band.to_string()
+        ).increment(1);
+    }
+    
+    /// Record GOES file fetch from MinIO
+    pub fn record_goes_fetch(&self, satellite: GoesSatellite, file_size_bytes: u64, duration_us: u64) {
+        let sat_label = satellite.label().to_string();
+        counter!("goes_fetch_total", "satellite" => sat_label.clone()).increment(1);
+        counter!("goes_fetch_bytes_total", "satellite" => sat_label.clone()).increment(file_size_bytes);
+        histogram!("goes_fetch_duration_ms", "satellite" => sat_label.clone())
+            .record(duration_us as f64 / 1000.0);
+        histogram!("goes_file_size_bytes", "satellite" => sat_label)
+            .record(file_size_bytes as f64);
+    }
+    
+    /// Record GOES NetCDF parsing time
+    pub fn record_goes_parse(&self, satellite: GoesSatellite, duration_us: u64, width: u32, height: u32) {
+        let sat_label = satellite.label().to_string();
+        histogram!("goes_parse_duration_ms", "satellite" => sat_label.clone())
+            .record(duration_us as f64 / 1000.0);
+        gauge!("goes_grid_width", "satellite" => sat_label.clone()).set(width as f64);
+        gauge!("goes_grid_height", "satellite" => sat_label.clone()).set(height as f64);
+        let pixels = (width as u64) * (height as u64);
+        gauge!("goes_grid_pixels", "satellite" => sat_label).set(pixels as f64);
+    }
+    
+    /// Record GOES projection/resampling time
+    pub fn record_goes_projection(&self, satellite: GoesSatellite, duration_us: u64, use_lut: bool) {
+        let sat_label = satellite.label().to_string();
+        let method = if use_lut { "lut" } else { "compute" };
+        histogram!("goes_projection_duration_ms", 
+            "satellite" => sat_label,
+            "method" => method.to_string()
+        ).record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record GOES render completion
+    pub fn record_goes_render(&self, satellite: GoesSatellite, band: &str, duration_us: u64, success: bool) {
+        let sat_label = satellite.label().to_string();
+        let band_label = band.to_string();
+        counter!("goes_renders_total", 
+            "satellite" => sat_label.clone(),
+            "band" => band_label.clone(),
+            "success" => success.to_string()
+        ).increment(1);
+        if success {
+            histogram!("goes_render_duration_ms", 
+                "satellite" => sat_label,
+                "band" => band_label
+            ).record(duration_us as f64 / 1000.0);
+        }
+    }
+    
+    /// Record GOES cache hit (grid data cache)
+    pub fn record_goes_cache_hit(&self, satellite: GoesSatellite) {
+        counter!("goes_cache_hits_total", "satellite" => satellite.label().to_string()).increment(1);
+    }
+    
+    /// Record GOES cache miss (grid data cache)
+    pub fn record_goes_cache_miss(&self, satellite: GoesSatellite) {
+        counter!("goes_cache_misses_total", "satellite" => satellite.label().to_string()).increment(1);
+    }
+    
+    /// Record GOES LUT (look-up table) usage for projection
+    pub fn record_goes_lut_status(&self, satellite: GoesSatellite, loaded: bool, generation_ms: Option<f64>) {
+        let sat_label = satellite.label().to_string();
+        gauge!("goes_lut_loaded", "satellite" => sat_label.clone()).set(if loaded { 1.0 } else { 0.0 });
+        if let Some(gen_ms) = generation_ms {
+            gauge!("goes_lut_generation_ms", "satellite" => sat_label).set(gen_ms);
+        }
+    }
+    
+    /// Record GOES ingestion event
+    pub fn record_goes_ingestion(&self, satellite: GoesSatellite, band: &str, file_size_bytes: u64) {
+        let sat_label = satellite.label().to_string();
+        counter!("goes_ingestion_total", 
+            "satellite" => sat_label.clone(),
+            "band" => band.to_string()
+        ).increment(1);
+        counter!("goes_ingestion_bytes_total", "satellite" => sat_label).increment(file_size_bytes);
+    }
+    
+    // ==================== Weather Model Metrics (GFS/HRRR/MRMS) ====================
+    
+    /// Record a weather model tile request
+    pub fn record_model_request(&self, model: WeatherModel, parameter: &str) {
+        counter!("model_requests_total", 
+            "model" => model.label().to_string(),
+            "parameter" => parameter.to_string()
+        ).increment(1);
+    }
+    
+    /// Record weather model file fetch from MinIO
+    pub fn record_model_fetch(&self, model: WeatherModel, file_size_bytes: u64, duration_us: u64) {
+        let model_label = model.label().to_string();
+        counter!("model_fetch_total", "model" => model_label.clone()).increment(1);
+        counter!("model_fetch_bytes_total", "model" => model_label.clone()).increment(file_size_bytes);
+        histogram!("model_fetch_duration_ms", "model" => model_label.clone())
+            .record(duration_us as f64 / 1000.0);
+        histogram!("model_file_size_bytes", "model" => model_label)
+            .record(file_size_bytes as f64);
+    }
+    
+    /// Record weather model GRIB2 parsing time
+    pub fn record_model_parse(&self, model: WeatherModel, duration_us: u64, grid_points: u64) {
+        let model_label = model.label().to_string();
+        histogram!("model_parse_duration_ms", "model" => model_label.clone())
+            .record(duration_us as f64 / 1000.0);
+        gauge!("model_grid_points", "model" => model_label).set(grid_points as f64);
+    }
+    
+    /// Record weather model render completion
+    pub fn record_model_render(&self, model: WeatherModel, parameter: &str, duration_us: u64, success: bool) {
+        let model_label = model.label().to_string();
+        let param_label = parameter.to_string();
+        counter!("model_renders_total", 
+            "model" => model_label.clone(),
+            "parameter" => param_label.clone(),
+            "success" => success.to_string()
+        ).increment(1);
+        if success {
+            histogram!("model_render_duration_ms", 
+                "model" => model_label,
+                "parameter" => param_label
+            ).record(duration_us as f64 / 1000.0);
+        }
+    }
+    
+    /// Record weather model cache hit (GRIB cache)
+    pub fn record_model_cache_hit(&self, model: WeatherModel) {
+        counter!("model_cache_hits_total", "model" => model.label().to_string()).increment(1);
+    }
+    
+    /// Record weather model cache miss (GRIB cache)
+    pub fn record_model_cache_miss(&self, model: WeatherModel) {
+        counter!("model_cache_misses_total", "model" => model.label().to_string()).increment(1);
+    }
+    
+    /// Record weather model grid cache hit (parsed grid data)
+    pub fn record_model_grid_cache_hit(&self, model: WeatherModel) {
+        counter!("model_grid_cache_hits_total", "model" => model.label().to_string()).increment(1);
+    }
+    
+    /// Record weather model grid cache miss (parsed grid data)
+    pub fn record_model_grid_cache_miss(&self, model: WeatherModel) {
+        counter!("model_grid_cache_misses_total", "model" => model.label().to_string()).increment(1);
+    }
+    
+    /// Record weather model resampling/projection time
+    pub fn record_model_resample(&self, model: WeatherModel, duration_us: u64) {
+        histogram!("model_resample_duration_ms", "model" => model.label().to_string())
+            .record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record weather model PNG encoding time
+    pub fn record_model_png_encode(&self, model: WeatherModel, duration_us: u64) {
+        histogram!("model_png_encode_duration_ms", "model" => model.label().to_string())
+            .record(duration_us as f64 / 1000.0);
+    }
+    
+    /// Record weather model ingestion event
+    pub fn record_model_ingestion(&self, model: WeatherModel, parameter: &str, file_size_bytes: u64, forecast_hour: u32) {
+        let model_label = model.label().to_string();
+        counter!("model_ingestion_total", 
+            "model" => model_label.clone(),
+            "parameter" => parameter.to_string()
+        ).increment(1);
+        counter!("model_ingestion_bytes_total", "model" => model_label.clone()).increment(file_size_bytes);
+        gauge!("model_latest_forecast_hour", "model" => model_label).set(forecast_hour as f64);
+    }
+    
+    /// Record forecast hour being rendered
+    pub fn record_model_forecast_hour(&self, model: WeatherModel, forecast_hour: u32) {
+        histogram!("model_forecast_hour_rendered", "model" => model.label().to_string())
+            .record(forecast_hour as f64);
+    }
+    
+    /// Record model data age (time since reference time)
+    pub fn record_model_data_age(&self, model: WeatherModel, age_minutes: u64) {
+        gauge!("model_data_age_minutes", "model" => model.label().to_string()).set(age_minutes as f64);
     }
     
     /// Record grid resampling time (projection + interpolation)

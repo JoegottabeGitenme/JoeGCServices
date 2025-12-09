@@ -1,0 +1,980 @@
+{
+  "uid": "goes-pipeline",
+  "title": "GOES Satellite Pipeline - Complete Analysis",
+  "tags": [
+    "goes",
+    "satellite",
+    "netcdf",
+    "performance"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 40,
+  "version": 1,
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "satellite",
+        "type": "custom",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [
+          {"text": "All", "value": "$__all"},
+          {"text": "GOES-16 (East)", "value": "goes16"},
+          {"text": "GOES-18 (West)", "value": "goes18"}
+        ],
+        "includeAll": true,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview - GOES Request & Throughput",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "opacity"
+          },
+          "color": {"mode": "palette-classic"}
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 1},
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_requests_total[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(goes_requests_total[$__rate_interval]))",
+          "legendFormat": "Total",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES Requests/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 1},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_renders_total{success=\"true\"}[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}} success",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(goes_renders_total{success=\"false\"}[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}} failed",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES Renders/sec (Success vs Failed)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 30,
+            "gradientMode": "opacity"
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 1},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_fetch_bytes_total[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}}",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES Data Throughput (bytes/sec)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Cache Performance",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 8},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 80}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 9},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_cache_hits_total[$__rate_interval])) by (satellite) / (sum(rate(goes_cache_hits_total[$__rate_interval])) by (satellite) + sum(rate(goes_cache_misses_total[$__rate_interval])) by (satellite)) * 100",
+          "legendFormat": "{{satellite}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(goes_cache_hits_total[$__rate_interval])) / (sum(rate(goes_cache_hits_total[$__rate_interval])) + sum(rate(goes_cache_misses_total[$__rate_interval]))) * 100",
+          "legendFormat": "Combined",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES Grid Cache Hit Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 9},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_cache_hits_total[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}} hits",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(goes_cache_misses_total[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}} misses",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES Cache Hits vs Misses",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 80}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 9},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(data_source_cache_hits_total{source=\"goes\"}[$__rate_interval])) / (sum(rate(data_source_cache_hits_total{source=\"goes\"}[$__rate_interval])) + sum(rate(data_source_parse_total{source=\"goes\"}[$__rate_interval]))) * 100",
+          "legendFormat": "Parse Cache Hit Rate",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES Data Source Cache Hit Rate",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Pipeline Latency Breakdown",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 16},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "stacking": {"mode": "normal"}
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "goes_fetch_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "Fetch (p50)",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_parse_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "Parse (p50)",
+          "refId": "B"
+        },
+        {
+          "expr": "goes_projection_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "Projection (p50)",
+          "refId": "C"
+        },
+        {
+          "expr": "png_encode_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "PNG Encode (p50)",
+          "refId": "D"
+        }
+      ],
+      "title": "GOES Pipeline Stages - p50 Latency (Stacked)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+      "id": 8,
+      "targets": [
+        {
+          "expr": "goes_render_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "{{satellite}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_render_duration_ms{quantile=\"0.95\"}",
+          "legendFormat": "{{satellite}} p95",
+          "refId": "B"
+        },
+        {
+          "expr": "goes_render_duration_ms{quantile=\"0.99\"}",
+          "legendFormat": "{{satellite}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "GOES Total Render Time (p50/p95/p99)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Per-Stage Detailed Metrics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 26},
+      "id": 9,
+      "targets": [
+        {
+          "expr": "goes_fetch_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "{{satellite}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_fetch_duration_ms{quantile=\"0.95\"}",
+          "legendFormat": "{{satellite}} p95",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES File Fetch Time (from MinIO/Cache)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 26},
+      "id": 10,
+      "targets": [
+        {
+          "expr": "goes_parse_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "{{satellite}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_parse_duration_ms{quantile=\"0.95\"}",
+          "legendFormat": "{{satellite}} p95",
+          "refId": "B"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"goes\",quantile=\"0.5\"}",
+          "legendFormat": "Combined p50",
+          "refId": "C"
+        }
+      ],
+      "title": "GOES NetCDF Parse Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 26},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "goes_projection_duration_ms{method=\"lut\",quantile=\"0.5\"}",
+          "legendFormat": "LUT p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_projection_duration_ms{method=\"compute\",quantile=\"0.5\"}",
+          "legendFormat": "Compute p50",
+          "refId": "B"
+        },
+        {
+          "expr": "goes_projection_duration_ms{quantile=\"0.95\"}",
+          "legendFormat": "Combined p95",
+          "refId": "C"
+        }
+      ],
+      "title": "GOES Projection Time (LUT vs Compute)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "File & Data Characteristics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 34},
+      "id": 12,
+      "targets": [
+        {
+          "expr": "goes_file_size_bytes{quantile=\"0.5\"}",
+          "legendFormat": "{{satellite}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_file_size_bytes{quantile=\"0.95\"}",
+          "legendFormat": "{{satellite}} p95",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES NetCDF File Sizes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 34},
+      "id": 13,
+      "targets": [
+        {
+          "expr": "goes_grid_width",
+          "legendFormat": "{{satellite}} width",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_grid_height",
+          "legendFormat": "{{satellite}} height",
+          "refId": "B"
+        }
+      ],
+      "title": "GOES Grid Dimensions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 34},
+      "id": 14,
+      "targets": [
+        {
+          "expr": "goes_grid_pixels",
+          "legendFormat": "{{satellite}} total pixels",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES Grid Size (Total Pixels)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Cumulative Stats & Counters",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 42},
+      "id": 15,
+      "targets": [
+        {
+          "expr": "sum(goes_requests_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total GOES Requests",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 42},
+      "id": 16,
+      "targets": [
+        {
+          "expr": "sum(goes_renders_total{success=\"true\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Successful Renders",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 42},
+      "id": 17,
+      "targets": [
+        {
+          "expr": "sum(goes_renders_total{success=\"false\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Renders",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "purple", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 42},
+      "id": 18,
+      "targets": [
+        {
+          "expr": "sum(goes_fetch_bytes_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Bytes Fetched",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 42},
+      "id": 19,
+      "targets": [
+        {
+          "expr": "sum(goes_cache_hits_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Hits",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "orange", "value": null}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 42},
+      "id": 20,
+      "targets": [
+        {
+          "expr": "sum(goes_cache_misses_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Misses",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "type": "row",
+      "title": "Per-Band Analysis",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 46},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 47},
+      "id": 21,
+      "targets": [
+        {
+          "expr": "sum(rate(goes_requests_total[$__rate_interval])) by (band)",
+          "legendFormat": "{{band}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Requests by Band",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 47},
+      "id": 22,
+      "targets": [
+        {
+          "expr": "goes_render_duration_ms{quantile=\"0.5\"}",
+          "legendFormat": "{{band}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "goes_render_duration_ms{quantile=\"0.95\"}",
+          "legendFormat": "{{band}} p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Render Time by Band",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "LUT (Look-Up Table) Status",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bool",
+          "mappings": [
+            {"options": {"0": {"text": "Not Loaded", "color": "red"}}, "type": "value"},
+            {"options": {"1": {"text": "Loaded", "color": "green"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 55},
+      "id": 23,
+      "targets": [
+        {
+          "expr": "goes_lut_loaded{satellite=\"goes16\"} or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES-16 LUT Status",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bool",
+          "mappings": [
+            {"options": {"0": {"text": "Not Loaded", "color": "red"}}, "type": "value"},
+            {"options": {"1": {"text": "Loaded", "color": "green"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 55},
+      "id": 24,
+      "targets": [
+        {
+          "expr": "goes_lut_loaded{satellite=\"goes18\"} or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES-18 LUT Status",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1000},
+              {"color": "red", "value": 5000}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 55},
+      "id": 25,
+      "targets": [
+        {
+          "expr": "goes_lut_generation_ms{satellite=\"goes16\"} or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES-16 LUT Generation Time",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1000},
+              {"color": "red", "value": 5000}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 55},
+      "id": 26,
+      "targets": [
+        {
+          "expr": "goes_lut_generation_ms{satellite=\"goes18\"} or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES-18 LUT Generation Time",
+      "type": "stat",
+      "options": {"colorMode": "background"}
+    },
+    {
+      "type": "row",
+      "title": "Comparison: GOES vs Other Data Sources",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 59},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 60},
+      "id": 27,
+      "targets": [
+        {
+          "expr": "data_source_parse_duration_ms{source=\"goes\",quantile=\"0.5\"}",
+          "legendFormat": "GOES p50",
+          "refId": "A"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"gfs\",quantile=\"0.5\"}",
+          "legendFormat": "GFS p50",
+          "refId": "B"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"hrrr\",quantile=\"0.5\"}",
+          "legendFormat": "HRRR p50",
+          "refId": "C"
+        },
+        {
+          "expr": "data_source_parse_duration_ms{source=\"mrms\",quantile=\"0.5\"}",
+          "legendFormat": "MRMS p50",
+          "refId": "D"
+        }
+      ],
+      "title": "Parse Time Comparison (All Sources)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 80}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 60},
+      "id": 28,
+      "targets": [
+        {
+          "expr": "sum(rate(data_source_cache_hits_total{source=\"goes\"}[$__rate_interval])) / (sum(rate(data_source_cache_hits_total{source=\"goes\"}[$__rate_interval])) + sum(rate(data_source_parse_total{source=\"goes\"}[$__rate_interval]))) * 100",
+          "legendFormat": "GOES",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(data_source_cache_hits_total{source=\"gfs\"}[$__rate_interval])) / (sum(rate(data_source_cache_hits_total{source=\"gfs\"}[$__rate_interval])) + sum(rate(data_source_parse_total{source=\"gfs\"}[$__rate_interval]))) * 100",
+          "legendFormat": "GFS",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(data_source_cache_hits_total{source=\"hrrr\"}[$__rate_interval])) / (sum(rate(data_source_cache_hits_total{source=\"hrrr\"}[$__rate_interval])) + sum(rate(data_source_parse_total{source=\"hrrr\"}[$__rate_interval]))) * 100",
+          "legendFormat": "HRRR",
+          "refId": "C"
+        }
+      ],
+      "title": "Cache Hit Rate Comparison (All Sources)",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "title": "Ingestion Stats",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 67},
+      "collapsed": false
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 68},
+      "id": 29,
+      "targets": [
+        {
+          "expr": "sum(increase(goes_ingestion_total[$__rate_interval])) by (satellite, band)",
+          "legendFormat": "{{satellite}} - {{band}}",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES Files Ingested",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 68},
+      "id": 30,
+      "targets": [
+        {
+          "expr": "sum(increase(goes_ingestion_bytes_total[$__rate_interval])) by (satellite)",
+          "legendFormat": "{{satellite}}",
+          "refId": "A"
+        }
+      ],
+      "title": "GOES Bytes Ingested",
+      "type": "timeseries"
+    }
+  ]
+}

@@ -2835,6 +2835,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "chrono",
+ "hdf5-metno-sys",
  "netcdf",
  "thiserror 1.0.69",
  "tracing",

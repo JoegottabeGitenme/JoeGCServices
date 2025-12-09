@@ -249,7 +249,7 @@ impl CleanupTask {
 }
 
 /// Statistics from a cleanup run.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct CleanupStats {
     /// Number of datasets marked as expired
     pub marked_expired: u64,
@@ -259,6 +259,151 @@ pub struct CleanupStats {
     pub records_deleted: u64,
     /// Number of delete errors
     pub delete_errors: u64,
+}
+
+/// Statistics from a sync operation.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct SyncStats {
+    /// Number of database records checked
+    pub db_records_checked: u64,
+    /// Number of MinIO objects checked
+    pub minio_objects_checked: u64,
+    /// Number of orphan DB records found (no file in MinIO)
+    pub orphan_db_records: u64,
+    /// Number of orphan MinIO objects found (no DB record)
+    pub orphan_minio_objects: u64,
+    /// Number of orphan DB records deleted
+    pub orphan_db_deleted: u64,
+    /// Number of orphan MinIO objects deleted
+    pub orphan_minio_deleted: u64,
+    /// Errors encountered during sync
+    pub errors: Vec<String>,
+}
+
+/// Sync task for reconciling database and MinIO storage.
+pub struct SyncTask {
+    state: Arc<AppState>,
+}
+
+impl SyncTask {
+    /// Create a new sync task.
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self { state }
+    }
+
+    /// Perform a dry-run sync to identify orphans without deleting.
+    pub async fn dry_run(&self) -> Result<SyncStats> {
+        self.run_sync(false).await
+    }
+
+    /// Perform a sync and delete orphans.
+    pub async fn run(&self) -> Result<SyncStats> {
+        self.run_sync(true).await
+    }
+
+    /// Core sync logic.
+    async fn run_sync(&self, delete: bool) -> Result<SyncStats> {
+        let mut stats = SyncStats::default();
+
+        info!(delete = delete, "Starting database/storage sync");
+
+        // Step 1: Get all storage paths from the database
+        let db_paths = self.state.catalog.get_all_storage_paths().await?;
+        let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
+        stats.db_records_checked = db_paths.len() as u64;
+
+        info!(count = db_paths.len(), "Retrieved database storage paths");
+
+        // Step 2: Get all objects from MinIO (under shredded/ prefix where data lives)
+        let minio_paths = self.state.storage.list("shredded/").await?;
+        let minio_path_set: std::collections::HashSet<String> = minio_paths.iter().cloned().collect();
+        stats.minio_objects_checked = minio_paths.len() as u64;
+
+        info!(count = minio_paths.len(), "Retrieved MinIO objects");
+
+        // Step 3: Find orphan DB records (in DB but not in MinIO)
+        let orphan_db_paths: Vec<String> = db_paths
+            .into_iter()
+            .filter(|path| !minio_path_set.contains(path))
+            .collect();
+        stats.orphan_db_records = orphan_db_paths.len() as u64;
+
+        if !orphan_db_paths.is_empty() {
+            info!(
+                count = orphan_db_paths.len(),
+                "Found orphan database records (missing from MinIO)"
+            );
+            
+            if orphan_db_paths.len() <= 20 {
+                for path in &orphan_db_paths {
+                    info!(path = %path, "Orphan DB record");
+                }
+            }
+
+            if delete {
+                match self.state.catalog.delete_orphan_records(&orphan_db_paths).await {
+                    Ok(deleted) => {
+                        stats.orphan_db_deleted = deleted;
+                        info!(count = deleted, "Deleted orphan database records");
+                    }
+                    Err(e) => {
+                        let msg = format!("Failed to delete orphan DB records: {}", e);
+                        error!("{}", msg);
+                        stats.errors.push(msg);
+                    }
+                }
+            }
+        }
+
+        // Step 4: Find orphan MinIO objects (in MinIO but not in DB)
+        let orphan_minio_paths: Vec<String> = minio_paths
+            .into_iter()
+            .filter(|path| !db_path_set.contains(path))
+            .collect();
+        stats.orphan_minio_objects = orphan_minio_paths.len() as u64;
+
+        if !orphan_minio_paths.is_empty() {
+            info!(
+                count = orphan_minio_paths.len(),
+                "Found orphan MinIO objects (missing from database)"
+            );
+
+            if orphan_minio_paths.len() <= 20 {
+                for path in &orphan_minio_paths {
+                    info!(path = %path, "Orphan MinIO object");
+                }
+            }
+
+            if delete {
+                for path in &orphan_minio_paths {
+                    match self.state.storage.delete(path).await {
+                        Ok(()) => {
+                            stats.orphan_minio_deleted += 1;
+                        }
+                        Err(e) => {
+                            let msg = format!("Failed to delete MinIO object {}: {}", path, e);
+                            warn!("{}", msg);
+                            stats.errors.push(msg);
+                        }
+                    }
+                }
+                info!(count = stats.orphan_minio_deleted, "Deleted orphan MinIO objects");
+            }
+        }
+
+        info!(
+            db_checked = stats.db_records_checked,
+            minio_checked = stats.minio_objects_checked,
+            orphan_db = stats.orphan_db_records,
+            orphan_minio = stats.orphan_minio_objects,
+            deleted_db = stats.orphan_db_deleted,
+            deleted_minio = stats.orphan_minio_deleted,
+            errors = stats.errors.len(),
+            "Sync complete"
+        );
+
+        Ok(stats)
+    }
 }
 
 #[cfg(test)]

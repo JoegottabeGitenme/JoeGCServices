@@ -35,6 +35,13 @@ pub struct CacheStats {
     pub total_bytes_cached: u64,
 }
 
+/// Result of a cache get operation, indicating whether it was a hit or miss
+#[derive(Debug, Clone)]
+pub struct CacheGetResult {
+    pub data: Bytes,
+    pub was_cache_hit: bool,
+}
+
 impl CacheStats {
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
@@ -76,6 +83,14 @@ impl GribCache {
     /// 3. Stores fetched data in cache for future requests
     /// 4. Updates cache statistics
     pub async fn get(&self, path: &str) -> WmsResult<Bytes> {
+        Ok(self.get_with_status(path).await?.data)
+    }
+    
+    /// Get GRIB data from cache or fetch from storage, with cache hit/miss status.
+    /// 
+    /// Same as `get()` but also returns whether the data came from cache.
+    /// Useful for model-specific cache metrics.
+    pub async fn get_with_status(&self, path: &str) -> WmsResult<CacheGetResult> {
         // Try cache first
         {
             let mut cache = self.cache.lock().await;
@@ -83,7 +98,10 @@ impl GribCache {
                 // Cache hit - update stats and return
                 let mut stats = self.stats.lock().await;
                 stats.hits += 1;
-                return Ok(data.clone());
+                return Ok(CacheGetResult {
+                    data: data.clone(),
+                    was_cache_hit: true,
+                });
             }
         }
 
@@ -114,7 +132,10 @@ impl GribCache {
             stats.total_bytes_cached += data_size;
         }
 
-        Ok(data)
+        Ok(CacheGetResult {
+            data,
+            was_cache_hit: false,
+        })
     }
 
     /// Get current cache statistics.
