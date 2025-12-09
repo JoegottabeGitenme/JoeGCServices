@@ -351,6 +351,59 @@ html, body {
     font-family: 'Monaco', 'Courier New', monospace;
 }
 
+/* Per-model stats in Data bar */
+#info-models-stats {
+    display: flex;
+    gap: 1rem;
+}
+
+.info-model-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    cursor: help;
+}
+
+.info-model-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+}
+
+.info-model-status {
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.info-model-status.active {
+    color: #10b981;
+}
+
+.info-model-status.inactive {
+    color: #6b7280;
+}
+
+.info-model-status.error {
+    color: #ef4444;
+}
+
+.info-model-files {
+    font-size: 1rem;
+    color: #60a5fa;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.info-model-params {
+    font-size: 0.95rem;
+    color: #6b7280;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
 /* Main Content */
 .main-content {
     display: flex;
@@ -376,6 +429,179 @@ html, body {
 .sidebar-right {
     width: 260px;
     border-left: 1px solid #ddd;
+}
+
+/* Minimap Container */
+.minimap-container {
+    width: 520px;
+    background: #1f2937;
+    border-left: 1px solid #374151;
+    display: flex;
+    flex-direction: column;
+}
+
+.minimap-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 50%;
+    min-height: 280px;
+}
+
+.minimap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+    border-bottom: 1px solid #4b5563;
+}
+
+.minimap-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.minimap-clear-btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 4px;
+    color: #f87171;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.minimap-clear-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.6);
+}
+
+#minimap {
+    flex: 1;
+    min-height: 200px;
+    background: #111827;
+}
+
+/* Bottom area below minimap - for future use */
+.minimap-bottom {
+    flex: 1;
+    background: #111827;
+    border-top: 1px solid #374151;
+}
+
+/* Hide Leaflet controls on minimap */
+#minimap .leaflet-control-zoom,
+#minimap .leaflet-control-attribution {
+    display: none !important;
+}
+
+/* Minimap viewport indicator */
+.minimap-viewport {
+    border: 2px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+    pointer-events: none;
+}
+
+/* Minimap legend */
+.minimap-legend {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0.4rem 0.5rem;
+    background: rgba(17, 24, 39, 0.9);
+    border-top: 1px solid #374151;
+}
+
+.minimap-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    opacity: 0.8;
+}
+
+.legend-label {
+    font-size: 0.65rem;
+    color: #9ca3af;
+    text-transform: uppercase;
+}
+
+/* Minimap stats */
+.minimap-stats {
+    display: flex;
+    justify-content: space-around;
+    padding: 0.5rem;
+    background: #111827;
+    border-top: 1px solid #374151;
+}
+
+.minimap-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.minimap-stat-label {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-transform: uppercase;
+}
+
+.minimap-stat-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #10b981;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+/* Heatmap point styles */
+.heatmap-point {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+
+/* Heatmap intensity gradient */
+.heatmap-point.intensity-1 {
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.6) 0%, rgba(59, 130, 246, 0) 70%);
+}
+
+.heatmap-point.intensity-2 {
+    background: radial-gradient(circle, rgba(16, 185, 129, 0.7) 0%, rgba(16, 185, 129, 0) 70%);
+}
+
+.heatmap-point.intensity-3 {
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.8) 0%, rgba(245, 158, 11, 0) 70%);
+}
+
+.heatmap-point.intensity-4 {
+    background: radial-gradient(circle, rgba(239, 68, 68, 0.9) 0%, rgba(239, 68, 68, 0) 70%);
+}
+
+/* Heatmap tooltip */
+.heatmap-tooltip {
+    background: rgba(31, 41, 55, 0.95);
+    border: 1px solid #4b5563;
+    color: #f3f4f6;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.heatmap-tooltip::before {
+    border-top-color: rgba(31, 41, 55, 0.95) !important;
 }
 
 .sidebar-section {
@@ -946,8 +1172,18 @@ html, body {
     }
 }
 
+@media (max-width: 1200px) {
+    .minimap-container {
+        width: 360px;
+    }
+}
+
 @media (max-width: 900px) {
     .sidebar-right {
+        display: none;
+    }
+    
+    .minimap-container {
         display: none;
     }
 }

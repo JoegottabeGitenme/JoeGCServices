@@ -1142,6 +1142,7 @@ function loadLayerOnMap(layerName) {
     if (wmsLayer) {
         map.removeLayer(wmsLayer);
         map.off('moveend', onMapMoveEnd); // Remove moveend listener from previous WMS layer
+        wmsLayer = null;
     }
 
     // Store current layer and reset style to default for new layer
@@ -1155,20 +1156,37 @@ function loadLayerOnMap(layerName) {
     performanceStats.layerStartTime = null;
 
     // Reset time mode to forecast (default) before loading
-    // This prevents stale observation times from being used for forecast layers
-    // The correct mode will be set by fetchAvailableTimes() after loading
     layerTimeMode = 'forecast';
     currentObservationTime = null;
-    currentForecastHour = 0;
+    currentForecastHour = null; // Will be set by fetchAvailableTimes
     currentElevation = ''; // Reset elevation - will be populated from capabilities
+
+    // Update current layer display
+    if (currentLayerNameEl) {
+        currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
+    }
+    updatePerformanceDisplay();
+    
+    // Fetch available times FIRST, then create the layer with correct time values
+    fetchAvailableTimes();
+}
+
+// Create and add the weather layer to the map (called after fetchAvailableTimes)
+function createWeatherLayer() {
+    if (!selectedLayer) return;
+    
+    // Remove existing layer if any
+    if (wmsLayer) {
+        map.removeLayer(wmsLayer);
+        map.off('moveend', onMapMoveEnd);
+    }
 
     if (selectedProtocol === 'wmts') {
         // Create WMTS layer using Leaflet TileLayer with direct URL pattern
-        // WMTS tile URL format: /wmts/rest/{layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png?time=N&elevation=...
-        const wmtsUrl = buildWmtsTileUrl(layerName, selectedStyle);
+        const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
         
         wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `${formatLayerName(layerName)} (WMTS - ${selectedStyle})`,
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7,
@@ -1195,22 +1213,14 @@ function loadLayerOnMap(layerName) {
         console.log('Loaded WMTS layer:', wmtsUrl);
     } else {
         // Create WMS layer using a single GetMap request for the entire viewport
-        // This uses L.imageOverlay which we update on map move
-        wmsLayer = createWmsImageOverlay(layerName, selectedStyle);
+        wmsLayer = createWmsImageOverlay(selectedLayer, selectedStyle);
         wmsLayer.addTo(map);
         
         // Update the overlay when map moves
         map.on('moveend', onMapMoveEnd);
         
-        console.log('Loaded WMS layer (single GetMap):', layerName, 'with style:', selectedStyle, 'time:', currentForecastHour);
+        console.log('Loaded WMS layer (single GetMap):', selectedLayer, 'with style:', selectedStyle, 'time:', currentForecastHour);
     }
-
-    // Update current layer display
-    currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
-    updatePerformanceDisplay();
-    
-    // Fetch available times and update time controls (this detects observation vs forecast mode)
-    fetchAvailableTimes();
 }
 
 // Create a WMS image overlay that covers the current viewport
@@ -1415,9 +1425,127 @@ async function fetchDataStats() {
         if (infoDataShreddedEl) {
             infoDataShreddedEl.textContent = (catalog.shredded_object_count ?? 0).toLocaleString();
         }
+        
+        // Update per-model stats in the Data info bar
+        updatePerModelStats(models, catalog);
     } catch (error) {
         console.error('Error fetching data stats:', error);
     }
+}
+
+// Update per-model statistics in the Data info bar
+function updatePerModelStats(models, catalog) {
+    // Map model names to element IDs (handle variations like goes16/goes18 -> goes)
+    const modelMapping = {
+        'gfs': 'gfs',
+        'hrrr': 'hrrr',
+        'goes16': 'goes',
+        'goes18': 'goes',
+        'mrms': 'mrms'
+    };
+    
+    // Aggregate stats per display model (e.g., combine goes16 + goes18)
+    const aggregated = {};
+    
+    // Process models array from ingestion status
+    models.forEach(model => {
+        // Use model.id (e.g., "gfs") not model.name (e.g., "GFS Model")
+        const name = (model.id || model.name || '').toLowerCase();
+        const displayName = modelMapping[name] || name;
+        
+        if (!displayName) return;
+        
+        if (!aggregated[displayName]) {
+            aggregated[displayName] = {
+                status: 'inactive',
+                files: 0,
+                params: 0,
+                hasData: false
+            };
+        }
+        
+        // If any sub-model is active, mark as active
+        if (model.status === 'active') {
+            aggregated[displayName].status = 'active';
+        } else if (model.status === 'error' && aggregated[displayName].status !== 'active') {
+            aggregated[displayName].status = 'error';
+        }
+        
+        // Sum up files and params (API uses total_files and parameters)
+        aggregated[displayName].files += model.total_files || model.file_count || 0;
+        aggregated[displayName].params += (model.parameters ? model.parameters.length : 0) || model.parameter_count || 0;
+        
+        if ((model.total_files || model.file_count) > 0) {
+            aggregated[displayName].hasData = true;
+        }
+    });
+    
+    // Also check catalog per-model stats if available (it's an array, not object)
+    const catalogModels = catalog.models || [];
+    catalogModels.forEach(stats => {
+        const name = (stats.model || '').toLowerCase();
+        const displayName = modelMapping[name] || name;
+        
+        if (!displayName) return;
+        
+        if (!aggregated[displayName]) {
+            aggregated[displayName] = {
+                status: 'inactive',
+                files: 0,
+                params: 0,
+                hasData: false
+            };
+        }
+        
+        // Use catalog counts if higher (more accurate)
+        const datasetCount = stats.dataset_count || stats.datasets || 0;
+        const paramCount = stats.parameter_count || stats.parameters || 0;
+        
+        if (datasetCount > aggregated[displayName].files) {
+            aggregated[displayName].files = datasetCount;
+        }
+        if (paramCount > aggregated[displayName].params) {
+            aggregated[displayName].params = paramCount;
+        }
+        if (datasetCount > 0) {
+            aggregated[displayName].hasData = true;
+            if (aggregated[displayName].status === 'inactive') {
+                aggregated[displayName].status = 'active';
+            }
+        }
+    });
+    
+    // Update the UI for each model
+    ['gfs', 'hrrr', 'goes', 'mrms'].forEach(modelName => {
+        const modelEl = document.getElementById(`info-model-${modelName}`);
+        if (!modelEl) return;
+        
+        const stats = aggregated[modelName] || { status: 'inactive', files: 0, params: 0 };
+        
+        const statusEl = modelEl.querySelector('.info-model-status');
+        const filesEl = modelEl.querySelector('.info-model-files');
+        const paramsEl = modelEl.querySelector('.info-model-params');
+        
+        if (statusEl) {
+            // Show a status indicator
+            statusEl.className = 'info-model-status ' + stats.status;
+            if (stats.status === 'active') {
+                statusEl.textContent = '\u2713'; // checkmark
+            } else if (stats.status === 'error') {
+                statusEl.textContent = '\u2717'; // X mark
+            } else {
+                statusEl.textContent = '-';
+            }
+        }
+        
+        if (filesEl) {
+            filesEl.textContent = stats.files > 0 ? stats.files.toLocaleString() + 'f' : '-';
+        }
+        
+        if (paramsEl) {
+            paramsEl.textContent = stats.params > 0 ? stats.params.toLocaleString() + 'p' : '-';
+        }
+    });
 }
 
 // Check ingestion status from catalog database
@@ -1466,8 +1594,8 @@ async function updateIngestionMetrics() {
 
         // Update UI
         setIngestionStatus('online');
-        datasetCountEl.textContent = datasetCount;
-        modelsListEl.textContent = Array.from(models).join(', ') || 'None';
+        if (datasetCountEl) datasetCountEl.textContent = datasetCount;
+        if (modelsListEl) modelsListEl.textContent = Array.from(models).join(', ') || 'None';
         
         // Fetch actual storage stats from API
         fetchStorageStats();
@@ -1484,11 +1612,13 @@ async function updateIngestionMetrics() {
 
 // Set ingestion service status
 function setIngestionStatus(status) {
+    if (!ingesterServiceStatusEl) return;
+    
     const statusDot = ingesterServiceStatusEl.querySelector('.status-dot');
     const statusText = ingesterServiceStatusEl.querySelector('.status-text');
     
-    statusDot.className = `status-dot ${status}`;
-    statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    if (statusDot) statusDot.className = `status-dot ${status}`;
+    if (statusText) statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 // Add entry to ingestion log (optional - only if log element exists)
@@ -1529,7 +1659,9 @@ async function fetchStorageStats() {
         const response = await fetch(`${API_BASE}/api/storage/stats`);
         if (response.ok) {
             const stats = await response.json();
-            storageSizeEl.textContent = `${formatBytes(stats.total_size)} (${stats.object_count} files)`;
+            if (storageSizeEl) {
+                storageSizeEl.textContent = `${formatBytes(stats.total_size)} (${stats.object_count} files)`;
+            }
             
             // Update Info Bar storage stats
             if (infoSysStorageEl) {
@@ -1549,7 +1681,7 @@ async function fetchStorageStats() {
         }
     } catch (error) {
         console.error('Error fetching storage stats:', error);
-        storageSizeEl.textContent = 'N/A';
+        if (storageSizeEl) storageSizeEl.textContent = 'N/A';
     }
 }
 
@@ -1884,7 +2016,7 @@ function trackTileLoadTime(time) {
 
 function updatePerformanceDisplay() {
     // Last tile time
-    if (performanceStats.tileTimes.length > 0) {
+    if (performanceStats.tileTimes.length > 0 && lastTileTimeEl) {
         const lastTime = performanceStats.tileTimes[performanceStats.tileTimes.length - 1];
         lastTileTimeEl.textContent = `${lastTime.toFixed(0)}ms`;
         lastTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
@@ -1898,7 +2030,7 @@ function updatePerformanceDisplay() {
     }
     
     // Average time
-    if (performanceStats.tileTimes.length > 0) {
+    if (performanceStats.tileTimes.length > 0 && avgTileTimeEl) {
         const avgTime = performanceStats.tileTimes.reduce((a, b) => a + b, 0) / performanceStats.tileTimes.length;
         avgTileTimeEl.textContent = `${avgTime.toFixed(0)}ms`;
         avgTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
@@ -1912,7 +2044,7 @@ function updatePerformanceDisplay() {
     }
     
     // Slowest time
-    if (performanceStats.tileTimes.length > 0) {
+    if (performanceStats.tileTimes.length > 0 && slowestTileTimeEl) {
         const slowestTime = Math.max(...performanceStats.tileTimes);
         slowestTileTimeEl.textContent = `${slowestTime.toFixed(0)}ms`;
         slowestTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
@@ -1926,10 +2058,12 @@ function updatePerformanceDisplay() {
     }
     
     // Tiles loaded
-    tilesLoadedCountEl.textContent = performanceStats.tilesLoaded;
+    if (tilesLoadedCountEl) {
+        tilesLoadedCountEl.textContent = performanceStats.tilesLoaded;
+    }
     
     // Current layer
-    if (performanceStats.currentLayer) {
+    if (performanceStats.currentLayer && currentLayerNameEl) {
         currentLayerNameEl.textContent = performanceStats.currentLayer;
     }
 }
@@ -2386,13 +2520,15 @@ async function fetchAvailableTimes() {
         // Populate and show the style selector if available
         populateStyleSelector();
         
-        // Reload the layer with the correct time parameters now that we know the time mode
-        updateLayerTime();
+        // Now create the layer with the correct time parameters
+        createWeatherLayer();
         
     } catch (error) {
         console.error('Failed to fetch available times:', error);
         hideTimeSlider();
         hideElevationSlider();
+        // Still try to create layer even if time fetch fails
+        createWeatherLayer();
     }
 }
 
@@ -2400,3 +2536,222 @@ async function fetchAvailableTimes() {
 
 // Note: stopPlayback() is defined earlier in this file (around line 289)
 // with full implementation including button state updates
+
+// ============================================================================
+// Minimap with Tile Request Heatmap
+// ============================================================================
+
+let minimap = null;
+let minimapViewportRect = null;
+let tileRequestHeatmap = {};  // Map of "lat,lng" -> count
+let totalTileRequests = 0;
+let heatmapLayer = null;
+
+// Initialize the minimap
+function initMinimap() {
+    const minimapEl = document.getElementById('minimap');
+    if (!minimapEl) return;
+    
+    // Create minimap with no controls - locked to global view
+    minimap = L.map('minimap', {
+        zoomControl: false,
+        attributionControl: false,
+        dragging: false,
+        touchZoom: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
+        tap: false,
+        minZoom: 1,
+        maxZoom: 1,
+        maxBounds: [[-90, -180], [90, 180]],
+        maxBoundsViscosity: 1.0
+    }).setView([20, 0], 1);  // Global view centered
+    
+    // Add dark base layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+        maxZoom: 18,
+        opacity: 0.6
+    }).addTo(minimap);
+    
+    // Create heatmap canvas layer
+    heatmapLayer = L.layerGroup().addTo(minimap);
+    
+    // Create viewport rectangle showing main map bounds
+    minimapViewportRect = L.rectangle([[0, 0], [0, 0]], {
+        color: '#f59e0b',
+        weight: 2,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.15,
+        interactive: false
+    }).addTo(minimap);
+    
+    // Setup clear button
+    const clearBtn = document.getElementById('minimap-clear-btn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearHeatmap);
+    }
+    
+    // Initial sync of viewport rectangle
+    syncMinimapViewport();
+    
+    console.log('Minimap initialized (global view)');
+}
+
+// Sync minimap viewport rectangle with main map bounds (minimap stays fixed at global view)
+function syncMinimapViewport() {
+    if (!minimap || !map || !minimapViewportRect) return;
+    
+    // Update only the viewport rectangle to show where the main map is looking
+    const bounds = map.getBounds();
+    minimapViewportRect.setBounds(bounds);
+    
+    // Minimap stays locked at global view - no zoom/pan changes
+}
+
+// Update the heatmap visualization on the minimap
+function updateHeatmapDisplay() {
+    if (!minimap || !heatmapLayer) return;
+    
+    // Clear existing markers
+    heatmapLayer.clearLayers();
+    
+    // Find max count for normalization
+    let maxCount = 1;
+    Object.values(tileRequestHeatmap).forEach(point => {
+        if (point.count > maxCount) maxCount = point.count;
+    });
+    
+    // Add rectangle markers for each heatmap point
+    Object.values(tileRequestHeatmap).forEach(point => {
+        // Calculate intensity (1-4) based on normalized count
+        const normalized = point.count / maxCount;
+        let intensity = 1;
+        if (normalized > 0.75) intensity = 4;
+        else if (normalized > 0.5) intensity = 3;
+        else if (normalized > 0.25) intensity = 2;
+        
+        // Color based on intensity
+        const colors = {
+            1: '#3b82f6',  // blue - low
+            2: '#10b981',  // green - medium
+            3: '#f59e0b',  // orange - high
+            4: '#ef4444'   // red - very high
+        };
+        
+        // Create rectangle bounds (roughly tile-sized at the aggregation resolution)
+        const halfSize = 0.5; // ~0.5 degrees each side
+        const bounds = [
+            [point.lat - halfSize, point.lng - halfSize],
+            [point.lat + halfSize, point.lng + halfSize]
+        ];
+        
+        const rect = L.rectangle(bounds, {
+            fillColor: colors[intensity],
+            fillOpacity: 0.25 + (intensity * 0.08),  // More transparent: 0.25-0.57
+            color: colors[intensity],
+            weight: 0.5,
+            opacity: 0.4
+        });
+        
+        rect.bindTooltip(`${point.count} requests`, {
+            permanent: false,
+            direction: 'top',
+            className: 'heatmap-tooltip'
+        });
+        
+        heatmapLayer.addLayer(rect);
+    });
+}
+
+// Update minimap statistics display
+function updateMinimapStats() {
+    const requestCountEl = document.getElementById('minimap-request-count');
+    const hotspotCountEl = document.getElementById('minimap-hotspot-count');
+    
+    if (requestCountEl) {
+        requestCountEl.textContent = totalTileRequests.toLocaleString();
+    }
+    
+    if (hotspotCountEl) {
+        // Count hotspots (locations with >5 requests)
+        const hotspots = Object.values(tileRequestHeatmap).filter(p => p.count > 5).length;
+        hotspotCountEl.textContent = hotspots.toLocaleString();
+    }
+}
+
+// Clear the heatmap data (also clears server-side)
+async function clearHeatmap() {
+    tileRequestHeatmap = {};
+    totalTileRequests = 0;
+    
+    if (heatmapLayer) {
+        heatmapLayer.clearLayers();
+    }
+    
+    updateMinimapStats();
+    
+    // Also clear server-side heatmap
+    try {
+        await fetch(`${API_BASE}/api/tile-heatmap/clear`, { method: 'POST' });
+        console.log('Heatmap cleared (client + server)');
+    } catch (error) {
+        console.error('Failed to clear server heatmap:', error);
+    }
+}
+
+// Fetch heatmap data from the server API
+async function fetchServerHeatmap() {
+    try {
+        const response = await fetch(`${API_BASE}/api/tile-heatmap`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        
+        // Update local state from server data
+        tileRequestHeatmap = {};
+        totalTileRequests = data.total_requests || 0;
+        
+        // Convert server cells to local format
+        if (data.cells && Array.isArray(data.cells)) {
+            data.cells.forEach(cell => {
+                const key = `${cell.lat.toFixed(1)},${cell.lng.toFixed(1)}`;
+                tileRequestHeatmap[key] = {
+                    lat: cell.lat,
+                    lng: cell.lng,
+                    count: cell.count
+                };
+            });
+        }
+        
+        // Update display
+        updateHeatmapDisplay();
+        updateMinimapStats();
+    } catch (error) {
+        // Silently fail - server might not support this endpoint yet
+        console.debug('Heatmap API not available:', error.message);
+    }
+}
+
+// Hook into tile loading to record requests (for local display before server update)
+function setupTileRequestTracking() {
+    // Periodically sync minimap viewport
+    map.on('moveend', syncMinimapViewport);
+    map.on('zoomend', syncMinimapViewport);
+    
+    // Poll server for heatmap updates every 2 seconds
+    setInterval(fetchServerHeatmap, 2000);
+    
+    // Initial fetch
+    fetchServerHeatmap();
+}
+
+// Initialize minimap after main map is ready
+document.addEventListener('DOMContentLoaded', () => {
+    // Wait a bit for main map to initialize
+    setTimeout(() => {
+        initMinimap();
+        setupTileRequestTracking();
+    }, 500);
+});

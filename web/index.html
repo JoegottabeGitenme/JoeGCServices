@@ -134,14 +134,6 @@
                     </div>
                     <div class="info-bar-separator"></div>
                     <div class="info-bar-stats">
-                        <div class="info-stat" title="Total size of weather data stored in MinIO object storage.">
-                            <span class="info-stat-label">Storage</span>
-                            <span class="info-stat-value" id="info-sys-storage">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of data files stored in MinIO.">
-                            <span class="info-stat-label">Files</span>
-                            <span class="info-stat-value" id="info-sys-files">-</span>
-                        </div>
                         <div class="info-stat" title="How long the WMS API service has been running.">
                             <span class="info-stat-label">Uptime</span>
                             <span class="info-stat-value" id="info-sys-uptime">-</span>
@@ -334,23 +326,33 @@
                         </div>
                     </div>
                     <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="Active weather models with ingested data">Models</span>
-                        <div class="info-stat" title="Weather models currently available with ingested data.">
-                            <span class="info-stat-label">Active</span>
-                            <span class="info-stat-value" id="info-data-models">-</span>
-                        </div>
-                        <div class="info-stat" title="Total number of raw (unshredded) data files.">
-                            <span class="info-stat-label">Raw</span>
-                            <span class="info-stat-value" id="info-data-raw">-</span>
-                        </div>
-                        <div class="info-stat" title="Total number of shredded (pre-processed) data files for faster rendering.">
-                            <span class="info-stat-label">Shredded</span>
-                            <span class="info-stat-value" id="info-data-shredded">-</span>
-                        </div>
+                    <!-- Per-model stats -->
+                    <div class="info-bar-group" id="info-models-stats">
+                        <span class="info-model-item" id="info-model-gfs" title="GFS (Global Forecast System)&#10;Global model, 0.25° resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">GFS</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                        <span class="info-model-item" id="info-model-hrrr" title="HRRR (High-Resolution Rapid Refresh)&#10;CONUS model, 3km resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">HRRR</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                        <span class="info-model-item" id="info-model-goes" title="GOES (Geostationary Satellite)&#10;GOES-16/18 imagery, real-time&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">GOES</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                        <span class="info-model-item" id="info-model-mrms" title="MRMS (Multi-Radar Multi-Sensor)&#10;Radar composite, 1km resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">MRMS</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
                     </div>
-                    <div class="info-bar-separator"></div>
-
                 </div>
             </div>
         </div>
@@ -404,63 +406,44 @@
                 </div>
             </main>
 
-            <!-- Right Sidebar - Status & Validation -->
-            <aside class="sidebar sidebar-right">
-                <!-- Ingestion Status Section -->
-                <div class="sidebar-section ingestion-status-section">
-                    <h2>Data Status</h2>
-                    <div id="ingestion-status" class="ingestion-status">
-                        <div class="status-box compact">
-                            <div class="status-row">
-                                <span class="label">Service:</span>
-                                <div class="status-badge mini" id="ingester-service-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">--</span>
-                                </div>
-                            </div>
-                            <div class="status-row">
-                                <span class="label">Datasets:</span>
-                                <span class="value" id="dataset-count">0</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="label">Models:</span>
-                                <span class="value" id="models-list">None</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="label">Storage:</span>
-                                <span class="value" id="storage-size">--</span>
-                            </div>
+            <!-- Minimap with Tile Request Heatmap -->
+            <aside class="minimap-container">
+                <div class="minimap-wrapper">
+                    <div class="minimap-header">
+                        <span class="minimap-title">Tile Requests</span>
+                        <button class="minimap-clear-btn" id="minimap-clear-btn" title="Clear heatmap">Clear</button>
+                    </div>
+                    <div id="minimap"></div>
+                    <div class="minimap-legend">
+                        <span class="minimap-legend-item">
+                            <span class="legend-color" style="background: #3b82f6;"></span>
+                            <span class="legend-label">Low</span>
+                        </span>
+                        <span class="minimap-legend-item">
+                            <span class="legend-color" style="background: #10b981;"></span>
+                            <span class="legend-label">Med</span>
+                        </span>
+                        <span class="minimap-legend-item">
+                            <span class="legend-color" style="background: #f59e0b;"></span>
+                            <span class="legend-label">High</span>
+                        </span>
+                        <span class="minimap-legend-item">
+                            <span class="legend-color" style="background: #ef4444;"></span>
+                            <span class="legend-label">Hot</span>
+                        </span>
+                    </div>
+                    <div class="minimap-stats">
+                        <div class="minimap-stat">
+                            <span class="minimap-stat-label">Requests</span>
+                            <span class="minimap-stat-value" id="minimap-request-count">0</span>
+                        </div>
+                        <div class="minimap-stat">
+                            <span class="minimap-stat-label">Hotspots</span>
+                            <span class="minimap-stat-value" id="minimap-hotspot-count">0</span>
                         </div>
                     </div>
                 </div>
-
-                <!-- Performance Stats -->
-                <div class="sidebar-section performance-section">
-                    <h2>Performance</h2>
-                    <div id="performance-stats" class="performance-stats compact">
-                        <div class="stat-row">
-                            <span class="stat-label">Last:</span>
-                            <span class="stat-value" id="last-tile-time">-</span>
-                        </div>
-                        <div class="stat-row">
-                            <span class="stat-label">Avg:</span>
-                            <span class="stat-value" id="avg-tile-time">-</span>
-                        </div>
-                        <div class="stat-row">
-                            <span class="stat-label">Tiles:</span>
-                            <span class="stat-value" id="tiles-loaded-count">0</span>
-                        </div>
-                        <div class="stat-row">
-                            <span class="stat-label">Slowest:</span>
-                            <span class="stat-value" id="slowest-tile-time">-</span>
-                        </div>
-                        <div class="stat-row">
-                            <span class="stat-label">Layer:</span>
-                            <span class="stat-value truncate" id="current-layer-name">None</span>
-                        </div>
-                    </div>
-                </div>
-                
+                <div class="minimap-bottom"></div>
             </aside>
         </div>
 
