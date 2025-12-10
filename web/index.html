@@ -506,6 +506,86 @@
                         </div>
                     </div>
                 </div>
+                
+                <!-- Cache & Performance Widget -->
+                <div class="perf-widget collapsed" id="perf-widget">
+                    <div class="perf-widget-header" onclick="togglePerfWidget()">
+                        <span class="perf-widget-title">Cache & Performance</span>
+                        <div class="perf-widget-meta">
+                            <span class="perf-memory-usage" id="perf-memory-usage" title="Grid cache memory usage">-</span>
+                            <span class="perf-toggle-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="perf-widget-content" id="perf-widget-content">
+                        <!-- Grid Cache Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Grid Cache</div>
+                            <div class="perf-grid">
+                                <div class="perf-item">
+                                    <span class="perf-label">Memory</span>
+                                    <span class="perf-value" id="perf-grid-memory">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Entries</span>
+                                    <span class="perf-value" id="perf-grid-entries">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Capacity</span>
+                                    <span class="perf-value" id="perf-grid-capacity">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Hit Rate</span>
+                                    <span class="perf-value" id="perf-grid-hitrate">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Evictions</span>
+                                    <span class="perf-value" id="perf-grid-evictions">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Memory Pressure Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Memory Management</div>
+                            <div class="perf-grid">
+                                <div class="perf-item">
+                                    <span class="perf-label">Pressure</span>
+                                    <span class="perf-value perf-status" id="perf-mem-pressure">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Threshold</span>
+                                    <span class="perf-value" id="perf-mem-threshold">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Target</span>
+                                    <span class="perf-value" id="perf-mem-target">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Feature Flags Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Feature Flags</div>
+                            <div class="perf-flags" id="perf-flags">
+                                <span class="perf-flag" id="perf-flag-l1" title="L1 In-Memory Tile Cache">L1</span>
+                                <span class="perf-flag" id="perf-flag-l2" title="L2 Redis Tile Cache">L2</span>
+                                <span class="perf-flag" id="perf-flag-grid" title="Grid Data Cache">Grid</span>
+                                <span class="perf-flag" id="perf-flag-grib" title="GRIB File Cache">GRIB</span>
+                                <span class="perf-flag" id="perf-flag-prefetch" title="Tile Prefetching">Prefetch</span>
+                                <span class="perf-flag" id="perf-flag-warming" title="Cache Warming">Warming</span>
+                                <span class="perf-flag" id="perf-flag-lut" title="Projection LUT">LUT</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Model Precaching Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Model Precaching</div>
+                            <div class="perf-precache-list" id="perf-precache-list">
+                                <div class="perf-loading">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </aside>
             
             <!-- Map -->

@@ -117,6 +117,13 @@ services:
       # Projection LUT for GOES (Phase: LUT optimization)
       ENABLE_PROJECTION_LUT: ${ENABLE_PROJECTION_LUT:-true}
       PROJECTION_LUT_DIR: ${PROJECTION_LUT_DIR:-/app/data/luts}
+      # Grid cache (parsed GOES/NetCDF data) - GOES grids are ~240MB each!
+      GRID_CACHE_SIZE: ${GRID_CACHE_SIZE:-20}
+      # Memory pressure management - evict caches before running out of memory
+      ENABLE_MEMORY_PRESSURE: ${ENABLE_MEMORY_PRESSURE:-true}
+      MEMORY_LIMIT_MB: ${MEMORY_LIMIT_MB:-4000}
+      MEMORY_PRESSURE_THRESHOLD: ${MEMORY_PRESSURE_THRESHOLD:-0.80}
+      MEMORY_PRESSURE_TARGET: ${MEMORY_PRESSURE_TARGET:-0.60}
     volumes:
       - ./validation/load-test/results:/app/validation/load-test/results:ro
       - ./config:/app/config:ro

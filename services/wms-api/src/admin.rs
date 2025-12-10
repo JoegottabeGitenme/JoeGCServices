@@ -2197,6 +2197,9 @@ pub struct ModelConfigSummary {
     pub poll_interval_secs: u64,
     pub retention_hours: u32,
     pub precaching_enabled: bool,
+    pub precache_keep_recent: Option<u32>,
+    pub precache_warm_on_ingest: Option<bool>,
+    pub precache_parameters: Option<Vec<String>>,
     pub parameter_count: usize,
     pub parameters: Vec<ParameterSummary>,
 }
@@ -2457,6 +2460,21 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
             .and_then(|p| p.get("enabled"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        precache_keep_recent: precaching
+            .and_then(|p| p.get("keep_recent"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        precache_warm_on_ingest: precaching
+            .and_then(|p| p.get("warm_on_ingest"))
+            .and_then(|v| v.as_bool()),
+        precache_parameters: precaching
+            .and_then(|p| p.get("parameters"))
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            }),
         parameter_count: params_list.len(),
         parameters: params_list,
     };

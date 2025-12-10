@@ -2660,6 +2660,12 @@ pub async fn config_handler(
                 "goes16_loaded": lut_goes16_loaded,
                 "goes18_loaded": lut_goes18_loaded,
                 "memory_mb": lut_memory_mb,
+            },
+            "memory_pressure": {
+                "enabled": state.optimization_config.memory_pressure_enabled,
+                "limit_mb": state.optimization_config.memory_limit_mb,
+                "threshold": state.optimization_config.memory_pressure_threshold,
+                "target": state.optimization_config.memory_pressure_target,
             }
         },
         "version": env!("CARGO_PKG_VERSION"),

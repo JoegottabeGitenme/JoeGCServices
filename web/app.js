@@ -4141,14 +4141,197 @@ function toggleStyleCard(card) {
     card.classList.toggle('expanded');
 }
 
+// ============================================================================
+// Performance & Cache Widget
+// ============================================================================
+
+let perfWidgetInterval = null;
+
+// Initialize performance widget
+function initPerfWidget() {
+    fetchPerfData();
+    // Refresh every 10 seconds
+    perfWidgetInterval = setInterval(fetchPerfData, 10000);
+}
+
+// Toggle performance widget expanded/collapsed
+function togglePerfWidget() {
+    const widget = document.getElementById('perf-widget');
+    if (widget) {
+        widget.classList.toggle('collapsed');
+        if (widget.classList.contains('collapsed')) {
+            widget.classList.remove('expanded');
+        } else {
+            widget.classList.add('expanded');
+        }
+    }
+}
+
+// Fetch performance and cache data
+async function fetchPerfData() {
+    try {
+        // Fetch metrics, model config, and optimization config in parallel
+        const [metricsRes, modelsRes, optConfigRes] = await Promise.all([
+            fetch(`${API_BASE}/api/metrics`),
+            fetch(`${API_BASE}/api/admin/config/full`),
+            fetch(`${API_BASE}/api/config`)
+        ]);
+        
+        if (!metricsRes.ok || !modelsRes.ok || !optConfigRes.ok) {
+            console.error('Failed to fetch perf data');
+            return;
+        }
+        
+        const metrics = await metricsRes.json();
+        const modelsConfig = await modelsRes.json();
+        const optConfig = await optConfigRes.json();
+        
+        renderPerfWidget(metrics, modelsConfig, optConfig);
+    } catch (error) {
+        console.error('Error fetching perf data:', error);
+    }
+}
+
+// Render the performance widget
+function renderPerfWidget(metrics, modelsConfig, optConfig) {
+    // Get memory pressure config
+    const memPressure = optConfig?.optimizations?.memory_pressure || {};
+    const memLimitMB = memPressure.limit_mb || 4000;
+    const memThreshold = memPressure.threshold || 0.80;
+    const memTarget = memPressure.target || 0.60;
+    
+    // Update header memory usage
+    const memUsageEl = document.getElementById('perf-memory-usage');
+    if (memUsageEl && metrics.grid_cache) {
+        const memMB = metrics.grid_cache.memory_mb || 0;
+        memUsageEl.textContent = formatMemory(memMB * 1024 * 1024);
+        
+        // Color based on usage relative to threshold
+        const thresholdMB = memLimitMB * memThreshold;
+        const targetMB = memLimitMB * memTarget;
+        if (memMB > thresholdMB) {
+            memUsageEl.style.background = '#ef4444'; // Red - above threshold
+        } else if (memMB > targetMB) {
+            memUsageEl.style.background = '#f59e0b'; // Yellow - between target and threshold
+        } else {
+            memUsageEl.style.background = '#10b981'; // Green - below target
+        }
+    }
+    
+    // Grid Cache Stats
+    if (metrics.grid_cache) {
+        const gc = metrics.grid_cache;
+        updateElement('perf-grid-memory', formatMemory(gc.memory_bytes || 0));
+        updateElement('perf-grid-entries', `${gc.entries || 0}`);
+        updateElement('perf-grid-capacity', `${gc.capacity || 0}`);
+        updateElement('perf-grid-hitrate', `${(gc.hit_rate || 0).toFixed(1)}%`);
+        updateElement('perf-grid-evictions', `${gc.evictions || 0}`);
+    }
+    
+    // Memory Pressure Stats
+    const gridMemMB = metrics.grid_cache?.memory_mb || 0;
+    const usageRatio = gridMemMB / memLimitMB;
+    
+    const pressureEl = document.getElementById('perf-mem-pressure');
+    if (pressureEl) {
+        if (usageRatio > memThreshold) {
+            pressureEl.textContent = 'HIGH';
+            pressureEl.className = 'perf-value perf-status critical';
+        } else if (usageRatio > memTarget) {
+            pressureEl.textContent = 'MODERATE';
+            pressureEl.className = 'perf-value perf-status warning';
+        } else {
+            pressureEl.textContent = 'LOW';
+            pressureEl.className = 'perf-value perf-status';
+        }
+    }
+    updateElement('perf-mem-threshold', `${Math.round(memThreshold * 100)}%`);
+    updateElement('perf-mem-target', `${Math.round(memTarget * 100)}%`);
+    
+    // Feature Flags
+    const opts = optConfig?.optimizations || {};
+    updateFeatureFlag('perf-flag-l1', opts.l1_cache?.enabled !== false);
+    updateFeatureFlag('perf-flag-l2', opts.l2_cache?.enabled !== false);
+    updateFeatureFlag('perf-flag-grid', opts.grid_cache?.enabled !== false);
+    updateFeatureFlag('perf-flag-grib', opts.grib_cache?.enabled !== false);
+    updateFeatureFlag('perf-flag-prefetch', opts.prefetch?.enabled !== false);
+    updateFeatureFlag('perf-flag-warming', modelsConfig.models?.some(m => m.precaching_enabled));
+    updateFeatureFlag('perf-flag-lut', opts.projection_lut?.enabled !== false);
+    
+    // Model Precaching List
+    renderPrecacheList(modelsConfig.models || []);
+}
+
+// Update feature flag styling
+function updateFeatureFlag(id, enabled) {
+    const el = document.getElementById(id);
+    if (el) {
+        if (enabled) {
+            el.classList.add('enabled');
+        } else {
+            el.classList.remove('enabled');
+        }
+    }
+}
+
+// Helper to update element text
+function updateElement(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+// Render model precaching list
+function renderPrecacheList(models) {
+    const listEl = document.getElementById('perf-precache-list');
+    if (!listEl) return;
+    
+    const html = models.map(model => {
+        const enabled = model.precaching_enabled || false;
+        const keepRecent = model.precache_keep_recent || 0;
+        const warmOnIngest = model.precache_warm_on_ingest || false;
+        const params = model.precache_parameters || [];
+        const paramsText = params.length > 0 ? params.join(', ') : 'all';
+        
+        return `
+            <div class="perf-precache-item">
+                <div class="perf-precache-model">
+                    <span class="perf-precache-name">${model.id.toUpperCase()}</span>
+                    <span class="perf-precache-status ${enabled ? 'enabled' : 'disabled'}">
+                        ${enabled ? 'ON' : 'OFF'}
+                    </span>
+                </div>
+                <div class="perf-precache-config">
+                    <span class="perf-precache-detail">Keep: <span>${keepRecent}</span></span>
+                    <span class="perf-precache-detail">Warm: <span>${warmOnIngest ? 'Yes' : 'No'}</span></span>
+                    <span class="perf-precache-params" title="${paramsText}">${paramsText}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    listEl.innerHTML = html || '<div class="perf-loading">No models configured</div>';
+}
+
+// Format memory size
+function formatMemory(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 // Initialize on DOM ready (add to existing init)
 document.addEventListener('DOMContentLoaded', () => {
     initConfigWidget();
+    initPerfWidget();
 });
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     if (configWidgetInterval) {
         clearInterval(configWidgetInterval);
+    }
+    if (perfWidgetInterval) {
+        clearInterval(perfWidgetInterval);
     }
 });

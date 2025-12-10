@@ -3161,6 +3161,240 @@ html, body {
 }
 
 /* ============================================================================
+   Cache & Performance Widget
+   ============================================================================ */
+
+.perf-widget {
+    display: flex;
+    flex-direction: column;
+    background: #111827;
+    border-top: 1px solid #374151;
+    max-height: 320px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.perf-widget.expanded {
+    flex: 1;
+    max-height: none;
+    min-height: 200px;
+}
+
+.perf-widget.collapsed .perf-widget-content {
+    display: none;
+}
+
+.perf-widget.collapsed .perf-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.perf-widget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+    border-bottom: 1px solid #4b5563;
+    cursor: pointer;
+}
+
+.perf-widget-header:hover {
+    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
+}
+
+.perf-widget-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.perf-widget-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.perf-memory-usage {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 600;
+    background: #f59e0b;
+    color: #1f2937;
+}
+
+.perf-toggle-icon {
+    font-size: 0.7rem;
+    color: #6b7280;
+    transition: transform 0.2s ease;
+}
+
+.perf-widget-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
+
+.perf-section {
+    margin-bottom: 0.75rem;
+}
+
+.perf-section:last-child {
+    margin-bottom: 0;
+}
+
+.perf-section-title {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+.perf-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.4rem;
+}
+
+.perf-item {
+    display: flex;
+    flex-direction: column;
+    background: rgba(55, 65, 81, 0.4);
+    border-radius: 4px;
+    padding: 0.3rem 0.4rem;
+}
+
+.perf-label {
+    font-size: 0.55rem;
+    color: #6b7280;
+    text-transform: uppercase;
+}
+
+.perf-value {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #d1d5db;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.perf-value.perf-status {
+    color: #10b981;
+}
+
+.perf-value.perf-status.warning {
+    color: #f59e0b;
+}
+
+.perf-value.perf-status.critical {
+    color: #ef4444;
+}
+
+/* Feature Flags */
+.perf-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.perf-flag {
+    font-size: 0.6rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 500;
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    cursor: default;
+}
+
+.perf-flag.enabled {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+/* Model Precaching List */
+.perf-precache-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.perf-loading {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-align: center;
+    padding: 0.5rem;
+}
+
+.perf-precache-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(55, 65, 81, 0.4);
+    border: 1px solid rgba(75, 85, 99, 0.3);
+    border-radius: 4px;
+    padding: 0.35rem 0.5rem;
+}
+
+.perf-precache-model {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.perf-precache-name {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #e5e7eb;
+}
+
+.perf-precache-status {
+    font-size: 0.55rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+}
+
+.perf-precache-status.enabled {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.perf-precache-status.disabled {
+    background: rgba(107, 114, 128, 0.3);
+    color: #6b7280;
+}
+
+.perf-precache-config {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.perf-precache-detail {
+    font-size: 0.6rem;
+    color: #9ca3af;
+}
+
+.perf-precache-detail span {
+    color: #d1d5db;
+    font-weight: 500;
+}
+
+.perf-precache-params {
+    font-size: 0.55rem;
+    color: #6b7280;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ============================================================================
    Data Panel (Left Sidebar) - PostgreSQL & MinIO Tree View
    ============================================================================ */
 
