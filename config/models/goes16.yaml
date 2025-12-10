@@ -38,12 +38,13 @@ retention:
   hours: 2                              # Keep 2 hours of imagery
 
 # Precaching configuration - proactively warm GridDataCache
+# NOTE: GOES grids are large (~60-240MB each in memory), so keep_recent should be low
 precaching:
   enabled: true
-  keep_recent: 10                       # Keep 10 most recent observations (~50 min)
+  keep_recent: 3                        # Keep 3 most recent observations (~15 min, ~1.5GB)
   warm_on_ingest: true                  # Immediately warm when new data ingested
   poll_interval_secs: 60                # Background poll every 60s for missed data
-  parameters: []                        # Empty = all parameters
+  parameters: [CMI_C02, CMI_C13]        # Only precache most-used bands (visible red, IR)
 
 parameters:
   # Blue Visible (0.47µm)
