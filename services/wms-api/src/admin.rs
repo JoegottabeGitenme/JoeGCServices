@@ -73,6 +73,66 @@ pub struct SystemInfo {
     pub worker_threads: usize,
 }
 
+// Database details response types
+#[derive(Debug, Clone, Serialize)]
+pub struct DatabaseDetailsResponse {
+    pub models: Vec<ModelDetail>,
+    pub total_datasets: u64,
+    pub total_parameters: u64,
+    pub total_size_bytes: u64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelDetail {
+    pub model: String,
+    pub parameter_count: u64,
+    pub dataset_count: u64,
+    pub total_size_bytes: u64,
+    pub parameters: Vec<ParameterDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParameterDetail {
+    pub parameter: String,
+    pub count: u64,
+    pub oldest: Option<String>,
+    pub newest: Option<String>,
+    pub total_size_bytes: u64,
+}
+
+// Dataset info response for drill-down
+#[derive(Debug, Clone, Serialize)]
+pub struct DatasetInfoResponse {
+    pub model: String,
+    pub parameter: String,
+    pub level: String,
+    pub reference_time: String,
+    pub forecast_hour: u32,
+    pub valid_time: String,
+    pub storage_path: String,
+    pub file_size: u64,
+}
+
+// Storage tree response types
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageTreeResponse {
+    pub nodes: Vec<StorageTreeNode>,
+    pub total_size: u64,
+    pub total_objects: u64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageTreeNode {
+    pub name: String,
+    pub path: String,
+    pub node_type: String,  // "file" or "directory"
+    pub size: u64,
+    pub children: Option<Vec<StorageTreeNode>>,
+    pub file_count: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelConfigResponse {
     pub id: String,
@@ -260,48 +320,27 @@ pub async fn ingestion_status_handler(
 ) -> impl IntoResponse {
     info!("Admin: Getting ingestion status");
     
-    // For now, return mock data since we don't have real-time ingestion tracking yet
-    // In a full implementation, this would query the catalog and cache
     let catalog = &state.catalog;
     
-    // Get available layers from catalog
-    let query = storage::DatasetQuery {
-        model: None,
-        parameter: None,
-        level: None,
-        time_range: None,
-        bbox: None,
-    };
-    let datasets = catalog.find_datasets(&query).await.unwrap_or_default();
+    // Get aggregated model stats directly from database
+    let model_stats = catalog.get_model_stats().await.unwrap_or_default();
     
-    // Group by model
-    let mut models_map = std::collections::HashMap::new();
-    for dataset in &datasets {
-        let model_id = dataset.model.clone();
-        models_map.entry(model_id).or_insert_with(Vec::new).push(dataset.clone());
-    }
-    
-    let mut models = Vec::new();
-    for (model_id, model_datasets) in models_map.iter() {
-        let parameters: Vec<String> = model_datasets
-            .iter()
-            .map(|d| d.parameter.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        
-        models.push(ModelStatus {
-            id: model_id.clone(),
-            name: format!("{} Model", model_id.to_uppercase()),
+    // Convert to API response format
+    let mut models: Vec<ModelStatus> = model_stats
+        .iter()
+        .map(|s| ModelStatus {
+            id: s.model.clone(),
+            name: format!("{} Model", s.model.to_uppercase()),
             status: "active".to_string(),
             enabled: true,
-            last_ingest: model_datasets.first().map(|d| {
-                d.reference_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-            }),
-            total_files: model_datasets.len() as u64,
-            parameters,
-        });
-    }
+            last_ingest: s.last_ingest.map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            total_files: s.dataset_count,
+            parameters: s.parameters.clone(),
+        })
+        .collect();
+    
+    // Sort models by name for consistent ordering
+    models.sort_by(|a, b| a.id.cmp(&b.id));
     
     // Get detailed storage stats from MinIO (raw vs shredded breakdown)
     let storage_stats = state.storage.detailed_stats().await.unwrap_or_else(|e| {
@@ -317,9 +356,13 @@ pub async fn ingestion_status_handler(
         }
     });
     
+    // Calculate totals from model stats
+    let total_datasets: u64 = model_stats.iter().map(|s| s.dataset_count).sum();
+    let total_parameters: u64 = model_stats.iter().map(|s| s.parameter_count).sum();
+    
     let catalog_summary = CatalogSummary {
-        total_datasets: datasets.len() as u64,
-        total_parameters: models.iter().map(|m| m.parameters.len() as u64).sum(),
+        total_datasets,
+        total_parameters,
         total_size_bytes: storage_stats.total_size_bytes,
         raw_size_bytes: storage_stats.raw_size_bytes,
         shredded_size_bytes: storage_stats.shredded_size_bytes,
@@ -348,6 +391,266 @@ pub async fn ingestion_status_handler(
     };
     
     Json(response)
+}
+
+/// GET /admin/database/details - Get detailed database ingestion stats
+/// Returns per-parameter statistics including counts and time ranges
+pub async fn database_details_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting detailed database stats");
+    
+    let catalog = &state.catalog;
+    
+    // Get detailed per-parameter stats
+    let param_stats = match catalog.get_detailed_parameter_stats().await {
+        Ok(stats) => {
+            info!("Got {} parameter stats from database", stats.len());
+            stats
+        }
+        Err(e) => {
+            error!("Failed to get detailed parameter stats: {}", e);
+            Vec::new()
+        }
+    };
+    
+    // Group by model for the response
+    let mut models_map: std::collections::HashMap<String, Vec<ParameterDetail>> = std::collections::HashMap::new();
+    
+    for stat in &param_stats {
+        models_map
+            .entry(stat.model.clone())
+            .or_default()
+            .push(ParameterDetail {
+                parameter: stat.parameter.clone(),
+                count: stat.count,
+                oldest: stat.oldest.map(|t| t.to_rfc3339()),
+                newest: stat.newest.map(|t| t.to_rfc3339()),
+                total_size_bytes: stat.total_size_bytes,
+            });
+    }
+    
+    // Convert to sorted list
+    let mut models: Vec<ModelDetail> = models_map
+        .into_iter()
+        .map(|(model, parameters)| {
+            let total_datasets: u64 = parameters.iter().map(|p| p.count).sum();
+            let total_size: u64 = parameters.iter().map(|p| p.total_size_bytes).sum();
+            ModelDetail {
+                model,
+                parameter_count: parameters.len() as u64,
+                dataset_count: total_datasets,
+                total_size_bytes: total_size,
+                parameters,
+            }
+        })
+        .collect();
+    
+    models.sort_by(|a, b| a.model.cmp(&b.model));
+    
+    // Get database-level totals
+    let total_datasets: u64 = param_stats.iter().map(|s| s.count).sum();
+    let total_size: u64 = param_stats.iter().map(|s| s.total_size_bytes).sum();
+    
+    Json(DatabaseDetailsResponse {
+        models,
+        total_datasets,
+        total_parameters: param_stats.len() as u64,
+        total_size_bytes: total_size,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// GET /admin/database/datasets/:model/:parameter - Get all datasets for a parameter
+pub async fn database_datasets_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((model, parameter)): Path<(String, String)>,
+) -> impl IntoResponse {
+    info!("Admin: Getting datasets for {}/{}", model, parameter);
+    
+    let catalog = &state.catalog;
+    
+    match catalog.get_datasets_for_parameter(&model, &parameter).await {
+        Ok(datasets) => {
+            let response: Vec<DatasetInfoResponse> = datasets
+                .into_iter()
+                .map(|d| DatasetInfoResponse {
+                    model: d.model,
+                    parameter: d.parameter,
+                    level: d.level,
+                    reference_time: d.reference_time.to_rfc3339(),
+                    forecast_hour: d.forecast_hour,
+                    valid_time: d.valid_time.to_rfc3339(),
+                    storage_path: d.storage_path,
+                    file_size: d.file_size,
+                })
+                .collect();
+            Json(response).into_response()
+        }
+        Err(e) => {
+            error!("Failed to get datasets: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get datasets: {}", e)).into_response()
+        }
+    }
+}
+
+/// GET /admin/storage/tree - Get MinIO storage as a tree structure
+pub async fn storage_tree_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting storage tree");
+    
+    // List all objects with sizes in MinIO
+    let all_objects = match state.storage.list_with_sizes("").await {
+        Ok(paths) => paths,
+        Err(e) => {
+            error!("Failed to list storage: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to list storage: {}", e)).into_response();
+        }
+    };
+    
+    // Build tree structure from paths
+    let tree = build_storage_tree(&all_objects);
+    
+    Json(tree).into_response()
+}
+
+/// Build a tree structure from flat list of paths with sizes
+fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
+    use std::collections::HashMap;
+    
+    // First pass: collect all directories and files
+    let mut dir_sizes: HashMap<String, (u64, u64)> = HashMap::new(); // path -> (size, count)
+    let mut files: Vec<(String, String, u64)> = Vec::new(); // (dir_path, filename, size)
+    
+    let mut total_size: u64 = 0;
+    let mut total_objects: u64 = 0;
+    
+    for (path, file_size) in objects {
+        total_size += file_size;
+        total_objects += 1;
+        
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.is_empty() {
+            continue;
+        }
+        
+        // Track file
+        if parts.len() >= 2 {
+            let dir_path = parts[..parts.len()-1].join("/");
+            let filename = parts[parts.len()-1].to_string();
+            files.push((dir_path, filename, *file_size));
+        } else {
+            files.push(("".to_string(), parts[0].to_string(), *file_size));
+        }
+        
+        // Accumulate sizes for all parent directories
+        let mut current = String::new();
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                current.push('/');
+            }
+            current.push_str(part);
+            
+            // Only track directories (not the file itself)
+            if i < parts.len() - 1 {
+                let entry = dir_sizes.entry(current.clone()).or_insert((0, 0));
+                entry.0 += file_size;
+                entry.1 += 1;
+            }
+        }
+    }
+    
+    // Build tree structure
+    fn build_node(
+        path: &str,
+        name: &str,
+        dir_sizes: &HashMap<String, (u64, u64)>,
+        files: &[(String, String, u64)],
+    ) -> StorageTreeNode {
+        let (size, file_count) = dir_sizes.get(path).copied().unwrap_or((0, 0));
+        
+        // Get immediate children
+        let mut children: Vec<StorageTreeNode> = Vec::new();
+        
+        // Add subdirectories
+        let prefix = if path.is_empty() { String::new() } else { format!("{}/", path) };
+        let mut seen_subdirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        
+        for (dir_path, _) in dir_sizes.iter() {
+            if dir_path.starts_with(&prefix) {
+                let remainder = &dir_path[prefix.len()..];
+                if let Some(subdir) = remainder.split('/').next() {
+                    if !subdir.is_empty() && seen_subdirs.insert(subdir.to_string()) {
+                        let child_path = if path.is_empty() {
+                            subdir.to_string()
+                        } else {
+                            format!("{}/{}", path, subdir)
+                        };
+                        children.push(build_node(&child_path, subdir, dir_sizes, files));
+                    }
+                }
+            }
+        }
+        
+        // Add files in this directory
+        for (file_dir, filename, fsize) in files {
+            if file_dir == path {
+                children.push(StorageTreeNode {
+                    name: filename.clone(),
+                    path: if path.is_empty() {
+                        filename.clone()
+                    } else {
+                        format!("{}/{}", path, filename)
+                    },
+                    node_type: "file".to_string(),
+                    size: *fsize,
+                    children: None,
+                    file_count: 1,
+                });
+            }
+        }
+        
+        // Sort: directories first, then files, alphabetically
+        children.sort_by(|a, b| {
+            match (&a.node_type[..], &b.node_type[..]) {
+                ("directory", "file") => std::cmp::Ordering::Less,
+                ("file", "directory") => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
+        
+        StorageTreeNode {
+            name: name.to_string(),
+            path: path.to_string(),
+            node_type: "directory".to_string(),
+            size,
+            children: Some(children),
+            file_count,
+        }
+    }
+    
+    // Build root nodes
+    let mut root_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (dir_path, _) in &dir_sizes {
+        if let Some(root) = dir_path.split('/').next() {
+            root_names.insert(root.to_string());
+        }
+    }
+    
+    let mut nodes: Vec<StorageTreeNode> = root_names
+        .into_iter()
+        .map(|name| build_node(&name, &name, &dir_sizes, &files))
+        .collect();
+    
+    nodes.sort_by(|a, b| a.name.cmp(&b.name));
+    
+    StorageTreeResponse {
+        nodes,
+        total_size,
+        total_objects,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    }
 }
 
 /// GET /admin/config/models - List all model configurations
@@ -1722,6 +2025,39 @@ pub async fn sync_status_handler(
                 dry_run: true,
                 message: format!("Failed to check sync status: {}", e),
             })
+        }
+    }
+}
+
+/// Response for sync preview endpoint - shows what will be deleted
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncPreviewResponse {
+    pub orphan_db_paths: Vec<String>,
+    pub orphan_minio_paths: Vec<String>,
+    pub db_records_checked: u64,
+    pub minio_objects_checked: u64,
+}
+
+/// GET /api/admin/sync/preview - Get detailed list of what will be synced
+pub async fn sync_preview_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting sync preview (detailed orphan list)");
+    
+    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    
+    match sync_task.preview().await {
+        Ok(preview) => {
+            Json(SyncPreviewResponse {
+                orphan_db_paths: preview.orphan_db_paths,
+                orphan_minio_paths: preview.orphan_minio_paths,
+                db_records_checked: preview.db_records_checked,
+                minio_objects_checked: preview.minio_objects_checked,
+            }).into_response()
+        }
+        Err(e) => {
+            error!(error = %e, "Sync preview failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to generate preview: {}", e)).into_response()
         }
     }
 }

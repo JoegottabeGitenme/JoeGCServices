@@ -22,15 +22,16 @@ The main map viewer uses Leaflet.js to display weather data layers:
 - **Time Slider**: Animate through forecast hours or observation times
 - **Click-to-Query**: GetFeatureInfo support for data values
 
-### Info Bars (5 Rows)
+### Info Bars (4 Rows)
 
 Real-time system statistics displayed in the header:
 
-#### 1. System Bar
+#### 1. System & Data Bar
 - CPU cores and load averages (1m, 5m)
 - RAM usage (used, total, percentage)
-- Storage (total size, file count)
 - Service uptime
+- Data stats: total files, size, datasets, parameters
+- Per-model status (GFS, HRRR, GOES, MRMS): active/inactive, file count, param count
 
 #### 2. Tile Cache Bar
 - **L1 (In-Memory)**: Hits, hit rate, tile count, size
@@ -44,10 +45,27 @@ Real-time system statistics displayed in the header:
 - **WMS**: Total, 1-minute, 5-minute counts
 - **WMTS**: Total, 1-minute, 5-minute counts
 - **Render**: Total, 1m, 5m, average time, min/max
+- **Layers**: Per-model WMS layer counts (GFS, HRRR, GOES, MRMS)
 
-#### 5. Data Bar
-- Total files, size, datasets, parameters
-- Per-model status (GFS, HRRR, GOES, MRMS): active/inactive, file count, param count
+### Data Panel (Left Sidebar)
+
+A collapsible left sidebar showing data storage details:
+
+#### PostgreSQL Section
+- **Dataset Count**: Total ingested datasets (unique model/run/parameter/forecast hour combinations)
+- **Size**: Sum of file sizes as recorded in database metadata
+- **Expandable Tree**: Browse by model > run > parameters
+
+#### MinIO Storage Section
+- **Object Count**: Total files stored in MinIO buckets
+- **Size**: Sum of actual file sizes in object storage
+- **Expandable Tree**: Browse by bucket > prefix > files
+
+#### Sync Status
+- Shows whether database and storage are in sync
+- Preview and trigger sync operations
+
+The panel is scrollable when expanded trees exceed the viewport height. Hover over count/size badges for detailed explanations.
 
 ### Tile Request Heatmap (Minimap)
 
@@ -64,6 +82,21 @@ A minimap panel on the right side displays geographic distribution of tile reque
 - **Clear Button**: Reset heatmap data
 
 The heatmap data comes from the server API (`/api/tile-heatmap`), showing ALL requests to the WMS API - not just from the web viewer. This is useful for monitoring load tests.
+
+### Downloads Widget
+
+Located below the minimap, shows real-time download status:
+
+- **Service Status**: Downloader service health
+- **Quick Stats**: Pending, active, completed, and failed downloads
+- **Active Downloads**: List of currently downloading files with progress
+- **Data Schedule**: Upcoming data availability times
+- **Link**: Quick access to full downloads dashboard
+
+### Footer
+
+- **Dual Clock**: Real-time display of local time and UTC time (updates every second)
+- **Service Attribution**: Weather WMS branding
 
 ### OGC Compliance Badges
 
@@ -97,6 +130,10 @@ The dashboard polls these endpoints for real-time updates:
 | `/api/storage/stats` | 30s | MinIO file counts, sizes |
 | `/api/tile-heatmap` | 2s | Tile request geographic distribution |
 | `/api/validation/status` | 5min | OGC compliance status |
+| `/api/admin/database/tree` | 30s | PostgreSQL data tree structure |
+| `/api/admin/storage/tree` | 30s | MinIO storage tree structure |
+| `/api/admin/sync/status` | 30s | Database/storage sync status |
+| `/downloader/status` | 10s | Download queue and progress |
 
 ## Configuration
 
@@ -156,19 +193,26 @@ Edit `web/style.css` for styling changes:
 2. Check browser console for fetch errors
 3. Clear and retry
 
+### Data Panel Not Loading
+
+1. Check admin API is accessible: `curl http://localhost:8080/api/admin/database/tree`
+2. Verify PostgreSQL connection in WMS API logs
+3. Check MinIO is running: `curl http://localhost:9000/minio/health/live`
+
 ## Files
 
 ```
 web/
-├── index.html      # Main dashboard page
-├── app.js          # Application logic
-├── style.css       # Styling
-├── admin.html      # Admin dashboard
-├── admin.js        # Admin logic
-├── downloads.html  # Downloads dashboard
-├── downloads.js    # Downloads logic
-├── benchmarks.html # Benchmark viewer
-└── server.py       # Simple HTTP server
+├── index.html          # Main dashboard page
+├── app.js              # Application logic
+├── style.css           # Styling
+├── admin.html          # Admin dashboard
+├── admin.js            # Admin logic
+├── downloads.html      # Downloads dashboard
+├── downloads.js        # Downloads logic
+├── benchmarks.html     # Benchmark viewer
+├── tile-visualizer.html # Tile request visualizer
+└── server.py           # Simple HTTP server
 ```
 
 ## Next Steps

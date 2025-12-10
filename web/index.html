@@ -139,6 +139,59 @@
                             <span class="info-stat-value" id="info-sys-uptime">-</span>
                         </div>
                     </div>
+                    <div class="info-bar-separator"></div>
+                    <!-- Data Stats -->
+                    <div class="info-bar-group">
+                        <span class="info-bar-title" title="Weather data storage and ingestion statistics.">Data</span>
+                        <div class="info-bar-stats">
+                            <div class="info-stat" title="Number of weather data files stored in MinIO object storage.">
+                                <span class="info-stat-label">Files</span>
+                                <span class="info-stat-value" id="info-data-files">-</span>
+                            </div>
+                            <div class="info-stat" title="Total size of weather data stored in MinIO.">
+                                <span class="info-stat-label">Size</span>
+                                <span class="info-stat-value" id="info-data-size">-</span>
+                            </div>
+                            <div class="info-stat" title="Number of ingested datasets (unique model/run/parameter combinations).">
+                                <span class="info-stat-label">Datasets</span>
+                                <span class="info-stat-value" id="info-data-datasets">-</span>
+                            </div>
+                            <div class="info-stat" title="Number of unique weather parameters available.">
+                                <span class="info-stat-label">Params</span>
+                                <span class="info-stat-value" id="info-data-params">-</span>
+                            </div>
+                        </div>
+                        <div class="info-bar-separator"></div>
+                        <!-- Per-model stats -->
+                        <div class="info-bar-group" id="info-models-stats">
+                        <span class="info-model-item" id="info-model-gfs" title="GFS (Global Forecast System)&#10;Global model, 0.25° resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">GFS</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                            <span class="info-model-item" id="info-model-hrrr" title="HRRR (High-Resolution Rapid Refresh)&#10;CONUS model, 3km resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">HRRR</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                            <span class="info-model-item" id="info-model-goes" title="GOES (Geostationary Satellite)&#10;GOES-16/18 imagery, real-time&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">GOES</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                            <span class="info-model-item" id="info-model-mrms" title="MRMS (Multi-Radar Multi-Sensor)&#10;Radar composite, 1km resolution&#10;Shows: status | files | parameters">
+                            <span class="info-model-name">MRMS</span>
+                            <span class="info-model-status">-</span>
+                            <span class="info-model-files">-</span>
+                            <span class="info-model-params">-</span>
+                        </span>
+                        </div>
+                        <div class="info-bar-separator"></div>
+
+                    </div>
                 </div>
             </div>
         </div>
@@ -298,66 +351,87 @@
                             <span class="info-stat-value" id="info-render-minmax">-</span>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="info-bar">
-            <div class="info-bar-content">
-                <!-- Data Stats -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="Weather data storage and ingestion statistics.">Data</span>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="Number of weather data files stored in MinIO object storage.">
-                            <span class="info-stat-label">Files</span>
-                            <span class="info-stat-value" id="info-data-files">-</span>
-                        </div>
-                        <div class="info-stat" title="Total size of weather data stored in MinIO.">
-                            <span class="info-stat-label">Size</span>
-                            <span class="info-stat-value" id="info-data-size">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of ingested datasets (unique model/run/parameter combinations).">
-                            <span class="info-stat-label">Datasets</span>
-                            <span class="info-stat-value" id="info-data-datasets">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of unique weather parameters available.">
-                            <span class="info-stat-label">Params</span>
-                            <span class="info-stat-value" id="info-data-params">-</span>
-                        </div>
-                    </div>
                     <div class="info-bar-separator"></div>
-                    <!-- Per-model stats -->
-                    <div class="info-bar-group" id="info-models-stats">
-                        <span class="info-model-item" id="info-model-gfs" title="GFS (Global Forecast System)&#10;Global model, 0.25° resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">GFS</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                        <span class="info-model-item" id="info-model-hrrr" title="HRRR (High-Resolution Rapid Refresh)&#10;CONUS model, 3km resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">HRRR</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                        <span class="info-model-item" id="info-model-goes" title="GOES (Geostationary Satellite)&#10;GOES-16/18 imagery, real-time&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">GOES</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                        <span class="info-model-item" id="info-model-mrms" title="MRMS (Multi-Radar Multi-Sensor)&#10;Radar composite, 1km resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">MRMS</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
+                    <!-- WMS Layers per model -->
+                    <div class="info-bar-group">
+                        <span class="info-bar-title" title="Number of renderable WMS layers per model from GetCapabilities">Layers</span>
+                        <div class="info-bar-group" id="info-wms-layers">
+                                <span class="info-layer-item" id="info-layer-gfs" title="GFS WMS layers available">
+                                    <span class="info-layer-name">GFS</span>
+                                    <span class="info-layer-count">-</span>
+                                </span>
+                            <span class="info-layer-item" id="info-layer-hrrr" title="HRRR WMS layers available">
+                                    <span class="info-layer-name">HRRR</span>
+                                    <span class="info-layer-count">-</span>
+                                </span>
+                            <span class="info-layer-item" id="info-layer-goes" title="GOES WMS layers available">
+                                    <span class="info-layer-name">GOES</span>
+                                    <span class="info-layer-count">-</span>
+                                </span>
+                            <span class="info-layer-item" id="info-layer-mrms" title="MRMS WMS layers available">
+                                    <span class="info-layer-name">MRMS</span>
+                                    <span class="info-layer-count">-</span>
+                                </span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="main-content">
+            <!-- Data Panel (Left Sidebar) -->
+            <aside class="data-panel">
+                <!-- PostgreSQL Database Section -->
+                <div class="data-section" id="postgres-section">
+                    <div class="data-section-header" onclick="toggleDataSection('postgres-section')">
+                        <div class="data-section-title">
+                            <span class="data-section-icon">🐘</span>
+                            <span>PostgreSQL</span>
+                        </div>
+                        <div class="data-section-meta">
+                            <span class="data-section-count" id="db-total-datasets" title="Total number of ingested datasets (unique model/run/parameter/forecast hour combinations) tracked in the database">--</span>
+                            <span class="data-section-size" id="db-total-size" title="Sum of file sizes for all ingested datasets as recorded in the database metadata">--</span>
+                            <span class="data-section-toggle">▼</span>
+                        </div>
+                    </div>
+                    <div class="data-section-content">
+                        <div class="data-tree" id="database-tree">
+                            <div class="tree-loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- MinIO Storage Section -->
+                <div class="data-section" id="minio-section">
+                    <div class="data-section-header" onclick="toggleDataSection('minio-section')">
+                        <div class="data-section-title">
+                            <span class="data-section-icon">🗄️</span>
+                            <span>MinIO Storage</span>
+                        </div>
+                        <div class="data-section-meta">
+                            <span class="data-section-count" id="minio-total-objects" title="Total number of objects (files) stored in MinIO object storage buckets">--</span>
+                            <span class="data-section-size" id="minio-total-size" title="Sum of actual file sizes for all objects stored in MinIO (raw weather data files)">--</span>
+                            <span class="data-section-toggle">▼</span>
+                        </div>
+                    </div>
+                    <div class="data-section-content">
+                        <div class="data-tree" id="minio-tree">
+                            <div class="tree-loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Sync Status -->
+                <div class="data-sync-status" id="data-sync-status">
+                    <span class="sync-icon">⚠️</span>
+                    <span class="sync-text" id="sync-status-text">Checking sync...</span>
+                    <div class="sync-actions" id="sync-actions" style="display: none;">
+                        <button class="sync-btn sync-btn-preview" onclick="showSyncPreview()" title="Preview what will be synced">Preview</button>
+                        <button class="sync-btn sync-btn-run" onclick="runSyncNow()" title="Sync now">Sync</button>
+                    </div>
+                </div>
+            </aside>
+            
             <!-- Map -->
             <main class="map-container">
                 <div id="map"></div>
@@ -443,12 +517,77 @@
                         </div>
                     </div>
                 </div>
-                <div class="minimap-bottom"></div>
+                <!-- Downloads Widget -->
+                <div class="downloads-widget">
+                    <div class="downloads-widget-header">
+                        <span class="downloads-widget-title">Downloads</span>
+                        <div class="downloads-widget-status">
+                            <span class="downloads-status-dot" id="downloader-status-dot"></span>
+                            <span class="downloads-status-text" id="downloader-status-text">--</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Quick Stats -->
+                    <div class="downloads-stats-row">
+                        <div class="downloads-stat">
+                            <span class="downloads-stat-value" id="dl-pending">--</span>
+                            <span class="downloads-stat-label">Pending</span>
+                        </div>
+                        <div class="downloads-stat">
+                            <span class="downloads-stat-value active" id="dl-active">--</span>
+                            <span class="downloads-stat-label">Active</span>
+                        </div>
+                        <div class="downloads-stat">
+                            <span class="downloads-stat-value completed" id="dl-completed">--</span>
+                            <span class="downloads-stat-label">Done</span>
+                        </div>
+                        <div class="downloads-stat">
+                            <span class="downloads-stat-value failed" id="dl-failed">--</span>
+                            <span class="downloads-stat-label">Failed</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Active Downloads List -->
+                    <div class="downloads-active-section">
+                        <div class="downloads-section-header">
+                            <span>Active Downloads</span>
+                            <span class="downloads-bytes" id="dl-total-bytes">--</span>
+                        </div>
+                        <div class="downloads-list" id="downloads-list">
+                            <div class="downloads-empty">No active downloads</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Next Data Availability -->
+                    <div class="downloads-next-section">
+                        <div class="downloads-section-header">
+                            <span>Data Schedule</span>
+                        </div>
+                        <div class="downloads-next-list" id="downloads-next-list">
+                            <div class="downloads-empty">--</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Link to full downloads page -->
+                    <div class="downloads-widget-footer">
+                        <a href="downloads.html" class="downloads-more-link">View All Downloads</a>
+                    </div>
+                </div>
             </aside>
         </div>
 
         <!-- Footer -->
         <footer class="footer">
+            <div class="footer-clocks">
+                <div class="footer-clock">
+                    <span class="clock-label">Local:</span>
+                    <span class="clock-time" id="local-time">--:--:--</span>
+                </div>
+                <div class="footer-clock">
+                    <span class="clock-label">UTC:</span>
+                    <span class="clock-time" id="utc-time">--:--:--</span>
+                </div>
+            </div>
             <p>Weather WMS Service - Powered by Rust & Leaflet</p>
         </footer>
     </div>
@@ -468,6 +607,23 @@
             }
         })();
     </script>
+
+    <!-- Sync Preview Modal -->
+    <div class="sync-modal-overlay" id="sync-modal-overlay" onclick="closeSyncModal(event)">
+        <div class="sync-modal" onclick="event.stopPropagation()">
+            <div class="sync-modal-header">
+                <span class="sync-modal-title">Sync Preview</span>
+                <button class="sync-modal-close" onclick="closeSyncModal()">&times;</button>
+            </div>
+            <div class="sync-modal-body" id="sync-modal-body">
+                <div class="tree-loading">Loading preview...</div>
+            </div>
+            <div class="sync-modal-footer">
+                <button class="sync-modal-btn sync-modal-btn-cancel" onclick="closeSyncModal()">Cancel</button>
+                <button class="sync-modal-btn sync-modal-btn-confirm" id="sync-modal-confirm" onclick="confirmSync()">Sync Now</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Application JS -->
     <script src="app.js"></script>

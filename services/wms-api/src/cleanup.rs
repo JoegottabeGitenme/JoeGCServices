@@ -280,6 +280,19 @@ pub struct SyncStats {
     pub errors: Vec<String>,
 }
 
+/// Detailed preview of what will be synced.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct SyncPreview {
+    /// Paths in database but not in MinIO storage
+    pub orphan_db_paths: Vec<String>,
+    /// Paths in MinIO storage but not in database
+    pub orphan_minio_paths: Vec<String>,
+    /// Total database records checked
+    pub db_records_checked: u64,
+    /// Total MinIO objects checked
+    pub minio_objects_checked: u64,
+}
+
 /// Sync task for reconciling database and MinIO storage.
 pub struct SyncTask {
     state: Arc<AppState>,
@@ -301,6 +314,45 @@ impl SyncTask {
         self.run_sync(true).await
     }
 
+    /// Get detailed preview of orphan paths without deleting anything.
+    pub async fn preview(&self) -> Result<SyncPreview> {
+        info!("Generating sync preview");
+
+        // Get all storage paths from the database
+        let db_paths = self.state.catalog.get_all_storage_paths().await?;
+        let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
+        let db_records_checked = db_paths.len() as u64;
+
+        // Get all objects from MinIO
+        // Need to check both shredded/ (GRIB2 data) and raw/ (GOES NetCDF data)
+        let mut minio_paths = self.state.storage.list("shredded/").await?;
+        let raw_paths = self.state.storage.list("raw/").await?;
+        minio_paths.extend(raw_paths);
+        
+        let minio_path_set: std::collections::HashSet<String> = minio_paths.iter().cloned().collect();
+        let minio_objects_checked = minio_paths.len() as u64;
+
+        // Find orphan DB records (in DB but not in MinIO)
+        let orphan_db_paths: Vec<String> = db_paths
+            .into_iter()
+            .filter(|path| !minio_path_set.contains(path))
+            .collect();
+
+        // Find orphan MinIO objects (in MinIO but not in DB)
+        // Only consider shredded/ files as orphans - raw/ files may be awaiting processing
+        let orphan_minio_paths: Vec<String> = minio_paths
+            .into_iter()
+            .filter(|path| path.starts_with("shredded/") && !db_path_set.contains(path))
+            .collect();
+
+        Ok(SyncPreview {
+            orphan_db_paths,
+            orphan_minio_paths,
+            db_records_checked,
+            minio_objects_checked,
+        })
+    }
+
     /// Core sync logic.
     async fn run_sync(&self, delete: bool) -> Result<SyncStats> {
         let mut stats = SyncStats::default();
@@ -314,12 +366,16 @@ impl SyncTask {
 
         info!(count = db_paths.len(), "Retrieved database storage paths");
 
-        // Step 2: Get all objects from MinIO (under shredded/ prefix where data lives)
-        let minio_paths = self.state.storage.list("shredded/").await?;
+        // Step 2: Get all objects from MinIO
+        // Need to check both shredded/ (GRIB2 data) and raw/ (GOES NetCDF data)
+        let mut minio_paths = self.state.storage.list("shredded/").await?;
+        let raw_paths = self.state.storage.list("raw/").await?;
+        minio_paths.extend(raw_paths);
+        
         let minio_path_set: std::collections::HashSet<String> = minio_paths.iter().cloned().collect();
         stats.minio_objects_checked = minio_paths.len() as u64;
 
-        info!(count = minio_paths.len(), "Retrieved MinIO objects");
+        info!(count = minio_paths.len(), "Retrieved MinIO objects (shredded + raw)");
 
         // Step 3: Find orphan DB records (in DB but not in MinIO)
         let orphan_db_paths: Vec<String> = db_paths
@@ -356,9 +412,10 @@ impl SyncTask {
         }
 
         // Step 4: Find orphan MinIO objects (in MinIO but not in DB)
+        // Only consider shredded/ files as orphans - raw/ files may be awaiting processing
         let orphan_minio_paths: Vec<String> = minio_paths
             .into_iter()
-            .filter(|path| !db_path_set.contains(path))
+            .filter(|path| path.starts_with("shredded/") && !db_path_set.contains(path))
             .collect();
         stats.orphan_minio_objects = orphan_minio_paths.len() as u64;
 

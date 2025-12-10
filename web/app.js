@@ -4,6 +4,7 @@
 // - localhost:8000 (docker-compose) -> use localhost:8080
 // - Otherwise (K8s ingress) -> use relative URLs (same origin)
 const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
+const DOWNLOADER_URL = window.location.port === '8000' ? 'http://localhost:8081' : '/downloader';
 const REDIS_URL = `${API_BASE}/api/ingestion`;
 
 // External service URLs - can be customized for different environments
@@ -1385,6 +1386,7 @@ function initIngestionStatus() {
     fetchBackendMetrics();
     fetchContainerStats();
     fetchDataStats();
+    fetchWmsLayerCounts();
     // Refresh ingestion status every 10 seconds
     ingestionStatusInterval = setInterval(() => {
         checkIngestionStatus();
@@ -1395,6 +1397,59 @@ function initIngestionStatus() {
     setInterval(fetchContainerStats, 5000);
     // Refresh data stats every 30 seconds
     setInterval(fetchDataStats, 30000);
+    // Refresh WMS layer counts every 60 seconds
+    setInterval(fetchWmsLayerCounts, 60000);
+}
+
+// Fetch WMS layer counts from GetCapabilities
+async function fetchWmsLayerCounts() {
+    try {
+        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`);
+        if (!response.ok) return;
+        
+        const text = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/xml');
+        const layers = doc.querySelectorAll('Layer > Name');
+        
+        // Map model names to display IDs
+        const modelMapping = {
+            'gfs': 'gfs',
+            'hrrr': 'hrrr',
+            'goes16': 'goes',
+            'goes18': 'goes',
+            'mrms': 'mrms'
+        };
+        
+        // Count parameter layers per model (e.g., gfs_TMP, hrrr_GUST, goes18_CMI_C01)
+        const layerCounts = { gfs: 0, hrrr: 0, goes: 0, mrms: 0 };
+        layers.forEach(layer => {
+            const name = layer.textContent;
+            // Match pattern: model_PARAM (parameter layers only, not group layers)
+            const match = name.match(/^(gfs|hrrr|goes16|goes18|mrms)_/i);
+            if (match) {
+                const modelName = match[1].toLowerCase();
+                const displayName = modelMapping[modelName] || modelName;
+                if (layerCounts[displayName] !== undefined) {
+                    layerCounts[displayName]++;
+                }
+            }
+        });
+        
+        // Update UI
+        for (const [model, count] of Object.entries(layerCounts)) {
+            const el = document.getElementById(`info-layer-${model}`);
+            if (el) {
+                const countEl = el.querySelector('.info-layer-count');
+                if (countEl) {
+                    countEl.textContent = count > 0 ? count : '-';
+                    countEl.className = 'info-layer-count' + (count === 0 ? ' none' : '');
+                }
+            }
+        }
+    } catch (e) {
+        console.debug('Could not fetch WMS layer counts:', e.message);
+    }
 }
 
 // Fetch data/ingestion stats from admin API
@@ -1434,7 +1489,8 @@ async function fetchDataStats() {
 }
 
 // Update per-model statistics in the Data info bar
-function updatePerModelStats(models, catalog) {
+// Fetches from: downloader schedule, ingestion status, and WMS capabilities
+async function updatePerModelStats(models, catalog) {
     // Map model names to element IDs (handle variations like goes16/goes18 -> goes)
     const modelMapping = {
         'gfs': 'gfs',
@@ -1446,6 +1502,32 @@ function updatePerModelStats(models, catalog) {
     
     // Aggregate stats per display model (e.g., combine goes16 + goes18)
     const aggregated = {};
+    
+    // First, try to get enabled status from downloader schedule
+    try {
+        const scheduleResponse = await fetch(`${DOWNLOADER_URL}/schedule`);
+        if (scheduleResponse.ok) {
+            const schedule = await scheduleResponse.json();
+            (schedule.models || []).forEach(m => {
+                const name = (m.id || '').toLowerCase();
+                const displayName = modelMapping[name] || name;
+                if (!displayName) return;
+                
+                if (!aggregated[displayName]) {
+                    aggregated[displayName] = {
+                        status: m.enabled ? 'enabled' : 'disabled',
+                        files: 0,
+                        params: 0,
+                        hasData: false
+                    };
+                } else if (m.enabled && aggregated[displayName].status === 'disabled') {
+                    aggregated[displayName].status = 'enabled';
+                }
+            });
+        }
+    } catch (e) {
+        // Downloader not available, continue with ingestion data only
+    }
     
     // Process models array from ingestion status
     models.forEach(model => {
@@ -1464,7 +1546,7 @@ function updatePerModelStats(models, catalog) {
             };
         }
         
-        // If any sub-model is active, mark as active
+        // If any sub-model is active (has data), mark as active
         if (model.status === 'active') {
             aggregated[displayName].status = 'active';
         } else if (model.status === 'error' && aggregated[displayName].status !== 'active') {
@@ -1477,6 +1559,7 @@ function updatePerModelStats(models, catalog) {
         
         if ((model.total_files || model.file_count) > 0) {
             aggregated[displayName].hasData = true;
+            aggregated[displayName].status = 'active';
         }
     });
     
@@ -1509,9 +1592,7 @@ function updatePerModelStats(models, catalog) {
         }
         if (datasetCount > 0) {
             aggregated[displayName].hasData = true;
-            if (aggregated[displayName].status === 'inactive') {
-                aggregated[displayName].status = 'active';
-            }
+            aggregated[displayName].status = 'active';
         }
     });
     
@@ -1530,9 +1611,13 @@ function updatePerModelStats(models, catalog) {
             // Show a status indicator
             statusEl.className = 'info-model-status ' + stats.status;
             if (stats.status === 'active') {
-                statusEl.textContent = '\u2713'; // checkmark
+                statusEl.textContent = '\u2713'; // checkmark - has data
+            } else if (stats.status === 'enabled') {
+                statusEl.textContent = '\u25cb'; // circle - enabled but no data yet
             } else if (stats.status === 'error') {
-                statusEl.textContent = '\u2717'; // X mark
+                statusEl.textContent = '\u2717'; // X mark - error
+            } else if (stats.status === 'disabled') {
+                statusEl.textContent = '\u2212'; // minus - disabled
             } else {
                 statusEl.textContent = '-';
             }
@@ -2391,20 +2476,20 @@ function updateLayerTime() {
     if (selectedProtocol === 'wmts') {
         const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
         
+        // Always remove and recreate layer to ensure Leaflet fetches fresh tiles
+        // setUrl() + redraw() doesn't reliably clear Leaflet's internal tile cache
         if (wmsLayer) {
-            // Use setUrl to update tiles without recreating the layer (smoother animation)
-            wmsLayer.setUrl(wmtsUrl);
-        } else {
-            // Create new layer if none exists
-            wmsLayer = L.tileLayer(wmtsUrl, {
-                attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
-                maxZoom: 18,
-                tileSize: 256,
-                opacity: 0.7,
-                pane: 'weatherPane'
-            });
-            wmsLayer.addTo(map);
+            map.removeLayer(wmsLayer);
         }
+        
+        wmsLayer = L.tileLayer(wmtsUrl, {
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+            maxZoom: 18,
+            tileSize: 256,
+            opacity: 0.7,
+            pane: 'weatherPane'
+        });
+        wmsLayer.addTo(map);
     } else {
         // For WMS, we need to recreate the overlay
         if (wmsLayer) {
@@ -2754,4 +2839,894 @@ document.addEventListener('DOMContentLoaded', () => {
         initMinimap();
         setupTileRequestTracking();
     }, 500);
+    
+    // Initialize downloads widget
+    initDownloadsWidget();
+    
+    // Initialize database panel
+    initDatabasePanel();
+});
+
+// ============================================================================
+// Downloads Widget
+// ============================================================================
+
+let downloadsWidgetInterval = null;
+
+// Initialize the downloads widget
+function initDownloadsWidget() {
+    // Initial fetch
+    fetchDownloadsStatus();
+    
+    // Refresh every 5 seconds
+    downloadsWidgetInterval = setInterval(fetchDownloadsStatus, 5000);
+}
+
+// Fetch downloads status from the downloader service
+async function fetchDownloadsStatus() {
+    try {
+        // Fetch status and downloads in parallel
+        const [statusResponse, downloadsResponse, scheduleResponse] = await Promise.all([
+            fetch(`${DOWNLOADER_URL}/status`).catch((e) => { console.error('Status fetch failed:', e); return null; }),
+            fetch(`${DOWNLOADER_URL}/downloads?limit=5`).catch((e) => { console.error('Downloads fetch failed:', e); return null; }),
+            fetch(`${DOWNLOADER_URL}/schedule`).catch((e) => { console.error('Schedule fetch failed:', e); return null; })
+        ]);
+        
+        // Update service status
+        if (statusResponse && statusResponse.ok) {
+            const status = await statusResponse.json();
+            updateDownloaderServiceStatus(true, status);
+            updateDownloadsStats(status.stats);
+        } else {
+            updateDownloaderServiceStatus(false);
+        }
+        
+        // Update active downloads list
+        if (downloadsResponse && downloadsResponse.ok) {
+            const downloads = await downloadsResponse.json();
+            updateDownloadsList(downloads);
+        }
+        
+        // Update next availability - pass full schedule for better display
+        if (scheduleResponse && scheduleResponse.ok) {
+            const schedule = await scheduleResponse.json();
+            updateNextAvailability(schedule);
+        }
+        
+    } catch (error) {
+        console.error('Error fetching downloads status:', error);
+        updateDownloaderServiceStatus(false);
+    }
+}
+
+// Update downloader service status indicator
+function updateDownloaderServiceStatus(online, status = null) {
+    const dot = document.getElementById('downloader-status-dot');
+    const text = document.getElementById('downloader-status-text');
+    
+    if (dot) {
+        dot.className = 'downloads-status-dot ' + (online ? 'online' : 'offline');
+    }
+    
+    if (text) {
+        if (online && status) {
+            text.textContent = status.status || 'Online';
+        } else {
+            text.textContent = 'Offline';
+        }
+    }
+}
+
+// Update downloads statistics
+function updateDownloadsStats(stats) {
+    if (!stats) return;
+    
+    const pendingEl = document.getElementById('dl-pending');
+    const activeEl = document.getElementById('dl-active');
+    const completedEl = document.getElementById('dl-completed');
+    const failedEl = document.getElementById('dl-failed');
+    const bytesEl = document.getElementById('dl-total-bytes');
+    
+    if (pendingEl) pendingEl.textContent = stats.pending ?? 0;
+    if (activeEl) activeEl.textContent = stats.in_progress ?? 0;
+    if (completedEl) completedEl.textContent = stats.completed ?? 0;
+    if (failedEl) failedEl.textContent = stats.failed ?? 0;
+    if (bytesEl) bytesEl.textContent = formatBytes(stats.total_bytes_downloaded ?? 0);
+}
+
+// Update active downloads list
+function updateDownloadsList(downloads) {
+    const listEl = document.getElementById('downloads-list');
+    if (!listEl) return;
+    
+    // Combine active and pending, prioritize active
+    const active = downloads.active || [];
+    const pending = downloads.pending || [];
+    const items = [...active, ...pending.slice(0, 3 - active.length)];
+    
+    if (items.length === 0) {
+        listEl.innerHTML = '<div class="downloads-empty">No active downloads</div>';
+        return;
+    }
+    
+    listEl.innerHTML = items.map(d => {
+        const progressPercent = d.progress_percent ?? 0;
+        const filename = d.filename || extractFilename(d.url);
+        const model = d.model || extractModel(filename);
+        
+        return `
+            <div class="download-item">
+                <div class="download-item-header">
+                    <span class="download-item-name">${truncateFilename(filename)}</span>
+                    ${model ? `<span class="download-item-model">${model}</span>` : ''}
+                </div>
+                ${d.status === 'in_progress' ? `
+                <div class="download-item-progress">
+                    <div class="download-progress-bar">
+                        <div class="download-progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <div class="download-progress-text">
+                        <span>${formatBytes(d.downloaded_bytes ?? 0)}</span>
+                        <span>${progressPercent.toFixed(0)}%</span>
+                    </div>
+                </div>
+                ` : `
+                <div class="download-progress-text">
+                    <span style="color: #60a5fa;">Pending</span>
+                </div>
+                `}
+            </div>
+        `;
+    }).join('');
+}
+
+// Update next data availability section
+function updateNextAvailability(schedule) {
+    const listEl = document.getElementById('downloads-next-list');
+    if (!listEl) return;
+    
+    const models = schedule.models || [];
+    const nextChecks = schedule.next_checks || [];
+    
+    if (models.length === 0) {
+        listEl.innerHTML = '<div class="downloads-empty">No models configured</div>';
+        return;
+    }
+    
+    // Create display items - distinguish observation vs forecast models
+    const displayItems = models
+        .filter(m => m.enabled)
+        .map(m => {
+            const isObservation = !m.cycles || m.cycles.length === 0;
+            
+            if (isObservation) {
+                // Observation model (GOES, MRMS) - calculate next check time
+                const pollSecs = m.poll_interval_secs || 300;
+                const nextCheckInfo = calculateNextCheckTime(pollSecs);
+                return {
+                    model: m.id.toUpperCase(),
+                    info: nextCheckInfo,
+                    isObservation: true
+                };
+            } else {
+                // Forecast model (GFS, HRRR) - find next check info
+                const check = nextChecks.find(c => c.model === m.id);
+                if (check) {
+                    return {
+                        model: m.id.toUpperCase(),
+                        info: `${check.next_cycle} - ${check.expected_available}`,
+                        isObservation: false
+                    };
+                } else {
+                    return {
+                        model: m.id.toUpperCase(),
+                        info: `Cycles: ${m.cycles.map(c => c + 'Z').join(', ')}`,
+                        isObservation: false
+                    };
+                }
+            }
+        });
+    
+    // Show all items (compact widget)
+    listEl.innerHTML = displayItems.map(item => {
+        const timeClass = item.isObservation ? 'downloads-next-continuous' : '';
+        return `
+            <div class="downloads-next-item">
+                <span class="downloads-next-model">${item.model}</span>
+                <span class="downloads-next-time ${timeClass}">${item.info}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// Calculate next check time based on poll interval
+function calculateNextCheckTime(pollIntervalSecs) {
+    const now = new Date();
+    const currentMinute = now.getMinutes();
+    const currentSecond = now.getSeconds();
+    
+    // Calculate seconds into current interval
+    const pollMins = pollIntervalSecs / 60;
+    const secsIntoInterval = (currentMinute % pollMins) * 60 + currentSecond;
+    const secsUntilNext = pollIntervalSecs - secsIntoInterval;
+    
+    // Calculate next check time
+    const nextCheck = new Date(now.getTime() + secsUntilNext * 1000);
+    
+    // Format time as HH:MM (local time)
+    const timeStr = nextCheck.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+    }).toLowerCase();
+    
+    // Format minutes away
+    const minsAway = Math.ceil(secsUntilNext / 60);
+    const minsAwayStr = minsAway <= 1 ? '<1 min' : `${minsAway} min`;
+    
+    return `${timeStr} (${minsAwayStr})`;
+}
+
+// Helper: Extract filename from URL
+function extractFilename(url) {
+    if (!url) return 'Unknown';
+    try {
+        const parts = url.split('/');
+        return parts[parts.length - 1] || 'Unknown';
+    } catch {
+        return 'Unknown';
+    }
+}
+
+// Helper: Extract model from filename
+function extractModel(filename) {
+    if (!filename) return null;
+    const lower = filename.toLowerCase();
+    if (lower.includes('gfs')) return 'GFS';
+    if (lower.includes('hrrr')) return 'HRRR';
+    if (lower.includes('goes')) return 'GOES';
+    if (lower.includes('mrms')) return 'MRMS';
+    return null;
+}
+
+// Helper: Truncate filename for display
+function truncateFilename(filename, maxLen = 40) {
+    if (!filename || filename.length <= maxLen) return filename;
+    // Keep extension visible
+    const ext = filename.split('.').pop();
+    const name = filename.substring(0, filename.length - ext.length - 1);
+    const truncLen = maxLen - ext.length - 4; // 4 for "..." and "."
+    return name.substring(0, truncLen) + '...' + ext;
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (downloadsWidgetInterval) {
+        clearInterval(downloadsWidgetInterval);
+    }
+    if (dataPanelInterval) {
+        clearInterval(dataPanelInterval);
+    }
+});
+
+// ============================================================================
+// Data Panel Widget (PostgreSQL + MinIO Tree View)
+// ============================================================================
+
+let dataPanelInterval = null;
+let dbTreeData = null;  // Cached PostgreSQL data
+let minioTreeData = null;  // Cached MinIO data
+let expandedNodes = new Set();  // Track expanded nodes across refreshes
+
+// Initialize the data panel
+function initDataPanel() {
+    // Initial fetch for both panels
+    fetchDatabaseTree();
+    fetchMinioTree();
+    checkSyncStatus();
+    
+    // Refresh every 15 seconds
+    dataPanelInterval = setInterval(() => {
+        fetchDatabaseTree();
+        fetchMinioTree();
+        checkSyncStatus();
+    }, 15000);
+}
+
+// Alias for backward compatibility
+function initDatabasePanel() {
+    initDataPanel();
+}
+
+// Toggle section collapse
+function toggleDataSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+
+// ============================================================================
+// PostgreSQL Tree
+// ============================================================================
+
+async function fetchDatabaseTree() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/database/details`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        dbTreeData = data;
+        renderDatabaseTree(data);
+        updateDbSummary(data);
+    } catch (error) {
+        console.error('Error fetching database details:', error);
+        const treeEl = document.getElementById('database-tree');
+        if (treeEl) {
+            treeEl.innerHTML = '<div class="tree-loading">Error loading data</div>';
+        }
+    }
+}
+
+function updateDbSummary(data) {
+    const countEl = document.getElementById('db-total-datasets');
+    const sizeEl = document.getElementById('db-total-size');
+    
+    if (countEl) countEl.textContent = (data.total_datasets || 0).toLocaleString();
+    if (sizeEl) sizeEl.textContent = formatBytes(data.total_size_bytes || 0);
+}
+
+function renderDatabaseTree(data) {
+    const treeEl = document.getElementById('database-tree');
+    if (!treeEl) return;
+    
+    if (!data.models || data.models.length === 0) {
+        treeEl.innerHTML = '<div class="tree-empty">No data ingested yet</div>';
+        return;
+    }
+    
+    treeEl.innerHTML = data.models.map(model => renderDbModelNode(model)).join('');
+}
+
+function renderDbModelNode(model) {
+    const modelId = `db-model-${model.model}`;
+    const isExpanded = expandedNodes.has(modelId);
+    const datasetCount = model.dataset_count || 0;
+    const sizeStr = formatBytes(model.total_size_bytes || 0);
+    
+    return `
+        <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-model="${model.model}" id="${modelId}">
+            <div class="tree-node-row" data-level="0" onclick="toggleDbModelNode('${modelId}', '${model.model}')">
+                <span class="tree-node-expander ${isExpanded ? 'expanded' : ''}">▶</span>
+                <span class="tree-node-icon">📦</span>
+                <span class="tree-node-name">${model.model.toUpperCase()}</span>
+                <div class="tree-node-meta">
+                    <span class="tree-node-count">${datasetCount}</span>
+                    <span class="tree-node-size">${sizeStr}</span>
+                </div>
+            </div>
+            <div class="tree-node-children">
+                ${(model.parameters || []).map(param => renderDbParamNode(model.model, param)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderDbParamNode(modelName, param) {
+    const paramId = `db-param-${modelName}-${param.parameter}`;
+    const isExpanded = expandedNodes.has(paramId);
+    const sizeStr = formatBytes(param.total_size_bytes || 0);
+    
+    return `
+        <div class="tree-node ${isExpanded ? 'expanded' : ''}" id="${paramId}">
+            <div class="tree-node-row" data-level="1" onclick="toggleDbParamNode('${paramId}', '${modelName}', '${param.parameter}')">
+                <span class="tree-node-expander ${isExpanded ? 'expanded' : ''}">▶</span>
+                <span class="tree-node-icon">📋</span>
+                <span class="tree-node-name">${param.parameter}</span>
+                <div class="tree-node-meta">
+                    <span class="tree-node-count">${param.count}</span>
+                    <span class="tree-node-size">${sizeStr}</span>
+                </div>
+            </div>
+            <div class="tree-node-children" id="${paramId}-children">
+                ${isExpanded ? '' : '<div class="tree-loading">Loading...</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function toggleDbModelNode(nodeId, modelName) {
+    const node = document.getElementById(nodeId);
+    if (!node) return;
+    
+    const isExpanded = node.classList.contains('expanded');
+    if (isExpanded) {
+        node.classList.remove('expanded');
+        expandedNodes.delete(nodeId);
+        node.querySelector('.tree-node-expander').classList.remove('expanded');
+    } else {
+        node.classList.add('expanded');
+        expandedNodes.add(nodeId);
+        node.querySelector('.tree-node-expander').classList.add('expanded');
+    }
+}
+
+async function toggleDbParamNode(nodeId, modelName, paramName) {
+    const node = document.getElementById(nodeId);
+    if (!node) return;
+    
+    const isExpanded = node.classList.contains('expanded');
+    const childrenEl = document.getElementById(`${nodeId}-children`);
+    
+    if (isExpanded) {
+        node.classList.remove('expanded');
+        expandedNodes.delete(nodeId);
+        node.querySelector('.tree-node-expander').classList.remove('expanded');
+    } else {
+        node.classList.add('expanded');
+        expandedNodes.add(nodeId);
+        node.querySelector('.tree-node-expander').classList.add('expanded');
+        
+        // Fetch datasets if not already loaded
+        if (childrenEl && childrenEl.querySelector('.tree-loading')) {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/database/datasets/${modelName}/${paramName}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const datasets = await response.json();
+                childrenEl.innerHTML = datasets.map(ds => renderDatasetNode(ds)).join('');
+            } catch (error) {
+                console.error('Error fetching datasets:', error);
+                childrenEl.innerHTML = '<div class="tree-loading">Error loading datasets</div>';
+            }
+        }
+    }
+}
+
+function renderDatasetNode(dataset) {
+    const validTime = dataset.valid_time ? formatDbTime(dataset.valid_time) : '--';
+    const sizeStr = formatBytes(dataset.file_size || 0);
+    const level = dataset.level || 'surface';
+    const fHour = dataset.forecast_hour !== undefined ? `f${String(dataset.forecast_hour).padStart(3, '0')}` : '';
+    
+    // Build display name: valid time + forecast hour + level
+    const displayParts = [validTime];
+    if (fHour) displayParts.push(fHour);
+    if (level !== 'surface') displayParts.push(level);
+    const displayName = displayParts.join(' | ');
+    
+    return `
+        <div class="tree-node">
+            <div class="tree-node-row" data-level="2">
+                <span class="tree-node-expander empty"></span>
+                <span class="tree-node-icon">📄</span>
+                <span class="tree-node-name" title="${dataset.storage_path || ''}">${displayName}</span>
+                <div class="tree-node-meta">
+                    <span class="tree-node-size">${sizeStr}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// ============================================================================
+// MinIO Tree
+// ============================================================================
+
+async function fetchMinioTree() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/storage/tree`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        minioTreeData = data;
+        renderMinioTree(data);
+        updateMinioSummary(data);
+    } catch (error) {
+        console.error('Error fetching MinIO tree:', error);
+        const treeEl = document.getElementById('minio-tree');
+        if (treeEl) {
+            treeEl.innerHTML = '<div class="tree-loading">Error loading storage</div>';
+        }
+    }
+}
+
+function updateMinioSummary(data) {
+    const countEl = document.getElementById('minio-total-objects');
+    const sizeEl = document.getElementById('minio-total-size');
+    
+    if (countEl) countEl.textContent = (data.total_objects || 0).toLocaleString();
+    if (sizeEl) sizeEl.textContent = formatBytes(data.total_size || 0);
+}
+
+function renderMinioTree(data) {
+    const treeEl = document.getElementById('minio-tree');
+    if (!treeEl) return;
+    
+    // API returns 'nodes' not 'tree'
+    const nodes = data.nodes || data.tree || [];
+    if (nodes.length === 0) {
+        treeEl.innerHTML = '<div class="tree-empty">No files in storage</div>';
+        return;
+    }
+    
+    treeEl.innerHTML = nodes.map(node => renderMinioNode(node, 0)).join('');
+}
+
+function renderMinioNode(node, level) {
+    const nodeId = `minio-${node.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    const isExpanded = expandedNodes.has(nodeId);
+    const isFolder = node.node_type === 'directory';
+    
+    if (isFolder) {
+        const childCount = countMinioChildren(node);
+        const totalSize = sumMinioSize(node);
+        
+        return `
+            <div class="tree-node ${isExpanded ? 'expanded' : ''}" id="${nodeId}">
+                <div class="tree-node-row" data-level="${level}" onclick="toggleMinioNode('${nodeId}')">
+                    <span class="tree-node-expander ${isExpanded ? 'expanded' : ''}">▶</span>
+                    <span class="tree-node-icon folder"></span>
+                    <span class="tree-node-name">${node.name}</span>
+                    <div class="tree-node-meta">
+                        <span class="tree-node-count">${childCount}</span>
+                        <span class="tree-node-size">${formatBytes(totalSize)}</span>
+                    </div>
+                </div>
+                <div class="tree-node-children">
+                    ${(node.children || []).map(child => renderMinioNode(child, level + 1)).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        // File node
+        const ext = node.name.split('.').pop().toLowerCase();
+        let iconClass = 'file-other';
+        if (ext === 'grib2' || ext === 'grb2') iconClass = 'file-grib';
+        else if (ext === 'nc') iconClass = 'file-nc';
+        
+        return `
+            <div class="tree-node" id="${nodeId}">
+                <div class="tree-node-row" data-level="${level}">
+                    <span class="tree-node-expander empty"></span>
+                    <span class="tree-node-icon ${iconClass}"></span>
+                    <span class="tree-node-name" title="${node.path}">${node.name}</span>
+                    <div class="tree-node-meta">
+                        <span class="tree-node-size">${formatBytes(node.size || 0)}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function toggleMinioNode(nodeId) {
+    const node = document.getElementById(nodeId);
+    if (!node) return;
+    
+    const isExpanded = node.classList.contains('expanded');
+    if (isExpanded) {
+        node.classList.remove('expanded');
+        expandedNodes.delete(nodeId);
+        node.querySelector('.tree-node-expander').classList.remove('expanded');
+    } else {
+        node.classList.add('expanded');
+        expandedNodes.add(nodeId);
+        node.querySelector('.tree-node-expander').classList.add('expanded');
+    }
+}
+
+function countMinioChildren(node) {
+    if (!node.children) return 0;
+    return node.children.reduce((acc, child) => {
+        if (child.node_type === 'directory') {
+            return acc + countMinioChildren(child);
+        }
+        return acc + 1;
+    }, 0);
+}
+
+function sumMinioSize(node) {
+    if (node.node_type === 'file') return node.size || 0;
+    if (!node.children) return 0;
+    return node.children.reduce((acc, child) => acc + sumMinioSize(child), 0);
+}
+
+// ============================================================================
+// Sync Status
+// ============================================================================
+
+async function checkSyncStatus() {
+    const statusEl = document.getElementById('data-sync-status');
+    const textEl = document.getElementById('sync-status-text');
+    const actionsEl = document.getElementById('sync-actions');
+    if (!statusEl || !textEl) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/sync/status`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        
+        statusEl.className = 'data-sync-status';
+        const orphanDb = data.orphan_db_records || 0;
+        const orphanMinio = data.orphan_minio_objects || 0;
+        
+        if (orphanDb === 0 && orphanMinio === 0) {
+            statusEl.classList.add('synced');
+            textEl.textContent = 'DB and storage in sync';
+            if (actionsEl) actionsEl.style.display = 'none';
+        } else {
+            statusEl.classList.add('warning');
+            const issues = [];
+            if (orphanDb > 0) issues.push(`${orphanDb} orphan DB`);
+            if (orphanMinio > 0) issues.push(`${orphanMinio} orphan files`);
+            textEl.textContent = issues.join(', ');
+            // Show sync buttons when there are orphans
+            if (actionsEl) actionsEl.style.display = 'flex';
+        }
+    } catch (error) {
+        console.error('Error checking sync status:', error);
+        statusEl.className = 'data-sync-status error';
+        textEl.textContent = 'Could not check sync';
+        if (actionsEl) actionsEl.style.display = 'none';
+    }
+}
+
+// ============================================================================
+// Sync Preview and Run
+// ============================================================================
+
+let currentSyncPreview = null;
+
+async function showSyncPreview() {
+    const overlay = document.getElementById('sync-modal-overlay');
+    const body = document.getElementById('sync-modal-body');
+    const confirmBtn = document.getElementById('sync-modal-confirm');
+    
+    if (!overlay || !body) return;
+    
+    // Show modal with loading state
+    overlay.classList.add('visible');
+    body.innerHTML = '<div class="tree-loading">Loading preview...</div>';
+    if (confirmBtn) confirmBtn.disabled = true;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/sync/preview`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        currentSyncPreview = data;
+        
+        renderSyncPreview(data);
+        if (confirmBtn) {
+            confirmBtn.disabled = (data.orphan_db_paths.length === 0 && data.orphan_minio_paths.length === 0);
+        }
+    } catch (error) {
+        console.error('Error fetching sync preview:', error);
+        body.innerHTML = `<div class="sync-result error">Failed to load preview: ${error.message}</div>`;
+    }
+}
+
+function renderSyncPreview(data) {
+    const body = document.getElementById('sync-modal-body');
+    if (!body) return;
+    
+    const orphanDbCount = data.orphan_db_paths?.length || 0;
+    const orphanMinioCount = data.orphan_minio_paths?.length || 0;
+    
+    let html = '';
+    
+    // Summary
+    html += `<div style="margin-bottom: 16px; font-size: 11px; color: #9ca3af;">
+        Checked ${data.db_records_checked || 0} DB records and ${data.minio_objects_checked || 0} MinIO objects.
+    </div>`;
+    
+    // Orphan DB records section
+    html += `<div class="sync-modal-section">
+        <div class="sync-modal-section-title">
+            Orphan DB Records (missing from MinIO)
+            <span class="sync-modal-section-count">${orphanDbCount}</span>
+        </div>
+        <div class="sync-modal-list">`;
+    
+    if (orphanDbCount === 0) {
+        html += '<div class="sync-modal-empty">No orphan database records</div>';
+    } else {
+        // Show up to 50 paths
+        const dbPathsToShow = data.orphan_db_paths.slice(0, 50);
+        html += dbPathsToShow.map(path => `<div class="sync-modal-list-item">${escapeHtml(path)}</div>`).join('');
+        if (orphanDbCount > 50) {
+            html += `<div class="sync-modal-list-item" style="color: #6b7280; font-style: italic;">... and ${orphanDbCount - 50} more</div>`;
+        }
+    }
+    html += '</div></div>';
+    
+    // Orphan MinIO objects section
+    html += `<div class="sync-modal-section">
+        <div class="sync-modal-section-title">
+            Orphan MinIO Files (missing from DB)
+            <span class="sync-modal-section-count">${orphanMinioCount}</span>
+        </div>
+        <div class="sync-modal-list">`;
+    
+    if (orphanMinioCount === 0) {
+        html += '<div class="sync-modal-empty">No orphan MinIO files</div>';
+    } else {
+        const minioPathsToShow = data.orphan_minio_paths.slice(0, 50);
+        html += minioPathsToShow.map(path => `<div class="sync-modal-list-item">${escapeHtml(path)}</div>`).join('');
+        if (orphanMinioCount > 50) {
+            html += `<div class="sync-modal-list-item" style="color: #6b7280; font-style: italic;">... and ${orphanMinioCount - 50} more</div>`;
+        }
+    }
+    html += '</div></div>';
+    
+    // Warning message
+    if (orphanDbCount > 0 || orphanMinioCount > 0) {
+        html += `<div style="margin-top: 16px; padding: 10px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 4px; font-size: 11px; color: #f59e0b;">
+            <strong>Warning:</strong> Clicking "Sync Now" will delete ${orphanDbCount} orphan DB records and ${orphanMinioCount} orphan MinIO files. This action cannot be undone.
+        </div>`;
+    }
+    
+    body.innerHTML = html;
+}
+
+function closeSyncModal(event) {
+    // If called from overlay click, only close if clicking directly on overlay
+    if (event && event.target !== event.currentTarget) return;
+    
+    const overlay = document.getElementById('sync-modal-overlay');
+    if (overlay) {
+        overlay.classList.remove('visible');
+    }
+    currentSyncPreview = null;
+}
+
+async function confirmSync() {
+    const body = document.getElementById('sync-modal-body');
+    const confirmBtn = document.getElementById('sync-modal-confirm');
+    
+    if (confirmBtn) confirmBtn.disabled = true;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/sync/run`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const result = await response.json();
+        
+        // Show success message
+        if (body) {
+            body.innerHTML = `<div class="sync-result success">
+                <strong>Sync completed successfully!</strong><br>
+                Deleted ${result.orphan_db_deleted || 0} orphan DB records and ${result.orphan_minio_deleted || 0} orphan MinIO files.
+            </div>`;
+        }
+        
+        // Refresh data panels after a short delay
+        setTimeout(() => {
+            closeSyncModal();
+            checkSyncStatus();
+            fetchDatabaseTree();
+            fetchMinioTree();
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Error running sync:', error);
+        if (body) {
+            body.innerHTML += `<div class="sync-result error">Sync failed: ${error.message}</div>`;
+        }
+        if (confirmBtn) confirmBtn.disabled = false;
+    }
+}
+
+// Quick sync without preview modal
+async function runSyncNow() {
+    if (!confirm('Are you sure you want to sync now? This will delete orphan records.')) {
+        return;
+    }
+    
+    const textEl = document.getElementById('sync-status-text');
+    if (textEl) textEl.textContent = 'Syncing...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/sync/run`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const result = await response.json();
+        
+        if (textEl) {
+            textEl.textContent = `Synced! Deleted ${result.orphan_db_deleted || 0} DB, ${result.orphan_minio_deleted || 0} files`;
+        }
+        
+        // Refresh everything
+        setTimeout(() => {
+            checkSyncStatus();
+            fetchDatabaseTree();
+            fetchMinioTree();
+        }, 1500);
+        
+    } catch (error) {
+        console.error('Error running sync:', error);
+        if (textEl) textEl.textContent = `Sync failed: ${error.message}`;
+    }
+}
+
+// Helper to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Format database time for display
+function formatDbTime(isoString) {
+    try {
+        const date = new Date(isoString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        
+        // If within last hour, show relative time
+        if (diffMins < 60) {
+            return `${diffMins}m ago`;
+        }
+        // If within last 24 hours, show hours ago
+        if (diffHours < 24) {
+            return `${diffHours}h ago`;
+        }
+        // Otherwise show date/time
+        return date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch {
+        return isoString;
+    }
+}
+
+// ============================================================================
+// Dual Clock (Local + UTC)
+// ============================================================================
+
+function updateClocks() {
+    const now = new Date();
+    
+    // Local time
+    const localTime = now.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    
+    // UTC time
+    const utcTime = now.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'UTC'
+    });
+    
+    const localTimeEl = document.getElementById('local-time');
+    const utcTimeEl = document.getElementById('utc-time');
+    
+    if (localTimeEl) localTimeEl.textContent = localTime;
+    if (utcTimeEl) utcTimeEl.textContent = utcTime;
+}
+
+// Initialize clocks
+document.addEventListener('DOMContentLoaded', () => {
+    updateClocks();
+    setInterval(updateClocks, 1000); // Update every second
 });

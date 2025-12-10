@@ -294,6 +294,9 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/loadtest/file/:filename", get(handlers::loadtest_file_handler))
         // Admin dashboard
         .route("/api/admin/ingestion/status", get(admin::ingestion_status_handler))
+        .route("/api/admin/database/details", get(admin::database_details_handler))
+        .route("/api/admin/database/datasets/:model/:parameter", get(admin::database_datasets_handler))
+        .route("/api/admin/storage/tree", get(admin::storage_tree_handler))
         .route("/api/admin/ingestion/log", get(admin::ingestion_log_handler))
         .route("/api/admin/preview-shred", get(admin::preview_shred_handler))
         .route("/api/admin/config/models", get(admin::list_models_handler))
@@ -305,6 +308,7 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/admin/cleanup/run", post(admin::cleanup_run_handler))
         // Database/storage sync endpoints
         .route("/api/admin/sync/status", get(admin::sync_status_handler))
+        .route("/api/admin/sync/preview", get(admin::sync_preview_handler))
         .route("/api/admin/sync/run", post(admin::sync_run_handler))
         // Layer extensions
         .layer(Extension(state))

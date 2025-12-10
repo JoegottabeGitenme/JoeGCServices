@@ -149,6 +149,37 @@ impl ObjectStorage {
         Ok(paths)
     }
 
+    /// List objects with metadata (path and size).
+    pub async fn list_with_sizes(&self, prefix: &str) -> WmsResult<Vec<(String, u64)>> {
+        use futures::TryStreamExt;
+
+        let prefix_path = Path::from(prefix);
+        let mut results = Vec::new();
+
+        let mut stream = self.store.list(Some(&prefix_path));
+        while let Some(meta) = stream
+            .try_next()
+            .await
+            .map_err(|e| WmsError::StorageError(format!("List failed: {}", e)))?
+        {
+            results.push((meta.location.to_string(), meta.size as u64));
+        }
+
+        Ok(results)
+    }
+
+    /// Get object metadata (size).
+    pub async fn head(&self, path: &str) -> WmsResult<u64> {
+        let location = Path::from(path);
+        
+        let meta = self.store
+            .head(&location)
+            .await
+            .map_err(|e| WmsError::StorageError(format!("Failed to get metadata for {}: {}", path, e)))?;
+        
+        Ok(meta.size as u64)
+    }
+
     /// Delete an object.
     #[instrument(skip(self), fields(bucket = %self.bucket, path = %path))]
     pub async fn delete(&self, path: &str) -> WmsResult<()> {

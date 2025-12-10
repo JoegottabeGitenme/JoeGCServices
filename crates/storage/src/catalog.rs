@@ -130,6 +130,64 @@ impl Catalog {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    /// Get aggregated statistics per model.
+    /// Returns (model_id, dataset_count, parameter_count, last_ingest_time, parameters_list)
+    pub async fn get_model_stats(&self) -> WmsResult<Vec<ModelStats>> {
+        #[derive(sqlx::FromRow)]
+        struct ModelStatsRow {
+            model: String,
+            dataset_count: i64,
+            param_count: i64,
+            last_ingest: Option<chrono::DateTime<Utc>>,
+        }
+
+        let rows = sqlx::query_as::<_, ModelStatsRow>(
+            "SELECT model, COUNT(*) as dataset_count, \
+             COUNT(DISTINCT parameter) as param_count, \
+             MAX(reference_time) as last_ingest \
+             FROM datasets WHERE status = 'available' \
+             GROUP BY model ORDER BY model",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Also get parameter names per model
+        #[derive(sqlx::FromRow)]
+        struct ParamRow {
+            model: String,
+            parameter: String,
+        }
+
+        let param_rows = sqlx::query_as::<_, ParamRow>(
+            "SELECT DISTINCT model, parameter FROM datasets WHERE status = 'available' ORDER BY model, parameter",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Group parameters by model
+        let mut params_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for row in param_rows {
+            params_map
+                .entry(row.model)
+                .or_default()
+                .push(row.parameter);
+        }
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ModelStats {
+                model: r.model.clone(),
+                dataset_count: r.dataset_count as u64,
+                parameter_count: r.param_count as u64,
+                last_ingest: r.last_ingest,
+                parameters: params_map.remove(&r.model).unwrap_or_default(),
+            })
+            .collect())
+    }
+
     /// Get the most recent dataset for a layer.
     pub async fn get_latest(
         &self,
@@ -708,6 +766,114 @@ impl Catalog {
 
         Ok(count)
     }
+
+    /// Get detailed per-parameter statistics for the database panel.
+    /// Returns stats for each model+parameter combination including counts and time ranges.
+    pub async fn get_detailed_parameter_stats(&self) -> WmsResult<Vec<ParameterStats>> {
+        #[derive(sqlx::FromRow)]
+        struct ParamStatsRow {
+            model: String,
+            parameter: String,
+            count: i64,
+            oldest: Option<chrono::DateTime<Utc>>,
+            newest: Option<chrono::DateTime<Utc>>,
+            total_size: Option<i64>,  // Cast in SQL to avoid NUMERIC
+        }
+
+        let rows = sqlx::query_as::<_, ParamStatsRow>(
+            "SELECT model, parameter, COUNT(*) as count, \
+             MIN(valid_time) as oldest, MAX(valid_time) as newest, \
+             CAST(COALESCE(SUM(file_size), 0) AS BIGINT) as total_size \
+             FROM datasets WHERE status = 'available' \
+             GROUP BY model, parameter \
+             ORDER BY model, parameter",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ParameterStats {
+                model: r.model,
+                parameter: r.parameter,
+                count: r.count as u64,
+                oldest: r.oldest,
+                newest: r.newest,
+                total_size_bytes: r.total_size.unwrap_or(0) as u64,
+            })
+            .collect())
+    }
+
+    /// Get all datasets for a specific model and parameter.
+    /// Returns full dataset details for drill-down views.
+    pub async fn get_datasets_for_parameter(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<DatasetInfo>> {
+        #[derive(sqlx::FromRow)]
+        struct DatasetRow {
+            model: String,
+            parameter: String,
+            level: String,
+            reference_time: chrono::DateTime<Utc>,
+            forecast_hour: i32,
+            valid_time: chrono::DateTime<Utc>,
+            storage_path: String,
+            file_size: i64,
+        }
+
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             valid_time, storage_path, file_size \
+             FROM datasets WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY valid_time DESC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| DatasetInfo {
+                model: r.model,
+                parameter: r.parameter,
+                level: r.level,
+                reference_time: r.reference_time,
+                forecast_hour: r.forecast_hour as u32,
+                valid_time: r.valid_time,
+                storage_path: r.storage_path,
+                file_size: r.file_size as u64,
+            })
+            .collect())
+    }
+}
+
+/// Full dataset information for tree views.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetInfo {
+    pub model: String,
+    pub parameter: String,
+    pub level: String,
+    pub reference_time: DateTime<Utc>,
+    pub forecast_hour: u32,
+    pub valid_time: DateTime<Utc>,
+    pub storage_path: String,
+    pub file_size: u64,
+}
+
+/// Detailed statistics for a parameter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParameterStats {
+    pub model: String,
+    pub parameter: String,
+    pub count: u64,
+    pub oldest: Option<DateTime<Utc>>,
+    pub newest: Option<DateTime<Utc>>,
+    pub total_size_bytes: u64,
 }
 
 /// A catalog entry representing an ingested dataset.
@@ -750,6 +916,21 @@ pub struct PurgePreview {
     pub dataset_count: u64,
     /// Total size of datasets that would be purged
     pub total_size_bytes: u64,
+}
+
+/// Aggregated statistics for a model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelStats {
+    /// Model identifier (e.g., "gfs", "hrrr")
+    pub model: String,
+    /// Total number of datasets for this model
+    pub dataset_count: u64,
+    /// Number of unique parameters
+    pub parameter_count: u64,
+    /// Most recent reference time
+    pub last_ingest: Option<DateTime<Utc>>,
+    /// List of parameter names
+    pub parameters: Vec<String>,
 }
 
 /// Internal row type for database queries.
