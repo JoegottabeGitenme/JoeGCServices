@@ -1009,7 +1009,13 @@ async fn ingest_file_tracked(
                 .to_lowercase();
             
             // Storage path: shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
-            let run_date = reference_time.format("%Y%m%d_%Hz").to_string();
+            // For observation data like MRMS (updates every ~2 minutes), use minute-level paths
+            // For forecast models like GFS/HRRR, use hourly paths (they have hourly forecast cycles)
+            let run_date = if model == "mrms" {
+                reference_time.format("%Y%m%d_%H%Mz").to_string()
+            } else {
+                reference_time.format("%Y%m%d_%Hz").to_string()
+            };
             let storage_path = format!(
                 "shredded/{}/{}/{}_{}/f{:03}.grib2",
                 model,

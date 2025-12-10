@@ -448,7 +448,13 @@ async fn test_file_ingestion(
             
             // New shredded storage path structure:
             // shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
-            let run_date = reference_time.format("%Y%m%d_%Hz").to_string();
+            // For observation data like MRMS (updates every ~2 minutes), use minute-level paths
+            // For forecast models like GFS/HRRR, use hourly paths (they have hourly forecast cycles)
+            let run_date = if model == "mrms" {
+                reference_time.format("%Y%m%d_%H%Mz").to_string()
+            } else {
+                reference_time.format("%Y%m%d_%Hz").to_string()
+            };
             let storage_path = format!(
                 "shredded/{}/{}/{}_{}/f{:03}.grib2",
                 model,
@@ -636,12 +642,12 @@ async fn test_goes_file_ingestion(
         "Parsed GOES file metadata"
     );
 
-    // Create storage path
-    let run_date = observation_time.format("%Y%m%d_%Hz").to_string();
+    // Create storage path - include hour and minute for GOES (5-minute intervals)
+    let run_datetime = observation_time.format("%Y%m%d_%H%Mz").to_string();
     let storage_path = format!(
         "raw/{}/{}/{}.nc",
         model,
-        run_date,
+        run_datetime,
         parameter.to_lowercase()
     );
 
