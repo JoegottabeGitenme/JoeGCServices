@@ -122,14 +122,10 @@ log_success "WMS service is running"
 echo ""
 
 # Define quick scenarios (< 60 seconds)
+# Note: With consolidated scenarios, all are 120s+ so this is less useful
 QUICK_SCENARIOS=(
-    "quick"
-    "gradient_only"
-    "isolines_only"
-    "wind_barbs_only"
-    "goes_single_tile_temporal"
-    "hrrr_single_tile_temporal"
-    "mrms_single_tile_temporal"
+    "mrms"
+    "goes"
 )
 
 # Get all available scenarios

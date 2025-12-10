@@ -645,21 +645,21 @@
                     </div>
                     <div id="minimap"></div>
                     <div class="minimap-legend">
-                        <span class="minimap-legend-item">
+                        <span class="minimap-legend-item" title="L1 in-memory cache hit (fastest)">
+                            <span class="legend-color" style="background: #22c55e;"></span>
+                            <span class="legend-label">L1</span>
+                        </span>
+                        <span class="minimap-legend-item" title="L2 Redis cache hit">
                             <span class="legend-color" style="background: #3b82f6;"></span>
-                            <span class="legend-label">Low</span>
+                            <span class="legend-label">L2</span>
                         </span>
-                        <span class="minimap-legend-item">
-                            <span class="legend-color" style="background: #10b981;"></span>
-                            <span class="legend-label">Med</span>
-                        </span>
-                        <span class="minimap-legend-item">
+                        <span class="minimap-legend-item" title="Mixed cache hits">
                             <span class="legend-color" style="background: #f59e0b;"></span>
-                            <span class="legend-label">High</span>
+                            <span class="legend-label">Mix</span>
                         </span>
-                        <span class="minimap-legend-item">
+                        <span class="minimap-legend-item" title="Cache miss - had to render">
                             <span class="legend-color" style="background: #ef4444;"></span>
-                            <span class="legend-label">Hot</span>
+                            <span class="legend-label">Miss</span>
                         </span>
                     </div>
                     <div class="minimap-stats">
@@ -671,6 +671,14 @@
                             <span class="minimap-stat-label">Hotspots</span>
                             <span class="minimap-stat-value" id="minimap-hotspot-count">0</span>
                         </div>
+                    </div>
+                    <div class="minimap-fade-controls">
+                        <label class="fade-toggle" title="Enable tile fade-out after timeout">
+                            <input type="checkbox" id="minimap-fade-enabled">
+                            <span class="fade-toggle-label">Fade</span>
+                        </label>
+                        <input type="range" id="minimap-fade-slider" min="2" max="30" value="10" class="fade-slider" title="Fade timeout in seconds">
+                        <span class="fade-value" id="minimap-fade-value">10s</span>
                     </div>
                 </div>
                 <!-- Downloads Widget -->

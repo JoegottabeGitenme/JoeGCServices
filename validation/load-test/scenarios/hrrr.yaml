@@ -1,0 +1,55 @@
+name: hrrr
+description: |
+  HRRR (High-Resolution Rapid Refresh) load test.
+  Tests available HRRR layers with various rendering styles.
+  
+  Currently available layers (check GetCapabilities for updates):
+  - hrrr_TMP, hrrr_GUST, hrrr_RH
+  - hrrr_UGRD, hrrr_VGRD, hrrr_WIND_BARBS
+
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+seed: 77777
+
+layers:
+  # Temperature
+  - name: hrrr_TMP
+    style: temperature
+    weight: 2.0
+  - name: hrrr_TMP
+    style: numbers
+    weight: 0.5
+
+  # Humidity
+  - name: hrrr_RH
+    style: humidity
+    weight: 1.0
+
+  # Wind Gust
+  - name: hrrr_GUST
+    style: wind
+    weight: 1.0
+
+  # Wind components (individual)
+  - name: hrrr_UGRD
+    style: default
+    weight: 0.5
+  - name: hrrr_VGRD
+    style: default
+    weight: 0.5
+
+  # Wind Barbs (composite)
+  - name: hrrr_WIND_BARBS
+    style: default
+    weight: 2.0
+
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0

@@ -246,10 +246,22 @@ struct RateTracker {
 }
 
 /// Tracks tile request locations for heatmap visualization
+/// Cache status for a tile request
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TileCacheStatus {
+    /// L1 in-memory cache hit
+    L1Hit,
+    /// L2 Redis cache hit  
+    L2Hit,
+    /// Cache miss - had to render
+    Miss,
+}
+
 #[derive(Debug)]
 pub struct TileRequestHeatmap {
-    /// Map of "lat,lng" (rounded to 1 decimal) -> request count
-    /// Uses aggregated lat/lng to reduce memory usage
+    /// Map of "min_lon,min_lat,max_lon,max_lat" -> tile cell
+    /// Stores actual tile bounds for accurate visualization
     cells: HashMap<String, TileHeatmapCell>,
     /// Maximum number of cells to track (prevents unbounded growth)
     max_cells: usize,
@@ -257,12 +269,22 @@ pub struct TileRequestHeatmap {
     last_clear: Instant,
 }
 
-/// A single cell in the tile heatmap
+/// A single cell in the tile heatmap - stores full tile bounds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileHeatmapCell {
-    pub lat: f32,
-    pub lng: f32,
+    /// Bounding box [min_lon, min_lat, max_lon, max_lat]
+    pub min_lon: f32,
+    pub min_lat: f32,
+    pub max_lon: f32,
+    pub max_lat: f32,
+    /// Total request count
     pub count: u64,
+    /// L1 cache hits
+    pub l1_hits: u64,
+    /// L2 cache hits
+    pub l2_hits: u64,
+    /// Cache misses (full renders)
+    pub misses: u64,
 }
 
 /// Snapshot of heatmap data for JSON serialization
@@ -281,23 +303,42 @@ impl TileRequestHeatmap {
         }
     }
     
-    /// Record a tile request at the given bounding box center
-    pub fn record(&mut self, bbox: &[f32; 4]) {
-        // Calculate center of bbox [min_lon, min_lat, max_lon, max_lat]
-        let center_lat = (bbox[1] + bbox[3]) / 2.0;
-        let center_lng = (bbox[0] + bbox[2]) / 2.0;
+    /// Record a tile request with its bounding box and cache status
+    pub fn record(&mut self, bbox: &[f32; 4], cache_status: TileCacheStatus) {
+        // bbox format: [min_lon, min_lat, max_lon, max_lat]
+        // Round to 2 decimal places to aggregate nearby tiles while preserving tile shapes
+        let min_lon = (bbox[0] * 100.0).round() / 100.0;
+        let min_lat = (bbox[1] * 100.0).round() / 100.0;
+        let max_lon = (bbox[2] * 100.0).round() / 100.0;
+        let max_lat = (bbox[3] * 100.0).round() / 100.0;
         
-        // Round to 1 decimal place for aggregation
-        let lat = (center_lat * 10.0).round() / 10.0;
-        let lng = (center_lng * 10.0).round() / 10.0;
-        
-        let key = format!("{:.1},{:.1}", lat, lng);
+        // Key uniquely identifies this tile's bounds
+        let key = format!("{:.2},{:.2},{:.2},{:.2}", min_lon, min_lat, max_lon, max_lat);
         
         // Update or insert cell
         if let Some(cell) = self.cells.get_mut(&key) {
             cell.count += 1;
+            match cache_status {
+                TileCacheStatus::L1Hit => cell.l1_hits += 1,
+                TileCacheStatus::L2Hit => cell.l2_hits += 1,
+                TileCacheStatus::Miss => cell.misses += 1,
+            }
         } else if self.cells.len() < self.max_cells {
-            self.cells.insert(key, TileHeatmapCell { lat, lng, count: 1 });
+            let (l1_hits, l2_hits, misses) = match cache_status {
+                TileCacheStatus::L1Hit => (1, 0, 0),
+                TileCacheStatus::L2Hit => (0, 1, 0),
+                TileCacheStatus::Miss => (0, 0, 1),
+            };
+            self.cells.insert(key, TileHeatmapCell {
+                min_lon,
+                min_lat,
+                max_lon,
+                max_lat,
+                count: 1,
+                l1_hits,
+                l2_hits,
+                misses,
+            });
         }
         // If at max capacity, just ignore new cells (existing cells still get incremented)
     }
@@ -496,9 +537,9 @@ impl MetricsCollector {
     
     /// Record a tile request location for heatmap visualization
     /// bbox format: [min_lon, min_lat, max_lon, max_lat]
-    pub fn record_tile_request_location(&self, bbox: &[f32; 4]) {
+    pub fn record_tile_request_location(&self, bbox: &[f32; 4], cache_status: TileCacheStatus) {
         if let Ok(mut heatmap) = self.tile_heatmap.try_write() {
-            heatmap.record(bbox);
+            heatmap.record(bbox, cache_status);
         }
     }
     

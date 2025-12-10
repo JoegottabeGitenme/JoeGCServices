@@ -1,0 +1,55 @@
+name: mixed
+description: |
+  Mixed data source load test - combines layers from all available data types.
+  Tests realistic multi-product access patterns.
+
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 20
+warmup_secs: 5
+seed: 12345
+
+layers:
+  # GFS
+  - name: gfs_TMP
+    style: temperature
+    weight: 2.0
+  - name: gfs_WIND_BARBS
+    style: default
+    weight: 1.5
+  - name: gfs_PRMSL
+    style: atmospheric
+    weight: 1.0
+
+  # HRRR
+  - name: hrrr_TMP
+    style: temperature
+    weight: 1.5
+  - name: hrrr_WIND_BARBS
+    style: default
+    weight: 1.5
+
+  # MRMS
+  - name: mrms_REFL
+    style: default
+    weight: 2.0
+  - name: mrms_PRECIP_RATE
+    style: default
+    weight: 1.5
+
+  # GOES-18
+  - name: goes18_CMI_C02
+    style: default
+    weight: 1.5
+  - name: goes18_CMI_C13
+    style: default
+    weight: 1.0
+
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0

@@ -2671,9 +2671,13 @@ async function fetchAvailableTimes() {
 
 let minimap = null;
 let minimapViewportRect = null;
-let tileRequestHeatmap = {};  // Map of "lat,lng" -> count
+let tileRequestHeatmap = {};  // Map of bbox key -> tile data with timestamp (client-side only for fade mode)
 let totalTileRequests = 0;
 let heatmapLayer = null;
+let fadeEnabled = false;
+let fadeTimeoutSecs = 10;
+let fadeInterval = null;
+let lastServerCounts = {};  // Track last known count per tile to detect new requests
 
 // Initialize the minimap
 function initMinimap() {
@@ -2721,10 +2725,73 @@ function initMinimap() {
         clearBtn.addEventListener('click', clearHeatmap);
     }
     
+    // Setup fade controls
+    const fadeCheckbox = document.getElementById('minimap-fade-enabled');
+    const fadeSlider = document.getElementById('minimap-fade-slider');
+    const fadeValueEl = document.getElementById('minimap-fade-value');
+    
+    if (fadeCheckbox) {
+        fadeCheckbox.addEventListener('change', (e) => {
+            fadeEnabled = e.target.checked;
+            if (fadeSlider) fadeSlider.disabled = !fadeEnabled;
+            if (fadeEnabled) {
+                startFadeInterval();
+            } else {
+                stopFadeInterval();
+            }
+        });
+        // Initialize slider state
+        if (fadeSlider) fadeSlider.disabled = !fadeCheckbox.checked;
+    }
+    
+    if (fadeSlider && fadeValueEl) {
+        fadeSlider.addEventListener('input', (e) => {
+            fadeTimeoutSecs = parseInt(e.target.value, 10);
+            fadeValueEl.textContent = `${fadeTimeoutSecs}s`;
+        });
+    }
+    
     // Initial sync of viewport rectangle
     syncMinimapViewport();
     
     console.log('Minimap initialized (global view)');
+}
+
+// Start the fade interval timer
+function startFadeInterval() {
+    if (fadeInterval) return;
+    // Update display frequently for smooth fade animation
+    fadeInterval = setInterval(() => {
+        if (fadeEnabled) {
+            pruneAndUpdateFadingTiles();
+        }
+    }, 200); // Update 5x per second for smooth fading
+}
+
+// Stop the fade interval timer
+function stopFadeInterval() {
+    if (fadeInterval) {
+        clearInterval(fadeInterval);
+        fadeInterval = null;
+    }
+}
+
+// Update fading tiles and remove fully faded ones
+function pruneAndUpdateFadingTiles() {
+    const now = Date.now();
+    const cutoff = now - (fadeTimeoutSecs * 1000);
+    
+    // Remove tiles that have completely faded
+    Object.keys(tileRequestHeatmap).forEach(key => {
+        const tile = tileRequestHeatmap[key];
+        if (tile.lastSeen && tile.lastSeen < cutoff) {
+            delete tileRequestHeatmap[key];
+        }
+    });
+    
+    // Redraw with current fade levels
+    updateHeatmapDisplay();
+    updateMinimapStats();
 }
 
 // Sync minimap viewport rectangle with main map bounds (minimap stays fixed at global view)
@@ -2745,49 +2812,82 @@ function updateHeatmapDisplay() {
     // Clear existing markers
     heatmapLayer.clearLayers();
     
-    // Find max count for normalization
-    let maxCount = 1;
-    Object.values(tileRequestHeatmap).forEach(point => {
-        if (point.count > maxCount) maxCount = point.count;
-    });
+    const now = Date.now();
     
-    // Add rectangle markers for each heatmap point
-    Object.values(tileRequestHeatmap).forEach(point => {
-        // Calculate intensity (1-4) based on normalized count
-        const normalized = point.count / maxCount;
-        let intensity = 1;
-        if (normalized > 0.75) intensity = 4;
-        else if (normalized > 0.5) intensity = 3;
-        else if (normalized > 0.25) intensity = 2;
+    // Add tile box markers using actual tile bounds from server
+    Object.values(tileRequestHeatmap).forEach(tile => {
+        // Color based on cache status:
+        // - Green: mostly L1 hits (fastest)
+        // - Blue: mostly L2 hits (fast)
+        // - Red/Magenta: mostly misses (slow - had to render)
+        const total = tile.count || 1;
+        const l1Ratio = (tile.l1_hits || 0) / total;
+        const l2Ratio = (tile.l2_hits || 0) / total;
+        const missRatio = (tile.misses || 0) / total;
         
-        // Color based on intensity
-        const colors = {
-            1: '#3b82f6',  // blue - low
-            2: '#10b981',  // green - medium
-            3: '#f59e0b',  // orange - high
-            4: '#ef4444'   // red - very high
-        };
+        let fillColor, strokeColor;
+        if (l1Ratio >= 0.5) {
+            // Mostly L1 hits - green
+            fillColor = '#22c55e';
+            strokeColor = '#4ade80';
+        } else if (l2Ratio >= 0.5) {
+            // Mostly L2 hits - blue
+            fillColor = '#3b82f6';
+            strokeColor = '#60a5fa';
+        } else if (missRatio >= 0.7) {
+            // Mostly misses - red/magenta
+            fillColor = '#ef4444';
+            strokeColor = '#f87171';
+        } else {
+            // Mixed - orange/yellow
+            fillColor = '#f59e0b';
+            strokeColor = '#fbbf24';
+        }
         
-        // Create rectangle bounds (roughly tile-sized at the aggregation resolution)
-        const halfSize = 0.5; // ~0.5 degrees each side
+        // Use actual tile bounds from server
         const bounds = [
-            [point.lat - halfSize, point.lng - halfSize],
-            [point.lat + halfSize, point.lng + halfSize]
+            [tile.min_lat, tile.min_lon],
+            [tile.max_lat, tile.max_lon]
         ];
         
+        // Calculate fade multiplier based on age (1.0 = fresh, 0.0 = about to disappear)
+        let fadeMult = 1.0;
+        if (fadeEnabled && tile.lastSeen) {
+            const age = now - tile.lastSeen;
+            const maxAge = fadeTimeoutSecs * 1000;
+            fadeMult = Math.max(0, 1.0 - (age / maxAge));
+        }
+        
+        // Base opacity adjusted by fade
+        const baseFillOpacity = 0.15 + (Math.min(tile.count, 20) / 20) * 0.15;  // 0.15 - 0.30
+        const baseStrokeOpacity = 0.4;
+        
+        const fillOpacity = baseFillOpacity * fadeMult;
+        const strokeOpacity = baseStrokeOpacity * fadeMult;
+        
+        // Skip completely faded tiles
+        if (fadeMult <= 0.05) return;
+        
         const rect = L.rectangle(bounds, {
-            fillColor: colors[intensity],
-            fillOpacity: 0.25 + (intensity * 0.08),  // More transparent: 0.25-0.57
-            color: colors[intensity],
-            weight: 0.5,
-            opacity: 0.4
+            fillColor: fillColor,
+            fillOpacity: fillOpacity,
+            color: strokeColor,
+            weight: 1,
+            opacity: strokeOpacity
         });
         
-        rect.bindTooltip(`${point.count} requests`, {
-            permanent: false,
-            direction: 'top',
-            className: 'heatmap-tooltip'
-        });
+        // Tooltip with cache breakdown
+        const l1Pct = (l1Ratio * 100).toFixed(0);
+        const l2Pct = (l2Ratio * 100).toFixed(0);
+        const missPct = (missRatio * 100).toFixed(0);
+        rect.bindTooltip(
+            `${tile.count} requests<br>L1: ${l1Pct}% | L2: ${l2Pct}% | Miss: ${missPct}%`,
+            {
+                permanent: false,
+                direction: 'top',
+                className: 'heatmap-tooltip'
+            }
+        );
         
         heatmapLayer.addLayer(rect);
     });
@@ -2812,6 +2912,7 @@ function updateMinimapStats() {
 // Clear the heatmap data (also clears server-side)
 async function clearHeatmap() {
     tileRequestHeatmap = {};
+    lastServerCounts = {};
     totalTileRequests = 0;
     
     if (heatmapLayer) {
@@ -2836,25 +2937,72 @@ async function fetchServerHeatmap() {
         if (!response.ok) return;
         
         const data = await response.json();
+        const now = Date.now();
         
-        // Update local state from server data
-        tileRequestHeatmap = {};
+        // Track total requests
         totalTileRequests = data.total_requests || 0;
         
-        // Convert server cells to local format
         if (data.cells && Array.isArray(data.cells)) {
-            data.cells.forEach(cell => {
-                const key = `${cell.lat.toFixed(1)},${cell.lng.toFixed(1)}`;
-                tileRequestHeatmap[key] = {
-                    lat: cell.lat,
-                    lng: cell.lng,
-                    count: cell.count
-                };
-            });
+            if (fadeEnabled) {
+                // FADE MODE: Only show tiles that have NEW requests since last fetch
+                // Each new request creates a fresh tile that fades out independently
+                data.cells.forEach(cell => {
+                    const key = `${cell.min_lon},${cell.min_lat},${cell.max_lon},${cell.max_lat}`;
+                    const lastCount = lastServerCounts[key] || 0;
+                    const newRequests = cell.count - lastCount;
+                    
+                    if (newRequests > 0) {
+                        // Create a unique key for this "burst" of requests so they fade independently
+                        const burstKey = `${key}_${now}`;
+                        tileRequestHeatmap[burstKey] = {
+                            min_lon: cell.min_lon,
+                            min_lat: cell.min_lat,
+                            max_lon: cell.max_lon,
+                            max_lat: cell.max_lat,
+                            count: newRequests,
+                            l1_hits: Math.max(0, (cell.l1_hits || 0) - (lastServerCounts[`${key}_l1`] || 0)),
+                            l2_hits: Math.max(0, (cell.l2_hits || 0) - (lastServerCounts[`${key}_l2`] || 0)),
+                            misses: Math.max(0, (cell.misses || 0) - (lastServerCounts[`${key}_miss`] || 0)),
+                            lastSeen: now
+                        };
+                    }
+                    
+                    // Update last known counts
+                    lastServerCounts[key] = cell.count;
+                    lastServerCounts[`${key}_l1`] = cell.l1_hits || 0;
+                    lastServerCounts[`${key}_l2`] = cell.l2_hits || 0;
+                    lastServerCounts[`${key}_miss`] = cell.misses || 0;
+                });
+            } else {
+                // NON-FADE MODE: Show cumulative server data as before
+                tileRequestHeatmap = {};
+                data.cells.forEach(cell => {
+                    const key = `${cell.min_lon},${cell.min_lat},${cell.max_lon},${cell.max_lat}`;
+                    tileRequestHeatmap[key] = {
+                        min_lon: cell.min_lon,
+                        min_lat: cell.min_lat,
+                        max_lon: cell.max_lon,
+                        max_lat: cell.max_lat,
+                        count: cell.count,
+                        l1_hits: cell.l1_hits || 0,
+                        l2_hits: cell.l2_hits || 0,
+                        misses: cell.misses || 0,
+                        lastSeen: now
+                    };
+                    
+                    // Also update last known counts for when fade is re-enabled
+                    lastServerCounts[key] = cell.count;
+                    lastServerCounts[`${key}_l1`] = cell.l1_hits || 0;
+                    lastServerCounts[`${key}_l2`] = cell.l2_hits || 0;
+                    lastServerCounts[`${key}_miss`] = cell.misses || 0;
+                });
+            }
         }
         
-        // Update display
-        updateHeatmapDisplay();
+        // Update display (only if fade is disabled - fade mode updates via interval)
+        if (!fadeEnabled) {
+            updateHeatmapDisplay();
+        }
         updateMinimapStats();
     } catch (error) {
         // Silently fail - server might not support this endpoint yet

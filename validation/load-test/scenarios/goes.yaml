@@ -1,0 +1,43 @@
+name: goes
+description: |
+  GOES satellite imagery load test.
+  Tests available GOES-18 (West) satellite layers.
+  
+  Currently available layers (check GetCapabilities for updates):
+  - goes18_CMI_C01 (Visible Blue)
+  - goes18_CMI_C02 (Visible Red)
+  - goes18_CMI_C08 (Water Vapor)
+  - goes18_CMI_C13 (IR)
+
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+seed: 55555
+
+layers:
+  # GOES-18 (West) visible bands
+  - name: goes18_CMI_C01
+    style: default
+    weight: 0.8
+  - name: goes18_CMI_C02
+    style: default
+    weight: 2.0
+
+  # GOES-18 (West) IR bands
+  - name: goes18_CMI_C08
+    style: default
+    weight: 1.0
+  - name: goes18_CMI_C13
+    style: default
+    weight: 1.5
+
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    # Western CONUS (GOES-18 coverage)
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -100.0
+    max_lat: 55.0

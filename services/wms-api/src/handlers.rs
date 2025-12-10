@@ -164,6 +164,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, elevation = ?elevation, "GetMap request");
     
     // Record bbox for heatmap visualization (parse and convert to WGS84 if needed)
+    // WMS requests don't use tile caching, so always record as miss
     if let Some(bbox_str) = bbox {
         let coords: Vec<f64> = bbox_str.split(',')
             .filter_map(|s| s.trim().parse().ok())
@@ -177,7 +178,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             } else {
                 [coords[0] as f32, coords[1] as f32, coords[2] as f32, coords[3] as f32]
             };
-            state.metrics.record_tile_request_location(&bbox_array);
+            state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
         }
     }
     
@@ -610,10 +611,31 @@ async fn wmts_get_tile(
         dimension_suffix.as_deref().unwrap_or("current")
     );
     
+    // Get tile bounding box early so we can record heatmap for all paths
+    let tms = web_mercator_tile_matrix_set();
+    let coord = TileCoord::new(z, x, y);
+    
+    let _bbox = match tms.tile_bbox(&coord) {
+        Some(bbox) => bbox,
+        None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
+    };
+    
+    // Convert Web Mercator bbox to WGS84 (lat/lon) for GRIB data
+    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
+    
+    // Format bbox as [min_lon, min_lat, max_lon, max_lat]
+    let bbox_array = [
+        latlon_bbox.min_x as f32,
+        latlon_bbox.min_y as f32,
+        latlon_bbox.max_x as f32,
+        latlon_bbox.max_y as f32,
+    ];
+    
     // Check L1 in-memory cache first (fastest) - if enabled
     if state.optimization_config.l1_cache_enabled {
         if let Some(tile_data) = state.tile_memory_cache.get(&cache_key_str).await {
             state.metrics.record_l1_cache_hit();
+            state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::L1Hit);
             debug!(layer = %layer, z = z, x = x, y = y, "L1 cache hit");
             return Response::builder()
                 .status(StatusCode::OK)
@@ -634,6 +656,7 @@ async fn wmts_get_tile(
         let mut cache = state.cache.lock().await;
         if let Ok(Some(cached_data)) = cache.get(&cache_key).await {
             state.metrics.record_cache_hit().await;
+            state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::L2Hit);
             info!(layer = %layer, z = z, x = x, y = y, "L2 cache hit");
             
             // Promote to L1 cache for future requests (if enabled)
@@ -654,29 +677,8 @@ async fn wmts_get_tile(
         state.metrics.record_cache_miss().await;
     }
     
-    // Get tile bounding box using Web Mercator tile matrix set
-    let tms = web_mercator_tile_matrix_set();
-    let coord = TileCoord::new(z, x, y);
-    
-    let _bbox = match tms.tile_bbox(&coord) {
-        Some(bbox) => bbox,
-        None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
-    };
-    
-    // Convert Web Mercator bbox to WGS84 (lat/lon) for GRIB data
-    // GRIB data is in geographic coordinates (EPSG:4326)
-    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
-    
-    // Format bbox as [min_lon, min_lat, max_lon, max_lat]
-    let bbox_array = [
-        latlon_bbox.min_x as f32,
-        latlon_bbox.min_y as f32,
-        latlon_bbox.max_x as f32,
-        latlon_bbox.max_y as f32,
-    ];
-    
-    // Record tile request location for heatmap visualization
-    state.metrics.record_tile_request_location(&bbox_array);
+    // Cache miss - record for heatmap (will render below)
+    state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
     
     info!(
         z = z,

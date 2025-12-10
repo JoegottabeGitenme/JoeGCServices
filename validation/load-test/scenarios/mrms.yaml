@@ -1,0 +1,34 @@
+name: mrms
+description: |
+  MRMS (Multi-Radar Multi-Sensor) load test.
+  Tests available MRMS radar and precipitation layers.
+  
+  Currently available layers (check GetCapabilities for updates):
+  - mrms_REFL (Radar Reflectivity)
+  - mrms_PRECIP_RATE (Precipitation Rate)
+
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+seed: 88888
+
+layers:
+  # Radar Reflectivity
+  - name: mrms_REFL
+    style: default
+    weight: 2.0
+
+  # Precipitation Rate
+  - name: mrms_PRECIP_RATE
+    style: default
+    weight: 1.5
+
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0

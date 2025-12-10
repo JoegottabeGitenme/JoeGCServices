@@ -1,0 +1,68 @@
+name: gfs
+description: |
+  GFS (Global Forecast System) load test.
+  Tests available GFS layers with various rendering styles.
+  
+  Currently available layers (check GetCapabilities for updates):
+  - gfs_TMP, gfs_GUST, gfs_HGT, gfs_PRMSL, gfs_RH
+  - gfs_UGRD, gfs_VGRD, gfs_WIND_BARBS
+
+base_url: http://localhost:8080
+duration_secs: 60
+concurrency: 15
+warmup_secs: 5
+seed: 42
+
+layers:
+  # Temperature - gradient, isolines, numbers
+  - name: gfs_TMP
+    style: temperature
+    weight: 2.0
+  - name: gfs_TMP
+    style: isolines
+    weight: 1.5
+  - name: gfs_TMP
+    style: numbers
+    weight: 0.5
+
+  # Pressure
+  - name: gfs_PRMSL
+    style: atmospheric
+    weight: 1.5
+
+  # Humidity
+  - name: gfs_RH
+    style: humidity
+    weight: 1.0
+
+  # Geopotential Height
+  - name: gfs_HGT
+    style: default
+    weight: 0.8
+
+  # Wind Gust
+  - name: gfs_GUST
+    style: wind
+    weight: 1.0
+
+  # Wind components (individual)
+  - name: gfs_UGRD
+    style: default
+    weight: 0.5
+  - name: gfs_VGRD
+    style: default
+    weight: 0.5
+
+  # Wind Barbs (composite)
+  - name: gfs_WIND_BARBS
+    style: default
+    weight: 2.0
+
+tile_selection:
+  type: random
+  zoom_range: [4, 12]
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0

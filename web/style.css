@@ -599,6 +599,88 @@ html, body {
     font-family: 'Monaco', 'Courier New', monospace;
 }
 
+/* Minimap fade controls */
+.minimap-fade-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    background: #0d1117;
+    border-top: 1px solid #374151;
+}
+
+.fade-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.fade-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #10b981;
+    cursor: pointer;
+}
+
+.fade-toggle-label {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    text-transform: uppercase;
+}
+
+.fade-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #374151;
+    border-radius: 2px;
+    outline: none;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.fade-slider:enabled {
+    opacity: 1;
+}
+
+.fade-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #10b981;
+    cursor: pointer;
+}
+
+.fade-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #10b981;
+    cursor: pointer;
+    border: none;
+}
+
+.fade-slider:disabled {
+    opacity: 0.3;
+}
+
+.fade-slider:disabled::-webkit-slider-thumb {
+    background: #6b7280;
+}
+
+.fade-value {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    min-width: 24px;
+    text-align: right;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
 /* Heatmap point styles */
 .heatmap-point {
     position: absolute;
