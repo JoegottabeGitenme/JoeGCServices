@@ -313,6 +313,7 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/admin/preview-shred", get(admin::preview_shred_handler))
         .route("/api/admin/config/models", get(admin::list_models_handler))
         .route("/api/admin/config/models/:id", get(admin::get_model_config_handler).put(admin::update_model_config_handler))
+        .route("/api/admin/config/full", get(admin::full_config_handler))
         // Ingest endpoint (called by downloader service)
         .route("/admin/ingest", post(admin::ingest_handler))
         // Cleanup/retention endpoints

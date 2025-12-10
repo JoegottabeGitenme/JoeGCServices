@@ -2161,3 +2161,422 @@ pub async fn sync_run_handler(
         }
     }
 }
+
+// ============================================================================
+// Full Configuration Endpoint (for dashboard widget)
+// ============================================================================
+
+/// Response for the full configuration endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct FullConfigurationResponse {
+    pub models: Vec<ModelConfigSummary>,
+    pub styles: Vec<StyleConfigSummary>,
+    pub ingestion: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelConfigSummary {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub source_type: String,
+    pub source_bucket: Option<String>,
+    pub projection: String,
+    pub resolution: Option<String>,
+    pub bbox: Option<BBoxInfo>,
+    pub schedule_type: String,  // "forecast" or "observation"
+    pub cycles: Vec<u8>,        // For forecast models
+    pub forecast_hours: Option<ForecastHoursInfo>,
+    pub poll_interval_secs: u64,
+    pub retention_hours: u32,
+    pub precaching_enabled: bool,
+    pub parameter_count: usize,
+    pub parameters: Vec<ParameterSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ForecastHoursInfo {
+    pub start: u32,
+    pub end: u32,
+    pub step: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParameterSummary {
+    pub name: String,
+    pub description: String,
+    pub style: String,
+    pub units: String,
+    pub level_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StyleConfigSummary {
+    pub filename: String,
+    pub name: String,
+    pub description: String,
+    pub style_count: usize,
+    pub styles: Vec<StyleInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StyleInfo {
+    pub id: String,
+    pub name: String,
+    pub style_type: String,
+    pub units: String,
+    pub range_min: Option<f64>,
+    pub range_max: Option<f64>,
+    pub stop_count: usize,
+}
+
+/// GET /api/admin/config/full - Get complete configuration for dashboard
+pub async fn full_config_handler() -> impl IntoResponse {
+    info!("Admin: Getting full configuration for dashboard");
+    
+    match load_full_configuration().await {
+        Ok(config) => Json(config).into_response(),
+        Err(e) => {
+            error!(error = %e, "Failed to load full configuration");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e)).into_response()
+        }
+    }
+}
+
+async fn load_full_configuration() -> anyhow::Result<FullConfigurationResponse> {
+    use std::fs;
+    use std::path::Path;
+    
+    // Load model configurations
+    let models = load_all_model_configs().await?;
+    
+    // Load style configurations
+    let styles = load_all_style_configs().await?;
+    
+    // Load ingestion config
+    let ingestion = load_ingestion_config().await?;
+    
+    Ok(FullConfigurationResponse {
+        models,
+        styles,
+        ingestion,
+    })
+}
+
+async fn load_all_model_configs() -> anyhow::Result<Vec<ModelConfigSummary>> {
+    use std::fs;
+    use std::path::Path;
+    
+    let models_dir = Path::new("config/models");
+    if !models_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut configs = Vec::new();
+    
+    for entry in fs::read_dir(models_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(Some(config)) = load_model_config_summary(stem).await {
+                    configs.push(config);
+                }
+            }
+        }
+    }
+    
+    // Sort by model ID
+    configs.sort_by(|a, b| a.id.cmp(&b.id));
+    
+    Ok(configs)
+}
+
+async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<ModelConfigSummary>> {
+    use std::fs;
+    use std::path::Path;
+    
+    let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
+    
+    if !config_path.exists() {
+        return Ok(None);
+    }
+    
+    let contents = fs::read_to_string(&config_path)?;
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+    
+    let model = yaml.get("model");
+    let source = yaml.get("source");
+    let grid = yaml.get("grid");
+    let schedule = yaml.get("schedule");
+    let retention = yaml.get("retention");
+    let precaching = yaml.get("precaching");
+    let parameters = yaml.get("parameters");
+    
+    // Determine schedule type
+    let schedule_type = schedule
+        .and_then(|s| s.get("type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            // If no type specified but has cycles, it's a forecast model
+            if schedule.and_then(|s| s.get("cycles")).is_some() {
+                "forecast"
+            } else {
+                "observation"
+            }
+        })
+        .to_string();
+    
+    // Parse forecast hours if present
+    let forecast_hours = schedule
+        .and_then(|s| s.get("forecast_hours"))
+        .and_then(|fh| {
+            Some(ForecastHoursInfo {
+                start: fh.get("start")?.as_u64()? as u32,
+                end: fh.get("end")?.as_u64()? as u32,
+                step: fh.get("step")?.as_u64()? as u32,
+            })
+        });
+    
+    // Parse parameters
+    let params_list: Vec<ParameterSummary> = parameters
+        .and_then(|p| p.as_sequence())
+        .map(|params| {
+            params.iter()
+                .filter_map(|param| {
+                    let name = param.get("name")?.as_str()?.to_string();
+                    let description = param.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let style = param.get("style")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default")
+                        .to_string();
+                    let units = param.get("units")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    // Count levels
+                    let level_count = param.get("levels")
+                        .and_then(|l| l.as_sequence())
+                        .map(|levels| {
+                            levels.iter().map(|level| {
+                                // Count values array if present, otherwise 1
+                                level.get("values")
+                                    .and_then(|v| v.as_sequence())
+                                    .map(|vals| vals.len())
+                                    .unwrap_or(1)
+                            }).sum()
+                        })
+                        .unwrap_or(0);
+                    
+                    Some(ParameterSummary {
+                        name,
+                        description,
+                        style,
+                        units,
+                        level_count,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    
+    let config = ModelConfigSummary {
+        id: model_id.to_string(),
+        name: model
+            .and_then(|m| m.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(model_id)
+            .to_string(),
+        description: model
+            .and_then(|m| m.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        enabled: model
+            .and_then(|m| m.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        source_type: source
+            .and_then(|s| s.get("type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        source_bucket: source
+            .and_then(|s| s.get("bucket"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        projection: grid
+            .and_then(|g| g.get("projection"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        resolution: grid
+            .and_then(|g| g.get("resolution"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        bbox: grid.and_then(|g| g.get("bbox")).and_then(|bbox| {
+            Some(BBoxInfo {
+                min_lon: bbox.get("min_lon")?.as_f64()?,
+                min_lat: bbox.get("min_lat")?.as_f64()?,
+                max_lon: bbox.get("max_lon")?.as_f64()?,
+                max_lat: bbox.get("max_lat")?.as_f64()?,
+            })
+        }),
+        schedule_type,
+        cycles: schedule
+            .and_then(|s| s.get("cycles"))
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        forecast_hours,
+        poll_interval_secs: schedule
+            .and_then(|s| s.get("poll_interval_secs"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3600),
+        retention_hours: retention
+            .and_then(|r| r.get("hours"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(24) as u32,
+        precaching_enabled: precaching
+            .and_then(|p| p.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        parameter_count: params_list.len(),
+        parameters: params_list,
+    };
+    
+    Ok(Some(config))
+}
+
+async fn load_all_style_configs() -> anyhow::Result<Vec<StyleConfigSummary>> {
+    use std::fs;
+    use std::path::Path;
+    
+    let styles_dir = Path::new("config/styles");
+    if !styles_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut configs = Vec::new();
+    
+    for entry in fs::read_dir(styles_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                // Skip schema example
+                if stem == "schema.example" {
+                    continue;
+                }
+                if let Ok(Some(config)) = load_style_config_summary(&path).await {
+                    configs.push(config);
+                }
+            }
+        }
+    }
+    
+    // Sort by filename
+    configs.sort_by(|a, b| a.filename.cmp(&b.filename));
+    
+    Ok(configs)
+}
+
+async fn load_style_config_summary(path: &std::path::Path) -> anyhow::Result<Option<StyleConfigSummary>> {
+    use std::fs;
+    
+    let contents = fs::read_to_string(path)?;
+    let json: serde_json::Value = serde_json::from_str(&contents)?;
+    
+    let filename = path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    
+    let metadata = json.get("metadata");
+    let styles_obj = json.get("styles");
+    
+    let mut styles = Vec::new();
+    
+    if let Some(styles_map) = styles_obj.and_then(|s| s.as_object()) {
+        for (id, style) in styles_map {
+            let name = style.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(id)
+                .to_string();
+            let style_type = style.get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("gradient")
+                .to_string();
+            let units = style.get("units")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let range = style.get("range");
+            let range_min = range.and_then(|r| r.get("min")).and_then(|v| v.as_f64());
+            let range_max = range.and_then(|r| r.get("max")).and_then(|v| v.as_f64());
+            let stop_count = style.get("stops")
+                .and_then(|s| s.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            
+            styles.push(StyleInfo {
+                id: id.clone(),
+                name,
+                style_type,
+                units,
+                range_min,
+                range_max,
+                stop_count,
+            });
+        }
+    }
+    
+    let name = metadata
+        .and_then(|m| m.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(&filename)
+        .to_string();
+    
+    Ok(Some(StyleConfigSummary {
+        filename,
+        name,
+        description: metadata
+            .and_then(|m| m.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        style_count: styles.len(),
+        styles,
+    }))
+}
+
+async fn load_ingestion_config() -> anyhow::Result<serde_json::Value> {
+    use std::fs;
+    use std::path::Path;
+    
+    let config_path = Path::new("config/ingestion.yaml");
+    
+    if !config_path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    
+    let contents = fs::read_to_string(config_path)?;
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+    
+    // Convert YAML to JSON for easier frontend handling
+    let json_str = serde_json::to_string(&yaml)?;
+    let json: serde_json::Value = serde_json::from_str(&json_str)?;
+    
+    Ok(json)
+}

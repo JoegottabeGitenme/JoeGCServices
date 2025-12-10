@@ -3173,6 +3173,14 @@ function initIngestionWidget() {
     ingestionWidgetInterval = setInterval(fetchIngestionStatus, 2000);
 }
 
+// Toggle ingestion widget expanded/collapsed
+function toggleIngestionWidget() {
+    const widget = document.getElementById('ingestion-widget');
+    if (widget) {
+        widget.classList.toggle('collapsed');
+    }
+}
+
 // Fetch ingestion status from the WMS API
 async function fetchIngestionStatus() {
     try {
@@ -3942,4 +3950,205 @@ function updateClocks() {
 document.addEventListener('DOMContentLoaded', () => {
     updateClocks();
     setInterval(updateClocks, 1000); // Update every second
+});
+
+// ============================================================================
+// Model Configuration Widget
+// ============================================================================
+
+let configWidgetInterval = null;
+let configData = null;
+
+// Initialize configuration widget
+function initConfigWidget() {
+    fetchConfigData();
+    // Refresh every 5 minutes (config doesn't change often)
+    configWidgetInterval = setInterval(fetchConfigData, 300000);
+}
+
+// Toggle config widget expanded/collapsed
+function toggleConfigWidget() {
+    const widget = document.getElementById('config-widget');
+    if (widget) {
+        widget.classList.toggle('collapsed');
+        // When not collapsed, add expanded class to fill remaining space
+        if (widget.classList.contains('collapsed')) {
+            widget.classList.remove('expanded');
+        } else {
+            widget.classList.add('expanded');
+        }
+    }
+}
+
+// Fetch configuration data
+async function fetchConfigData() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/config/full`);
+        if (!response.ok) {
+            console.error('Failed to fetch config:', response.status);
+            return;
+        }
+        
+        configData = await response.json();
+        renderConfigWidget(configData);
+    } catch (error) {
+        console.error('Error fetching config:', error);
+    }
+}
+
+// Render the configuration widget
+function renderConfigWidget(data) {
+    const modelCountEl = document.getElementById('config-model-count');
+    const styleCountEl = document.getElementById('config-style-count');
+    const modelsListEl = document.getElementById('config-models-list');
+    const stylesListEl = document.getElementById('config-styles-list');
+    
+    // Update counts in header
+    if (modelCountEl) {
+        const enabledCount = data.models.filter(m => m.enabled).length;
+        modelCountEl.textContent = `${enabledCount} models`;
+        modelCountEl.title = `${enabledCount} enabled models`;
+    }
+    
+    if (styleCountEl) {
+        const totalStyles = data.styles.reduce((sum, s) => sum + s.style_count, 0);
+        styleCountEl.textContent = `${totalStyles} styles`;
+        styleCountEl.title = `${totalStyles} rendering styles across ${data.styles.length} files`;
+    }
+    
+    // Render models
+    if (modelsListEl) {
+        modelsListEl.innerHTML = data.models.map(model => renderModelCard(model)).join('');
+    }
+    
+    // Render styles
+    if (stylesListEl) {
+        stylesListEl.innerHTML = data.styles.map(style => renderStyleCard(style)).join('');
+    }
+}
+
+// Render a model card
+function renderModelCard(model) {
+    const scheduleInfo = model.schedule_type === 'observation' 
+        ? 'Observation' 
+        : `${model.cycles.length} cycles/day`;
+    
+    const forecastInfo = model.forecast_hours 
+        ? `F${model.forecast_hours.start}-${model.forecast_hours.end}h` 
+        : '';
+    
+    const badges = [];
+    if (model.enabled) {
+        badges.push('<span class="config-badge enabled">ON</span>');
+    } else {
+        badges.push('<span class="config-badge disabled">OFF</span>');
+    }
+    if (model.precaching_enabled) {
+        badges.push('<span class="config-badge precache">PRE</span>');
+    }
+    
+    // Create parameter tags (show first 5, then "+X more")
+    const paramTags = model.parameters.slice(0, 5).map(p => 
+        `<span class="config-param-tag" title="${p.description} (${p.units})">${p.name}</span>`
+    ).join('');
+    const moreParams = model.parameters.length > 5 
+        ? `<span class="config-param-tag">+${model.parameters.length - 5}</span>` 
+        : '';
+    
+    return `
+        <div class="config-model-card" onclick="toggleModelCard(this)">
+            <div class="config-model-header">
+                <div class="config-model-info">
+                    <div class="config-model-name">
+                        ${model.name.split(' - ')[0]}
+                        <span class="config-model-id">${model.id}</span>
+                    </div>
+                    <div class="config-model-desc">${model.description || model.name}</div>
+                </div>
+                <div class="config-model-badges">
+                    ${badges.join('')}
+                </div>
+            </div>
+            <div class="config-model-details">
+                <div class="config-detail-row">
+                    <span class="config-detail-label">Source</span>
+                    <span class="config-detail-value">${model.source_type} / ${model.source_bucket || '-'}</span>
+                </div>
+                <div class="config-detail-row">
+                    <span class="config-detail-label">Grid</span>
+                    <span class="config-detail-value">${model.projection} @ ${model.resolution || '-'}</span>
+                </div>
+                <div class="config-detail-row">
+                    <span class="config-detail-label">Schedule</span>
+                    <span class="config-detail-value">${scheduleInfo} ${forecastInfo}</span>
+                </div>
+                <div class="config-detail-row">
+                    <span class="config-detail-label">Retention</span>
+                    <span class="config-detail-value">${model.retention_hours}h</span>
+                </div>
+                <div class="config-detail-row">
+                    <span class="config-detail-label">Parameters</span>
+                    <span class="config-detail-value">${model.parameter_count}</span>
+                </div>
+                <div class="config-params-list">
+                    ${paramTags}${moreParams}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Render a style card
+function renderStyleCard(style) {
+    const variantsHtml = style.styles.map(s => {
+        const range = s.range_min !== null && s.range_max !== null 
+            ? `${s.range_min} - ${s.range_max} ${s.units}` 
+            : s.units || '-';
+        return `
+            <div class="config-style-variant">
+                <span class="config-style-variant-name">${s.id}</span>
+                <span class="config-style-variant-meta">
+                    <span>${s.style_type}</span>
+                    <span>${s.stop_count} stops</span>
+                </span>
+            </div>
+        `;
+    }).join('');
+    
+    return `
+        <div class="config-style-card" onclick="toggleStyleCard(this)">
+            <div class="config-style-header">
+                <span class="config-style-name">${style.name}</span>
+                <span class="config-style-count">${style.style_count}</span>
+            </div>
+            <div class="config-style-details">
+                <div class="config-style-desc">${style.description}</div>
+                <div class="config-style-variants">
+                    ${variantsHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Toggle model card expanded/collapsed
+function toggleModelCard(card) {
+    card.classList.toggle('expanded');
+}
+
+// Toggle style card expanded/collapsed
+function toggleStyleCard(card) {
+    card.classList.toggle('expanded');
+}
+
+// Initialize on DOM ready (add to existing init)
+document.addEventListener('DOMContentLoaded', () => {
+    initConfigWidget();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (configWidgetInterval) {
+        clearInterval(configWidgetInterval);
+    }
 });

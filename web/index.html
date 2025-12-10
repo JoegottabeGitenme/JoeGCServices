@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Weather WMS Dashboard</title>
+    <title>JoeGCServices Dashboard</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
@@ -16,7 +16,7 @@
         <!-- Header -->
         <header class="header">
             <div class="header-content">
-                <h1>🗺️ Weather WMS Dashboard</h1>
+                <h1>🗺️ JoeGCServices Dashboard</h1>
                 <div class="header-right">
                     <div class="status-indicators">
                         <div class="status-item">
@@ -393,8 +393,18 @@
         <div class="main-content">
             <!-- Data Panel (Left Sidebar) -->
             <aside class="data-panel">
+                <!-- Sync Status (at top) -->
+                <div class="data-sync-status" id="data-sync-status">
+                    <span class="sync-icon">⚠️</span>
+                    <span class="sync-text" id="sync-status-text">Checking sync...</span>
+                    <div class="sync-actions" id="sync-actions" style="display: none;">
+                        <button class="sync-btn sync-btn-preview" onclick="showSyncPreview()" title="Preview what will be synced">Preview</button>
+                        <button class="sync-btn sync-btn-run" onclick="runSyncNow()" title="Sync now">Sync</button>
+                    </div>
+                </div>
+                
                 <!-- PostgreSQL Database Section -->
-                <div class="data-section" id="postgres-section">
+                <div class="data-section collapsed" id="postgres-section">
                     <div class="data-section-header" onclick="toggleDataSection('postgres-section')">
                         <div class="data-section-title">
                             <span class="data-section-icon">🐘</span>
@@ -414,7 +424,7 @@
                 </div>
                 
                 <!-- MinIO Storage Section -->
-                <div class="data-section" id="minio-section">
+                <div class="data-section collapsed" id="minio-section">
                     <div class="data-section-header" onclick="toggleDataSection('minio-section')">
                         <div class="data-section-title">
                             <span class="data-section-icon">🗄️</span>
@@ -433,45 +443,66 @@
                     </div>
                 </div>
                 
-                <!-- Sync Status -->
-                <div class="data-sync-status" id="data-sync-status">
-                    <span class="sync-icon">⚠️</span>
-                    <span class="sync-text" id="sync-status-text">Checking sync...</span>
-                    <div class="sync-actions" id="sync-actions" style="display: none;">
-                        <button class="sync-btn sync-btn-preview" onclick="showSyncPreview()" title="Preview what will be synced">Preview</button>
-                        <button class="sync-btn sync-btn-run" onclick="runSyncNow()" title="Sync now">Sync</button>
+                <!-- Ingestion Status Widget -->
+                <div class="ingestion-widget collapsed" id="ingestion-widget">
+                    <div class="ingestion-widget-header" onclick="toggleIngestionWidget()">
+                        <span class="ingestion-widget-title">Ingestion Pipeline</span>
+                        <div class="ingestion-widget-meta">
+                            <span class="ingestion-status-dot" id="ingestion-status-dot"></span>
+                            <span class="ingestion-status-text" id="ingestion-status-text">Idle</span>
+                            <span class="ingestion-toggle-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="ingestion-widget-content" id="ingestion-widget-content">
+                        <!-- Active Ingestions -->
+                        <div class="ingestion-active-section">
+                            <div class="ingestion-section-header">
+                                <span>Active</span>
+                                <span class="ingestion-active-count" id="ingestion-active-count">0</span>
+                            </div>
+                            <div class="ingestion-active-list" id="ingestion-active-list">
+                                <div class="ingestion-empty">No active ingestions</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Recent Completions -->
+                        <div class="ingestion-recent-section">
+                            <div class="ingestion-section-header">
+                                <span>Recent</span>
+                                <span class="ingestion-recent-stats" id="ingestion-recent-stats">--</span>
+                            </div>
+                            <div class="ingestion-recent-list" id="ingestion-recent-list">
+                                <div class="ingestion-empty">No recent ingestions</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
-                <!-- Ingestion Status Widget -->
-                <div class="ingestion-widget">
-                    <div class="ingestion-widget-header">
-                        <span class="ingestion-widget-title">Ingestion Pipeline</span>
-                        <div class="ingestion-widget-status">
-                            <span class="ingestion-status-dot" id="ingestion-status-dot"></span>
-                            <span class="ingestion-status-text" id="ingestion-status-text">Idle</span>
+                <!-- Model Configuration Widget -->
+                <div class="config-widget collapsed" id="config-widget">
+                    <div class="config-widget-header" onclick="toggleConfigWidget()">
+                        <span class="config-widget-title">Model Configuration</span>
+                        <div class="config-widget-meta">
+                            <span class="config-model-count" id="config-model-count">-</span>
+                            <span class="config-style-count" id="config-style-count">-</span>
+                            <span class="config-toggle-icon">▼</span>
                         </div>
                     </div>
-                    
-                    <!-- Active Ingestions -->
-                    <div class="ingestion-active-section">
-                        <div class="ingestion-section-header">
-                            <span>Active</span>
-                            <span class="ingestion-active-count" id="ingestion-active-count">0</span>
+                    <div class="config-widget-content" id="config-widget-content">
+                        <!-- Models Section -->
+                        <div class="config-section">
+                            <div class="config-section-title">Weather Models</div>
+                            <div class="config-models-list" id="config-models-list">
+                                <div class="config-loading">Loading...</div>
+                            </div>
                         </div>
-                        <div class="ingestion-active-list" id="ingestion-active-list">
-                            <div class="ingestion-empty">No active ingestions</div>
-                        </div>
-                    </div>
-                    
-                    <!-- Recent Completions -->
-                    <div class="ingestion-recent-section">
-                        <div class="ingestion-section-header">
-                            <span>Recent</span>
-                            <span class="ingestion-recent-stats" id="ingestion-recent-stats">--</span>
-                        </div>
-                        <div class="ingestion-recent-list" id="ingestion-recent-list">
-                            <div class="ingestion-empty">No recent ingestions</div>
+                        
+                        <!-- Styles Section -->
+                        <div class="config-section">
+                            <div class="config-section-title">Rendering Styles</div>
+                            <div class="config-styles-list" id="config-styles-list">
+                                <div class="config-loading">Loading...</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -633,7 +664,7 @@
                     <span class="clock-time" id="utc-time">--:--:--</span>
                 </div>
             </div>
-            <p>Weather WMS Service - Powered by Rust & Leaflet</p>
+            <p>JoeGCServices - Powered by Rust & Leaflet & Claude :)</p>
         </footer>
     </div>
 
