@@ -1,0 +1,77 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape logs from Docker containers
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Only keep containers from our project
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(weather-wms[-_])?(.*)'
+        target_label: 'container'
+        replacement: '$2'
+      
+      # Extract service name from container name
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.+)'
+        target_label: 'service'
+        replacement: '$1'
+      
+      # Add compose service label if available
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+      
+      # Add compose project label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+
+    pipeline_stages:
+      # Try to parse as JSON (for Rust services using tracing-subscriber json output)
+      - json:
+          expressions:
+            level: level
+            message: fields.message
+            target: target
+            timestamp: timestamp
+            # Extract common tracing fields
+            span_name: span.name
+            trace_id: span.trace_id
+      
+      # Fallback regex for non-JSON logs
+      - match:
+          selector: '{compose_service=~".+"} |~ "^[^{]"'
+          stages:
+            - regex:
+                expression: '^(?P<timestamp>\S+)\s+(?P<level>\w+)\s+(?P<target>\S+):\s+(?P<message>.*)$'
+      
+      # Normalize log levels
+      - template:
+          source: level
+          template: '{{ ToLower .Value }}'
+      
+      # Add level label for filtering
+      - labels:
+          level:
+          target:
+      
+      # Set timestamp from log if available
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - RFC3339
+            - '2006-01-02T15:04:05.999999999Z07:00'
+      
+      # Use message field as log line if extracted
+      - output:
+          source: message
