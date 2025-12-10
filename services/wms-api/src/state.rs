@@ -171,6 +171,13 @@ pub struct OptimizationConfig {
     // Projection LUT
     pub projection_lut_enabled: bool,
     pub projection_lut_dir: String,
+    
+    // Memory Pressure Management
+    pub memory_pressure_enabled: bool,
+    pub memory_limit_mb: usize,           // Hard limit for total memory (0 = auto-detect from cgroup)
+    pub memory_pressure_threshold: f64,   // Percentage (0.0-1.0) at which to start evicting (default 0.80)
+    pub memory_pressure_target: f64,      // Target percentage after eviction (default 0.70)
+    pub memory_check_interval_secs: u64,  // How often to check memory pressure
 }
 
 impl OptimizationConfig {
@@ -235,6 +242,25 @@ impl OptimizationConfig {
             projection_lut_enabled: parse_bool("ENABLE_PROJECTION_LUT", true),
             projection_lut_dir: env::var("PROJECTION_LUT_DIR")
                 .unwrap_or_else(|_| "/app/data/luts".to_string()),
+            
+            // Memory Pressure Management
+            memory_pressure_enabled: parse_bool("ENABLE_MEMORY_PRESSURE", true),
+            memory_limit_mb: parse_usize("MEMORY_LIMIT_MB", 0), // 0 = auto-detect
+            memory_pressure_threshold: {
+                let val = env::var("MEMORY_PRESSURE_THRESHOLD")
+                    .ok()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.80);
+                val.clamp(0.0, 1.0)
+            },
+            memory_pressure_target: {
+                let val = env::var("MEMORY_PRESSURE_TARGET")
+                    .ok()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.70);
+                val.clamp(0.0, 1.0)
+            },
+            memory_check_interval_secs: parse_u64("MEMORY_CHECK_INTERVAL_SECS", 30),
         }
     }
 }

@@ -912,6 +912,10 @@ pub async fn metrics_handler(
         grib_capacity,
     );
     
+    // Update grid data cache metrics
+    let grid_stats = state.grid_cache.stats().await;
+    state.metrics.record_grid_cache_stats(&grid_stats);
+    
     // Update L1 tile memory cache metrics
     let l1_stats = state.tile_memory_cache.stats();
     state.metrics.record_tile_memory_cache_stats(&l1_stats);
@@ -982,12 +986,27 @@ pub async fn api_metrics_handler(
         }
     };
     
+    // Get grid cache stats
+    let grid_stats = state.grid_cache.stats().await;
+    let grid_cache_stats = serde_json::json!({
+        "hits": grid_stats.hits,
+        "misses": grid_stats.misses,
+        "evictions": grid_stats.evictions,
+        "entries": grid_stats.entries,
+        "capacity": grid_stats.capacity,
+        "memory_bytes": grid_stats.memory_bytes,
+        "memory_mb": grid_stats.memory_mb(),
+        "hit_rate": grid_stats.hit_rate(),
+        "utilization": grid_stats.utilization(),
+    });
+    
     // Combine metrics, system, and cache stats
     let combined = serde_json::json!({
         "metrics": snapshot,
         "system": system,
         "l1_cache": l1_cache_stats,
-        "l2_cache": l2_cache_stats
+        "l2_cache": l2_cache_stats,
+        "grid_cache": grid_cache_stats
     });
     
     Json(combined)

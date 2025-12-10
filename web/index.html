@@ -254,17 +254,25 @@
                 <div class="info-bar-group">
                     <span class="info-bar-title" title="Cache for parsed weather data grids. Avoids re-parsing GRIB2/NetCDF files on each tile render.">Grid Cache</span>
                     <div class="info-bar-stats">
-                        <div class="info-stat" title="Total number of grid parse operations across all data sources. Each render may need to parse source data.">
-                            <span class="info-stat-label">Parses</span>
-                            <span class="info-stat-value" id="info-grid-parses">-</span>
+                        <div class="info-stat" title="Number of parsed grids currently stored in the cache.">
+                            <span class="info-stat-label">Entries</span>
+                            <span class="info-stat-value" id="info-grid-entries">-</span>
+                        </div>
+                        <div class="info-stat" title="Current memory usage of the grid cache. GOES grids are ~15MB each.">
+                            <span class="info-stat-label">Memory</span>
+                            <span class="info-stat-value" id="info-grid-memory">-</span>
                         </div>
                         <div class="info-stat" title="Number of times a pre-parsed grid was found in cache, avoiding expensive file parsing.">
                             <span class="info-stat-label">Hits</span>
                             <span class="info-stat-value" id="info-grid-hits">-</span>
                         </div>
-                        <div class="info-stat" title="Overall grid cache hit rate across all sources. Higher rates mean faster tile rendering.">
+                        <div class="info-stat" title="Overall grid cache hit rate. Higher rates mean faster tile rendering.">
                             <span class="info-stat-label">Rate</span>
                             <span class="info-stat-value" id="info-grid-rate">-</span>
+                        </div>
+                        <div class="info-stat" title="Number of grids evicted from cache due to LRU policy or memory pressure.">
+                            <span class="info-stat-label">Evictions</span>
+                            <span class="info-stat-value" id="info-grid-evictions">-</span>
                         </div>
                     </div>
                 </div>

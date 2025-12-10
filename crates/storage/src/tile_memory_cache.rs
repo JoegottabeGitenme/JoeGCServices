@@ -91,10 +91,13 @@ impl TileMemoryCache {
         if let Some(cached_tile) = cache.get(key) {
             // Check if expired
             if cached_tile.is_expired() {
+                // Get size before removing
+                let tile_size = cached_tile.data.len() as u64;
                 // Remove expired tile
                 cache.pop(key);
                 self.stats.expired.fetch_add(1, Ordering::Relaxed);
                 self.stats.misses.fetch_add(1, Ordering::Relaxed);
+                self.stats.size_bytes.fetch_sub(tile_size, Ordering::Relaxed);
                 None
             } else {
                 // Cache hit
@@ -115,8 +118,12 @@ impl TileMemoryCache {
         let mut cache = self.cache.write().await;
         let tile_size = data.len() as u64;
 
-        // Check if we'll evict an entry
+        // Check if we'll evict an entry and track its size
         if cache.len() >= self.capacity {
+            if let Some((_, lru_entry)) = cache.peek_lru() {
+                let evicted_size = lru_entry.data.len() as u64;
+                self.stats.size_bytes.fetch_sub(evicted_size, Ordering::Relaxed);
+            }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -129,7 +136,7 @@ impl TileMemoryCache {
 
         cache.put(key.to_string(), cached_tile);
 
-        // Update size metric (approximate - doesn't account for evictions)
+        // Update size metric
         self.stats.size_bytes.fetch_add(tile_size, Ordering::Relaxed);
     }
 
@@ -178,6 +185,35 @@ impl TileMemoryCache {
         self.stats.evictions.store(0, Ordering::Relaxed);
         self.stats.expired.store(0, Ordering::Relaxed);
         self.stats.size_bytes.store(0, Ordering::Relaxed);
+    }
+    
+    /// Evict a percentage of entries (0.0 to 1.0) using LRU order.
+    /// Returns the number of entries evicted.
+    ///
+    /// This is used by the memory pressure monitor to free memory.
+    pub async fn evict_percentage(&self, percentage: f64) -> usize {
+        let mut cache = self.cache.write().await;
+        let entries_to_evict = (cache.len() as f64 * percentage.clamp(0.0, 1.0)) as usize;
+        let mut evicted_count = 0;
+        let mut bytes_freed = 0u64;
+        
+        for _ in 0..entries_to_evict {
+            if let Some((_, evicted)) = cache.pop_lru() {
+                bytes_freed += evicted.data.len() as u64;
+                self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+                evicted_count += 1;
+            } else {
+                break;
+            }
+        }
+        
+        // Subtract freed bytes from size tracking
+        if bytes_freed > 0 {
+            let current = self.stats.size_bytes.load(Ordering::Relaxed);
+            self.stats.size_bytes.store(current.saturating_sub(bytes_freed), Ordering::Relaxed);
+        }
+        
+        evicted_count
     }
 }
 

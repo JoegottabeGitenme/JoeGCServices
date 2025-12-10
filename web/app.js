@@ -84,9 +84,11 @@ const infoL2TilesEl = document.getElementById('info-l2-tiles');
 const infoL2SizeEl = document.getElementById('info-l2-size');
 
 // Info Bar Grid Cache Elements
-const infoGridParsesEl = document.getElementById('info-grid-parses');
+const infoGridEntriesEl = document.getElementById('info-grid-entries');
+const infoGridMemoryEl = document.getElementById('info-grid-memory');
 const infoGridHitsEl = document.getElementById('info-grid-hits');
 const infoGridRateEl = document.getElementById('info-grid-rate');
+const infoGridEvictionsEl = document.getElementById('info-grid-evictions');
 
 // Info Bar System Stats Elements
 const infoSysCpusEl = document.getElementById('info-sys-cpus');
@@ -1905,17 +1907,31 @@ async function fetchBackendMetrics() {
             infoL2SizeEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
         }
         
-        // Update Info Bar grid cache stats
-        const dataSourceStats = metrics.data_source_stats || {};
-        let totalParses = 0;
-        let totalHits = 0;
-        let totalMisses = 0;
+        // Update Info Bar grid cache stats from new grid_cache API response
+        const gridCache = data.grid_cache || {};
+        if (infoGridEntriesEl) {
+            const entries = gridCache.entries ?? 0;
+            const capacity = gridCache.capacity ?? 100;
+            infoGridEntriesEl.textContent = `${entries}/${capacity}`;
+        }
+        if (infoGridMemoryEl) {
+            const memoryMb = gridCache.memory_mb ?? 0;
+            infoGridMemoryEl.textContent = memoryMb < 1 ? '<1 MB' : memoryMb.toFixed(1) + ' MB';
+        }
+        if (infoGridHitsEl) {
+            infoGridHitsEl.textContent = (gridCache.hits ?? 0).toLocaleString();
+        }
+        if (infoGridRateEl) {
+            const rate = gridCache.hit_rate ?? 0;
+            infoGridRateEl.textContent = rate.toFixed(1) + '%';
+        }
+        if (infoGridEvictionsEl) {
+            infoGridEvictionsEl.textContent = (gridCache.evictions ?? 0).toLocaleString();
+        }
         
+        // Update per-source stats from data_source_stats
+        const dataSourceStats = metrics.data_source_stats || {};
         for (const [source, stats] of Object.entries(dataSourceStats)) {
-            totalParses += stats.parse_count || 0;
-            totalHits += stats.cache_hits || 0;
-            totalMisses += stats.cache_misses || 0;
-            
             // Update per-source stats
             const sourceEl = document.getElementById(`info-src-${source}`);
             if (sourceEl) {
@@ -1932,17 +1948,6 @@ async function fetchBackendMetrics() {
                     timeEl.textContent = avgMs < 1 ? '<1ms' : avgMs.toFixed(0) + 'ms';
                 }
             }
-        }
-        
-        if (infoGridParsesEl) {
-            infoGridParsesEl.textContent = totalParses.toLocaleString();
-        }
-        if (infoGridHitsEl) {
-            infoGridHitsEl.textContent = totalHits.toLocaleString();
-        }
-        if (infoGridRateEl) {
-            const overallRate = totalParses > 0 ? (totalHits / (totalHits + totalMisses)) * 100 : 0;
-            infoGridRateEl.textContent = overallRate.toFixed(1) + '%';
         }
         
         // Update system stats (sidebar)

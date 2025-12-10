@@ -6,6 +6,7 @@ mod admin;
 mod cleanup;
 mod grid_warming;
 mod handlers;
+mod memory_pressure;
 pub mod metrics;
 mod rendering;
 mod startup_validation;
@@ -237,6 +238,17 @@ async fn async_main(args: Args) -> Result<()> {
         });
         
         info!("Grid warming background task started");
+    }
+
+    // Start memory pressure monitor background task
+    if state.optimization_config.memory_pressure_enabled {
+        let monitor = memory_pressure::MemoryPressureMonitor::new(state.clone());
+        tokio::spawn(async move {
+            monitor.run_forever().await;
+        });
+        info!("Memory pressure monitor started");
+    } else {
+        info!("Memory pressure monitoring disabled (set ENABLE_MEMORY_PRESSURE=true to enable)");
     }
 
     // Build router
