@@ -1,6 +1,9 @@
 //! Application state and shared resources.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
@@ -12,6 +15,129 @@ use tracing::{info, warn};
 use projection::ProjectionLutCache;
 use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::metrics::MetricsCollector;
+
+// ============================================================================
+// Ingestion Tracking
+// ============================================================================
+
+/// Status of an active ingestion job
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveIngestion {
+    pub id: String,
+    pub file_path: String,
+    pub model: String,
+    pub started_at: DateTime<Utc>,
+    pub status: String,  // "parsing", "shredding", "storing", "registering"
+    pub parameters_found: u32,
+    pub parameters_stored: u32,
+}
+
+/// A completed ingestion record
+#[derive(Debug, Clone, Serialize)]
+pub struct CompletedIngestion {
+    pub id: String,
+    pub file_path: String,
+    pub model: String,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+    pub duration_ms: u64,
+    pub parameters_registered: u32,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+/// Tracks ingestion activity for the dashboard
+#[derive(Debug)]
+pub struct IngestionTracker {
+    /// Currently active ingestions (keyed by ID)
+    pub active: Mutex<std::collections::HashMap<String, ActiveIngestion>>,
+    /// Recently completed ingestions (ring buffer, max 50)
+    pub completed: Mutex<VecDeque<CompletedIngestion>>,
+    /// Maximum completed entries to keep
+    max_completed: usize,
+}
+
+impl IngestionTracker {
+    pub fn new() -> Self {
+        Self {
+            active: Mutex::new(std::collections::HashMap::new()),
+            completed: Mutex::new(VecDeque::new()),
+            max_completed: 50,
+        }
+    }
+    
+    /// Start tracking an ingestion job
+    pub async fn start(&self, id: String, file_path: String, model: String) {
+        let ingestion = ActiveIngestion {
+            id: id.clone(),
+            file_path,
+            model,
+            started_at: Utc::now(),
+            status: "parsing".to_string(),
+            parameters_found: 0,
+            parameters_stored: 0,
+        };
+        self.active.lock().await.insert(id, ingestion);
+    }
+    
+    /// Update ingestion status
+    pub async fn update(&self, id: &str, status: &str, found: u32, stored: u32) {
+        if let Some(ingestion) = self.active.lock().await.get_mut(id) {
+            ingestion.status = status.to_string();
+            ingestion.parameters_found = found;
+            ingestion.parameters_stored = stored;
+        }
+    }
+    
+    /// Complete an ingestion job (success or failure)
+    pub async fn complete(&self, id: &str, success: bool, error_message: Option<String>, parameters_registered: u32) {
+        let mut active = self.active.lock().await;
+        if let Some(ingestion) = active.remove(id) {
+            let completed_at = Utc::now();
+            let duration_ms = (completed_at - ingestion.started_at).num_milliseconds() as u64;
+            
+            let completed = CompletedIngestion {
+                id: ingestion.id,
+                file_path: ingestion.file_path,
+                model: ingestion.model,
+                started_at: ingestion.started_at,
+                completed_at,
+                duration_ms,
+                parameters_registered,
+                success,
+                error_message,
+            };
+            
+            let mut completed_list = self.completed.lock().await;
+            completed_list.push_front(completed);
+            
+            // Keep only the most recent entries
+            while completed_list.len() > self.max_completed {
+                completed_list.pop_back();
+            }
+        }
+    }
+    
+    /// Get current ingestion status for the dashboard
+    pub async fn get_status(&self) -> IngestionTrackerStatus {
+        let active = self.active.lock().await;
+        let completed = self.completed.lock().await;
+        
+        IngestionTrackerStatus {
+            active: active.values().cloned().collect(),
+            recent: completed.iter().take(10).cloned().collect(),
+            total_completed: completed.len(),
+        }
+    }
+}
+
+/// Response for ingestion status endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct IngestionTrackerStatus {
+    pub active: Vec<ActiveIngestion>,
+    pub recent: Vec<CompletedIngestion>,
+    pub total_completed: usize,
+}
 
 /// Configuration for performance optimizations.
 /// Each optimization can be toggled on/off via environment variables.
@@ -222,6 +348,7 @@ pub struct AppState {
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
+    pub ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
 }
 
 impl AppState {
@@ -307,6 +434,7 @@ impl AppState {
             prefetch_rings,
             optimization_config,
             grid_warmer: tokio::sync::RwLock::new(None),
+            ingestion_tracker: IngestionTracker::new(),
         })
     }
     

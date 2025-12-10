@@ -65,6 +65,24 @@ A collapsible left sidebar showing data storage details:
 - Shows whether database and storage are in sync
 - Preview and trigger sync operations
 
+#### Ingestion Pipeline Widget
+Real-time monitoring of file ingestion:
+
+- **Status Indicator**: Shows if ingestion is active (orange pulsing) or idle (green)
+- **Active Ingestions**: Currently processing files with:
+  - Model name (GFS, HRRR, GOES, MRMS)
+  - Processing status (Parsing, Shredding, Storing, Registering)
+  - File being processed
+  - Parameters found/stored count
+  - Elapsed time
+- **Recent Completions**: Last 5 completed ingestions showing:
+  - Model name
+  - Number of parameters registered
+  - Processing duration (green for success, red for failure)
+- **Stats**: Success rate and average processing time
+
+The widget updates every 2 seconds for real-time visibility into the data pipeline.
+
 The panel is scrollable when expanded trees exceed the viewport height. Hover over count/size badges for detailed explanations.
 
 ### Tile Request Heatmap (Minimap)
@@ -133,6 +151,7 @@ The dashboard polls these endpoints for real-time updates:
 | `/api/admin/database/tree` | 30s | PostgreSQL data tree structure |
 | `/api/admin/storage/tree` | 30s | MinIO storage tree structure |
 | `/api/admin/sync/status` | 30s | Database/storage sync status |
+| `/api/admin/ingestion/active` | 2s | Active and recent ingestion status |
 | `/downloader/status` | 10s | Download queue and progress |
 
 ## Configuration

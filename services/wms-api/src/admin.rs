@@ -734,6 +734,15 @@ pub async fn ingestion_log_handler(
     }
 }
 
+/// GET /api/admin/ingestion/active - Get currently active and recent ingestions
+pub async fn ingestion_active_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Getting active ingestion status");
+    let status = state.ingestion_tracker.get_status().await;
+    Json(status)
+}
+
 /// GET /admin/preview-shred - Preview what parameters will be extracted for a model
 pub async fn preview_shred_handler(
     Extension(_state): Extension<Arc<AppState>>,
@@ -804,10 +813,39 @@ pub async fn ingest_handler(
         "Admin: Ingesting file"
     );
     
-    match ingest_file(&state, &payload).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+    // Generate unique ID for tracking
+    let ingestion_id = uuid::Uuid::new_v4().to_string();
+    let model = payload.model.clone().unwrap_or_else(|| 
+        extract_model_from_filename(&payload.file_path).unwrap_or_else(|| "unknown".to_string())
+    );
+    
+    // Start tracking this ingestion
+    state.ingestion_tracker.start(
+        ingestion_id.clone(),
+        payload.file_path.clone(),
+        model.clone(),
+    ).await;
+    
+    match ingest_file_tracked(&state, &payload, &ingestion_id).await {
+        Ok(response) => {
+            // Mark as completed successfully
+            state.ingestion_tracker.complete(
+                &ingestion_id,
+                true,
+                None,
+                response.datasets_registered as u32,
+            ).await;
+            (StatusCode::OK, Json(response)).into_response()
+        },
         Err(e) => {
             error!(error = %e, file = %payload.file_path, "Ingestion failed");
+            // Mark as failed
+            state.ingestion_tracker.complete(
+                &ingestion_id,
+                false,
+                Some(e.to_string()),
+                0,
+            ).await;
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(IngestResponse {
@@ -823,10 +861,11 @@ pub async fn ingest_handler(
     }
 }
 
-/// Ingest a file into the catalog
-async fn ingest_file(
+/// Ingest a file into the catalog with progress tracking
+async fn ingest_file_tracked(
     state: &Arc<AppState>,
     request: &IngestRequest,
+    ingestion_id: &str,
 ) -> anyhow::Result<IngestResponse> {
     use std::fs;
     
@@ -842,12 +881,17 @@ async fn ingest_file(
     let is_grib2 = file_path.ends_with(".grib2") || file_path.ends_with(".grb2") || file_path.ends_with(".grib2.gz");
     
     if is_netcdf {
+        // Update status for NetCDF
+        state.ingestion_tracker.update(ingestion_id, "parsing_netcdf", 0, 0).await;
         return ingest_netcdf_file(state, request, file_path).await;
     }
     
     if !is_grib2 {
         anyhow::bail!("Unsupported file type. Expected .grib2, .grb2, or .nc");
     }
+    
+    // Update status: parsing
+    state.ingestion_tracker.update(ingestion_id, "parsing", 0, 0).await;
     
     // Read file (decompress if needed)
     let data = if file_path.ends_with(".gz") {
@@ -874,11 +918,15 @@ async fn ingest_file(
     
     info!(model = %model, forecast_hour = forecast_hour, "Detected file metadata");
     
+    // Update status: shredding
+    state.ingestion_tracker.update(ingestion_id, "shredding", 0, 0).await;
+    
     // Parse GRIB2 and extract parameters
     let mut reader = grib2_parser::Grib2Reader::new(data);
     let mut registered_params = HashSet::new();
     let mut grib_reference_time: Option<chrono::DateTime<Utc>> = None;
     let mut datasets_registered = 0;
+    let mut params_found = 0u32;
     
     // Parameters to ingest with their accepted level types
     let pressure_levels: HashSet<u32> = [
@@ -951,6 +999,8 @@ async fn ingest_file(
         };
         
         if should_register {
+            params_found += 1;
+            
             let reference_time = grib_reference_time.unwrap_or_else(Utc::now);
             
             // Sanitize level for path
@@ -969,6 +1019,9 @@ async fn ingest_file(
                 forecast_hour
             );
             
+            // Update status: storing
+            state.ingestion_tracker.update(ingestion_id, "storing", params_found, datasets_registered as u32).await;
+            
             // Store shredded GRIB message
             let shredded_data = message.raw_data.clone();
             let shredded_size = shredded_data.len() as u64;
@@ -982,6 +1035,9 @@ async fn ingest_file(
                 size = shredded_size,
                 "Stored shredded GRIB message"
             );
+            
+            // Update status: registering
+            state.ingestion_tracker.update(ingestion_id, "registering", params_found, datasets_registered as u32).await;
             
             // Get model-specific bounding box
             let bbox = get_model_bbox(&model);

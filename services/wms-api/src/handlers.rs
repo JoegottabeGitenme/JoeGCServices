@@ -1683,12 +1683,16 @@ fn build_wms_capabilities_xml(
             let north = bbox.max_y;
             
             // Check if this is an observational model (MRMS, GOES, etc.)
-            // Observational data has forecast_hour=0 and uses TIME dimension instead of RUN/FORECAST
+            // Observational data has forecast_hour=0 and uses TIME dimension with ISO8601 timestamps
+            // Forecast models use TIME dimension with forecast hour integers
             let is_observational = model == "mrms" || model == "goes" || model == "goes16" || model == "goes18";
             
-            // Build base dimension elements
+            // Build TIME dimension - used for both observation and forecast modes
+            // The backend accepts TIME parameter which is parsed as either:
+            // - Integer (forecast hour) for forecast models
+            // - ISO8601 timestamp for observation models
             let base_dimensions = if is_observational {
-                // For observational data: single TIME dimension with available observation times
+                // For observational data: TIME dimension with available observation timestamps
                 // The runs list contains the observation times (stored as reference_time with forecast_hour=0)
                 let time_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
                 let time_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
@@ -1697,24 +1701,20 @@ fn build_wms_capabilities_xml(
                     time_default, time_values
                 )
             } else {
-                // For forecast models: RUN (model initialization time) and FORECAST (hours ahead)
-                let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
-                let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
-                // Convert forecast hours to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
+                // For forecast models: TIME dimension with available forecast hours (as integers)
+                // This is simpler than RUN+FORECAST and matches what the backend actually accepts
                 let forecast_values = if forecasts.is_empty() { 
-                    "PT0H".to_string() 
+                    "0".to_string() 
                 } else { 
                     forecasts.iter()
-                        .map(|h| format!("PT{}H", h))
+                        .map(|h| h.to_string())
                         .collect::<Vec<_>>()
                         .join(",") 
                 };
-                // Default to earliest (0th) forecast hour from the latest run
-                let forecast_default_hour = forecasts.first().unwrap_or(&0);
-                let forecast_default = format!("PT{}H", forecast_default_hour);
+                let forecast_default = forecasts.first().unwrap_or(&0);
                 format!(
-                    r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="ISO8601" default="{}">{}</Dimension>"#,
-                    run_default, run_values, forecast_default, forecast_values
+                    r#"<Dimension name="TIME" units="hours" default="{}">{}</Dimension>"#,
+                    forecast_default, forecast_values
                 )
             };
             

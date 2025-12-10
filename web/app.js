@@ -1271,16 +1271,21 @@ function buildWmtsTileUrl(layerName, style) {
     ];
     
     // Add TIME parameter based on layer mode
+    console.log('Building WMTS URL - layerTimeMode:', layerTimeMode, 'currentForecastHour:', currentForecastHour, 'currentObservationTime:', currentObservationTime);
+    
     if (layerTimeMode === 'observation') {
         // Observation layers use ISO8601 timestamp
         if (currentObservationTime) {
             params.push(`TIME=${encodeURIComponent(currentObservationTime)}`);
+        } else {
+            console.warn('Observation mode but no currentObservationTime set');
         }
     } else {
-        // Forecast layers use forecast hour
-        if (currentForecastHour !== undefined && currentForecastHour !== null) {
-            params.push(`TIME=${currentForecastHour}`);
-        }
+        // Forecast layers use forecast hour - always include TIME parameter
+        const forecastHour = (currentForecastHour !== undefined && currentForecastHour !== null) 
+            ? currentForecastHour 
+            : 0;  // Default to 0 if not set
+        params.push(`TIME=${forecastHour}`);
     }
     
     if (currentElevation) {
@@ -1326,9 +1331,13 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
         // Observation layers use ISO8601 timestamp
         timeValue = currentObservationTime || '';
     } else {
-        // Forecast layers use forecast hour
-        timeValue = currentForecastHour.toString();
+        // Forecast layers use forecast hour - default to 0 if not set
+        const forecastHour = (currentForecastHour !== undefined && currentForecastHour !== null) 
+            ? currentForecastHour 
+            : 0;
+        timeValue = forecastHour.toString();
     }
+    console.log('WMS TIME parameter:', timeValue, 'layerTimeMode:', layerTimeMode);
     
     const params = new URLSearchParams({
         SERVICE: 'WMS',
@@ -2531,51 +2540,74 @@ async function fetchAvailableTimes() {
             if (nameEl && nameEl.textContent === selectedLayer) {
                 // Get dimensions
                 const dimensions = layer.getElementsByTagName('Dimension');
-                let hasTimeDimension = false;
-                let hasRunDimension = false;
                 
                 for (let dim of dimensions) {
                     const dimName = dim.getAttribute('name');
+                    const dimUnits = dim.getAttribute('units') || '';
                     
                     if (dimName === 'TIME') {
-                        // Observational data - single TIME dimension with ISO8601 timestamps
-                        hasTimeDimension = true;
                         const timeText = dim.textContent.trim();
-                        availableObservationTimes = timeText.split(',').filter(t => t && t !== 'latest');
-                        // Sort by date descending (latest first)
-                        availableObservationTimes.sort((a, b) => new Date(b) - new Date(a));
-                        // Set default to latest observation time
-                        currentObservationTime = availableObservationTimes.length > 0 
-                            ? availableObservationTimes[0] 
-                            : null;
-                        console.log('Layer has TIME dimension (observation mode):', availableObservationTimes.length, 'times');
+                        const timeValues = timeText.split(',').filter(t => t && t !== 'latest');
+                        
+                        // Determine if this is observation (ISO8601) or forecast (hours) based on units or content
+                        // Units "ISO8601" = observation times, units "hours" = forecast hours
+                        // Also check if values look like integers or ISO dates
+                        const looksLikeIntegers = timeValues.length > 0 && timeValues.every(v => /^\d+$/.test(v.trim()));
+                        const isObservationMode = dimUnits.toLowerCase() === 'iso8601' || 
+                            (!looksLikeIntegers && timeValues.length > 0 && timeValues[0].includes('T'));
+                        
+                        if (isObservationMode) {
+                            // Observational data - TIME contains ISO8601 timestamps
+                            layerTimeMode = 'observation';
+                            availableObservationTimes = timeValues;
+                            // Sort by date descending (latest first)
+                            availableObservationTimes.sort((a, b) => new Date(b) - new Date(a));
+                            // Set default to latest observation time
+                            currentObservationTime = availableObservationTimes.length > 0 
+                                ? availableObservationTimes[0] 
+                                : null;
+                            console.log('Layer has TIME dimension (observation mode):', availableObservationTimes.length, 'times');
+                        } else {
+                            // Forecast data - TIME contains forecast hours as integers
+                            layerTimeMode = 'forecast';
+                            availableForecastHours = timeValues.map(h => {
+                                h = h.trim();
+                                // Handle ISO 8601 duration format (PT0H, PT3H) just in case
+                                const isoMatch = h.match(/^PT(\d+)H$/i);
+                                if (isoMatch) {
+                                    return parseInt(isoMatch[1]);
+                                }
+                                // Plain integer
+                                const parsed = parseInt(h);
+                                return isNaN(parsed) ? 0 : parsed;
+                            }).filter(h => !isNaN(h));
+                            // Sort ascending
+                            availableForecastHours.sort((a, b) => a - b);
+                            // Default to first (earliest) forecast hour
+                            currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
+                            console.log('Layer has TIME dimension (forecast mode):', availableForecastHours.length, 'hours:', availableForecastHours);
+                        }
                     }
+                    // Legacy support for RUN dimension (if backend still sends it)
                     if (dimName === 'RUN') {
-                        hasRunDimension = true;
                         const runsText = dim.textContent.trim();
                         availableRuns = runsText.split(',');
-                        // Sort descending (latest first)
                         availableRuns.sort((a, b) => new Date(b) - new Date(a));
-                        console.log('Layer has RUN dimension:', availableRuns.length, 'runs, latest:', availableRuns[0]);
+                        console.log('Layer has RUN dimension:', availableRuns.length, 'runs');
                     }
+                    // Legacy support for FORECAST dimension (if backend still sends it)
                     if (dimName === 'FORECAST') {
                         const forecastText = dim.textContent.trim();
-                        // Parse forecast hours - handle both plain integers and ISO 8601 duration format (PT0H, PT3H, etc.)
                         availableForecastHours = forecastText.split(',').map(h => {
                             h = h.trim();
-                            // Check for ISO 8601 duration format (e.g., PT0H, PT3H, PT12H)
                             const isoMatch = h.match(/^PT(\d+)H$/i);
-                            if (isoMatch) {
-                                return parseInt(isoMatch[1]);
-                            }
-                            // Try plain integer
+                            if (isoMatch) return parseInt(isoMatch[1]);
                             const parsed = parseInt(h);
                             return isNaN(parsed) ? 0 : parsed;
                         }).filter(h => !isNaN(h));
-                        // Sort ascending
                         availableForecastHours.sort((a, b) => a - b);
-                        // Default to first (earliest) forecast hour
                         currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
+                        layerTimeMode = 'forecast';
                         console.log('Layer has FORECAST dimension:', availableForecastHours.length, 'hours');
                     }
                     if (dimName === 'ELEVATION') {
@@ -2584,14 +2616,16 @@ async function fetchAvailableTimes() {
                     }
                 }
                 
-                // Determine layer time mode
-                if (hasTimeDimension && !hasRunDimension) {
-                    layerTimeMode = 'observation';
-                } else {
-                    layerTimeMode = 'forecast';
+                // Ensure defaults are set for forecast mode
+                if (layerTimeMode === 'forecast' && (currentForecastHour === null || currentForecastHour === undefined)) {
+                    currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
+                    console.log('Set default forecast hour:', currentForecastHour);
                 }
                 
-                console.log('Layer time mode:', layerTimeMode);
+                console.log('Layer time mode:', layerTimeMode, 
+                    layerTimeMode === 'observation' ? 
+                        `currentObservationTime: ${currentObservationTime}` : 
+                        `currentForecastHour: ${currentForecastHour}`);
                 break;
             }
         }
@@ -2612,6 +2646,10 @@ async function fetchAvailableTimes() {
         console.error('Failed to fetch available times:', error);
         hideTimeSlider();
         hideElevationSlider();
+        // Default to forecast mode with hour 0 if time fetch fails
+        layerTimeMode = 'forecast';
+        currentForecastHour = 0;
+        console.log('Using default forecast mode with hour 0 due to error');
         // Still try to create layer even if time fetch fails
         createWeatherLayer();
     }
@@ -2845,6 +2883,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize database panel
     initDatabasePanel();
+    
+    // Initialize ingestion widget
+    initIngestionWidget();
 });
 
 // ============================================================================
@@ -3107,7 +3148,174 @@ window.addEventListener('beforeunload', () => {
     if (dataPanelInterval) {
         clearInterval(dataPanelInterval);
     }
+    if (ingestionWidgetInterval) {
+        clearInterval(ingestionWidgetInterval);
+    }
 });
+
+// ============================================================================
+// Ingestion Pipeline Widget
+// ============================================================================
+
+let ingestionWidgetInterval = null;
+
+// Initialize the ingestion widget
+function initIngestionWidget() {
+    // Initial fetch
+    fetchIngestionStatus();
+    
+    // Refresh every 2 seconds for real-time updates
+    ingestionWidgetInterval = setInterval(fetchIngestionStatus, 2000);
+}
+
+// Fetch ingestion status from the WMS API
+async function fetchIngestionStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/ingestion/active`);
+        
+        if (response.ok) {
+            const data = await response.json();
+            updateIngestionWidget(data);
+        } else {
+            updateIngestionWidgetOffline();
+        }
+    } catch (error) {
+        console.error('Error fetching ingestion status:', error);
+        updateIngestionWidgetOffline();
+    }
+}
+
+// Update the ingestion widget with data
+function updateIngestionWidget(data) {
+    const statusDot = document.getElementById('ingestion-status-dot');
+    const statusText = document.getElementById('ingestion-status-text');
+    const activeCount = document.getElementById('ingestion-active-count');
+    const activeList = document.getElementById('ingestion-active-list');
+    const recentList = document.getElementById('ingestion-recent-list');
+    const recentStats = document.getElementById('ingestion-recent-stats');
+    
+    const isActive = data.active && data.active.length > 0;
+    
+    // Update status indicator
+    if (statusDot) {
+        statusDot.className = 'ingestion-status-dot ' + (isActive ? 'active' : 'idle');
+    }
+    if (statusText) {
+        statusText.textContent = isActive ? 'Processing' : 'Idle';
+    }
+    
+    // Update active count
+    if (activeCount) {
+        activeCount.textContent = data.active ? data.active.length : 0;
+    }
+    
+    // Update active ingestions list
+    if (activeList) {
+        if (data.active && data.active.length > 0) {
+            activeList.innerHTML = data.active.map(item => {
+                const filename = extractFilename(item.file_path);
+                const elapsed = formatElapsedTime(item.started_at);
+                return `
+                    <div class="ingestion-item">
+                        <div class="ingestion-item-header">
+                            <span class="ingestion-item-model">${item.model}</span>
+                            <span class="ingestion-item-status">${formatIngestionStatus(item.status)}</span>
+                        </div>
+                        <div class="ingestion-item-file" title="${item.file_path}">${filename}</div>
+                        <div class="ingestion-item-progress">
+                            <span>Found: ${item.parameters_found} | Stored: ${item.parameters_stored}</span>
+                            <span>${elapsed}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            activeList.innerHTML = '<div class="ingestion-empty">No active ingestions</div>';
+        }
+    }
+    
+    // Update recent stats
+    if (recentStats && data.recent) {
+        const successful = data.recent.filter(r => r.success).length;
+        const failed = data.recent.filter(r => !r.success).length;
+        if (data.recent.length > 0) {
+            const avgTime = data.recent.reduce((sum, r) => sum + r.duration_ms, 0) / data.recent.length;
+            recentStats.textContent = `${successful}/${data.recent.length} ok, avg ${formatDuration(avgTime)}`;
+        } else {
+            recentStats.textContent = '--';
+        }
+    }
+    
+    // Update recent ingestions list
+    if (recentList) {
+        if (data.recent && data.recent.length > 0) {
+            recentList.innerHTML = data.recent.slice(0, 5).map(item => {
+                const timeClass = item.success ? '' : ' failed';
+                return `
+                    <div class="ingestion-recent-item">
+                        <span class="ingestion-recent-model">${item.model}</span>
+                        <span class="ingestion-recent-params">${item.parameters_registered} params</span>
+                        <span class="ingestion-recent-time${timeClass}">${formatDuration(item.duration_ms)}</span>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            recentList.innerHTML = '<div class="ingestion-empty">No recent ingestions</div>';
+        }
+    }
+}
+
+// Update widget when API is offline
+function updateIngestionWidgetOffline() {
+    const statusDot = document.getElementById('ingestion-status-dot');
+    const statusText = document.getElementById('ingestion-status-text');
+    
+    if (statusDot) {
+        statusDot.className = 'ingestion-status-dot';
+    }
+    if (statusText) {
+        statusText.textContent = 'Offline';
+    }
+}
+
+// Format ingestion status for display
+function formatIngestionStatus(status) {
+    const statusMap = {
+        'parsing': 'Parsing',
+        'parsing_netcdf': 'Parsing NC',
+        'shredding': 'Shredding',
+        'storing': 'Storing',
+        'registering': 'Registering'
+    };
+    return statusMap[status] || status;
+}
+
+// Format elapsed time since start
+function formatElapsedTime(startedAt) {
+    try {
+        const start = new Date(startedAt);
+        const now = new Date();
+        const ms = now - start;
+        return formatDuration(ms);
+    } catch {
+        return '--';
+    }
+}
+
+// Format duration in ms to human readable
+function formatDuration(ms) {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    const mins = Math.floor(ms / 60000);
+    const secs = Math.round((ms % 60000) / 1000);
+    return `${mins}m ${secs}s`;
+}
+
+// Extract filename from path
+function extractFilename(path) {
+    if (!path) return 'unknown';
+    return path.split('/').pop() || path;
+}
 
 // ============================================================================
 // Data Panel Widget (PostgreSQL + MinIO Tree View)

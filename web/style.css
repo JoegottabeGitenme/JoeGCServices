@@ -2610,6 +2610,197 @@ html, body {
 }
 
 /* ============================================================================
+   Ingestion Pipeline Widget
+   ============================================================================ */
+
+.ingestion-widget {
+    display: flex;
+    flex-direction: column;
+    background: #111827;
+    border-top: 1px solid #374151;
+    max-height: 200px;
+    overflow: hidden;
+}
+
+.ingestion-widget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+    border-bottom: 1px solid #4b5563;
+}
+
+.ingestion-widget-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ingestion-widget-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.ingestion-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6b7280;
+}
+
+.ingestion-status-dot.active {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    animation: pulse 1s infinite;
+}
+
+.ingestion-status-dot.idle {
+    background: #10b981;
+}
+
+.ingestion-status-text {
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+
+.ingestion-active-section,
+.ingestion-recent-section {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.ingestion-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0.75rem;
+    background: rgba(55, 65, 81, 0.5);
+    font-size: 0.7rem;
+    color: #9ca3af;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.ingestion-active-count {
+    background: #f59e0b;
+    color: #111827;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 0.65rem;
+}
+
+.ingestion-recent-stats {
+    font-family: 'Monaco', 'Courier New', monospace;
+    color: #10b981;
+    font-size: 0.65rem;
+}
+
+.ingestion-active-list,
+.ingestion-recent-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.25rem 0.5rem;
+    max-height: 60px;
+}
+
+.ingestion-empty {
+    text-align: center;
+    padding: 0.4rem;
+    color: #6b7280;
+    font-size: 0.7rem;
+}
+
+/* Active Ingestion Item */
+.ingestion-item {
+    background: rgba(55, 65, 81, 0.4);
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    border-radius: 4px;
+    padding: 0.4rem;
+    margin-bottom: 0.3rem;
+}
+
+.ingestion-item:last-child {
+    margin-bottom: 0;
+}
+
+.ingestion-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.2rem;
+}
+
+.ingestion-item-model {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #60a5fa;
+    text-transform: uppercase;
+}
+
+.ingestion-item-status {
+    font-size: 0.65rem;
+    color: #f59e0b;
+    padding: 0.1rem 0.3rem;
+    background: rgba(245, 158, 11, 0.2);
+    border-radius: 3px;
+}
+
+.ingestion-item-file {
+    font-size: 0.65rem;
+    color: #9ca3af;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ingestion-item-progress {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.6rem;
+    color: #6b7280;
+    margin-top: 0.2rem;
+}
+
+/* Recent Ingestion Item */
+.ingestion-recent-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0.3rem;
+    border-bottom: 1px solid rgba(55, 65, 81, 0.5);
+    font-size: 0.65rem;
+}
+
+.ingestion-recent-item:last-child {
+    border-bottom: none;
+}
+
+.ingestion-recent-model {
+    color: #60a5fa;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.ingestion-recent-params {
+    color: #9ca3af;
+}
+
+.ingestion-recent-time {
+    color: #10b981;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.ingestion-recent-time.failed {
+    color: #ef4444;
+}
+
+/* ============================================================================
    Data Panel (Left Sidebar) - PostgreSQL & MinIO Tree View
    ============================================================================ */
 

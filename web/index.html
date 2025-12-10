@@ -77,6 +77,10 @@
                             <span class="link-icon">📊</span>
                             <span class="link-text">Grafana</span>
                         </a>
+                        <a href="http://localhost:3000/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" target="_blank" class="external-link" title="Open System Stats Dashboard (CPU, Memory, Leak Detection)">
+                            <span class="link-icon">🖥️</span>
+                            <span class="link-text">System</span>
+                        </a>
                         <a href="http://localhost:9090" target="_blank" class="external-link" title="Open Prometheus">
                             <span class="link-icon">📈</span>
                             <span class="link-text">Prometheus</span>
@@ -428,6 +432,39 @@
                     <div class="sync-actions" id="sync-actions" style="display: none;">
                         <button class="sync-btn sync-btn-preview" onclick="showSyncPreview()" title="Preview what will be synced">Preview</button>
                         <button class="sync-btn sync-btn-run" onclick="runSyncNow()" title="Sync now">Sync</button>
+                    </div>
+                </div>
+                
+                <!-- Ingestion Status Widget -->
+                <div class="ingestion-widget">
+                    <div class="ingestion-widget-header">
+                        <span class="ingestion-widget-title">Ingestion Pipeline</span>
+                        <div class="ingestion-widget-status">
+                            <span class="ingestion-status-dot" id="ingestion-status-dot"></span>
+                            <span class="ingestion-status-text" id="ingestion-status-text">Idle</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Active Ingestions -->
+                    <div class="ingestion-active-section">
+                        <div class="ingestion-section-header">
+                            <span>Active</span>
+                            <span class="ingestion-active-count" id="ingestion-active-count">0</span>
+                        </div>
+                        <div class="ingestion-active-list" id="ingestion-active-list">
+                            <div class="ingestion-empty">No active ingestions</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Recent Completions -->
+                    <div class="ingestion-recent-section">
+                        <div class="ingestion-section-header">
+                            <span>Recent</span>
+                            <span class="ingestion-recent-stats" id="ingestion-recent-stats">--</span>
+                        </div>
+                        <div class="ingestion-recent-list" id="ingestion-recent-list">
+                            <div class="ingestion-empty">No recent ingestions</div>
+                        </div>
                     </div>
                 </div>
             </aside>

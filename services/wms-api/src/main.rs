@@ -310,6 +310,8 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/admin/sync/status", get(admin::sync_status_handler))
         .route("/api/admin/sync/preview", get(admin::sync_preview_handler))
         .route("/api/admin/sync/run", post(admin::sync_run_handler))
+        // Ingestion tracking endpoint
+        .route("/api/admin/ingestion/active", get(admin::ingestion_active_handler))
         // Layer extensions
         .layer(Extension(state))
         .layer(Extension(prometheus_handle))

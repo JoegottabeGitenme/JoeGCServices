@@ -92,6 +92,16 @@ Grafana dashboards are included in `deploy/grafana/provisioning/dashboards/`:
 - CPU Usage
 - Per-source parsing stats
 
+**System Stats Dashboard** (`system-stats.json`):
+- Memory Usage Over Time (Container, RSS, Total)
+- Memory Usage Percentage Gauge
+- CPU Load Average (1m, 5m, 15m)
+- CPU Load Percentage
+- Cache Memory Usage (L1 Tile Cache, GRIB Cache)
+- Cache Entries and Evictions
+- Memory Leak Detection (Growth Rate, Memory excl. Caches)
+- Request/Cache Miss Correlation
+
 **Per-Model Pipeline Dashboards**:
 - `gfs-pipeline.json` - GFS model metrics
 - `hrrr-pipeline.json` - HRRR model metrics  
