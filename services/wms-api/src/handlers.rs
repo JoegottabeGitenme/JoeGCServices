@@ -215,7 +215,20 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
         }
         Err(e) => {
             state.metrics.record_render(timer.elapsed_us(), false).await;
-            error!(error = %e, "Rendering failed");
+            error!(
+                layer = %layers,
+                style = %style,
+                width = width,
+                height = height,
+                bbox = ?bbox,
+                crs = ?crs,
+                time = ?dimensions.time,
+                run = ?dimensions.run,
+                forecast = ?dimensions.forecast,
+                elevation = ?dimensions.elevation,
+                error = %e,
+                "WMS GetMap rendering failed"
+            );
             wms_exception(
                 "NoApplicableCode",
                 &format!("Rendering failed: {}", e),
@@ -907,7 +920,18 @@ async fn wmts_get_tile(
         }
         Err(e) => {
             state.metrics.record_render(timer.elapsed_us(), false).await;
-            error!(error = %e, "WMTS tile rendering failed");
+            error!(
+                layer = %layer,
+                style = %style,
+                z = z,
+                x = x,
+                y = y,
+                forecast_hour = ?forecast_hour,
+                observation_time = ?observation_time,
+                elevation = ?elevation,
+                error = %e,
+                "WMTS tile rendering failed"
+            );
             wmts_exception(
                 "NoApplicableCode",
                 &format!("Rendering failed: {}", e),
