@@ -7,6 +7,14 @@ model:
   description: "NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS coverage"
   enabled: true
 
+# WMS/WMTS dimension configuration
+# Defines which dimensions are exposed in capabilities and accepted in requests
+dimensions:
+  type: forecast           # "forecast" = RUN+FORECAST dimensions, "observation" = TIME dimension
+  run: true                # RUN dimension - model initialization time (ISO8601)
+  forecast: true           # FORECAST dimension - hours ahead from run time
+  elevation: true          # ELEVATION dimension - vertical levels (from parameter definitions)
+
 source:
   type: aws_s3
   bucket: noaa-hrrr-bdp-pds

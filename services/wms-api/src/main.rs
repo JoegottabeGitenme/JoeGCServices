@@ -8,6 +8,7 @@ mod grid_warming;
 mod handlers;
 mod memory_pressure;
 pub mod metrics;
+pub mod model_config;
 mod rendering;
 mod startup_validation;
 mod state;

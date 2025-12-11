@@ -7,6 +7,13 @@ model:
   description: "CONUS-wide radar mosaic and precipitation analysis at ~1km resolution"
   enabled: true
 
+# WMS/WMTS dimension configuration
+# Defines which dimensions are exposed in capabilities and accepted in requests
+dimensions:
+  type: observation        # "observation" = TIME dimension (ISO8601 timestamps)
+  time: true               # TIME dimension - observation timestamp
+  elevation: false         # No vertical levels for radar data
+
 source:
   type: aws_s3_grib2
   bucket: noaa-mrms-pds

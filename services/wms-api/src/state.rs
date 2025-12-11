@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use projection::ProjectionLutCache;
 use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::metrics::MetricsCollector;
+use crate::model_config::ModelDimensionRegistry;
 
 // ============================================================================
 // Ingestion Tracking
@@ -375,6 +376,7 @@ pub struct AppState {
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
     pub ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
+    pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
 }
 
 impl AppState {
@@ -446,6 +448,14 @@ impl AppState {
             info!("Projection LUTs disabled (set ENABLE_PROJECTION_LUT=true to enable)");
             ProjectionLuts { goes16: None, goes18: None }
         };
+        
+        // Load model dimension configurations from YAML files
+        let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+        let model_dimensions = ModelDimensionRegistry::load_from_directory(&config_dir);
+        info!(
+            models = model_dimensions.models().len(),
+            "Loaded model dimension configurations"
+        );
 
         Ok(Self {
             catalog,
@@ -461,6 +471,7 @@ impl AppState {
             optimization_config,
             grid_warmer: tokio::sync::RwLock::new(None),
             ingestion_tracker: IngestionTracker::new(),
+            model_dimensions,
         })
     }
     

@@ -1259,7 +1259,7 @@ function createWmsImageOverlay(layerName, style) {
 
 // Build WMTS tile URL with optional time/elevation dimensions
 function buildWmtsTileUrl(layerName, style) {
-    // Use WMTS KVP format which properly supports TIME and ELEVATION dimensions
+    // Use WMTS KVP format which properly supports dimensions
     const params = [
         'SERVICE=WMTS',
         'REQUEST=GetTile',
@@ -1272,22 +1272,27 @@ function buildWmtsTileUrl(layerName, style) {
         'FORMAT=image/png'
     ];
     
-    // Add TIME parameter based on layer mode
-    console.log('Building WMTS URL - layerTimeMode:', layerTimeMode, 'currentForecastHour:', currentForecastHour, 'currentObservationTime:', currentObservationTime);
+    // Add dimension parameters based on layer mode
+    console.log('Building WMTS URL - layerTimeMode:', layerTimeMode, 'currentRun:', currentRun, 'currentForecastHour:', currentForecastHour, 'currentObservationTime:', currentObservationTime);
     
     if (layerTimeMode === 'observation') {
-        // Observation layers use ISO8601 timestamp
+        // Observation layers (GOES, MRMS) use TIME dimension with ISO8601 timestamp
         if (currentObservationTime) {
             params.push(`TIME=${encodeURIComponent(currentObservationTime)}`);
         } else {
             console.warn('Observation mode but no currentObservationTime set');
         }
     } else {
-        // Forecast layers use forecast hour - always include TIME parameter
+        // Forecast layers (GFS, HRRR) use RUN + FORECAST dimensions
+        // RUN: model run time (ISO8601 or 'latest')
+        if (currentRun) {
+            params.push(`RUN=${encodeURIComponent(currentRun)}`);
+        }
+        // FORECAST: forecast hour offset
         const forecastHour = (currentForecastHour !== undefined && currentForecastHour !== null) 
             ? currentForecastHour 
             : 0;  // Default to 0 if not set
-        params.push(`TIME=${forecastHour}`);
+        params.push(`FORECAST=${forecastHour}`);
     }
     
     if (currentElevation) {
@@ -1327,20 +1332,7 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
     const bbox = `${mercWest},${mercSouth},${mercEast},${mercNorth}`;
     console.log('WMS BBOX (EPSG:3857):', { west, south, east, north, mercWest, mercSouth, mercEast, mercNorth });
     
-    // Determine TIME parameter based on layer mode
-    let timeValue;
-    if (layerTimeMode === 'observation') {
-        // Observation layers use ISO8601 timestamp
-        timeValue = currentObservationTime || '';
-    } else {
-        // Forecast layers use forecast hour - default to 0 if not set
-        const forecastHour = (currentForecastHour !== undefined && currentForecastHour !== null) 
-            ? currentForecastHour 
-            : 0;
-        timeValue = forecastHour.toString();
-    }
-    console.log('WMS TIME parameter:', timeValue, 'layerTimeMode:', layerTimeMode);
-    
+    // Build base WMS parameters
     const params = new URLSearchParams({
         SERVICE: 'WMS',
         VERSION: '1.3.0',
@@ -1352,9 +1344,27 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
         WIDTH: size.x,
         HEIGHT: size.y,
         FORMAT: 'image/png',
-        TRANSPARENT: 'true',
-        TIME: timeValue
+        TRANSPARENT: 'true'
     });
+    
+    // Add dimension parameters based on layer mode
+    if (layerTimeMode === 'observation') {
+        // Observation layers (GOES, MRMS) use TIME dimension with ISO8601 timestamp
+        if (currentObservationTime) {
+            params.set('TIME', currentObservationTime);
+        }
+        console.log('WMS TIME parameter:', currentObservationTime, 'layerTimeMode:', layerTimeMode);
+    } else {
+        // Forecast layers (GFS, HRRR) use RUN + FORECAST dimensions
+        if (currentRun) {
+            params.set('RUN', currentRun);
+        }
+        const forecastHour = (currentForecastHour !== undefined && currentForecastHour !== null) 
+            ? currentForecastHour 
+            : 0;
+        params.set('FORECAST', forecastHour.toString());
+        console.log('WMS RUN:', currentRun, 'FORECAST:', forecastHour, 'layerTimeMode:', layerTimeMode);
+    }
     
     // Add elevation if set
     if (currentElevation) {
@@ -2519,7 +2529,7 @@ function updateLayerTime() {
     if (layerTimeMode === 'observation') {
         console.log('Layer updated with TIME (observation):', currentObservationTime, 'ELEVATION:', currentElevation || 'default');
     } else {
-        console.log('Layer updated with TIME (forecast):', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
+        console.log('Layer updated with RUN:', currentRun, 'FORECAST:', currentForecastHour, 'ELEVATION:', currentElevation || 'default');
     }
 }
 
@@ -2551,70 +2561,59 @@ async function fetchAvailableTimes() {
                     const dimUnits = dim.getAttribute('units') || '';
                     
                     if (dimName === 'TIME') {
+                        // TIME dimension is for observation layers (GOES, MRMS)
+                        // Contains ISO8601 timestamps
                         const timeText = dim.textContent.trim();
                         const timeValues = timeText.split(',').filter(t => t && t !== 'latest');
                         
-                        // Determine if this is observation (ISO8601) or forecast (hours) based on units or content
-                        // Units "ISO8601" = observation times, units "hours" = forecast hours
-                        // Also check if values look like integers or ISO dates
-                        const looksLikeIntegers = timeValues.length > 0 && timeValues.every(v => /^\d+$/.test(v.trim()));
-                        const isObservationMode = dimUnits.toLowerCase() === 'iso8601' || 
-                            (!looksLikeIntegers && timeValues.length > 0 && timeValues[0].includes('T'));
-                        
-                        if (isObservationMode) {
-                            // Observational data - TIME contains ISO8601 timestamps
-                            layerTimeMode = 'observation';
-                            availableObservationTimes = timeValues;
-                            // Sort by date descending (latest first)
-                            availableObservationTimes.sort((a, b) => new Date(b) - new Date(a));
-                            // Set default to latest observation time
-                            currentObservationTime = availableObservationTimes.length > 0 
-                                ? availableObservationTimes[0] 
-                                : null;
-                            console.log('Layer has TIME dimension (observation mode):', availableObservationTimes.length, 'times');
-                        } else {
-                            // Forecast data - TIME contains forecast hours as integers
-                            layerTimeMode = 'forecast';
-                            availableForecastHours = timeValues.map(h => {
-                                h = h.trim();
-                                // Handle ISO 8601 duration format (PT0H, PT3H) just in case
-                                const isoMatch = h.match(/^PT(\d+)H$/i);
-                                if (isoMatch) {
-                                    return parseInt(isoMatch[1]);
-                                }
-                                // Plain integer
-                                const parsed = parseInt(h);
-                                return isNaN(parsed) ? 0 : parsed;
-                            }).filter(h => !isNaN(h));
-                            // Sort ascending
-                            availableForecastHours.sort((a, b) => a - b);
-                            // Default to first (earliest) forecast hour
-                            currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
-                            console.log('Layer has TIME dimension (forecast mode):', availableForecastHours.length, 'hours:', availableForecastHours);
-                        }
+                        layerTimeMode = 'observation';
+                        availableObservationTimes = timeValues;
+                        // Sort by date descending (latest first)
+                        availableObservationTimes.sort((a, b) => new Date(b) - new Date(a));
+                        // Set default to latest observation time
+                        currentObservationTime = availableObservationTimes.length > 0 
+                            ? availableObservationTimes[0] 
+                            : null;
+                        console.log('Layer has TIME dimension (observation mode):', availableObservationTimes.length, 'times');
                     }
-                    // Legacy support for RUN dimension (if backend still sends it)
+                    
                     if (dimName === 'RUN') {
+                        // RUN dimension is for forecast models (GFS, HRRR)
+                        // Contains ISO8601 model run times
                         const runsText = dim.textContent.trim();
-                        availableRuns = runsText.split(',');
-                        availableRuns.sort((a, b) => new Date(b) - new Date(a));
-                        console.log('Layer has RUN dimension:', availableRuns.length, 'runs');
+                        availableRuns = runsText.split(',').filter(r => r && r.trim());
+                        // Sort by date descending (latest first)
+                        availableRuns.sort((a, b) => {
+                            if (a === 'latest') return -1;
+                            if (b === 'latest') return 1;
+                            return new Date(b) - new Date(a);
+                        });
+                        // Default to latest run
+                        currentRun = availableRuns.length > 0 ? availableRuns[0] : 'latest';
+                        layerTimeMode = 'forecast';
+                        console.log('Layer has RUN dimension:', availableRuns.length, 'runs, current:', currentRun);
                     }
-                    // Legacy support for FORECAST dimension (if backend still sends it)
+                    
                     if (dimName === 'FORECAST') {
+                        // FORECAST dimension is for forecast models (GFS, HRRR)
+                        // Contains forecast hours (integers)
                         const forecastText = dim.textContent.trim();
                         availableForecastHours = forecastText.split(',').map(h => {
                             h = h.trim();
+                            // Handle ISO 8601 duration format (PT0H, PT3H) just in case
                             const isoMatch = h.match(/^PT(\d+)H$/i);
                             if (isoMatch) return parseInt(isoMatch[1]);
                             const parsed = parseInt(h);
                             return isNaN(parsed) ? 0 : parsed;
                         }).filter(h => !isNaN(h));
+                        // Sort ascending (earliest first)
                         availableForecastHours.sort((a, b) => a - b);
+                        // Default to first (earliest) forecast hour
                         currentForecastHour = availableForecastHours.length > 0 ? availableForecastHours[0] : 0;
                         layerTimeMode = 'forecast';
-                        console.log('Layer has FORECAST dimension:', availableForecastHours.length, 'hours');
+                        console.log('Layer has FORECAST dimension:', availableForecastHours.length, 'hours:', availableForecastHours);
                     }
+                    
                     if (dimName === 'ELEVATION') {
                         const elevationText = dim.textContent.trim();
                         availableElevations = elevationText.split(',');

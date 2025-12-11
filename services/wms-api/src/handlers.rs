@@ -14,6 +14,7 @@ use tracing::{info, instrument, error, debug};
 use storage::CacheKey;
 use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
 
+use crate::model_config::ModelDimensionRegistry;
 use crate::state::AppState;
 
 // ============================================================================
@@ -43,8 +44,16 @@ pub struct WmsParams {
     height: Option<u32>,
     #[serde(rename = "FORMAT", alias = "format")]
     format: Option<String>,
+    // Dimension parameters:
+    // - TIME: For observation layers (GOES, MRMS) - ISO8601 timestamp
+    // - RUN: For forecast models (GFS, HRRR) - ISO8601 model run time
+    // - FORECAST: For forecast models - forecast hour offset from RUN
     #[serde(rename = "TIME", alias = "time")]
     time: Option<String>,
+    #[serde(rename = "RUN", alias = "run")]
+    run: Option<String>,
+    #[serde(rename = "FORECAST", alias = "forecast")]
+    forecast: Option<String>,
     #[serde(rename = "ELEVATION", alias = "elevation")]
     elevation: Option<String>,
     #[serde(rename = "TRANSPARENT", alias = "transparent")]
@@ -128,7 +137,7 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         }
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes);
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes, &state.model_dimensions);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -158,10 +167,18 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let style = params.styles.as_deref().unwrap_or("default");
     let bbox = params.bbox.as_deref();
     let crs = params.crs.as_deref();
-    let time = params.time.clone();
-    let elevation = params.elevation.clone();
+    
+    // Build dimension parameters from request
+    let dimensions = DimensionParams {
+        time: params.time.clone(),
+        run: params.run.clone(),
+        forecast: params.forecast.clone(),
+        elevation: params.elevation.clone(),
+    };
 
-    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, time = ?time, elevation = ?elevation, "GetMap request");
+    info!(layer = %layers, style = %style, width = width, height = height, bbox = ?bbox, crs = ?crs, 
+          time = ?dimensions.time, run = ?dimensions.run, forecast = ?dimensions.forecast, 
+          elevation = ?dimensions.elevation, "GetMap request");
     
     // Record bbox for heatmap visualization (parse and convert to WGS84 if needed)
     // WMS requests don't use tile caching, so always record as miss
@@ -186,7 +203,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let timer = Timer::start();
     
     // Try to render actual data, return error on failure
-    match render_weather_data(&state, layers, style, width, height, bbox, crs, time.as_deref(), elevation.as_deref()).await {
+    match render_weather_data(&state, layers, style, width, height, bbox, crs, &dimensions).await {
         Ok(png_data) => {
             state.metrics.record_render(timer.elapsed_us(), true).await;
             Response::builder()
@@ -397,8 +414,16 @@ pub struct WmtsKvpParams {
     tile_col: Option<u32>,
     #[serde(rename = "FORMAT")]
     format: Option<String>,
+    // Dimension parameters:
+    // - TIME: For observation layers (GOES, MRMS) - ISO8601 timestamp
+    // - RUN: For forecast models (GFS, HRRR) - ISO8601 model run time
+    // - FORECAST: For forecast models - forecast hour offset from RUN
     #[serde(rename = "TIME")]
     time: Option<String>,
+    #[serde(rename = "RUN")]
+    run: Option<String>,
+    #[serde(rename = "FORECAST")]
+    forecast: Option<String>,
     #[serde(rename = "ELEVATION")]
     elevation: Option<String>,
 }
@@ -429,11 +454,19 @@ pub async fn wmts_kvp_handler(
             let tile_col = params.tile_col.unwrap_or(0);
             let z: u32 = tile_matrix.parse().unwrap_or(0);
             
-            // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
-            let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
-            let elevation = params.elevation.clone();
+            // Build dimension parameters
+            let dimensions = DimensionParams {
+                time: params.time.clone(),
+                run: params.run.clone(),
+                forecast: params.forecast.clone(),
+                elevation: params.elevation.clone(),
+            };
             
-            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, forecast_hour, observation_time, elevation.as_deref()).await
+            // Parse model from layer name to determine dimension interpretation
+            let model = layer.split('_').next().unwrap_or("");
+            let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
+            
+            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
         }
         _ => wmts_exception(
             "MissingParameterValue",
@@ -446,9 +479,15 @@ pub async fn wmts_kvp_handler(
 /// Query parameters for WMTS RESTful tile requests (dimensions)
 #[derive(Debug, Deserialize, Default)]
 pub struct WmtsDimensionParams {
-    /// TIME dimension - forecast hour (e.g., "3", "6", "12") or ISO8601 datetime
+    /// TIME dimension - for observation layers (GOES, MRMS) - ISO8601 datetime
     #[serde(rename = "time", alias = "TIME")]
     pub time: Option<String>,
+    /// RUN dimension - for forecast models (GFS, HRRR) - ISO8601 model run time
+    #[serde(rename = "run", alias = "RUN")]
+    pub run: Option<String>,
+    /// FORECAST dimension - for forecast models - forecast hour offset from RUN
+    #[serde(rename = "forecast", alias = "FORECAST")]
+    pub forecast: Option<String>,
     /// ELEVATION dimension - vertical level (e.g., "500 mb", "2 m above ground")
     #[serde(rename = "elevation", alias = "ELEVATION")]
     pub elevation: Option<String>,
@@ -482,11 +521,19 @@ pub async fn wmts_rest_handler(
     let (y_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
     let y: u32 = y_str.parse().unwrap_or(0);  // Row (Y)
     
-    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
-    let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
-    let elevation = params.elevation.clone();
+    // Build dimension parameters
+    let dimensions = DimensionParams {
+        time: params.time.clone(),
+        run: params.run.clone(),
+        forecast: params.forecast.clone(),
+        elevation: params.elevation.clone(),
+    };
     
-    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, observation_time, elevation.as_deref()).await
+    // Parse model from layer name to determine dimension interpretation
+    let model = layer.split('_').next().unwrap_or("");
+    let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
+    
+    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
 }
 
 #[instrument(skip(state))]
@@ -498,41 +545,19 @@ pub async fn xyz_tile_handler(
     let (y_str, _) = y.rsplit_once('.').unwrap_or((&y, "png"));
     let y_val: u32 = y_str.parse().unwrap_or(0);
     
-    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
-    let (forecast_hour, observation_time) = parse_time_parameter(params.time.as_deref());
-    let elevation = params.elevation.clone();
+    // Build dimension parameters
+    let dimensions = DimensionParams {
+        time: params.time.clone(),
+        run: params.run.clone(),
+        forecast: params.forecast.clone(),
+        elevation: params.elevation.clone(),
+    };
     
-    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, observation_time, elevation.as_deref()).await
-}
-
-/// Parse TIME parameter supporting both forecast hour (integer) and ISO8601 observation time
-fn parse_time_parameter(time: Option<&str>) -> (Option<u32>, Option<chrono::DateTime<chrono::Utc>>) {
-    time.map(|t| {
-        tracing::debug!("Parsing TIME parameter: '{}'", t);
-        // First try to parse as integer (forecast hour)
-        if let Ok(hour) = t.parse::<u32>() {
-            tracing::debug!("Parsed as forecast hour: {}", hour);
-            (Some(hour), None)
-        } else {
-            // Try to parse as ISO8601 datetime for observation layers
-            // Use NaiveDateTime parsing since the format doesn't include timezone offset
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%SZ") {
-                let utc_dt = dt.and_utc();
-                tracing::debug!("Parsed as ISO8601 observation time (NaiveDateTime): {:?}", utc_dt);
-                (None, Some(utc_dt))
-            } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.fZ") {
-                let utc_dt = dt.and_utc();
-                tracing::debug!("Parsed as ISO8601 observation time (NaiveDateTime with frac): {:?}", utc_dt);
-                (None, Some(utc_dt))
-            } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
-                tracing::debug!("Parsed as RFC3339 observation time: {:?}", dt);
-                (None, Some(dt.with_timezone(&chrono::Utc)))
-            } else {
-                tracing::warn!("Could not parse TIME parameter: '{}' - tried NaiveDateTime and RFC3339", t);
-                (None, None)
-            }
-        }
-    }).unwrap_or((None, None))
+    // Parse model from layer name to determine dimension interpretation
+    let model = layer.split('_').next().unwrap_or("");
+    let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
+    
+    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
 }
 
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
@@ -541,8 +566,18 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
     // Get parameters and dimensions for each model
     let mut model_params = HashMap::new();
     let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
+    let mut param_levels: HashMap<String, Vec<String>> = HashMap::new();  // model_param -> levels
+    
     for model in &models {
         let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
+        
+        // Get levels for each parameter
+        for param in &params_list {
+            let levels = state.catalog.get_available_levels(model, param).await.unwrap_or_default();
+            let key = format!("{}_{}", model, param);
+            param_levels.insert(key, levels);
+        }
+        
         model_params.insert(model.clone(), params_list);
         
         // Get RUN and FORECAST dimensions
@@ -550,7 +585,7 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions);
+    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -720,9 +755,8 @@ async fn wmts_get_tile(
         .await
     } else if style == "isolines" {
         // Isolines are only supported for GRIB2 data (GFS, HRRR temperature)
-        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
-        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
-        if is_netcdf_model {
+        // Not supported for observation data (GOES, MRMS) which are satellite/radar imagery
+        if state.model_dimensions.is_observation(model) {
             return wmts_exception(
                 "StyleNotDefined",
                 &format!("Isolines style is not supported for {} layers. Isolines are only available for temperature parameters (GFS, HRRR).", model.to_uppercase()),
@@ -1222,6 +1256,69 @@ fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
     (lon, lat)
 }
 
+/// Dimension parameters for WMS/WMTS requests
+/// 
+/// For observation layers (GOES, MRMS): use `time` (ISO8601 timestamp)
+/// For forecast models (GFS, HRRR): use `run` (ISO8601) + `forecast` (hours)
+#[derive(Debug, Clone, Default)]
+pub struct DimensionParams {
+    /// TIME dimension - for observation layers (ISO8601 timestamp)
+    pub time: Option<String>,
+    /// RUN dimension - for forecast models (ISO8601 model run time)
+    pub run: Option<String>,
+    /// FORECAST dimension - for forecast models (hours from run time)
+    pub forecast: Option<String>,
+    /// ELEVATION dimension - vertical level (e.g., "500 mb", "2 m above ground")
+    pub elevation: Option<String>,
+}
+
+impl DimensionParams {
+    /// Parse dimensions based on layer type (observation vs forecast model)
+    /// Uses the model dimension registry to determine dimension type.
+    /// Returns (forecast_hour, observation_time, reference_time) tuple
+    pub fn parse_for_layer(&self, model: &str, registry: &ModelDimensionRegistry) -> (Option<u32>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) {
+        let is_observational = registry.is_observation(model);
+        
+        if is_observational {
+            // Observation layers use TIME dimension (ISO8601)
+            let observation_time = self.time.as_ref().and_then(|t| {
+                parse_iso8601_timestamp(t)
+            });
+            (None, observation_time, None)
+        } else {
+            // Forecast models use RUN + FORECAST dimensions
+            let reference_time = self.run.as_ref().and_then(|r| {
+                if r == "latest" {
+                    None  // Will use latest run
+                } else {
+                    parse_iso8601_timestamp(r)
+                }
+            });
+            
+            let forecast_hour = self.forecast.as_ref().and_then(|f| {
+                f.parse::<u32>().ok()
+            });
+            
+            (forecast_hour, None, reference_time)
+        }
+    }
+}
+
+/// Parse an ISO8601 timestamp string
+fn parse_iso8601_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    // Try various ISO8601 formats
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ") {
+        return Some(dt.and_utc());
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ") {
+        return Some(dt.and_utc());
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    None
+}
+
 async fn render_weather_data(
     state: &Arc<AppState>,
     layer: &str,
@@ -1230,8 +1327,7 @@ async fn render_weather_data(
     height: u32,
     bbox: Option<&str>,
     crs: Option<&str>,
-    time: Option<&str>,
-    elevation: Option<&str>,
+    dimensions: &DimensionParams,
 ) -> Result<Vec<u8>, String> {
     // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
     let parts: Vec<&str> = layer.split('_').collect();
@@ -1242,11 +1338,11 @@ async fn render_weather_data(
     let model = parts[0];
     let parameter = parts[1..].join("_");
     
-    // Parse TIME parameter (supports both forecast hour and ISO8601 observation time)
-    let (forecast_hour, observation_time) = parse_time_parameter(time);
+    // Parse dimensions based on layer type (using config-driven dimension registry)
+    let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
     
     // ELEVATION parameter is the level string (e.g., "500 mb", "2 m above ground")
-    let level = elevation.map(|s| s.to_string());
+    let level = dimensions.elevation.clone();
     
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
@@ -1319,9 +1415,8 @@ async fn render_weather_data(
     
     if style == "isolines" {
         // Isolines are only supported for GRIB2 data (GFS, HRRR temperature)
-        // Not supported for NetCDF data (GOES, MRMS) which are satellite/radar imagery
-        let is_netcdf_model = model == "goes16" || model == "goes18" || model == "goes" || model == "mrms";
-        if is_netcdf_model {
+        // Not supported for observation data (GOES, MRMS) which are satellite/radar imagery
+        if state.model_dimensions.is_observation(model) {
             return Err(format!(
                 "Isolines style is not supported for {} layers. Isolines are only available for temperature parameters (GFS, HRRR).",
                 model.to_uppercase()
@@ -1674,6 +1769,7 @@ fn build_wms_capabilities_xml(
     model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
     param_levels: &HashMap<String, Vec<String>>,
     model_bboxes: &HashMap<String, wms_common::BoundingBox>,
+    dimension_registry: &ModelDimensionRegistry,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
@@ -1703,15 +1799,12 @@ fn build_wms_capabilities_xml(
             let south = bbox.min_y;
             let north = bbox.max_y;
             
-            // Check if this is an observational model (MRMS, GOES, etc.)
-            // Observational data has forecast_hour=0 and uses TIME dimension with ISO8601 timestamps
-            // Forecast models use TIME dimension with forecast hour integers
-            let is_observational = model == "mrms" || model == "goes" || model == "goes16" || model == "goes18";
+            // Check if this is an observational model using the config-driven registry
+            // Observational data uses TIME dimension with ISO8601 timestamps
+            // Forecast models use RUN (model initialization time) + FORECAST (hours ahead) dimensions
+            let is_observational = dimension_registry.is_observation(model);
             
-            // Build TIME dimension - used for both observation and forecast modes
-            // The backend accepts TIME parameter which is parsed as either:
-            // - Integer (forecast hour) for forecast models
-            // - ISO8601 timestamp for observation models
+            // Build time-related dimensions based on data type
             let base_dimensions = if is_observational {
                 // For observational data: TIME dimension with available observation timestamps
                 // The runs list contains the observation times (stored as reference_time with forecast_hour=0)
@@ -1722,8 +1815,12 @@ fn build_wms_capabilities_xml(
                     time_default, time_values
                 )
             } else {
-                // For forecast models: TIME dimension with available forecast hours (as integers)
-                // This is simpler than RUN+FORECAST and matches what the backend actually accepts
+                // For forecast models: RUN dimension (model run time) + FORECAST dimension (hours ahead)
+                // RUN: ISO8601 timestamps of available model runs (defaults to latest)
+                let run_values = if runs.is_empty() { "latest".to_string() } else { runs.join(",") };
+                let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+                
+                // FORECAST: Available forecast hours (defaults to first/earliest)
                 let forecast_values = if forecasts.is_empty() { 
                     "0".to_string() 
                 } else { 
@@ -1733,8 +1830,10 @@ fn build_wms_capabilities_xml(
                         .join(",") 
                 };
                 let forecast_default = forecasts.first().unwrap_or(&0);
+                
                 format!(
-                    r#"<Dimension name="TIME" units="hours" default="{}">{}</Dimension>"#,
+                    r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
+                    run_default, run_values,
                     forecast_default, forecast_values
                 )
             };
@@ -1908,28 +2007,126 @@ fn build_wmts_capabilities_xml(
     models: &[String], 
     model_params: &HashMap<String, Vec<String>>,
     model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
+    param_levels: &HashMap<String, Vec<String>>,
+    dimension_registry: &ModelDimensionRegistry,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
+    let empty_levels = Vec::new();
     
     // Build layer definitions for each model/parameter combination
     let mut all_layers: Vec<String> = models
         .iter()
         .flat_map(|model| {
             let params = model_params.get(model).unwrap_or(&empty_params);
-            let (_runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+            let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
             
-            // Build dimension values for time (forecast hour)
-            let forecast_default = forecasts.first().unwrap_or(&0);
-            let forecast_values: Vec<i32> = if forecasts.is_empty() { 
-                vec![0] 
-            } else { 
-                forecasts.clone() 
+            // Check if this is an observational model using the config-driven registry
+            let is_observational = dimension_registry.is_observation(model);
+            
+            // Build time-related dimension XML based on data type
+            let time_dimensions_xml = if is_observational {
+                // For observational data: TIME dimension with ISO8601 timestamps
+                let time_values_xml: String = if runs.is_empty() {
+                    "        <Value>latest</Value>".to_string()
+                } else {
+                    runs.iter()
+                        .map(|v| format!("        <Value>{}</Value>", v))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let time_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+                
+                format!(
+                    r#"      <Dimension>
+        <ows:Identifier>time</ows:Identifier>
+        <ows:UOM>ISO8601</ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+                    time_default, time_values_xml
+                )
+            } else {
+                // For forecast models: RUN dimension + FORECAST dimension
+                let run_values_xml: String = if runs.is_empty() {
+                    "        <Value>latest</Value>".to_string()
+                } else {
+                    runs.iter()
+                        .map(|v| format!("        <Value>{}</Value>", v))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+                
+                let forecast_values_xml: String = if forecasts.is_empty() {
+                    "        <Value>0</Value>".to_string()
+                } else {
+                    forecasts.iter()
+                        .map(|v| format!("        <Value>{}</Value>", v))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let forecast_default = forecasts.first().unwrap_or(&0);
+                
+                format!(
+                    r#"      <Dimension>
+        <ows:Identifier>run</ows:Identifier>
+        <ows:UOM>ISO8601</ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>
+      <Dimension>
+        <ows:Identifier>forecast</ows:Identifier>
+        <ows:UOM>hours</ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+                    run_default, run_values_xml,
+                    forecast_default, forecast_values_xml
+                )
             };
             
+            let model_clone = model.clone();
+            let time_dimensions_xml_clone = time_dimensions_xml.clone();
+            let empty_levels_clone = empty_levels.clone();
             params.iter().map(move |param| {
-                let layer_id = format!("{}_{}", model, param);
-                let layer_title = format!("{} - {}", get_model_display_name(model), get_parameter_name(param));
+                let layer_id = format!("{}_{}", model_clone, param);
+                let layer_title = format!("{} - {}", get_model_display_name(&model_clone), get_parameter_name(param));
+                
+                // Get levels for this parameter and build ELEVATION dimension if available
+                let param_key = format!("{}_{}", model_clone, param);
+                let levels = param_levels.get(&param_key).unwrap_or(&empty_levels_clone);
+                
+                let elevation_dim = if levels.len() > 1 {
+                    // Sort levels for display (pressure levels should be sorted numerically)
+                    let mut sorted_levels = levels.clone();
+                    sorted_levels.sort_by(|a, b| {
+                        let a_val = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                        let b_val = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                        b_val.cmp(&a_val)  // Descending (1000 mb first)
+                    });
+                    let level_values_xml: String = sorted_levels.iter()
+                        .map(|v| format!("        <Value>{}</Value>", v))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let default_level = sorted_levels.first().map(|s| s.as_str()).unwrap_or("");
+                    
+                    format!(
+                        r#"
+      <Dimension>
+        <ows:Identifier>elevation</ows:Identifier>
+        <ows:UOM></ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+                        default_level, level_values_xml
+                    )
+                } else {
+                    String::new()
+                };
+                
+                // Combine time dimensions with elevation dimension
+                let all_dimensions = format!("{}{}", time_dimensions_xml_clone, elevation_dim);
                 
                 // Determine available styles based on parameter type
                 let styles = if param.contains("TMP") || param.contains("TEMP") {
@@ -1999,15 +2196,6 @@ fn build_wmts_capabilities_xml(
       </Style>"#
                 };
                 
-                // Build dimension elements for time (forecast hour)
-                // Using "time" as dimension identifier to match query parameter
-                // Convert to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
-                let forecast_values_xml: String = forecast_values.iter()
-                    .map(|v| format!("        <Value>PT{}H</Value>", v))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let forecast_default_iso = format!("PT{}H", forecast_default);
-                
                 format!(
                     r#"    <Layer>
       <ows:Title>{}</ows:Title>
@@ -2021,16 +2209,11 @@ fn build_wmts_capabilities_xml(
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
-      <Dimension>
-        <ows:Identifier>time</ows:Identifier>
-        <ows:UOM>ISO8601</ows:UOM>
-        <Default>{}</Default>
 {}
-      </Dimension>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                     layer_title, layer_id, styles, 
-                    forecast_default_iso, forecast_values_xml,
+                    all_dimensions,
                     layer_id
                 )
             })
@@ -2040,7 +2223,7 @@ fn build_wmts_capabilities_xml(
     // Add composite WIND_BARBS layers for each model that has both UGRD and VGRD
     for model in models {
         let params = model_params.get(model).unwrap_or(&empty_params);
-        let (_runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
+        let (runs, forecasts) = model_dimensions.get(model).unwrap_or(&empty_dims);
         let has_ugrd = params.iter().any(|p| p == "UGRD");
         let has_vgrd = params.iter().any(|p| p == "VGRD");
         
@@ -2048,17 +2231,57 @@ fn build_wmts_capabilities_xml(
             let layer_id = format!("{}_WIND_BARBS", model);
             let layer_title = format!("{} - Wind Barbs", get_model_display_name(model));
             
-            let forecast_default = forecasts.first().unwrap_or(&0);
-            // Convert to ISO8601 duration format (PT0H, PT3H, PT6H, etc.)
-            let forecast_values_xml: String = if forecasts.is_empty() {
-                "        <Value>PT0H</Value>".to_string()
+            // Wind barbs are only for forecast models (they need UGRD/VGRD from GFS/HRRR)
+            // Build RUN + FORECAST dimensions
+            let run_values_xml: String = if runs.is_empty() {
+                "        <Value>latest</Value>".to_string()
             } else {
-                forecasts.iter()
-                    .map(|v| format!("        <Value>PT{}H</Value>", v))
+                runs.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
                     .collect::<Vec<_>>()
                     .join("\n")
             };
-            let forecast_default_iso = format!("PT{}H", forecast_default);
+            let run_default = runs.first().map(|s| s.as_str()).unwrap_or("latest");
+            
+            let forecast_values_xml: String = if forecasts.is_empty() {
+                "        <Value>0</Value>".to_string()
+            } else {
+                forecasts.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let forecast_default = forecasts.first().unwrap_or(&0);
+            
+            // Get ELEVATION dimension from UGRD (same levels as VGRD)
+            let ugrd_key = format!("{}_UGRD", model);
+            let wind_levels = param_levels.get(&ugrd_key).unwrap_or(&empty_levels);
+            let elevation_dim = if wind_levels.len() > 1 {
+                let mut sorted_levels = wind_levels.clone();
+                sorted_levels.sort_by(|a, b| {
+                    let a_val = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                    let b_val = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+                    b_val.cmp(&a_val)
+                });
+                let level_values_xml: String = sorted_levels.iter()
+                    .map(|v| format!("        <Value>{}</Value>", v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let default_level = sorted_levels.first().map(|s| s.as_str()).unwrap_or("");
+                
+                format!(
+                    r#"
+      <Dimension>
+        <ows:Identifier>elevation</ows:Identifier>
+        <ows:UOM></ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+                    default_level, level_values_xml
+                )
+            } else {
+                String::new()
+            };
             
             let wind_barbs_layer = format!(
                 r#"    <Layer>
@@ -2077,15 +2300,23 @@ fn build_wmts_capabilities_xml(
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <Dimension>
-        <ows:Identifier>time</ows:Identifier>
+        <ows:Identifier>run</ows:Identifier>
         <ows:UOM>ISO8601</ows:UOM>
         <Default>{}</Default>
 {}
       </Dimension>
+      <Dimension>
+        <ows:Identifier>forecast</ows:Identifier>
+        <ows:UOM>hours</ows:UOM>
+        <Default>{}</Default>
+{}
+      </Dimension>{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
                 layer_title, layer_id, 
-                forecast_default_iso, forecast_values_xml,
+                run_default, run_values_xml,
+                forecast_default, forecast_values_xml,
+                elevation_dim,
                 layer_id
             );
             
