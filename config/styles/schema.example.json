@@ -31,7 +31,7 @@
       "transform": {
         "_comment": "Optional transformation applied to input data before color mapping",
         "type": "linear",
-        "_type_options": ["none", "linear", "pa_to_hpa", "mps_to_knots", "k_to_c"],
+        "_type_options": ["none", "linear", "pa_to_hpa", "mps_to_knots", "k_to_c", "m_to_km"],
         "scale": 1.0,
         "offset": -273.15
       },
@@ -209,7 +209,8 @@
       "linear": "Apply scale and offset: output = input * scale + offset",
       "pa_to_hpa": "Convert Pascals to hectoPascals (divide by 100)",
       "mps_to_knots": "Convert m/s to knots (multiply by 1.94384)",
-      "k_to_c": "Convert Kelvin to Celsius (subtract 273.15)"
+      "k_to_c": "Convert Kelvin to Celsius (subtract 273.15)",
+      "m_to_km": "Convert meters to kilometers (divide by 1000)"
     }
   }
 }

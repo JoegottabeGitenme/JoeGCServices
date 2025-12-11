@@ -1809,7 +1809,6 @@ dependencies = [
  "bytes",
  "chrono",
  "grib",
- "renderer",
  "thiserror 1.0.69",
 ]
 
