@@ -99,10 +99,17 @@ pub fn parse_indicator(data: &[u8]) -> Result<Indicator, Grib2Error> {
         ));
     }
 
+    // Section 0 (Indicator) layout per GRIB2 spec:
+    // Octets 1-4: "GRIB" (indices 0-3)
+    // Octets 5-6: Reserved (indices 4-5)  
+    // Octet 7: Discipline (index 6)
+    // Octet 8: GRIB Edition Number (index 7)
+    // Octets 9-16: Total length of GRIB message (indices 8-15, 8-byte big-endian)
+    let discipline = data[6];
     let edition = data[7];
-    let discipline = data[8];
-
-    // Message length is 6 bytes at indices 10-15 (fits in u32 using last 4 bytes)
+    
+    // Message length is 8 bytes at indices 8-15
+    // Most GRIB2 files fit in u32, so we read the lower 4 bytes
     let message_length = u32::from_be_bytes([data[12], data[13], data[14], data[15]]);
 
     if edition != 2 {
@@ -115,8 +122,8 @@ pub fn parse_indicator(data: &[u8]) -> Result<Indicator, Grib2Error> {
     Ok(Indicator {
         magic: [data[0], data[1], data[2], data[3]],
         reserved: u16::from_be_bytes([data[4], data[5]]),
-        edition,
         discipline,
+        edition,
         message_length,
     })
 }
@@ -369,45 +376,48 @@ pub fn parse_data_representation(data: &[u8]) -> Result<DataRepresentation, Grib
         });
     }
 
-    // Section 5 structure:
-    // [0-3]: Section length
-    // [4]: Section number (5)
-    // [5-6]: Data representation template number (THIS is the packing method!)
-    // [7-10]: Number of data points
-    // [11+]: Template-specific data
+    // Section 5 structure (GRIB2 spec):
+    // Octets 1-4 [0-3]: Section length
+    // Octet 5 [4]: Section number (5)
+    // Octets 6-9 [5-8]: Number of data points (N)
+    // Octets 10-11 [9-10]: Data representation template number
+    // Octets 12+ [11+]: Template-specific data
+    //
+    // For Template 5.0 (simple packing):
+    // Octets 12-15 [11-14]: Reference value (R) - IEEE 32-bit float
+    // Octets 16-17 [15-16]: Binary scale factor (E) - signed 16-bit
+    // Octets 18-19 [17-18]: Decimal scale factor (D) - signed 16-bit
+    // Octet 20 [19]: Number of bits per packed value
+    // Octet 21 [20]: Type of original field values
 
-    // Read the template number - this tells us the packing method
-    let template_number = u16::from_be_bytes([section_data[5], section_data[6]]);
-    let packing_method = template_number as u8; // Store template as packing method
+    let num_data_points = u32::from_be_bytes([
+        section_data[5], section_data[6], section_data[7], section_data[8]
+    ]);
+    
+    let template_number = u16::from_be_bytes([section_data[9], section_data[10]]);
+    let packing_method = template_number as u8;
 
-    // Read common fields (present in all templates after the template number)
-    let rep_data = &section_data[7..];
-    let num_data_points = u32::from_be_bytes([rep_data[0], rep_data[1], rep_data[2], rep_data[3]]);
+    // Template-specific data starts at offset 11
+    let template_data = &section_data[11..];
     
-    // For Template 0 (simple packing), the structure after num_data_points is:
-    // [4]: Original field type
-    // [5-8]: Reference value
-    // [9-10]: Binary scale factor
-    // [11-12]: Decimal scale factor
-    // [13]: Bits per value
-    
-    let original_data_type = rep_data.get(4).copied().unwrap_or(0);
-    let reference_value = if rep_data.len() >= 9 {
-        f32::from_be_bytes([rep_data[5], rep_data[6], rep_data[7], rep_data[8]])
+    // Parse Template 5.0 fields
+    let reference_value = if template_data.len() >= 4 {
+        f32::from_be_bytes([template_data[0], template_data[1], template_data[2], template_data[3]])
     } else {
         0.0
     };
-    let binary_scale_factor = if rep_data.len() >= 11 {
-        i16::from_be_bytes([rep_data[9], rep_data[10]])
+    let binary_scale_factor = if template_data.len() >= 6 {
+        i16::from_be_bytes([template_data[4], template_data[5]])
     } else {
         0
     };
-    let decimal_scale_factor = if rep_data.len() >= 13 {
-        i16::from_be_bytes([rep_data[11], rep_data[12]])
+    let decimal_scale_factor = if template_data.len() >= 8 {
+        i16::from_be_bytes([template_data[6], template_data[7]])
     } else {
         0
     };
-    let bits_per_value = rep_data.get(13).copied().unwrap_or(0);
+    let bits_per_value = template_data.get(8).copied().unwrap_or(0);
+    let original_data_type = template_data.get(9).copied().unwrap_or(0);
 
     Ok(DataRepresentation {
         num_data_points,

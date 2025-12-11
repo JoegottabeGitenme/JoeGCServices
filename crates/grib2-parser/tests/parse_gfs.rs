@@ -1,18 +1,15 @@
 /// Integration test for parsing real GFS GRIB2 file
+mod common;
+
+use bytes::Bytes;
 use grib2_parser::Grib2Reader;
 use std::fs;
-use bytes::Bytes;
 
 #[test]
 fn test_parse_gfs_file() {
-    let path = "../../testdata/gfs_sample.grib2";
-    
-    if !std::path::Path::new(path).exists() {
-        println!("Skipping test: GFS sample file not found at {}", path);
-        return;
-    }
+    let path = require_test_file!("gfs_sample.grib2");
 
-    let data = fs::read(path).expect("Failed to read test file");
+    let data = fs::read(&path).expect("Failed to read test file");
     let data = Bytes::from(data);
 
     let mut reader = Grib2Reader::new(data);
@@ -27,7 +24,7 @@ fn test_parse_gfs_file() {
         match reader.next_message() {
             Ok(Some(msg)) => {
                 message_count += 1;
-                
+
                 if message_count <= 5 {
                     println!(
                         "Message {}: {} at {} (Level: {})",
@@ -72,7 +69,7 @@ fn test_parse_gfs_file() {
         println!("  Level: {}", msg.level());
         println!("  Valid time: {}", msg.valid_time());
         println!("  Reference time: {}", msg.identification.reference_time);
-        
+
         assert!(!msg.parameter().is_empty());
         assert!(!msg.level().is_empty());
         // Grid parsing is WIP, so just check that we have basic metadata

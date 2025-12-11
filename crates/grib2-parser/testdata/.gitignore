@@ -1,0 +1,9 @@
+# Ignore downloaded test data files
+# These are fetched on-demand by tests/setup_test_data.sh
+*.grib2
+*.grib2.gz
+*.nc
+*.nc.gz
+
+# Keep the .gitignore itself
+!.gitignore
