@@ -1934,6 +1934,7 @@ dependencies = [
  "tracing",
  "wms-common",
  "zarrs",
+ "zarrs_filesystem",
  "zarrs_storage",
 ]
 

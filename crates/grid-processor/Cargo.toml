@@ -47,3 +47,4 @@ storage = { path = "../storage" }
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile = "3"
+zarrs_filesystem = "0.2"
