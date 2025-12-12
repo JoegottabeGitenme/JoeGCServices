@@ -1057,6 +1057,7 @@ async fn ingest_file_tracked(
                 bbox,
                 storage_path,
                 file_size: shredded_size,
+                zarr_metadata: None,
             };
             
             match state.catalog.register_dataset(&entry).await {
@@ -1232,6 +1233,7 @@ async fn ingest_netcdf_file(
         bbox,
         storage_path: storage_path.clone(),
         file_size,
+        zarr_metadata: None,
     };
     
     // Register in catalog

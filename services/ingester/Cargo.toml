@@ -11,6 +11,7 @@ path = "src/main.rs"
 wms-common = { path = "../../crates/wms-common" }
 storage = { path = "../../crates/storage" }
 grib2-parser = { path = "../../crates/grib2-parser" }
+grid-processor = { path = "../../crates/grid-processor" }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }
@@ -30,3 +31,8 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+# Zarr writing support
+zarrs_filesystem = "0.2"
+tempfile = "3"
+walkdir = "2"

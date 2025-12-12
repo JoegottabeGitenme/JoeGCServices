@@ -670,6 +670,7 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
                     level: level_str,
                     parameter: param.name.clone(),
                 },
+                units: Some(param.units.clone()),
             });
         }
     }

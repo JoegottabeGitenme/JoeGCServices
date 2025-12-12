@@ -8,8 +8,10 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument, warn};
 
+use grid_processor::{GridProcessorConfig, ZarrWriter};
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 use wms_common::BoundingBox;
+use zarrs_filesystem::FilesystemStore;
 
 use crate::config::{IngesterConfig, ModelConfig, ParameterConfig};
 use crate::sources::{
@@ -368,6 +370,7 @@ impl IngestionPipeline {
             bbox: get_model_bbox(model_id),
             storage_path: storage_path.to_string(),
             file_size,
+            zarr_metadata: None,
         };
 
         self.catalog.register_dataset(&entry).await?;
@@ -376,7 +379,7 @@ impl IngestionPipeline {
         Ok(())
     }
 
-    /// Extract a parameter from GRIB2 data.
+    /// Extract a parameter from GRIB2 data and write as Zarr.
     #[instrument(skip(self, data), fields(parameter = %param_config.name))]
     async fn extract_parameter(
         &self,
@@ -386,8 +389,8 @@ impl IngestionPipeline {
         fhr: u32,
         data: &Bytes,
         param_config: &ParameterConfig,
-        storage_path: &str,
-        file_size: u64,
+        _storage_path: &str,
+        _file_size: u64,
     ) -> Result<()> {
         // Parse reference time
         let reference_time = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")?
@@ -397,49 +400,146 @@ impl IngestionPipeline {
 
         // Parse GRIB2 file and find matching parameter
         let mut reader = grib2_parser::Grib2Reader::new(data.clone());
-        let mut found_matching_message = false;
 
         while let Some(message) = reader.next_message().ok().flatten() {
             // Check if this message matches the parameter we're looking for
             if message.product_definition.parameter_short_name == param_config.grib_filter.parameter
                 && message.product_definition.level_description.contains(&param_config.grib_filter.level)
             {
-                found_matching_message = true;
-                
                 debug!(
                     "Found matching parameter message: {} at level {}",
                     param_config.grib_filter.parameter,
                     param_config.grib_filter.level
                 );
 
-                // For now, just register the raw file in the catalog
-                // Full data extraction and unpacking can be added later
+                // Extract grid dimensions
+                let width = message.grid_definition.num_points_longitude as usize;
+                let height = message.grid_definition.num_points_latitude as usize;
+                
+                // Unpack the grid data
+                let grid_data = match message.unpack_data() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        warn!(error = %e, "Failed to unpack GRIB2 data, skipping");
+                        continue;
+                    }
+                };
+                
+                if grid_data.len() != width * height {
+                    warn!(
+                        expected = width * height,
+                        actual = grid_data.len(),
+                        "Grid data size mismatch, skipping"
+                    );
+                    continue;
+                }
+                
+                // Calculate bounding box from grid definition
+                let bbox = get_bbox_from_grid(&message.grid_definition);
+                
+                // Create Zarr storage path: grids/{model}/{date}/{param}_f{fhr:03}.zarr
+                let zarr_storage_path = format!(
+                    "grids/{}/{}/{:02}/{}_f{:03}.zarr",
+                    model_id, date, cycle, param_config.name, fhr
+                );
+                
+                // Create a temporary directory for Zarr output
+                let temp_dir = tempfile::tempdir()?;
+                let zarr_path = temp_dir.path().join("grid.zarr");
+                std::fs::create_dir_all(&zarr_path)?;
+                
+                // Create Zarr writer with default config
+                let config = GridProcessorConfig::default();
+                let writer = ZarrWriter::new(config);
+                
+                // Create filesystem store for the temp directory
+                let store = FilesystemStore::new(&zarr_path)
+                    .map_err(|e| anyhow!("Failed to create filesystem store: {}", e))?;
+                
+                // Get units from parameter config or use default
+                let units = param_config.units.as_deref().unwrap_or("unknown");
+                
+                // Convert grid-processor BoundingBox to match the writer's expected type
+                let gp_bbox = grid_processor::BoundingBox::new(
+                    bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y
+                );
+                
+                // Write Zarr data using sharded format (single file)
+                let write_result = writer.write_sharded(
+                    store,
+                    "/",
+                    &grid_data,
+                    width,
+                    height,
+                    &gp_bbox,
+                    model_id,
+                    &param_config.name,
+                    &param_config.grib_filter.level,
+                    units,
+                    reference_time,
+                    fhr,
+                ).map_err(|e| anyhow!("Failed to write Zarr: {}", e))?;
+                
+                info!(
+                    path = %zarr_storage_path,
+                    width = width,
+                    height = height,
+                    bytes = write_result.bytes_written,
+                    "Wrote Zarr grid"
+                );
+                
+                // Upload Zarr files to object storage
+                let zarr_file_size = self.upload_zarr_directory(&zarr_path, &zarr_storage_path).await?;
+                
+                // Create catalog entry with Zarr metadata
+                let entry = CatalogEntry {
+                    model: model_id.to_string(),
+                    parameter: param_config.name.clone(),
+                    level: param_config.grib_filter.level.clone(),
+                    reference_time,
+                    forecast_hour: fhr,
+                    bbox,
+                    storage_path: zarr_storage_path.clone(),
+                    file_size: zarr_file_size,
+                    zarr_metadata: Some(write_result.metadata.to_json()),
+                };
+
+                self.catalog.register_dataset(&entry).await?;
+                info!(path = %zarr_storage_path, "Registered Zarr dataset in catalog");
+                
+                // Only process the first matching message
+                return Ok(());
             }
         }
 
-        if found_matching_message {
-            // Create catalog entry for this parameter
-            let entry = CatalogEntry {
-                model: model_id.to_string(),
-                parameter: param_config.name.clone(),
-                level: param_config.grib_filter.level.clone(),
-                reference_time,
-                forecast_hour: fhr,
-                bbox: get_model_bbox(model_id),
-                storage_path: storage_path.to_string(),
-                file_size,
-            };
-
-            self.catalog.register_dataset(&entry).await?;
-            info!("Registered parameter in catalog");
-        } else {
-            debug!(
-                "Parameter {} not found in GRIB2 file at level {}",
-                param_config.grib_filter.parameter, param_config.grib_filter.level
-            );
-        }
+        debug!(
+            "Parameter {} not found in GRIB2 file at level {}",
+            param_config.grib_filter.parameter, param_config.grib_filter.level
+        );
 
         Ok(())
+    }
+    
+    /// Upload a Zarr directory to object storage.
+    async fn upload_zarr_directory(&self, local_path: &std::path::Path, storage_prefix: &str) -> Result<u64> {
+        let mut total_size = 0u64;
+        
+        for entry in walkdir::WalkDir::new(local_path) {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                let relative_path = entry.path().strip_prefix(local_path)?;
+                let storage_path = format!("{}/{}", storage_prefix, relative_path.display());
+                
+                let file_data = tokio::fs::read(entry.path()).await?;
+                let file_size = file_data.len() as u64;
+                total_size += file_size;
+                
+                self.storage.put(&storage_path, Bytes::from(file_data)).await?;
+                debug!(path = %storage_path, size = file_size, "Uploaded Zarr file");
+            }
+        }
+        
+        Ok(total_size)
     }
 
     /// Clean up old data.
@@ -504,6 +604,23 @@ fn get_model_bbox(model_id: &str) -> BoundingBox {
         "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
         _ => BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
     }
+}
+
+/// Extract bounding box from GRIB2 grid definition.
+fn get_bbox_from_grid(grid: &grib2_parser::sections::GridDefinition) -> BoundingBox {
+    // Convert millidegrees to degrees
+    let first_lat = grid.first_latitude_millidegrees as f64 / 1_000_000.0;
+    let first_lon = grid.first_longitude_millidegrees as f64 / 1_000_000.0;
+    let last_lat = grid.last_latitude_millidegrees as f64 / 1_000_000.0;
+    let last_lon = grid.last_longitude_millidegrees as f64 / 1_000_000.0;
+    
+    // Determine min/max (grid might scan in different directions)
+    let min_lat = first_lat.min(last_lat);
+    let max_lat = first_lat.max(last_lat);
+    let min_lon = first_lon.min(last_lon);
+    let max_lon = first_lon.max(last_lon);
+    
+    BoundingBox::new(min_lon, min_lat, max_lon, max_lat)
 }
 
 // Re-export chrono::TimeZone for use in from_utc_datetime

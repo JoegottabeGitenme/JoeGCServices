@@ -65,3 +65,4 @@ pub use projection::{
 };
 pub use projection::interpolation::resample_grid;
 pub use types::{BoundingBox, CacheStats, GridMetadata, GridRegion, InterpolationMethod};
+pub use writer::{ZarrMetadata, ZarrWriteResult, ZarrWriter};

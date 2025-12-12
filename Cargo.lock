@@ -2511,17 +2511,21 @@ dependencies = [
  "clap",
  "futures",
  "grib2-parser",
+ "grid-processor",
  "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
  "shellexpand",
  "storage",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
  "wms-common",
+ "zarrs_filesystem",
 ]
 
 [[package]]

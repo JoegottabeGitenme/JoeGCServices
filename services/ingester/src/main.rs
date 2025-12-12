@@ -517,6 +517,7 @@ async fn test_file_ingestion(
                 bbox,
                 storage_path,
                 file_size: shredded_size,
+                zarr_metadata: None,
             };
 
                 match catalog.register_dataset(&entry).await {
@@ -672,6 +673,7 @@ async fn test_goes_file_ingestion(
         bbox,
         storage_path: storage_path.clone(),
         file_size,
+        zarr_metadata: None,
     };
 
     match catalog.register_dataset(&entry).await {

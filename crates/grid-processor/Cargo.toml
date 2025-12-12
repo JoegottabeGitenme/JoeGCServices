@@ -10,6 +10,7 @@ description = "Grid processing abstraction layer with Zarr V3 support for effici
 # Zarr support
 zarrs = "0.18"
 zarrs_storage = "0.3"
+zarrs_filesystem = "0.2"
 
 # Async runtime
 tokio.workspace = true

@@ -80,6 +80,7 @@ impl IngesterConfig {
                             level: "2 m above ground".to_string(),
                             parameter: "TMP".to_string(),
                         },
+                        units: Some("K".to_string()),
                     },
                     ParameterConfig {
                         name: "wind_u_10m".to_string(),
@@ -87,6 +88,7 @@ impl IngesterConfig {
                             level: "10 m above ground".to_string(),
                             parameter: "UGRD".to_string(),
                         },
+                        units: Some("m/s".to_string()),
                     },
                     ParameterConfig {
                         name: "wind_v_10m".to_string(),
@@ -94,6 +96,7 @@ impl IngesterConfig {
                             level: "10 m above ground".to_string(),
                             parameter: "VGRD".to_string(),
                         },
+                        units: Some("m/s".to_string()),
                     },
                     ParameterConfig {
                         name: "pressure_msl".to_string(),
@@ -101,6 +104,7 @@ impl IngesterConfig {
                             level: "mean sea level".to_string(),
                             parameter: "PRMSL".to_string(),
                         },
+                        units: Some("Pa".to_string()),
                     },
                 ],
                 cycles: vec![0, 6, 12, 18],
@@ -125,6 +129,7 @@ impl IngesterConfig {
                             level: "2 m above ground".to_string(),
                             parameter: "TMP".to_string(),
                         },
+                        units: Some("K".to_string()),
                     },
                     ParameterConfig {
                         name: "reflectivity".to_string(),
@@ -132,6 +137,7 @@ impl IngesterConfig {
                             level: "1000 m above ground".to_string(),
                             parameter: "REFC".to_string(),
                         },
+                        units: Some("dBZ".to_string()),
                     },
                 ],
                 cycles: (0..24).collect(),
@@ -158,6 +164,7 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C02".to_string(), // 0.64µm red visible
                         },
+                        units: None, // Reflectance factor (dimensionless)
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -165,6 +172,7 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C13".to_string(), // 10.3µm clean IR
                         },
+                        units: Some("K".to_string()),
                     },
                 ],
                 cycles: (0..24).collect(), // Hourly
@@ -191,6 +199,7 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C02".to_string(),
                         },
+                        units: None,
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -198,6 +207,7 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C13".to_string(),
                         },
+                        units: Some("K".to_string()),
                     },
                 ],
                 cycles: (0..24).collect(),
@@ -282,6 +292,10 @@ pub struct ParameterConfig {
 
     /// GRIB filter criteria
     pub grib_filter: GribFilter,
+    
+    /// Physical units (e.g., "K", "m/s", "Pa")
+    #[serde(default)]
+    pub units: Option<String>,
 }
 
 /// GRIB2 message filter criteria.
