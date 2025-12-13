@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use async_trait::async_trait;
+use tracing::{debug, error, info, instrument, warn};
 use zarrs::array::Array;
 use zarrs::array_subset::ArraySubset;
 use zarrs::storage::ReadableStorageTraits;
@@ -82,10 +83,33 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         chunk_cache: Arc<RwLock<ChunkCache>>,
         config: GridProcessorConfig,
     ) -> Result<Self> {
+        debug!(
+            path = %path,
+            model = %metadata.model,
+            parameter = %metadata.parameter,
+            shape = ?metadata.shape,
+            chunk_shape = ?metadata.chunk_shape,
+            "Opening Zarr array with pre-populated metadata"
+        );
+        
         let array = Array::open(Arc::new(storage), path)
-            .map_err(|e| GridProcessorError::open_failed(e.to_string()))?;
+            .map_err(|e| {
+                error!(
+                    path = %path,
+                    error = %e,
+                    "Failed to open Zarr array"
+                );
+                GridProcessorError::open_failed(e.to_string())
+            })?;
 
         let path_hash = hash_path(path);
+
+        info!(
+            path = %path,
+            model = %metadata.model,
+            parameter = %metadata.parameter,
+            "Successfully opened Zarr array"
+        );
 
         Ok(Self {
             array,
@@ -265,17 +289,55 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let actual_w = end_col - start_col;
         let actual_h = end_row - start_row;
 
+        debug!(
+            path = %self.path,
+            chunk_x = chunk_x,
+            chunk_y = chunk_y,
+            start_row = start_row,
+            start_col = start_col,
+            actual_w = actual_w,
+            actual_h = actual_h,
+            "Reading Zarr chunk"
+        );
+
         // Zarr uses [row, col] indexing
         let subset = ArraySubset::new_with_start_shape(
             vec![start_row as u64, start_col as u64],
             vec![actual_h as u64, actual_w as u64],
         )
-        .map_err(|e| GridProcessorError::read_failed(e.to_string()))?;
+        .map_err(|e| {
+            error!(
+                path = %self.path,
+                chunk_x = chunk_x,
+                chunk_y = chunk_y,
+                error = %e,
+                "Failed to create array subset"
+            );
+            GridProcessorError::read_failed(e.to_string())
+        })?;
 
         let data: Vec<f32> = self
             .array
             .retrieve_array_subset_elements(&subset)
-            .map_err(|e| GridProcessorError::read_failed(e.to_string()))?;
+            .map_err(|e| {
+                error!(
+                    path = %self.path,
+                    chunk_x = chunk_x,
+                    chunk_y = chunk_y,
+                    subset = ?subset,
+                    error = %e,
+                    "Failed to retrieve chunk data from Zarr"
+                );
+                GridProcessorError::read_failed(e.to_string())
+            })?;
+
+        debug!(
+            path = %self.path,
+            chunk_x = chunk_x,
+            chunk_y = chunk_y,
+            data_len = data.len(),
+            "Successfully read Zarr chunk"
+        );
 
         Ok(data)
     }
@@ -288,9 +350,22 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         {
             let mut cache = self.chunk_cache.write().await;
             if let Some(data) = cache.get(&cache_key) {
+                debug!(
+                    path = %self.path,
+                    chunk_x = chunk_x,
+                    chunk_y = chunk_y,
+                    "Chunk cache HIT"
+                );
                 return Ok(data.clone());
             }
         }
+
+        debug!(
+            path = %self.path,
+            chunk_x = chunk_x,
+            chunk_y = chunk_y,
+            "Chunk cache MISS - fetching from storage"
+        );
 
         // Cache miss - read from Zarr (blocking in spawn_blocking)
         let data = self.read_chunk_sync(chunk_x, chunk_y)?;

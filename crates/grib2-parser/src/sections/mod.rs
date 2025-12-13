@@ -14,7 +14,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 /// NOT two's complement. The MSB (most significant bit) indicates the sign:
 /// - MSB = 0: positive value
 /// - MSB = 1: negative value (magnitude is the value with MSB cleared)
-fn decode_grib2_signed(bytes: &[u8]) -> i32 {
+pub fn decode_grib2_signed(bytes: &[u8]) -> i32 {
     if bytes.len() != 4 {
         return 0;
     }

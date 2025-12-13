@@ -8,7 +8,7 @@ use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{info, debug, warn};
+use tracing::{info, debug, warn, error, instrument};
 use projection::{LambertConformal, Geostationary};
 use crate::metrics::{MetricsCollector, DataSourceType};
 use crate::state::{GridProcessorFactory, ProjectionLuts};
@@ -359,6 +359,7 @@ pub async fn render_weather_data_with_lut(
                     use_mercator,
                     model,
                     goes_projection.as_ref(),
+                    grid_result.grid_uses_360,
                 )
             }
         } else {
@@ -731,12 +732,15 @@ fn resample_from_geographic(
     output_height: usize,
     output_bbox: [f32; 4],
     data_bounds: [f32; 4],
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
     let [data_min_lon, data_min_lat, data_max_lon, data_max_lat] = data_bounds;
     
-    // Check if data uses 0-360 longitude convention (like GFS)
-    let data_uses_360 = data_min_lon >= 0.0 && data_max_lon > 180.0;
+    // Use the explicit grid_uses_360 flag rather than inferring from data_bounds.
+    // This is important because partial reads may return data with bbox that doesn't
+    // span > 180, but the underlying grid still uses 0-360 convention.
+    let data_uses_360 = grid_uses_360;
     
     // Data grid resolution
     let data_lon_range = data_max_lon - data_min_lon;
@@ -754,27 +758,64 @@ fn resample_from_geographic(
             let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
             let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
             
+            // Check if this is a global grid (covers nearly 360 degrees)
+            let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+            
             // Normalize longitude for data grids that use 0-360 convention
+            // For tiles that span negative longitudes, we need to add 360 to map them
+            // to the 0-360 grid.
             let norm_lon = if data_uses_360 && lon < 0.0 {
+                lon + 360.0
+            } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
+                // Special case: data is from the "wrapped" region (e.g., 343-360)
+                // and we're at lon near 0, which should map to near 360
                 lon + 360.0
             } else {
                 lon
             };
             
-            // Check if this pixel is within data bounds
-            if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
-                // Outside data coverage - leave as NaN for transparent rendering
-                continue;
+            // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
+            // by treating longitudes in this gap as valid and wrapping interpolation
+            let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+            
+            // Check if this pixel is within data bounds (with special handling for wrap gap)
+            if !in_wrap_gap {
+                if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
+                    // Outside data coverage - leave as NaN for transparent rendering
+                    continue;
+                }
+            } else {
+                // In wrap gap - only check latitude bounds
+                if lat < data_min_lat || lat > data_max_lat {
+                    continue;
+                }
             }
             
             // Convert to data grid coordinates (continuous, not indices)
-            let grid_x = (norm_lon - data_min_lon) / data_lon_range * data_width as f32;
+            // For the wrap gap, calculate position relative to the last grid cell
+            let grid_x = if in_wrap_gap {
+                // In the gap between last grid point and 360°
+                // Map to position past the last column, interpolation will wrap to column 0
+                let gap_start = data_max_lon;
+                let gap_size = 360.0 - data_max_lon + data_min_lon; // Gap wraps around
+                let pos_in_gap = norm_lon - gap_start;
+                (data_width as f32 - 1.0) + (pos_in_gap / gap_size) as f32
+            } else {
+                (norm_lon - data_min_lon) / data_lon_range * data_width as f32
+            };
             let grid_y = (data_max_lat - lat) / data_lat_range * data_height as f32;
             
             // Bilinear interpolation from data grid
             let x1 = grid_x.floor() as usize;
             let y1 = grid_y.floor() as usize;
-            let x2 = (x1 + 1).min(data_width - 1);
+            
+            // For global grids (0-360), wrap x2 around instead of clamping
+            // This ensures smooth interpolation across the prime meridian
+            let x2 = if is_global_grid && x1 + 1 >= data_width {
+                0 // Wrap to column 0
+            } else {
+                (x1 + 1).min(data_width - 1)
+            };
             let y2 = (y1 + 1).min(data_height - 1);
             
             // Bounds check
@@ -823,12 +864,15 @@ fn resample_for_mercator(
     output_height: usize,
     output_bbox: [f32; 4],  // [min_lon, min_lat, max_lon, max_lat] in WGS84
     data_bounds: [f32; 4],
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
     let [data_min_lon, data_min_lat, data_max_lon, data_max_lat] = data_bounds;
     
-    // Check if data uses 0-360 longitude convention (like GFS)
-    let data_uses_360 = data_min_lon >= 0.0 && data_max_lon > 180.0;
+    // Use the explicit grid_uses_360 flag rather than inferring from data_bounds.
+    // This is important because partial reads may return data with bbox that doesn't
+    // span > 180, but the underlying grid still uses 0-360 convention.
+    let data_uses_360 = grid_uses_360;
     
     // Convert lat bounds to Mercator Y coordinates
     let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
@@ -854,27 +898,64 @@ fn resample_for_mercator(
             let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
             let lat = mercator_y_to_lat(merc_y) as f32;
             
+            // Check if this is a global grid (covers nearly 360 degrees)
+            let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+            
             // Normalize longitude for data grids that use 0-360 convention
+            // For tiles that span negative longitudes, we need to add 360 to map them
+            // to the 0-360 grid.
             let norm_lon = if data_uses_360 && lon < 0.0 {
+                lon + 360.0
+            } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
+                // Special case: data is from the "wrapped" region (e.g., 343-360)
+                // and we're at lon near 0, which should map to near 360
                 lon + 360.0
             } else {
                 lon
             };
             
-            // Check if this pixel is within data bounds
-            if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
-                // Outside data coverage - leave as NaN for transparent rendering
-                continue;
+            // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
+            // by treating longitudes in this gap as valid and wrapping interpolation
+            let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+            
+            // Check if this pixel is within data bounds (with special handling for wrap gap)
+            if !in_wrap_gap {
+                if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
+                    // Outside data coverage - leave as NaN for transparent rendering
+                    continue;
+                }
+            } else {
+                // In wrap gap - only check latitude bounds
+                if lat < data_min_lat || lat > data_max_lat {
+                    continue;
+                }
             }
             
             // Convert to data grid coordinates
-            let grid_x = (norm_lon - data_min_lon) / data_lon_range * data_width as f32;
+            // For the wrap gap, calculate position relative to the last grid cell
+            let grid_x = if in_wrap_gap {
+                // In the gap between last grid point and 360°
+                // Map to position past the last column, interpolation will wrap to column 0
+                let gap_start = data_max_lon;
+                let gap_size = 360.0 - data_max_lon + data_min_lon; // Gap wraps around
+                let pos_in_gap = norm_lon - gap_start;
+                (data_width as f32 - 1.0) + (pos_in_gap / gap_size) as f32
+            } else {
+                (norm_lon - data_min_lon) / data_lon_range * data_width as f32
+            };
             let grid_y = (data_max_lat - lat) / data_lat_range * data_height as f32;
             
             // Bilinear interpolation
             let x1 = grid_x.floor() as usize;
             let y1 = grid_y.floor() as usize;
-            let x2 = (x1 + 1).min(data_width - 1);
+            
+            // For global grids (0-360), wrap x2 around instead of clamping
+            // This ensures smooth interpolation across the prime meridian
+            let x2 = if is_global_grid && x1 + 1 >= data_width {
+                0 // Wrap to column 0
+            } else {
+                (x1 + 1).min(data_width - 1)
+            };
             let y2 = (y1 + 1).min(data_height - 1);
             
             // Bounds check
@@ -930,10 +1011,11 @@ fn resample_grid_for_bbox(
     data_bounds: [f32; 4],
     use_mercator: bool,
     model: &str,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     resample_grid_for_bbox_with_proj(
         data, data_width, data_height, output_width, output_height,
-        output_bbox, data_bounds, use_mercator, model, None
+        output_bbox, data_bounds, use_mercator, model, None, grid_uses_360
     )
 }
 
@@ -949,6 +1031,7 @@ fn resample_grid_for_bbox_with_proj(
     use_mercator: bool,
     model: &str,
     goes_projection: Option<&GoesProjectionParams>,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     // Use Lambert Conformal resampling for HRRR (native projection)
     if model == "hrrr" {
@@ -990,9 +1073,9 @@ fn resample_grid_for_bbox_with_proj(
     } else {
         // GFS and other models use geographic (lat/lon) grids
         if use_mercator {
-            resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+            resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
         } else {
-            resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+            resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
         }
     }
 }
@@ -1421,6 +1504,7 @@ fn resample_for_model_geographic(
     output_bbox: [f32; 4],
     data_bounds: [f32; 4],
     model: &str,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     if model == "hrrr" {
         resample_lambert_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox)
@@ -1428,7 +1512,7 @@ fn resample_for_model_geographic(
         let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
         resample_geostationary_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
     } else {
-        resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+        resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
     }
 }
 
@@ -1545,6 +1629,9 @@ pub(crate) struct GridData {
     pub bbox: Option<[f32; 4]>,
     /// For GOES data: dynamic geostationary projection parameters
     pub goes_projection: Option<GoesProjectionParams>,
+    /// Whether the underlying grid uses 0-360 longitude convention (like GFS).
+    /// This is needed for proper coordinate handling even when bbox is a partial region.
+    pub grid_uses_360: bool,
 }
 
 /// Dynamic GOES projection parameters extracted from NetCDF file
@@ -1693,12 +1780,15 @@ async fn load_grid_data_with_options(
                         metrics.record_model_grid_cache_hit(wm);
                     }
                     
+                    // Check if grid uses 0-360 longitude (like GFS)
+                    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
                     return Ok(GridData {
                         data: (*cached.data).clone(),
                         width: cached.width,
                         height: cached.height,
                         bbox: None, // GRIB2 cached data uses full grid bbox from entry
                         goes_projection: None, // GRIB2 doesn't use GOES projection
+                        grid_uses_360,
                     });
                 }
             }
@@ -1784,12 +1874,15 @@ async fn load_grid_data_with_options(
             }
         }
         
+        // Check if grid uses 0-360 longitude (like GFS)
+        let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
         Ok(GridData {
             data: grid_data,
             width: grid_width as usize,
             height: grid_height as usize,
             bbox: None, // GRIB2 returns full grid, use entry.bbox
             goes_projection: None,
+            grid_uses_360,
         })
     }
 }
@@ -1807,6 +1900,12 @@ async fn load_grid_data_with_options(
 ///
 /// # Returns
 /// GridData containing the grid values and dimensions
+#[instrument(skip(factory, entry), fields(
+    model = %entry.model,
+    parameter = %entry.parameter,
+    level = %entry.level,
+    storage_path = %entry.storage_path,
+))]
 async fn load_grid_data_from_zarr(
     factory: &GridProcessorFactory,
     entry: &CatalogEntry,
@@ -1820,10 +1919,16 @@ async fn load_grid_data_from_zarr(
 
     // Parse zarr_metadata from catalog entry
     let zarr_json = entry.zarr_metadata.as_ref()
-        .ok_or_else(|| "No zarr_metadata in catalog entry".to_string())?;
+        .ok_or_else(|| {
+            error!(model = %entry.model, parameter = %entry.parameter, "No zarr_metadata in catalog entry");
+            "No zarr_metadata in catalog entry".to_string()
+        })?;
     
     let zarr_meta = ZarrMetadata::from_json(zarr_json)
-        .map_err(|e| format!("Failed to parse zarr_metadata: {}", e))?;
+        .map_err(|e| {
+            error!(model = %entry.model, parameter = %entry.parameter, error = %e, "Failed to parse zarr_metadata");
+            format!("Failed to parse zarr_metadata: {}", e)
+        })?;
     
     info!(
         storage_path = %entry.storage_path,
@@ -1844,7 +1949,15 @@ async fn load_grid_data_from_zarr(
     // Create MinIO storage using the helper (uses correct object_store version)
     let minio_config = MinioConfig::from_env();
     let store = create_minio_storage(&minio_config)
-        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+        .map_err(|e| {
+            error!(
+                error = %e,
+                endpoint = %minio_config.endpoint,
+                bucket = %minio_config.bucket,
+                "Failed to create MinIO storage"
+            );
+            format!("Failed to create MinIO storage: {}", e)
+        })?;
     
     // Convert zarr_meta to GridMetadata for the processor
     let grid_metadata = grid_processor::GridMetadata {
@@ -1865,10 +1978,19 @@ async fn load_grid_data_from_zarr(
     let processor = ZarrGridProcessor::with_metadata(
         store,
         &zarr_path,
-        grid_metadata,
+        grid_metadata.clone(),
         factory.chunk_cache(),
         factory.config().clone(),
-    ).map_err(|e| format!("Failed to open Zarr: {}", e))?;
+    ).map_err(|e| {
+        error!(
+            error = %e,
+            zarr_path = %zarr_path,
+            shape = ?grid_metadata.shape,
+            chunk_shape = ?grid_metadata.chunk_shape,
+            "Failed to open Zarr array"
+        );
+        format!("Failed to open Zarr: {}", e)
+    })?;
     
     // Determine bbox to read
     let read_bbox = if let Some(bbox_arr) = bbox {
@@ -1886,16 +2008,16 @@ async fn load_grid_data_from_zarr(
     // Read the region
     let start = Instant::now();
     let region = processor.read_region(&read_bbox).await
-        .map_err(|e| format!("Failed to read Zarr region: {}", e))?;
+        .map_err(|e| {
+            error!(
+                error = %e,
+                zarr_path = %zarr_path,
+                bbox = ?read_bbox,
+                "Failed to read Zarr region"
+            );
+            format!("Failed to read Zarr region: {}", e)
+        })?;
     let read_duration = start.elapsed();
-    
-    info!(
-        width = region.width,
-        height = region.height,
-        data_points = region.data.len(),
-        read_ms = read_duration.as_millis(),
-        "Loaded Zarr region"
-    );
     
     // Return actual bbox from the region (important for partial reads)
     let actual_bbox = [
@@ -1905,12 +2027,27 @@ async fn load_grid_data_from_zarr(
         region.bbox.max_lat as f32,
     ];
     
+    info!(
+        width = region.width,
+        height = region.height,
+        data_points = region.data.len(),
+        read_ms = read_duration.as_millis(),
+        actual_bbox_min_lon = actual_bbox[0],
+        actual_bbox_max_lon = actual_bbox[2],
+        "Loaded Zarr region"
+    );
+    
+    // Check if source grid uses 0-360 longitude (like GFS)
+    // This must be based on the full grid bbox, not the partial region bbox
+    let grid_uses_360 = zarr_meta.bbox.min_lon >= 0.0 && zarr_meta.bbox.max_lon > 180.0;
+    
     Ok(GridData {
         data: region.data,
         width: region.width,
         height: region.height,
         bbox: Some(actual_bbox),
         goes_projection: None, // Zarr data is always pre-projected to geographic
+        grid_uses_360,
     })
 }
 
@@ -1965,6 +2102,7 @@ async fn load_netcdf_grid_data(
                     semi_minor_axis: p.semi_minor_axis,
                     longitude_origin: p.longitude_origin,
                 }),
+                grid_uses_360: false, // GOES uses geostationary projection, not 0-360
             });
         }
     }
@@ -2075,6 +2213,7 @@ async fn load_netcdf_grid_data(
         height,
         bbox: None, // GOES/NetCDF returns full grid, use entry.bbox
         goes_projection: Some(goes_projection),
+        grid_uses_360: false, // GOES uses geostationary projection, not 0-360
     })
 }
 
@@ -2107,7 +2246,7 @@ pub async fn render_wind_barbs_tile(
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
     // Load U and V component data
-    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components(grib_cache, catalog, model, forecast_hour).await?;
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = load_wind_components(grib_cache, catalog, model, forecast_hour).await?;
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -2144,11 +2283,11 @@ pub async fn render_wind_barbs_tile(
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
         &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     let v_resampled = resample_for_model_geographic(
         &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     
     // Render wind barbs with geographic alignment
@@ -2204,7 +2343,7 @@ pub async fn render_wind_barbs_tile_with_level(
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
     // Load U and V component data with level support
-    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components_with_level(
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = load_wind_components_with_level(
         grib_cache, catalog, model, forecast_hour, level
     ).await?;
     
@@ -2244,11 +2383,11 @@ pub async fn render_wind_barbs_tile_with_level(
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
         &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     let v_resampled = resample_for_model_geographic(
         &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     
     // Render wind barbs with geographic alignment
@@ -2281,7 +2420,7 @@ async fn load_wind_components_with_level(
     model: &str,
     forecast_hour: Option<u32>,
     level: Option<&str>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4]), String> {
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     // Load U component (UGRD) with level support
     let u_entry = match (forecast_hour, level) {
         (Some(hour), Some(lev)) => {
@@ -2388,7 +2527,10 @@ async fn load_wind_components_with_level(
         u_entry.bbox.max_y as f32,
     ];
     
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds))
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
+    
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
 }
 
 /// Load U and V wind component data from cache/storage
@@ -2397,7 +2539,7 @@ async fn load_wind_components(
     catalog: &Catalog,
     model: &str,
     forecast_hour: Option<u32>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4]), String> {
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     // Load U component (UGRD)
     let u_entry = if let Some(hour) = forecast_hour {
         catalog
@@ -2470,7 +2612,10 @@ async fn load_wind_components(
         u_entry.bbox.max_y as f32,
     ];
 
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds))
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
+
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
 }
 
 /// Render wind barbs combining U and V component data
@@ -2607,6 +2752,9 @@ pub async fn render_wind_barbs_layer(
         u_entry.bbox.max_x as f32,
         u_entry.bbox.max_y as f32,
     ];
+    
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
 
     // If bbox is specified, we need to resample to that region
     let (u_to_render, v_to_render, render_width, render_height) = if let Some(bbox) = bbox {
@@ -2621,8 +2769,8 @@ pub async fn render_wind_barbs_layer(
         );
         
         // Resample from geographic coordinates (model-aware for proper projection handling)
-        let u_resampled = resample_for_model_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model);
-        let v_resampled = resample_for_model_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model);
+        let u_resampled = resample_for_model_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
+        let v_resampled = resample_for_model_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
         
         // Debug: check resampled data statistics
         let u_min = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
@@ -2853,6 +3001,9 @@ pub async fn render_numbers_tile(
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
     ];
+    
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
 
     // Resample data to the render bbox
     let resampled_data = resample_grid_for_bbox(
@@ -2865,6 +3016,7 @@ pub async fn render_numbers_tile(
         data_bounds,
         use_mercator,
         model,
+        grid_uses_360,
     );
 
     // Convert flat array to 2D grid for numbers renderer
@@ -3599,6 +3751,9 @@ pub async fn render_isolines_tile_with_level(
         entry.bbox.max_y as f32,
     ];
     
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
+    
     info!(
         render_width = render_width,
         render_height = render_height,
@@ -3620,6 +3775,7 @@ pub async fn render_isolines_tile_with_level(
         data_bounds,
         use_mercator,
         model,
+        grid_uses_360,
     );
     
     // Log resampled data stats for debugging
