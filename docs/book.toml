@@ -9,6 +9,7 @@ build-dir = "book"
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+optional = true
 
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]

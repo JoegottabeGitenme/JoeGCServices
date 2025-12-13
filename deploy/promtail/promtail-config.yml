@@ -36,33 +36,58 @@ scrape_configs:
         target_label: 'compose_project'
 
     pipeline_stages:
-      # Try to parse as JSON (for Rust services using tracing-subscriber json output)
+      # Parse JSON logs from Rust services using tracing-subscriber
+      # Format: {"timestamp":"...","level":"INFO","fields":{"message":"...","key":"val"},"target":"crate::module","span":{"name":"..."}}
       - json:
           expressions:
             level: level
-            message: fields.message
             target: target
             timestamp: timestamp
-            # Extract common tracing fields
+            # Extract the message
+            message: fields.message
+            # Extract span info for tracing context
             span_name: span.name
-            trace_id: span.trace_id
+            # Extract common WMS/rendering fields
+            layer: fields.layer
+            style: fields.style
+            model: fields.model
+            parameter: fields.parameter
+            z: fields.z
+            x: fields.x
+            y: fields.y
+            # Extract error details
+            error: fields.error
+            # Extract paths and storage info
+            storage_path: fields.storage_path
+            zarr_path: fields.zarr_path
+            # Extract bbox/coordinate info
+            bbox: fields.bbox
+            # Chunk info for grid-processor debugging
+            chunk_x: fields.chunk_x
+            chunk_y: fields.chunk_y
+            # Performance metrics in logs
+            read_ms: fields.read_ms
+            render_ms: fields.render_ms
       
-      # Fallback regex for non-JSON logs
+      # Fallback regex for non-JSON logs (e.g., from postgres, redis)
       - match:
           selector: '{compose_service=~".+"} |~ "^[^{]"'
           stages:
             - regex:
                 expression: '^(?P<timestamp>\S+)\s+(?P<level>\w+)\s+(?P<target>\S+):\s+(?P<message>.*)$'
       
-      # Normalize log levels
+      # Normalize log levels to lowercase
       - template:
           source: level
           template: '{{ ToLower .Value }}'
       
-      # Add level label for filtering
+      # Add labels for efficient querying in Grafana
       - labels:
           level:
           target:
+          layer:
+          model:
+          parameter:
       
       # Set timestamp from log if available
       - timestamp:
@@ -72,6 +97,11 @@ scrape_configs:
             - RFC3339
             - '2006-01-02T15:04:05.999999999Z07:00'
       
-      # Use message field as log line if extracted
+      # Format output to include key context fields
+      # This creates a more readable log line while preserving the raw JSON
+      - template:
+          source: output_line
+          template: '{{ if .message }}{{ .message }}{{ if .error }} | error={{ .error }}{{ end }}{{ if .layer }} | layer={{ .layer }}{{ end }}{{ if .model }} | model={{ .model }}{{ end }}{{ if .storage_path }} | path={{ .storage_path }}{{ end }}{{ else }}{{ .__line__ }}{{ end }}'
+      
       - output:
-          source: message
+          source: output_line
