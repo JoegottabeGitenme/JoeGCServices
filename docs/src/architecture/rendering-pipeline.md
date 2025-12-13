@@ -114,6 +114,21 @@ Different weather models use different longitude conventions:
 
 GFS data uses 0-360 longitude convention, while web maps use -180/180. This requires careful coordinate normalization.
 
+### The `grid_uses_360` Flag
+
+When performing partial Zarr reads, the returned data may have a bounding box that doesn't span >180° (e.g., a small regional subset). This makes it impossible to infer the longitude convention from the data bounds alone. To solve this, the rendering pipeline propagates an explicit `grid_uses_360` flag from the grid metadata through to the resampling functions.
+
+```rust
+// In GridData struct
+pub struct GridData {
+    pub values: Vec<f32>,
+    pub width: usize,
+    pub height: usize,
+    pub bbox: Option<[f32; 4]>,
+    pub grid_uses_360: bool,  // Explicit flag from grid metadata
+}
+```
+
 ### Normalizing Request Bbox to Grid Space
 
 ```rust
@@ -232,9 +247,10 @@ fn resample_for_mercator(
     output_height: usize,
     output_bbox: [f32; 4],  // Tile bounds in WGS84
     data_bounds: [f32; 4],  // Actual grid data bounds
+    grid_uses_360: bool,    // Explicit flag from grid metadata
 ) -> Vec<f32> {
-    // Check if data uses 0-360 longitude
-    let data_uses_360 = data_bounds[0] >= 0.0 && data_bounds[2] > 180.0;
+    // Use explicit flag - cannot infer from partial read bounds
+    let data_uses_360 = grid_uses_360;
     
     let mut output = vec![f32::NAN; output_width * output_height];
     
@@ -258,22 +274,74 @@ fn resample_for_mercator(
                 lon
             };
             
-            // 5. Check if within data bounds
-            if norm_lon < data_min_lon || norm_lon > data_max_lon {
-                continue;  // Leave as NaN (transparent)
+            // 5. Handle wrap gap for global grids (see below)
+            let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+            let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+            
+            // 6. Check if within data bounds (with wrap gap exception)
+            if !in_wrap_gap {
+                if norm_lon < data_min_lon || norm_lon > data_max_lon {
+                    continue;  // Leave as NaN (transparent)
+                }
             }
             
-            // 6. Convert to grid coordinates
-            let grid_x = (norm_lon - data_min_lon) / data_lon_range * data_width;
+            // 7. Convert to grid coordinates (with wrap gap handling)
+            let grid_x = if in_wrap_gap {
+                // Map wrap gap position to interpolate between last column and first
+                let gap_start = data_max_lon;
+                let gap_size = 360.0 - data_max_lon + data_min_lon;
+                let pos_in_gap = norm_lon - gap_start;
+                (data_width as f32 - 1.0) + (pos_in_gap / gap_size) as f32
+            } else {
+                (norm_lon - data_min_lon) / data_lon_range * data_width
+            };
             let grid_y = (data_max_lat - lat) / data_lat_range * data_height;
             
-            // 7. Bilinear interpolation
-            output[out_y * output_width + out_x] = bilinear_sample(data, grid_x, grid_y);
+            // 8. Bilinear interpolation (with wrapping for x)
+            output[out_y * output_width + out_x] = bilinear_sample_wrap(data, grid_x, grid_y);
         }
     }
     
     output
 }
+```
+
+## Handling the Prime Meridian Wrap Gap
+
+GFS and other global grids using 0-360° longitude have a gap between the last grid column and 360°. For example, GFS 0.25° resolution:
+- Column 0 = 0°
+- Column 1439 = 359.75°
+- **Gap**: 359.75° to 360° (no data column at exactly 360°)
+
+When rendering tiles near the prime meridian (0° longitude), negative request longitudes (e.g., -0.1°) normalize to values in this gap (359.9°). Without special handling, these pixels would be skipped as "out of bounds," causing a visible vertical line artifact at 0° longitude.
+
+### Wrap Gap Solution
+
+The resampling functions detect when a normalized longitude falls in the wrap gap and handle it specially:
+
+```rust
+// Detect wrap gap
+let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+
+// For wrap gap pixels:
+// 1. Skip the normal bounds check (only check latitude)
+// 2. Calculate grid_x to position past the last column
+// 3. Bilinear interpolation wraps from column 1439 to column 0
+```
+
+This allows seamless interpolation across the 360°/0° boundary, eliminating the line artifact.
+
+### Bilinear Interpolation with Wrapping
+
+When `grid_x` exceeds `data_width - 1`, the interpolation wraps the `x2` coordinate back to column 0:
+
+```rust
+let x2 = if is_global_grid && x1 == data_width - 1 {
+    0  // Wrap to first column
+} else {
+    (x1 + 1).min(data_width - 1)
+};
 ```
 
 ## Color Styling

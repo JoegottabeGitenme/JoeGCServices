@@ -457,6 +457,23 @@ if bbox.crosses_dateline_on_360_grid(&grid_bbox) {
 
 ---
 
+### Vertical Line at Prime Meridian (0° Longitude)
+
+**Symptom**: A visible vertical seam or line artifact appears at 0° longitude on GFS temperature (or other global 0-360° grid) tiles.
+
+**Cause**: GFS uses 0-360° longitude with 0.25° resolution, creating a gap between the last grid column (359.75°) and 360°. When tiles near the prime meridian request negative longitudes (e.g., -0.1°), these normalize to the gap region (e.g., 359.9°). Without special handling, pixels in this gap fail the bounds check and render as transparent/NaN.
+
+**Solution**: The resampling functions now detect the "wrap gap" and handle it specially:
+1. Pixels in the gap (between 359.75° and 360°) skip the normal bounds check
+2. Grid coordinates are calculated to position past the last column
+3. Bilinear interpolation wraps from column 1439 back to column 0
+
+This fix requires the `grid_uses_360` flag to be propagated from grid metadata through the rendering pipeline (cannot be inferred from partial read bounds).
+
+See [Rendering Pipeline - Prime Meridian Wrap Gap](../architecture/rendering-pipeline.md#handling-the-prime-meridian-wrap-gap) for implementation details.
+
+---
+
 ### Temperature Colors Don't Match Expected Values
 
 **Symptom**: Temperature appears with wrong colors (e.g., hot areas showing blue).

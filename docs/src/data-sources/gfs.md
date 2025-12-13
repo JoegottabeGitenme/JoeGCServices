@@ -8,6 +8,7 @@ NOAA's global numerical weather prediction model providing worldwide forecasts u
 - **Coverage**: Global (90°S to 90°N, 180°W to 180°E)
 - **Resolution**: 0.25° (~25 km)
 - **Grid Size**: 1440 × 721 points
+- **Longitude Convention**: 0° to 360° (see [Coordinate Convention](#coordinate-convention) below)
 - **Update Frequency**: Every 6 hours (00, 06, 12, 18 UTC)
 - **Forecast Range**: 0-384 hours (16 days)
 - **Format**: GRIB2
@@ -80,6 +81,33 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.20241203/00/atmos/gf
 # - Forecast hours 0-120 (every 3h)
 # - Total: ~4 GB per run
 ```
+
+## Coordinate Convention
+
+GFS uses the **0-360° longitude convention**, which differs from the standard -180° to 180° used by web maps:
+
+| Location | Standard (WGS84) | GFS Convention |
+|----------|------------------|----------------|
+| New York | -74° | 286° |
+| London | 0° | 0° |
+| Tokyo | 140° | 140° |
+| Los Angeles | -118° | 242° |
+
+### Grid Structure
+
+```
+Column 0    = 0.00° longitude
+Column 1    = 0.25° longitude
+...
+Column 1439 = 359.75° longitude
+(No column at exactly 360° - creates a "wrap gap")
+```
+
+### Wrap Gap Handling
+
+The 0.25° gap between column 1439 (359.75°) and 360° requires special handling in the rendering pipeline. When tile requests include negative longitudes near 0° (e.g., -0.1°), they normalize to this gap region (359.9°). The renderer detects this and uses wrapping interpolation between the last and first columns to ensure seamless rendering across the prime meridian.
+
+See [Rendering Pipeline - Prime Meridian Wrap Gap](../architecture/rendering-pipeline.md#handling-the-prime-meridian-wrap-gap) for implementation details.
 
 ## Typical Uses
 
