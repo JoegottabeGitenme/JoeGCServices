@@ -1,0 +1,62 @@
+# MRMS Layer Configuration
+# Defines WMS/WMTS layers exposed for the MRMS radar mosaic
+# CONUS coverage only
+
+model: mrms
+display_name: "MRMS - Multi-Radar Multi-Sensor"
+
+# MRMS covers CONUS
+default_bbox:
+  west: -130.0
+  south: 20.0
+  east: -60.0
+  north: 55.0
+
+# MRMS is observation data, not forecast
+dimension_type: observation
+
+layers:
+  # ==========================================================================
+  # Radar Reflectivity
+  # ==========================================================================
+  
+  - id: mrms_REFL
+    parameter: REFL
+    title: "Radar Reflectivity"
+    abstract: "Merged radar reflectivity composite (QC'd)"
+    style_file: reflectivity.json
+    units:
+      native: dBZ
+      display: dBZ
+    levels:
+      - value: "composite"
+        default: true
+
+  # ==========================================================================
+  # Precipitation
+  # ==========================================================================
+  
+  - id: mrms_PRECIP_RATE
+    parameter: PRECIP_RATE
+    title: "Precipitation Rate"
+    abstract: "Instantaneous precipitation rate"
+    style_file: precip_rate.json
+    units:
+      native: "mm/hr"
+      display: "mm/hr"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: mrms_QPE_01H
+    parameter: QPE_01H
+    title: "1-Hour QPE"
+    abstract: "1-hour quantitative precipitation estimate"
+    style_file: precipitation.json
+    units:
+      native: mm
+      display: mm
+    accumulation: true
+    levels:
+      - value: "surface"
+        default: true

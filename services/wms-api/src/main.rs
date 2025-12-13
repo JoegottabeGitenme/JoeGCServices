@@ -6,6 +6,7 @@ mod admin;
 mod cleanup;
 mod grid_warming;
 mod handlers;
+pub mod layer_config;
 mod memory_pressure;
 pub mod metrics;
 pub mod model_config;
@@ -107,6 +108,32 @@ async fn async_main(args: Args) -> Result<()> {
     info!("Running database migrations...");
     state.catalog.migrate().await?;
     info!("Database migrations completed successfully");
+
+    // Validate layer configs against catalog
+    // This ensures all parameters in the catalog have proper layer configs
+    {
+        let models = state.catalog.list_models().await.unwrap_or_default();
+        let mut model_params = std::collections::HashMap::new();
+        for model in &models {
+            let params = state.catalog.list_parameters(model).await.unwrap_or_default();
+            model_params.insert(model.clone(), params);
+        }
+        
+        if let Err(e) = state.layer_configs.validate_catalog_coverage(&models, &model_params) {
+            // Check if we should fail on missing configs (default: warn only)
+            let strict_validation = env::var("STRICT_LAYER_VALIDATION")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(false);
+            
+            if strict_validation {
+                return Err(anyhow::anyhow!("Layer configuration validation failed:\n{}", e));
+            } else {
+                tracing::warn!("Layer configuration validation warning:\n{}", e);
+            }
+        } else {
+            info!("Layer configuration validation passed");
+        }
+    }
 
     // Run cache warming if enabled (Phase 7.D)
     {

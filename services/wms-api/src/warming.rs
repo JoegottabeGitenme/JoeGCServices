@@ -257,6 +257,8 @@ async fn warm_single_tile(
         )
         .await
     } else if style == "isolines" {
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = format!("{}/temperature.json", style_config_dir);
         rendering::render_isolines_tile(
             &state.grib_cache,
             &state.catalog,
@@ -266,7 +268,8 @@ async fn warm_single_tile(
             256,
             256,
             bbox_array,
-            "temperature_isolines", // style_path (default)
+            &style_file,
+            "isolines",  // style name within the file
             Some(forecast_hour),
             true, // use_mercator
         )

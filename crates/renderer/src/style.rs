@@ -309,22 +309,31 @@ impl ContourStyle {
     }
     
     /// Load a specific style variant from JSON file
+    /// Supports mixed-type style files (gradient + contour + numbers in same file)
     pub fn from_file_with_style(path: &str, style_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         
-        // First try to parse as nested format (with styles map)
-        if let Ok(file) = serde_json::from_str::<ContourStyleFile>(&content) {
-            let style_def = file.styles.get(style_name)
-                .ok_or_else(|| format!("Style '{}' not found in {}", style_name, path))?;
-            
-            return Ok(ContourStyle {
-                name: style_def.name.clone(),
-                title: Some(style_def.name.clone()),
-                description: style_def.description.clone(),
-                style_type: style_def.style_type.clone(),
-                units: style_def.units.clone(),
-                contour: style_def.contour.clone(),
-            });
+        // Parse as generic JSON first to handle mixed-type style files
+        let json: serde_json::Value = serde_json::from_str(&content)?;
+        
+        // Try to get the specific style from styles map
+        if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+            if let Some(style_value) = styles.get(style_name) {
+                // Parse just this one style as ContourStyleDefinition
+                let style_def: ContourStyleDefinition = serde_json::from_value(style_value.clone())
+                    .map_err(|e| format!("Failed to parse style '{}': {}", style_name, e))?;
+                
+                return Ok(ContourStyle {
+                    name: style_def.name.clone(),
+                    title: Some(style_def.name.clone()),
+                    description: style_def.description.clone(),
+                    style_type: style_def.style_type.clone(),
+                    units: style_def.units.clone(),
+                    contour: style_def.contour.clone(),
+                });
+            } else {
+                return Err(format!("Style '{}' not found in {}", style_name, path).into());
+            }
         }
         
         // Fall back to flat format (direct ContourStyle)

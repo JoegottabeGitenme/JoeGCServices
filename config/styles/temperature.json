@@ -2,116 +2,102 @@
   "version": "1.0",
   "metadata": {
     "name": "Temperature Styles",
-    "description": "Temperature visualization styles for surface and upper-air data"
+    "description": "All visualization styles for temperature parameters"
   },
   "styles": {
-    "temperature": {
+    "default": {
       "name": "Temperature Gradient",
       "description": "Temperature color scale from cold (blue) to hot (red)",
       "type": "gradient",
-      "units": "K",
       "range": {
         "min": 233.15,
         "max": 313.15
       },
       "stops": [
-        { "value": 233.15, "color": "#1E0082", "label": "-40C" },
-        { "value": 243.15, "color": "#0032C8", "label": "-30C" },
-        { "value": 253.15, "color": "#0096FF", "label": "-20C" },
-        { "value": 263.15, "color": "#32C8FF", "label": "-10C" },
-        { "value": 273.15, "color": "#96FFC8", "label": "0C" },
-        { "value": 283.15, "color": "#FFFF32", "label": "10C" },
-        { "value": 293.15, "color": "#FF9600", "label": "20C" },
-        { "value": 303.15, "color": "#FF3200", "label": "30C" },
-        { "value": 313.15, "color": "#960000", "label": "40C" }
+        { "value": 233.15, "color": "#1E0082", "label": "-40°C" },
+        { "value": 243.15, "color": "#0032C8", "label": "-30°C" },
+        { "value": 253.15, "color": "#0096FF", "label": "-20°C" },
+        { "value": 263.15, "color": "#32C8FF", "label": "-10°C" },
+        { "value": 273.15, "color": "#96FFC8", "label": "0°C" },
+        { "value": 283.15, "color": "#FFFF32", "label": "10°C" },
+        { "value": 293.15, "color": "#FF9600", "label": "20°C" },
+        { "value": 303.15, "color": "#FF3200", "label": "30°C" },
+        { "value": 313.15, "color": "#960000", "label": "40°C" }
       ],
       "interpolation": "linear",
       "out_of_range": "clamp",
       "legend": {
-        "title": "Temperature",
-        "labels": ["-40C", "-30C", "-20C", "-10C", "0C", "10C", "20C", "30C", "40C"]
-      }
-    },
-    "default": {
-      "name": "Temperature",
-      "description": "Temperature color scale from cold (blue) to hot (red)",
-      "type": "gradient",
-      "units": "K",
-      "range": {
-        "min": 233.15,
-        "max": 313.15
-      },
-      "stops": [
-        { "value": 233.15, "color": "#1E0082", "label": "-40C" },
-        { "value": 243.15, "color": "#0032C8", "label": "-30C" },
-        { "value": 253.15, "color": "#0096FF", "label": "-20C" },
-        { "value": 263.15, "color": "#32C8FF", "label": "-10C" },
-        { "value": 273.15, "color": "#96FFC8", "label": "0C" },
-        { "value": 283.15, "color": "#FFFF32", "label": "10C" },
-        { "value": 293.15, "color": "#FF9600", "label": "20C" },
-        { "value": 303.15, "color": "#FF3200", "label": "30C" },
-        { "value": 313.15, "color": "#960000", "label": "40C" }
-      ],
-      "interpolation": "linear",
-      "out_of_range": "clamp",
-      "legend": {
-        "title": "Temperature",
-        "labels": ["-40C", "-30C", "-20C", "-10C", "0C", "10C", "20C", "30C", "40C"]
-      }
-    },
-    "celsius": {
-      "name": "Temperature (Celsius)",
-      "description": "Temperature in Celsius with conversion from Kelvin",
-      "type": "gradient",
-      "units": "C",
-      "transform": {
-        "type": "k_to_c"
-      },
-      "range": {
-        "min": -40,
-        "max": 40
-      },
-      "stops": [
-        { "value": -40, "color": "#1E0082", "label": "-40C" },
-        { "value": -30, "color": "#0032C8", "label": "-30C" },
-        { "value": -20, "color": "#0096FF", "label": "-20C" },
-        { "value": -10, "color": "#32C8FF", "label": "-10C" },
-        { "value": 0, "color": "#96FFC8", "label": "0C" },
-        { "value": 10, "color": "#FFFF32", "label": "10C" },
-        { "value": 20, "color": "#FF9600", "label": "20C" },
-        { "value": 30, "color": "#FF3200", "label": "30C" },
-        { "value": 40, "color": "#960000", "label": "40C" }
-      ],
-      "interpolation": "linear",
-      "out_of_range": "clamp",
-      "legend": {
-        "title": "Temperature (C)",
+        "title": "Temperature (°C)",
         "labels": ["-40", "-20", "0", "20", "40"]
       }
     },
-    "anomaly": {
-      "name": "Temperature Anomaly",
-      "description": "Temperature departure from normal (blue=cold, red=warm)",
+    "gradient": {
+      "name": "Temperature Gradient",
+      "description": "Temperature color scale from cold (blue) to hot (red)",
       "type": "gradient",
-      "units": "K",
       "range": {
-        "min": -10,
-        "max": 10
+        "min": 233.15,
+        "max": 313.15
       },
       "stops": [
-        { "value": -10, "color": "#00008B", "label": "-10" },
-        { "value": -5, "color": "#0000FF", "label": "-5" },
-        { "value": -2, "color": "#00BFFF", "label": "-2" },
-        { "value": 0, "color": "#FFFFFF", "label": "0" },
-        { "value": 2, "color": "#FFBF00", "label": "+2" },
-        { "value": 5, "color": "#FF0000", "label": "+5" },
-        { "value": 10, "color": "#8B0000", "label": "+10" }
+        { "value": 233.15, "color": "#1E0082", "label": "-40°C" },
+        { "value": 243.15, "color": "#0032C8", "label": "-30°C" },
+        { "value": 253.15, "color": "#0096FF", "label": "-20°C" },
+        { "value": 263.15, "color": "#32C8FF", "label": "-10°C" },
+        { "value": 273.15, "color": "#96FFC8", "label": "0°C" },
+        { "value": 283.15, "color": "#FFFF32", "label": "10°C" },
+        { "value": 293.15, "color": "#FF9600", "label": "20°C" },
+        { "value": 303.15, "color": "#FF3200", "label": "30°C" },
+        { "value": 313.15, "color": "#960000", "label": "40°C" }
       ],
       "interpolation": "linear",
       "out_of_range": "clamp",
       "legend": {
-        "title": "Temperature Anomaly (K)",
-        "labels": ["-10", "-5", "0", "+5", "+10"]
+        "title": "Temperature (°C)",
+        "labels": ["-40", "-20", "0", "20", "40"]
+      }
+    },
+    "isolines": {
+      "name": "Temperature Isolines",
+      "description": "Temperature contour lines at 5°C intervals",
+      "type": "contour",
+      "contour": {
+        "interval": 5.0,
+        "min_value": -40,
+        "max_value": 40,
+        "unit_conversion": 273.15,
+        "line_width": 1.5,
+        "line_color": "#333333",
+        "labels": true,
+        "label_font_size": 9.0,
+        "label_spacing": 180.0,
+        "smoothing_passes": 1,
+        "special_levels": [
+          {
+            "value": 0,
+            "line_color": "#0066FF",
+            "line_width": 2.5,
+            "label": "0°C"
+          }
+        ]
+      },
+      "legend": {
+        "title": "Temperature (°C)"
+      }
+    },
+    "numbers": {
+      "name": "Numeric Values",
+      "description": "Display temperature values as numbers on the map",
+      "type": "numbers",
+      "numbers": {
+        "spacing": 50,
+        "font_size": 11.0,
+        "font_color": "#000000",
+        "background_color": "#FFFFFFCC",
+        "decimal_places": 1
+      },
+      "legend": {
+        "title": "Temperature (°C)"
       }
     }
   }

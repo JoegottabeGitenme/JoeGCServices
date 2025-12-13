@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
 use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
 
@@ -449,6 +450,7 @@ pub struct AppState {
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
     pub ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
+    pub layer_configs: LayerConfigRegistry,  // Layer configurations (from YAML) - styles, units, levels
 }
 
 impl AppState {
@@ -544,6 +546,14 @@ impl AppState {
             models = model_dimensions.models().len(),
             "Loaded model dimension configurations"
         );
+        
+        // Load layer configurations from YAML files (styles, units, levels)
+        let layer_configs = LayerConfigRegistry::load_from_directory(&config_dir);
+        info!(
+            models = layer_configs.models().len(),
+            total_layers = layer_configs.total_layers(),
+            "Loaded layer configurations"
+        );
 
         Ok(Self {
             catalog,
@@ -561,6 +571,7 @@ impl AppState {
             grid_warmer: tokio::sync::RwLock::new(None),
             ingestion_tracker: IngestionTracker::new(),
             model_dimensions,
+            layer_configs,
         })
     }
     

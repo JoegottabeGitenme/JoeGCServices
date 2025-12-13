@@ -3642,12 +3642,13 @@ pub async fn render_isolines_tile(
     height: u32,
     bbox: [f32; 4],
     style_path: &str,
+    style_name: &str,
     forecast_hour: Option<u32>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     render_isolines_tile_with_level(
         grib_cache, catalog, model, parameter, tile_coord, width, height, bbox,
-        style_path, forecast_hour, None, use_mercator
+        style_path, style_name, forecast_hour, None, use_mercator
     ).await
 }
 
@@ -3662,15 +3663,16 @@ pub async fn render_isolines_tile_with_level(
     height: u32,
     bbox: [f32; 4],
     style_path: &str,
+    style_name: &str,
     forecast_hour: Option<u32>,
     level: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::crop_center_tile;
     
-    // Load style configuration
-    let style_config = ContourStyle::from_file(style_path)
-        .map_err(|e| format!("Failed to load contour style: {}", e))?;
+    // Load style configuration - look up the specific style by name
+    let style_config = ContourStyle::from_file_with_style(style_path, style_name)
+        .map_err(|e| format!("Failed to load contour style '{}' from {}: {}", style_name, style_path, e))?;
     
     // Get dataset for this parameter, optionally at a specific level
     let entry = match (forecast_hour, level) {
