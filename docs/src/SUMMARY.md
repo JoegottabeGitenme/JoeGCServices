@@ -15,6 +15,7 @@
 - [Overview](./architecture/README.md)
   - [System Design](./architecture/system-design.md)
   - [Data Flow](./architecture/data-flow.md)
+  - [Rendering Pipeline](./architecture/rendering-pipeline.md)
   - [Caching Strategy](./architecture/caching.md)
 
 # Services
