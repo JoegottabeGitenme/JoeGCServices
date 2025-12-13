@@ -8,10 +8,10 @@ use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 use projection::{LambertConformal, Geostationary};
 use crate::metrics::{MetricsCollector, DataSourceType};
-use crate::state::ProjectionLuts;
+use crate::state::{GridProcessorFactory, ProjectionLuts};
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -146,11 +146,12 @@ pub async fn render_weather_data_with_time(
     style_name: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    // Call the LUT-aware version without tile coords or LUT
+    // Call the LUT-aware version without tile coords, LUT, or Zarr factory
+    // (This path is for legacy callers that don't have Zarr support)
     render_weather_data_with_lut(
         grib_cache, grid_cache, catalog, metrics, model, parameter,
         forecast_hour, observation_time, level, width, height, bbox,
-        style_name, use_mercator, None, None,
+        style_name, use_mercator, None, None, None,
     ).await
 }
 
@@ -160,9 +161,11 @@ pub async fn render_weather_data_with_time(
 /// - Forecast models (GFS, HRRR): Use `forecast_hour` parameter
 /// - Observation data (MRMS, GOES): Use `observation_time` parameter
 /// - Pre-computed projection LUTs for fast GOES tile rendering
+/// - Zarr-format grid data with efficient chunked reads (when zarr_metadata is present)
 ///
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving files
+/// - `grid_processor_factory`: Optional factory for Zarr-based grid access
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name
@@ -193,6 +196,7 @@ pub async fn render_weather_data_with_lut(
     use_mercator: bool,
     tile_coords: Option<(u32, u32, u32)>,  // (z, x, y) for LUT lookup
     projection_luts: Option<&ProjectionLuts>,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     // Record model-specific request
     let render_start = Instant::now();
@@ -258,17 +262,28 @@ pub async fn render_weather_data_with_lut(
         }
     }};
 
-    // Load grid data from cache/storage (handles both GRIB2 and NetCDF formats)
+    // Load grid data from cache/storage (handles GRIB2, NetCDF, and Zarr formats)
+    // If zarr_metadata is present and grid_processor_factory is available, use efficient
+    // chunked reads from Zarr; otherwise fall back to legacy loaders
     info!(
         parameter = parameter,
         level = %entry.level,
         storage_path = %entry.storage_path,
         model = model,
+        has_zarr = entry.zarr_metadata.is_some(),
         "Loading grid data"
     );
     
     let start = Instant::now();
-    let grid_result = load_grid_data(grib_cache, grid_cache, metrics, &entry, parameter).await?;
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        bbox,
+    ).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
     
@@ -307,13 +322,14 @@ pub async fn render_weather_data_with_lut(
     let rendered_width = width as usize;
     let rendered_height = height as usize;
     
-    // Convert entry.bbox to array format for resampling
-    let data_bounds = [
+    // Use actual bbox from grid data if available (for Zarr partial reads),
+    // otherwise fall back to entry.bbox (for GRIB2/NetCDF full grid reads)
+    let data_bounds = grid_result.bbox.unwrap_or_else(|| [
         entry.bbox.min_x as f32,
         entry.bbox.min_y as f32,
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
-    ];
+    ]);
     
     let start = Instant::now();
     let resampled_data = {
@@ -1520,18 +1536,20 @@ fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str, level: Optio
     Err(format!("Parameter {} not found in GRIB2 file", parameter))
 }
 
-/// Grid data extracted from either GRIB2 or NetCDF files
-struct GridData {
-    data: Vec<f32>,
-    width: usize,
-    height: usize,
+/// Grid data extracted from either GRIB2, NetCDF, or Zarr files
+pub(crate) struct GridData {
+    pub data: Vec<f32>,
+    pub width: usize,
+    pub height: usize,
+    /// Actual bounding box of the returned data (may be subset of full grid)
+    pub bbox: Option<[f32; 4]>,
     /// For GOES data: dynamic geostationary projection parameters
-    goes_projection: Option<GoesProjectionParams>,
+    pub goes_projection: Option<GoesProjectionParams>,
 }
 
 /// Dynamic GOES projection parameters extracted from NetCDF file
 #[derive(Clone, Debug)]
-struct GoesProjectionParams {
+pub(crate) struct GoesProjectionParams {
     x_origin: f64,
     y_origin: f64,
     dx: f64,
@@ -1542,10 +1560,12 @@ struct GoesProjectionParams {
     longitude_origin: f64,
 }
 
-/// Load grid data from a storage path, handling both GRIB2 and NetCDF files
+/// Load grid data from a storage path, handling GRIB2, NetCDF, and Zarr files.
 /// 
-/// For GRIB2 files, searches for the matching parameter and level.
-/// For NetCDF (GOES) files, reads the CMI variable directly with caching.
+/// This function automatically routes to the appropriate loader:
+/// - If `zarr_metadata` is present in the entry -> use Zarr loader (efficient chunked reads)
+/// - If file is NetCDF (.nc or GOES) -> use NetCDF loader
+/// - Otherwise -> use GRIB2 loader
 /// 
 /// When `cache_grib2` is true and `grid_cache` is provided, parsed GRIB2 grids
 /// will also be cached to avoid redundant decompression for adjacent tiles.
@@ -1556,6 +1576,76 @@ async fn load_grid_data(
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
+    load_grid_data_with_options(grib_cache, grid_cache, metrics, entry, parameter, true).await
+}
+
+/// Load grid data with support for Zarr format when zarr_metadata is available.
+///
+/// This is the preferred method for loading grid data as it automatically
+/// uses efficient chunked reads for Zarr-format data.
+///
+/// # Arguments
+/// * `factory` - Optional GridProcessorFactory for Zarr data access
+/// * `grib_cache` - GRIB cache for legacy format fallback
+/// * `grid_cache` - Grid data cache for parsed data
+/// * `metrics` - Metrics collector
+/// * `entry` - Catalog entry
+/// * `parameter` - Parameter name
+/// * `bbox` - Optional bounding box (for Zarr partial reads)
+pub async fn load_grid_data_with_zarr_support(
+    factory: Option<&GridProcessorFactory>,
+    grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
+    metrics: &MetricsCollector,
+    entry: &CatalogEntry,
+    parameter: &str,
+    bbox: Option<[f32; 4]>,
+) -> Result<GridData, String> {
+    // Determine loader type for logging
+    let loader_type = if entry.zarr_metadata.is_some() && factory.is_some() {
+        "zarr"
+    } else if entry.storage_path.ends_with(".nc") || entry.parameter.starts_with("CMI_") {
+        "netcdf"
+    } else {
+        "grib2"
+    };
+    
+    debug!(
+        model = %entry.model,
+        parameter = %entry.parameter,
+        level = %entry.level,
+        storage_path = %entry.storage_path,
+        loader = loader_type,
+        has_zarr_meta = entry.zarr_metadata.is_some(),
+        "Loading grid data"
+    );
+    
+    // Check if this entry has Zarr metadata and we have a factory
+    if entry.zarr_metadata.is_some() {
+        if let Some(factory) = factory {
+            info!(
+                model = %entry.model,
+                parameter = %entry.parameter,
+                storage_path = %entry.storage_path,
+                loader = "zarr",
+                "Using Zarr loader for grid data"
+            );
+            return load_grid_data_from_zarr(factory, entry, bbox).await;
+        } else {
+            warn!(
+                storage_path = %entry.storage_path,
+                "Entry has zarr_metadata but no GridProcessorFactory available, falling back to legacy loader"
+            );
+        }
+    }
+    
+    // Fall back to legacy loaders
+    debug!(
+        model = %entry.model,
+        parameter = %entry.parameter,
+        loader = loader_type,
+        "Using legacy loader for grid data"
+    );
     load_grid_data_with_options(grib_cache, grid_cache, metrics, entry, parameter, true).await
 }
 
@@ -1607,6 +1697,7 @@ async fn load_grid_data_with_options(
                         data: (*cached.data).clone(),
                         width: cached.width,
                         height: cached.height,
+                        bbox: None, // GRIB2 cached data uses full grid bbox from entry
                         goes_projection: None, // GRIB2 doesn't use GOES projection
                     });
                 }
@@ -1697,9 +1788,130 @@ async fn load_grid_data_with_options(
             data: grid_data,
             width: grid_width as usize,
             height: grid_height as usize,
+            bbox: None, // GRIB2 returns full grid, use entry.bbox
             goes_projection: None,
         })
     }
+}
+
+/// Load grid data from a Zarr file stored in MinIO.
+///
+/// This function uses the new GridProcessor abstraction for efficient partial reads
+/// from Zarr V3 formatted data. It only loads the chunks needed for the requested
+/// bounding box, significantly reducing data transfer for tile requests.
+///
+/// # Arguments
+/// * `factory` - GridProcessorFactory containing MinIO client and shared cache
+/// * `entry` - Catalog entry with zarr_metadata
+/// * `bbox` - Optional bounding box to load (if None, loads full grid)
+///
+/// # Returns
+/// GridData containing the grid values and dimensions
+async fn load_grid_data_from_zarr(
+    factory: &GridProcessorFactory,
+    entry: &CatalogEntry,
+    bbox: Option<[f32; 4]>,
+) -> Result<GridData, String> {
+    use grid_processor::{
+        BoundingBox as GpBoundingBox,
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+    };
+
+    // Parse zarr_metadata from catalog entry
+    let zarr_json = entry.zarr_metadata.as_ref()
+        .ok_or_else(|| "No zarr_metadata in catalog entry".to_string())?;
+    
+    let zarr_meta = ZarrMetadata::from_json(zarr_json)
+        .map_err(|e| format!("Failed to parse zarr_metadata: {}", e))?;
+    
+    info!(
+        storage_path = %entry.storage_path,
+        shape = ?zarr_meta.shape,
+        chunk_shape = ?zarr_meta.chunk_shape,
+        "Loading grid data from Zarr"
+    );
+    
+    // Build storage path - the storage_path in catalog points to the Zarr directory
+    // e.g., "grids/gfs/20241212_00z/TMP_2m_f006.zarr"
+    // zarrs expects paths to start with / for object_store backends
+    let zarr_path = if entry.storage_path.starts_with('/') {
+        entry.storage_path.clone()
+    } else {
+        format!("/{}", entry.storage_path)
+    };
+    
+    // Create MinIO storage using the helper (uses correct object_store version)
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+    
+    // Convert zarr_meta to GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: zarr_meta.model.clone(),
+        parameter: zarr_meta.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // Create processor with metadata from catalog (avoids metadata fetch from MinIO)
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &zarr_path,
+        grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| format!("Failed to open Zarr: {}", e))?;
+    
+    // Determine bbox to read
+    let read_bbox = if let Some(bbox_arr) = bbox {
+        GpBoundingBox::new(
+            bbox_arr[0] as f64,
+            bbox_arr[1] as f64, 
+            bbox_arr[2] as f64,
+            bbox_arr[3] as f64,
+        )
+    } else {
+        // Read full grid
+        zarr_meta.bbox
+    };
+    
+    // Read the region
+    let start = Instant::now();
+    let region = processor.read_region(&read_bbox).await
+        .map_err(|e| format!("Failed to read Zarr region: {}", e))?;
+    let read_duration = start.elapsed();
+    
+    info!(
+        width = region.width,
+        height = region.height,
+        data_points = region.data.len(),
+        read_ms = read_duration.as_millis(),
+        "Loaded Zarr region"
+    );
+    
+    // Return actual bbox from the region (important for partial reads)
+    let actual_bbox = [
+        region.bbox.min_lon as f32,
+        region.bbox.min_lat as f32,
+        region.bbox.max_lon as f32,
+        region.bbox.max_lat as f32,
+    ];
+    
+    Ok(GridData {
+        data: region.data,
+        width: region.width,
+        height: region.height,
+        bbox: Some(actual_bbox),
+        goes_projection: None, // Zarr data is always pre-projected to geographic
+    })
 }
 
 /// Load GOES NetCDF data from storage with parsed grid caching
@@ -1742,6 +1954,7 @@ async fn load_netcdf_grid_data(
                 data: (*cached.data).clone(),
                 width: cached.width,
                 height: cached.height,
+                bbox: None, // GOES/NetCDF returns full grid, use entry.bbox
                 goes_projection: cached.goes_projection.map(|p| GoesProjectionParams {
                     x_origin: p.x_origin,
                     y_origin: p.y_origin,
@@ -1860,6 +2073,7 @@ async fn load_netcdf_grid_data(
         data,
         width,
         height,
+        bbox: None, // GOES/NetCDF returns full grid, use entry.bbox
         goes_projection: Some(goes_projection),
     })
 }

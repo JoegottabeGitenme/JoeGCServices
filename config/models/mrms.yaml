@@ -5,7 +5,7 @@ model:
   id: mrms
   name: "MRMS - Multi-Radar Multi-Sensor"
   description: "CONUS-wide radar mosaic and precipitation analysis at ~1km resolution"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests

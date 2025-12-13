@@ -1935,6 +1935,7 @@ dependencies = [
  "wms-common",
  "zarrs",
  "zarrs_filesystem",
+ "zarrs_object_store",
  "zarrs_storage",
 ]
 
@@ -6142,6 +6143,7 @@ dependencies = [
  "dotenvy",
  "flate2",
  "grib2-parser",
+ "grid-processor",
  "metrics",
  "metrics-exporter-prometheus",
  "netcdf-parser",
@@ -6154,14 +6156,17 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "storage",
+ "tempfile",
  "tokio",
  "tower 0.4.13",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
  "wms-common",
  "wms-protocol",
+ "zarrs_filesystem",
 ]
 
 [[package]]
@@ -6295,14 +6300,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "zarrs_object_store"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fec22ab4b2ce2ee9fad62a4f1a0c7a063e9ad092f0c675d329981513d0662525"
+dependencies = [
+ "async-trait",
+ "futures",
+ "object_store",
+ "zarrs_storage",
+]
+
+[[package]]
 name = "zarrs_storage"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0908f7fe5a8b2e181d25b3fe9a6f0aa314dcc9a2e3e65ed9cf8b7a0ae77486d7"
 dependencies = [
+ "async-trait",
  "auto_impl",
  "bytes",
  "derive_more 2.1.0",
+ "futures",
  "itertools 0.14.0",
  "parking_lot",
  "thiserror 2.0.17",

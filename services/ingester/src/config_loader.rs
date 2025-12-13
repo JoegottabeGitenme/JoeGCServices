@@ -695,6 +695,7 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
         forecast_hours,
         resolution: cfg.grid.resolution.clone()
             .unwrap_or_else(|| "default".to_string()),
+        file_pattern: cfg.source.file_pattern.clone(),
         poll_interval_secs: cfg.schedule.poll_interval_secs,
     })
 }

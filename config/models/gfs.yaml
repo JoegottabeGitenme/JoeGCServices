@@ -19,7 +19,7 @@ source:
   type: aws_s3
   bucket: noaa-gfs-bdp-pds
   prefix_template: "gfs.{date}/{cycle:02}/atmos"
-  file_pattern: "gfs.t{cycle:02}z.pgrb2.{resolution}.f{forecast:03}"
+  file_pattern: "gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}"
   region: us-east-1
   
 grid:

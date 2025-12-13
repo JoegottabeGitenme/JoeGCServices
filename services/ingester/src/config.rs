@@ -109,7 +109,8 @@ impl IngesterConfig {
                 ],
                 cycles: vec![0, 6, 12, 18],
                 forecast_hours: (0..=120).step_by(3).collect(),
-                resolution: "0p25".to_string(),
+                resolution: "0.25deg".to_string(),
+                file_pattern: Some("gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}".to_string()),
                 poll_interval_secs: 3600, // 1 hour
             },
         );
@@ -143,6 +144,7 @@ impl IngesterConfig {
                 cycles: (0..24).collect(),
                 forecast_hours: (0..=18).collect(),
                 resolution: "3km".to_string(),
+                file_pattern: Some("hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2".to_string()),
                 poll_interval_secs: 3600,
             },
         );
@@ -178,6 +180,7 @@ impl IngesterConfig {
                 cycles: (0..24).collect(), // Hourly
                 forecast_hours: vec![1, 2, 13], // Reused as band numbers
                 resolution: "1km".to_string(),
+                file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300, // 5 minutes - GOES updates every 5-15 min
             },
         );
@@ -213,6 +216,7 @@ impl IngesterConfig {
                 cycles: (0..24).collect(),
                 forecast_hours: vec![1, 2, 13],
                 resolution: "1km".to_string(),
+                file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300,
             },
         );
@@ -247,8 +251,14 @@ pub struct ModelConfig {
     /// Forecast hours to download
     pub forecast_hours: Vec<u32>,
 
-    /// Grid resolution identifier
+    /// Grid resolution identifier (for metadata, e.g., "0.25deg")
     pub resolution: String,
+
+    /// File pattern template for constructing filenames
+    /// Supports placeholders: {cycle:02}, {forecast:02}, {forecast:03}
+    /// Example: "gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}"
+    #[serde(default)]
+    pub file_pattern: Option<String>,
 
     /// Model-specific polling interval
     pub poll_interval_secs: u64,
@@ -345,10 +355,20 @@ impl DataSource {
     }
 
     /// Get the file pattern for listing files.
-    pub fn file_pattern(&self, model: &str, resolution: &str, cycle: u32, fhr: u32) -> String {
+    /// If a custom file_pattern is provided, it will be used with placeholder substitution.
+    /// Otherwise falls back to legacy hardcoded patterns.
+    pub fn file_pattern(&self, model: &str, _resolution: &str, cycle: u32, fhr: u32, custom_pattern: Option<&str>) -> String {
+        // If a custom pattern is provided from config, use it
+        if let Some(pattern) = custom_pattern {
+            return pattern
+                .replace("{cycle:02}", &format!("{:02}", cycle))
+                .replace("{forecast:03}", &format!("{:03}", fhr))
+                .replace("{forecast:02}", &format!("{:02}", fhr));
+        }
+        
+        // Legacy fallback for hardcoded patterns (deprecated - configs should specify file_pattern)
         match self {
             DataSource::NoaaAws { .. } | DataSource::Nomads { .. } => match model {
-                "gfs" => format!("gfs.t{:02}z.pgrb2.{}.f{:03}", cycle, resolution, fhr),
                 "hrrr" => format!("hrrr.t{:02}z.wrfsfcf{:02}.grib2", cycle, fhr),
                 _ => format!("{}.t{:02}z.f{:03}.grib2", model, cycle, fhr),
             },

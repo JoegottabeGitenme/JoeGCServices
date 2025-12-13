@@ -277,6 +277,29 @@
                     </div>
                 </div>
                 <div class="info-bar-separator"></div>
+                <!-- Chunk Cache Stats (Zarr) -->
+                <div class="info-bar-group">
+                    <span class="info-bar-title" title="Cache for Zarr data chunks. Enables efficient partial reads from cloud storage for tile rendering.">Chunk Cache</span>
+                    <div class="info-bar-stats">
+                        <div class="info-stat" title="Number of Zarr chunks currently stored in the cache.">
+                            <span class="info-stat-label">Entries</span>
+                            <span class="info-stat-value" id="info-chunk-entries">-</span>
+                        </div>
+                        <div class="info-stat" title="Current memory usage of the chunk cache.">
+                            <span class="info-stat-label">Memory</span>
+                            <span class="info-stat-value" id="info-chunk-memory">-</span>
+                        </div>
+                        <div class="info-stat" title="Number of chunk requests served from cache.">
+                            <span class="info-stat-label">Hits</span>
+                            <span class="info-stat-value" id="info-chunk-hits">-</span>
+                        </div>
+                        <div class="info-stat" title="Chunk cache hit rate. Higher rates reduce cloud storage reads.">
+                            <span class="info-stat-label">Rate</span>
+                            <span class="info-stat-value" id="info-chunk-rate">-</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="info-bar-separator"></div>
                 <!-- Per-source compact stats -->
                 <div class="info-bar-group" id="info-source-stats">
                     <span class="info-source-item" id="info-src-gfs" title="GFS (Global Forecast System) - GRIB2 format&#10;Global model, 0.25° resolution, 384hr forecasts&#10;Shows: cache hit rate % | avg parse time">
@@ -582,6 +605,74 @@
                             <div class="perf-section-title">Model Precaching</div>
                             <div class="perf-precache-list" id="perf-precache-list">
                                 <div class="perf-loading">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Grid Processor Widget (Zarr/Chunk Cache) -->
+                <div class="perf-widget collapsed" id="grid-processor-widget">
+                    <div class="perf-widget-header" onclick="toggleGridProcessorWidget()">
+                        <span class="perf-widget-title">Grid Processor (Zarr)</span>
+                        <div class="perf-widget-meta">
+                            <span class="perf-memory-usage" id="grid-proc-summary" title="Chunk cache summary">-</span>
+                            <span class="perf-toggle-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="perf-widget-content" id="grid-processor-widget-content">
+                        <!-- Chunk Cache Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Chunk Cache</div>
+                            <div class="perf-grid">
+                                <div class="perf-item">
+                                    <span class="perf-label">Memory</span>
+                                    <span class="perf-value" id="grid-proc-memory">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Entries</span>
+                                    <span class="perf-value" id="grid-proc-entries">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Max Size</span>
+                                    <span class="perf-value" id="grid-proc-max-size">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Hit Rate</span>
+                                    <span class="perf-value" id="grid-proc-hitrate">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Request Stats Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Request Stats</div>
+                            <div class="perf-grid">
+                                <div class="perf-item">
+                                    <span class="perf-label">Hits</span>
+                                    <span class="perf-value perf-value-good" id="grid-proc-hits">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Misses</span>
+                                    <span class="perf-value" id="grid-proc-misses">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Evictions</span>
+                                    <span class="perf-value" id="grid-proc-evictions">-</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Total</span>
+                                    <span class="perf-value" id="grid-proc-total">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Zarr Info Section -->
+                        <div class="perf-section">
+                            <div class="perf-section-title">Zarr Configuration</div>
+                            <div class="perf-flags" id="grid-proc-flags">
+                                <span class="perf-flag" id="grid-proc-flag-enabled" title="Chunk Cache Enabled">Cache</span>
+                                <span class="perf-flag" id="grid-proc-flag-zarr" title="Zarr V3 Format">Zarr V3</span>
+                                <span class="perf-flag" id="grid-proc-flag-storage" title="MinIO Storage Backend">MinIO</span>
                             </div>
                         </div>
                     </div>

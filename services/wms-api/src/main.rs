@@ -286,6 +286,8 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/storage/stats", get(handlers::storage_stats_handler))
         // Container/pod resource stats API
         .route("/api/container/stats", get(handlers::container_stats_handler))
+        // Grid processor stats API (Zarr chunk cache and processing)
+        .route("/api/grid-processor/stats", get(handlers::grid_processor_stats_handler))
         // Tile request heatmap API (for geographic visualization)
         .route("/api/tile-heatmap", get(handlers::tile_heatmap_handler))
         .route("/api/tile-heatmap/clear", post(handlers::tile_heatmap_clear_handler))

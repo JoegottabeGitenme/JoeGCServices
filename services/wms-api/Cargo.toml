@@ -15,6 +15,7 @@ grib2-parser = { path = "../../crates/grib2-parser" }
 netcdf-parser = { path = "../../crates/netcdf-parser" }
 renderer = { path = "../../crates/renderer" }
 projection = { path = "../../crates/projection" }
+grid-processor = { path = "../../crates/grid-processor" }
 
 tokio = { workspace = true }
 axum = { workspace = true }
@@ -41,3 +42,6 @@ anyhow = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
 dotenvy = { workspace = true }
+zarrs_filesystem = "0.2"
+walkdir = "2.5"
+tempfile = "3.14"

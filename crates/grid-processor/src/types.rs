@@ -73,6 +73,46 @@ impl BoundingBox {
             max_lat: self.max_lat.max(-90.0).min(90.0),
         }
     }
+
+    /// Check if this bounding box uses 0-360 longitude convention.
+    /// Returns true if the grid spans the 0-360 range (like GFS).
+    pub fn uses_0_360_longitude(&self) -> bool {
+        self.min_lon >= 0.0 && self.max_lon > 180.0
+    }
+
+    /// Check if this request bbox would cross the dateline when normalized to a 0-360 grid.
+    /// This happens when the request spans from negative to positive longitude
+    /// (e.g., min_lon=-100, max_lon=50 becomes 260 to 50, which is inverted).
+    pub fn crosses_dateline_on_360_grid(&self, grid_bbox: &BoundingBox) -> bool {
+        if !grid_bbox.uses_0_360_longitude() {
+            return false;
+        }
+        // Request crosses dateline if min_lon is negative and max_lon is positive
+        // After normalization, min_lon would be > max_lon
+        self.min_lon < 0.0 && self.max_lon >= 0.0
+    }
+
+    /// Normalize a request bbox to match a grid's coordinate system.
+    /// If the grid uses 0-360 longitude and the request uses -180/180,
+    /// convert the request to 0-360.
+    /// 
+    /// NOTE: This does NOT handle cross-dateline requests properly.
+    /// Use `crosses_dateline_on_360_grid()` to check first, and if true,
+    /// either load the full grid or split into two requests.
+    pub fn normalize_to_grid(&self, grid_bbox: &BoundingBox) -> Self {
+        if grid_bbox.uses_0_360_longitude() && self.min_lon < 0.0 {
+            // Grid uses 0-360, request uses -180/180
+            // Convert request to 0-360 by adding 360 to negative longitudes
+            Self {
+                min_lon: if self.min_lon < 0.0 { self.min_lon + 360.0 } else { self.min_lon },
+                min_lat: self.min_lat,
+                max_lon: if self.max_lon < 0.0 { self.max_lon + 360.0 } else { self.max_lon },
+                max_lat: self.max_lat,
+            }
+        } else {
+            *self
+        }
+    }
 }
 
 impl Default for BoundingBox {

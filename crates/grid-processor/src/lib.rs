@@ -50,6 +50,7 @@
 pub mod cache;
 pub mod config;
 pub mod error;
+pub mod minio_storage;
 pub mod processor;
 pub mod projection;
 pub mod types;
@@ -59,6 +60,7 @@ pub mod writer;
 pub use cache::{ChunkCache, ChunkKey};
 pub use config::{GridProcessorConfig, ZarrCompression};
 pub use error::{GridProcessorError, Result};
+pub use minio_storage::{create_minio_storage, MinioConfig};
 pub use processor::{GridProcessor, ZarrGridProcessor};
 pub use projection::{
     bilinear_interpolate, cubic_interpolate, nearest_interpolate, tile_to_bbox,

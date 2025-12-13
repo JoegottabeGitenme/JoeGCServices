@@ -8,6 +8,30 @@ use crate::Grib2Error;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDate, Utc};
 
+/// Decode a GRIB2 signed integer using sign-magnitude encoding.
+/// 
+/// GRIB2 uses sign-magnitude representation for signed values (like coordinates),
+/// NOT two's complement. The MSB (most significant bit) indicates the sign:
+/// - MSB = 0: positive value
+/// - MSB = 1: negative value (magnitude is the value with MSB cleared)
+fn decode_grib2_signed(bytes: &[u8]) -> i32 {
+    if bytes.len() != 4 {
+        return 0;
+    }
+    
+    let raw = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    
+    if raw & 0x80000000 != 0 {
+        // Sign bit is set - value is negative
+        // Clear the sign bit to get magnitude, then negate
+        let magnitude = raw & 0x7FFFFFFF;
+        -(magnitude as i32)
+    } else {
+        // Positive value
+        raw as i32
+    }
+}
+
 /// Section 0: Indicator Section (16 bytes)
 #[derive(Debug, Clone)]
 pub struct Indicator {
@@ -246,10 +270,12 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
         
         // Latitudes and longitudes are in microdegrees (10^-6 degrees)
-        let la1 = i32::from_be_bytes([gd[32], gd[33], gd[34], gd[35]]);
-        let lo1 = i32::from_be_bytes([gd[36], gd[37], gd[38], gd[39]]);
-        let la2 = i32::from_be_bytes([gd[41], gd[42], gd[43], gd[44]]);
-        let lo2 = i32::from_be_bytes([gd[45], gd[46], gd[47], gd[48]]);
+        // GRIB2 uses sign-magnitude encoding: MSB indicates sign, remaining bits are magnitude
+        // This is NOT two's complement!
+        let la1 = decode_grib2_signed(&gd[32..36]);
+        let lo1 = decode_grib2_signed(&gd[36..40]);
+        let la2 = decode_grib2_signed(&gd[41..45]);
+        let lo2 = decode_grib2_signed(&gd[45..49]);
         let di = u32::from_be_bytes([gd[49], gd[50], gd[51], gd[52]]);
         let dj = u32::from_be_bytes([gd[53], gd[54], gd[55], gd[56]]);
         let scanning_mode = gd[57];

@@ -9,9 +9,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
+use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
 use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::metrics::MetricsCollector;
@@ -160,6 +161,10 @@ pub struct OptimizationConfig {
     // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
     pub grib_grid_cache_enabled: bool,
     
+    // Zarr Chunk Cache (for chunked Zarr grid data)
+    pub chunk_cache_enabled: bool,
+    pub chunk_cache_size_mb: usize,
+    
     // Prefetch
     pub prefetch_enabled: bool,
     pub prefetch_rings: u32,
@@ -229,6 +234,11 @@ impl OptimizationConfig {
             // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
             // This can significantly reduce CPU usage for adjacent tile requests
             grib_grid_cache_enabled: parse_bool("ENABLE_GRIB_GRID_CACHE", true),
+            
+            // Zarr Chunk Cache (for chunked Zarr grid data)
+            // This caches decompressed chunks from Zarr files for efficient partial reads
+            chunk_cache_enabled: parse_bool("ENABLE_CHUNK_CACHE", true),
+            chunk_cache_size_mb: parse_usize("CHUNK_CACHE_SIZE_MB", 1024), // Default 1GB
             
             // Prefetch
             prefetch_enabled: parse_bool("ENABLE_PREFETCH", true),
@@ -360,6 +370,67 @@ impl ProjectionLuts {
     }
 }
 
+/// Factory for creating grid processors from Zarr-format data.
+///
+/// This factory manages a shared chunk cache for efficient partial reads
+/// from Zarr-format grid data stored in MinIO.
+///
+/// # Data Flow
+/// 
+/// When a tile request comes in for a dataset with `zarr_metadata`:
+/// 1. The catalog query returns the `CatalogEntry` with embedded `zarr_metadata`
+/// 2. `GridProcessorFactory::create_processor()` creates a `ZarrGridProcessor`
+///    using metadata from the catalog (no MinIO request needed for metadata)
+/// 3. The processor fetches only the chunks needed for the tile via byte-range requests
+/// 4. Decompressed chunks are cached in the shared `ChunkCache` for reuse
+///
+/// For datasets without `zarr_metadata`, the legacy GRIB2/NetCDF path is used.
+pub struct GridProcessorFactory {
+    /// Object storage client for MinIO access.
+    pub storage: Arc<ObjectStorage>,
+    /// Grid processor configuration.
+    pub config: GridProcessorConfig,
+    /// Shared chunk cache for decompressed Zarr chunks.
+    pub chunk_cache: Arc<RwLock<ChunkCache>>,
+}
+
+impl GridProcessorFactory {
+    /// Create a new GridProcessorFactory.
+    pub fn new(storage: Arc<ObjectStorage>, chunk_cache_size_mb: usize) -> Self {
+        let chunk_cache = Arc::new(RwLock::new(ChunkCache::new(
+            chunk_cache_size_mb * 1024 * 1024,
+        )));
+        
+        let config = GridProcessorConfig::default();
+        
+        Self {
+            storage,
+            config,
+            chunk_cache,
+        }
+    }
+    
+    /// Get chunk cache statistics for monitoring.
+    pub async fn cache_stats(&self) -> grid_processor::CacheStats {
+        self.chunk_cache.read().await.stats()
+    }
+    
+    /// Get memory usage of the chunk cache.
+    pub async fn cache_memory_bytes(&self) -> u64 {
+        self.chunk_cache.read().await.stats().memory_bytes
+    }
+    
+    /// Get the shared chunk cache reference (for creating processors).
+    pub fn chunk_cache(&self) -> Arc<RwLock<ChunkCache>> {
+        self.chunk_cache.clone()
+    }
+    
+    /// Get the processor config.
+    pub fn config(&self) -> &GridProcessorConfig {
+        &self.config
+    }
+}
+
 /// Shared application state.
 pub struct AppState {
     pub catalog: Catalog,
@@ -370,6 +441,7 @@ pub struct AppState {
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,
     pub grid_cache: GridDataCache,  // Cache for parsed grid data (GOES/NetCDF)
+    pub grid_processor_factory: GridProcessorFactory,  // Factory for Zarr-based grid processors
     pub projection_luts: ProjectionLuts,  // Pre-computed projection LUTs for GOES
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
@@ -427,6 +499,22 @@ impl AppState {
 
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
+        
+        // Create GridProcessorFactory for Zarr-based data access
+        let grid_processor_factory = if optimization_config.chunk_cache_enabled {
+            let factory = GridProcessorFactory::new(
+                storage.clone(),
+                optimization_config.chunk_cache_size_mb,
+            );
+            info!(
+                chunk_cache_size_mb = optimization_config.chunk_cache_size_mb,
+                "GridProcessorFactory initialized with chunk cache"
+            );
+            factory
+        } else {
+            info!("Chunk cache disabled (set ENABLE_CHUNK_CACHE=true to enable)");
+            GridProcessorFactory::new(storage.clone(), 0) // 0 MB = minimal cache
+        };
 
         // Load projection LUTs for fast GOES rendering
         let projection_luts = if optimization_config.projection_lut_enabled {
@@ -465,6 +553,7 @@ impl AppState {
             storage,
             grib_cache,
             grid_cache,
+            grid_processor_factory,
             projection_luts,
             metrics,
             prefetch_rings,

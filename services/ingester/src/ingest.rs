@@ -147,6 +147,7 @@ impl IngestionPipeline {
                     &model_config.resolution,
                     cycle,
                     fhr,
+                    model_config.file_pattern.as_deref(),
                 );
 
                 async move {

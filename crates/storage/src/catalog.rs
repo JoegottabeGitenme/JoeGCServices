@@ -1013,16 +1013,5 @@ CREATE TABLE IF NOT EXISTS layer_styles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     UNIQUE(layer_id, style_name)
-);
-
--- Migration: Add zarr_metadata column if it doesn't exist
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'datasets' AND column_name = 'zarr_metadata'
-    ) THEN
-        ALTER TABLE datasets ADD COLUMN zarr_metadata JSONB;
-    END IF;
-END $$;
+)
 "#;

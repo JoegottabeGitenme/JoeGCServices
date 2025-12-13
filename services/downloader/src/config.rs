@@ -84,6 +84,8 @@ pub struct GridConfig {
     pub dimensions: Option<Dimensions>,
 }
 
+
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BBox {
@@ -325,4 +327,5 @@ schedule:
         assert_eq!(config.schedule.cycles, vec![0, 6, 12, 18]);
         assert_eq!(config.forecast_hours(), vec![0, 3, 6, 9, 12, 15, 18, 21, 24]);
     }
+    
 }

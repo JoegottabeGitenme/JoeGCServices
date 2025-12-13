@@ -5,6 +5,33 @@
     "description": "Temperature visualization styles for surface and upper-air data"
   },
   "styles": {
+    "temperature": {
+      "name": "Temperature Gradient",
+      "description": "Temperature color scale from cold (blue) to hot (red)",
+      "type": "gradient",
+      "units": "K",
+      "range": {
+        "min": 233.15,
+        "max": 313.15
+      },
+      "stops": [
+        { "value": 233.15, "color": "#1E0082", "label": "-40C" },
+        { "value": 243.15, "color": "#0032C8", "label": "-30C" },
+        { "value": 253.15, "color": "#0096FF", "label": "-20C" },
+        { "value": 263.15, "color": "#32C8FF", "label": "-10C" },
+        { "value": 273.15, "color": "#96FFC8", "label": "0C" },
+        { "value": 283.15, "color": "#FFFF32", "label": "10C" },
+        { "value": 293.15, "color": "#FF9600", "label": "20C" },
+        { "value": 303.15, "color": "#FF3200", "label": "30C" },
+        { "value": 313.15, "color": "#960000", "label": "40C" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Temperature",
+        "labels": ["-40C", "-30C", "-20C", "-10C", "0C", "10C", "20C", "30C", "40C"]
+      }
+    },
     "default": {
       "name": "Temperature",
       "description": "Temperature color scale from cold (blue) to hot (red)",

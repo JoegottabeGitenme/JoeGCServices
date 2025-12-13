@@ -7,6 +7,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 use storage::TileMemoryCacheStats;
+use grid_processor;
 
 /// Metrics collector for the WMS API.
 #[derive(Debug)]
@@ -937,6 +938,25 @@ impl MetricsCollector {
         gauge!("grid_cache_memory_mb").set(memory_mb);
         gauge!("grid_cache_hit_rate_percent").set(hit_rate);
         gauge!("grid_cache_utilization_percent").set(utilization);
+    }
+    
+    /// Record Zarr chunk cache statistics (for chunked grid data)
+    pub fn record_chunk_cache_stats(&self, stats: &grid_processor::CacheStats) {
+        let total = stats.hits + stats.misses;
+        let hit_rate = if total > 0 {
+            (stats.hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        let memory_mb = stats.memory_bytes as f64 / (1024.0 * 1024.0);
+        
+        gauge!("chunk_cache_hits_total").set(stats.hits as f64);
+        gauge!("chunk_cache_misses_total").set(stats.misses as f64);
+        gauge!("chunk_cache_evictions_total").set(stats.evictions as f64);
+        gauge!("chunk_cache_entries").set(stats.entries as f64);
+        gauge!("chunk_cache_memory_bytes").set(stats.memory_bytes as f64);
+        gauge!("chunk_cache_memory_mb").set(memory_mb);
+        gauge!("chunk_cache_hit_rate_percent").set(hit_rate);
     }
     
     /// Get current metrics snapshot

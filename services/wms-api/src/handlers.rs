@@ -193,7 +193,9 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                 let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                 [min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32]
             } else {
-                [coords[0] as f32, coords[1] as f32, coords[2] as f32, coords[3] as f32]
+                // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                // BBOX format: min_lat, min_lon, max_lat, max_lon
+                [coords[1] as f32, coords[0] as f32, coords[3] as f32, coords[2] as f32]
             };
             state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
         }
@@ -297,7 +299,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         .and_then(InfoFormat::from_mime)
         .unwrap_or(InfoFormat::Html);
     
-    // Parse BBOX
+    // Parse BBOX - WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
     let bbox_coords: Result<Vec<f64>, _> = bbox
         .split(',')
         .map(|s| s.trim().parse())
@@ -305,7 +307,14 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     
     let bbox_array = match bbox_coords {
         Ok(coords) if coords.len() == 4 => {
-            [coords[0], coords[1], coords[2], coords[3]]
+            if crs.contains("3857") {
+                // Web Mercator - keep as [minx, miny, maxx, maxy]
+                [coords[0], coords[1], coords[2], coords[3]]
+            } else {
+                // EPSG:4326 - input is [min_lat, min_lon, max_lat, max_lon]
+                // Convert to [min_lon, min_lat, max_lon, max_lat]
+                [coords[1], coords[0], coords[3], coords[2]]
+            }
         }
         _ => {
             return wms_exception(
@@ -863,10 +872,11 @@ async fn wmts_get_tile(
             256,  // tile width
             256,  // tile height
             Some(bbox_array),
-            None,  // style_name
+            Some(style),  // style_name - pass requested style for proper color mapping
             true,  // use_mercator for WMTS
             Some((z, x, y)),  // tile coords for LUT lookup
             Some(&state.projection_luts),  // projection LUT cache
+            Some(&state.grid_processor_factory),  // Zarr grid processor factory
         )
         .await
     };
@@ -874,6 +884,20 @@ async fn wmts_get_tile(
     match result
     {
         Ok(png_data) => {
+            let render_time_ms = timer.elapsed_us() as f64 / 1000.0;
+            
+            // Log successful render with timing
+            info!(
+                layer = %layer,
+                style = %style,
+                z = z,
+                x = x,
+                y = y,
+                render_ms = render_time_ms,
+                png_size = png_data.len(),
+                "WMTS tile rendered"
+            );
+            
             // Classify layer type and record metrics
             let layer_type = crate::metrics::LayerType::from_layer_and_style(layer, style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
@@ -976,6 +1000,10 @@ pub async fn metrics_handler(
     let grid_stats = state.grid_cache.stats().await;
     state.metrics.record_grid_cache_stats(&grid_stats);
     
+    // Update Zarr chunk cache metrics
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    state.metrics.record_chunk_cache_stats(&chunk_stats);
+    
     // Update L1 tile memory cache metrics
     let l1_stats = state.tile_memory_cache.stats();
     state.metrics.record_tile_memory_cache_stats(&l1_stats);
@@ -1060,13 +1088,30 @@ pub async fn api_metrics_handler(
         "utilization": grid_stats.utilization(),
     });
     
+    // Get Zarr chunk cache stats
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    let chunk_cache_stats = serde_json::json!({
+        "hits": chunk_stats.hits,
+        "misses": chunk_stats.misses,
+        "evictions": chunk_stats.evictions,
+        "entries": chunk_stats.entries,
+        "memory_bytes": chunk_stats.memory_bytes,
+        "memory_mb": chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0),
+        "hit_rate": if chunk_stats.hits + chunk_stats.misses > 0 {
+            chunk_stats.hits as f64 / (chunk_stats.hits + chunk_stats.misses) as f64
+        } else {
+            0.0
+        },
+    });
+    
     // Combine metrics, system, and cache stats
     let combined = serde_json::json!({
         "metrics": snapshot,
         "system": system,
         "l1_cache": l1_cache_stats,
         "l2_cache": l2_cache_stats,
-        "grid_cache": grid_cache_stats
+        "grid_cache": grid_cache_stats,
+        "chunk_cache": chunk_cache_stats
     });
     
     Json(combined)
@@ -1098,6 +1143,50 @@ pub async fn storage_stats_handler(
 /// Reads from /proc to get memory and CPU info, also checks cgroup limits
 pub async fn container_stats_handler() -> impl IntoResponse {
     let stats = read_container_stats();
+    Json(stats)
+}
+
+/// Grid processor stats endpoint - returns Zarr chunk cache and processing statistics
+/// This provides detailed information about the grid processor subsystem for monitoring
+pub async fn grid_processor_stats_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Get chunk cache stats
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    let total_requests = chunk_stats.hits + chunk_stats.misses;
+    let hit_rate = if total_requests > 0 {
+        (chunk_stats.hits as f64 / total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Get configuration
+    let config = &state.optimization_config;
+    
+    let stats = serde_json::json!({
+        "chunk_cache": {
+            "enabled": config.chunk_cache_enabled,
+            "configured_size_mb": config.chunk_cache_size_mb,
+            "hits": chunk_stats.hits,
+            "misses": chunk_stats.misses,
+            "evictions": chunk_stats.evictions,
+            "entries": chunk_stats.entries,
+            "memory_bytes": chunk_stats.memory_bytes,
+            "memory_mb": chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0),
+            "hit_rate_percent": hit_rate,
+            "total_requests": total_requests,
+        },
+        "zarr": {
+            "supported": true,
+            "format_version": "v3",
+            "storage_backend": "minio",
+        },
+        "status": {
+            "healthy": true,
+            "last_updated": chrono::Utc::now().to_rfc3339(),
+        }
+    });
+    
     Json(stats)
 }
 
@@ -1379,11 +1468,14 @@ async fn render_weather_data(
             if coords.len() == 4 {
                 let crs_str = crs.unwrap_or("EPSG:4326");
                 let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+                    // Web Mercator - BBOX is [minx, miny, maxx, maxy] in meters
                     let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
                     let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                     (min_lon, min_lat, max_lon, max_lat)
                 } else {
-                    (coords[0], coords[1], coords[2], coords[3])
+                    // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                    // BBOX format: min_lat, min_lon, max_lat, max_lon
+                    (coords[1], coords[0], coords[3], coords[2])
                 };
                 
                 Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
@@ -1415,13 +1507,14 @@ async fn render_weather_data(
             // Check CRS and convert if needed
             let crs_str = crs.unwrap_or("EPSG:4326");
             let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
-                // Web Mercator - convert to WGS84
+                // Web Mercator - BBOX is [minx, miny, maxx, maxy] in meters
                 let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
                 let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                 (min_lon, min_lat, max_lon, max_lat)
             } else {
-                // Assume WGS84/EPSG:4326
-                (coords[0], coords[1], coords[2], coords[3])
+                // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                // BBOX format: min_lat, min_lon, max_lat, max_lon
+                (coords[1], coords[0], coords[3], coords[2])
             };
             
             Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
@@ -1519,8 +1612,8 @@ async fn render_weather_data(
         .await;
     }
 
-    // Use shared rendering logic with support for observation time
-    crate::rendering::render_weather_data_with_time(
+    // Use shared rendering logic with support for observation time and Zarr
+    crate::rendering::render_weather_data_with_lut(
         &state.grib_cache,
         state.grid_cache_if_enabled(),
         &state.catalog,
@@ -1535,6 +1628,9 @@ async fn render_weather_data(
         parsed_bbox,
         Some(style),
         use_mercator,
+        None,  // tile_coords
+        None,  // projection_luts
+        Some(&state.grid_processor_factory),  // Zarr grid processor factory
     )
     .await
 }
@@ -2764,16 +2860,25 @@ async fn prefetch_single_tile(
         )
         .await
     } else {
-        crate::rendering::render_weather_data(
+        // Use render_weather_data_with_lut to enable Zarr support for prefetched tiles
+        crate::rendering::render_weather_data_with_lut(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
             model,
             &parameter,
-            None,
+            None,  // forecast_hour
+            None,  // observation_time
+            None,  // level/elevation
             256,
             256,
             Some(bbox_array),
+            Some(style),  // style_name - pass requested style for proper color mapping
+            true,  // use_mercator for WMTS prefetch
+            Some((coord.z, coord.x, coord.y)),  // tile coords for LUT lookup
+            Some(&state.projection_luts),  // projection LUT cache
+            Some(&state.grid_processor_factory),  // Zarr grid processor factory
         )
         .await
     };

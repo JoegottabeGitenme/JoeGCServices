@@ -324,12 +324,23 @@ impl SyncTask {
         let db_records_checked = db_paths.len() as u64;
 
         // Get all objects from MinIO
-        // Need to check both shredded/ (GRIB2 data) and raw/ (GOES NetCDF data)
+        // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data), and grids/ (Zarr data)
         let mut minio_paths = self.state.storage.list("shredded/").await?;
         let raw_paths = self.state.storage.list("raw/").await?;
         minio_paths.extend(raw_paths);
+        let grid_paths = self.state.storage.list("grids/").await?;
+        minio_paths.extend(grid_paths);
         
-        let minio_path_set: std::collections::HashSet<String> = minio_paths.iter().cloned().collect();
+        // For Zarr directories, extract the parent .zarr path from individual files
+        let mut minio_path_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for path in &minio_paths {
+            if let Some(zarr_idx) = path.find(".zarr/") {
+                let zarr_dir = &path[..zarr_idx + 5];
+                minio_path_set.insert(zarr_dir.to_string());
+            } else {
+                minio_path_set.insert(path.clone());
+            }
+        }
         let minio_objects_checked = minio_paths.len() as u64;
 
         // Find orphan DB records (in DB but not in MinIO)
@@ -339,10 +350,12 @@ impl SyncTask {
             .collect();
 
         // Find orphan MinIO objects (in MinIO but not in DB)
-        // Only consider shredded/ files as orphans - raw/ files may be awaiting processing
-        let orphan_minio_paths: Vec<String> = minio_paths
-            .into_iter()
-            .filter(|path| path.starts_with("shredded/") && !db_path_set.contains(path))
+        // For Zarr files, check if the extracted zarr directory exists in DB
+        // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
+        let orphan_minio_paths: Vec<String> = minio_path_set
+            .iter()
+            .filter(|path| (path.starts_with("shredded/") || path.starts_with("grids/")) && !db_path_set.contains(*path))
+            .cloned()
             .collect();
 
         Ok(SyncPreview {
@@ -367,15 +380,30 @@ impl SyncTask {
         info!(count = db_paths.len(), "Retrieved database storage paths");
 
         // Step 2: Get all objects from MinIO
-        // Need to check both shredded/ (GRIB2 data) and raw/ (GOES NetCDF data)
+        // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data), and grids/ (Zarr data)
         let mut minio_paths = self.state.storage.list("shredded/").await?;
         let raw_paths = self.state.storage.list("raw/").await?;
         minio_paths.extend(raw_paths);
+        let grid_paths = self.state.storage.list("grids/").await?;
+        minio_paths.extend(grid_paths);
         
-        let minio_path_set: std::collections::HashSet<String> = minio_paths.iter().cloned().collect();
+        // For Zarr directories, we need to extract the parent .zarr path from individual files
+        // e.g., "grids/mrms/123/foo.zarr/c/0/0" -> "grids/mrms/123/foo.zarr"
+        let mut minio_path_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for path in &minio_paths {
+            // Check if this is a Zarr file (contains .zarr/ in path)
+            if let Some(zarr_idx) = path.find(".zarr/") {
+                // Extract the zarr directory path (including .zarr)
+                let zarr_dir = &path[..zarr_idx + 5]; // +5 for ".zarr"
+                minio_path_set.insert(zarr_dir.to_string());
+            } else {
+                // Regular file path
+                minio_path_set.insert(path.clone());
+            }
+        }
         stats.minio_objects_checked = minio_paths.len() as u64;
 
-        info!(count = minio_paths.len(), "Retrieved MinIO objects (shredded + raw)");
+        info!(count = minio_paths.len(), unique_paths = minio_path_set.len(), "Retrieved MinIO objects (shredded + raw + grids)");
 
         // Step 3: Find orphan DB records (in DB but not in MinIO)
         let orphan_db_paths: Vec<String> = db_paths
@@ -412,10 +440,12 @@ impl SyncTask {
         }
 
         // Step 4: Find orphan MinIO objects (in MinIO but not in DB)
-        // Only consider shredded/ files as orphans - raw/ files may be awaiting processing
-        let orphan_minio_paths: Vec<String> = minio_paths
-            .into_iter()
-            .filter(|path| path.starts_with("shredded/") && !db_path_set.contains(path))
+        // For Zarr files, check if the extracted zarr directory exists in DB
+        // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
+        let orphan_minio_paths: Vec<String> = minio_path_set
+            .iter()
+            .filter(|path| (path.starts_with("shredded/") || path.starts_with("grids/")) && !db_path_set.contains(*path))
+            .cloned()
             .collect();
         stats.orphan_minio_objects = orphan_minio_paths.len() as u64;
 

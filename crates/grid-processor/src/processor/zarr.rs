@@ -212,6 +212,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     /// Calculate which chunks intersect a bounding box.
     ///
     /// This is O(1) - pure arithmetic, no iteration or lookup needed.
+    /// Handles coordinate system conversion for grids using 0-360 longitude.
     fn chunks_for_bbox(&self, bbox: &BoundingBox) -> Vec<(usize, usize)> {
         let grid_bbox = &self.metadata.bbox;
         let (grid_width, grid_height) = self.metadata.shape;
@@ -221,17 +222,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let lon_per_cell = grid_bbox.width() / grid_width as f64;
         let lat_per_cell = grid_bbox.height() / grid_height as f64;
 
+        // Normalize bbox to grid's coordinate system (handles 0-360 vs -180/180)
+        let norm_bbox = bbox.normalize_to_grid(grid_bbox);
+
         // Convert bbox to grid indices
-        let min_col = ((bbox.min_lon - grid_bbox.min_lon) / lon_per_cell)
+        let min_col = ((norm_bbox.min_lon - grid_bbox.min_lon) / lon_per_cell)
             .floor()
             .max(0.0) as usize;
-        let max_col = ((bbox.max_lon - grid_bbox.min_lon) / lon_per_cell)
+        let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / lon_per_cell)
             .ceil()
             .min(grid_width as f64) as usize;
-        let min_row = ((grid_bbox.max_lat - bbox.max_lat) / lat_per_cell)
+        let min_row = ((grid_bbox.max_lat - norm_bbox.max_lat) / lat_per_cell)
             .floor()
             .max(0.0) as usize;
-        let max_row = ((grid_bbox.max_lat - bbox.min_lat) / lat_per_cell)
+        let max_row = ((grid_bbox.max_lat - norm_bbox.min_lat) / lat_per_cell)
             .ceil()
             .min(grid_height as f64) as usize;
 
@@ -312,17 +316,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let (chunk_w, chunk_h) = self.metadata.chunk_shape;
         let (grid_w, grid_h) = self.metadata.shape;
 
+        // Normalize bbox to grid's coordinate system (handles 0-360 vs -180/180)
+        let norm_bbox = bbox.normalize_to_grid(grid_bbox);
+
         // Calculate output region bounds in grid coordinates
-        let min_col = ((bbox.min_lon - grid_bbox.min_lon) / res_x)
+        let min_col = ((norm_bbox.min_lon - grid_bbox.min_lon) / res_x)
             .floor()
             .max(0.0) as usize;
-        let max_col = ((bbox.max_lon - grid_bbox.min_lon) / res_x)
+        let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / res_x)
             .ceil()
             .min(grid_w as f64) as usize;
-        let min_row = ((grid_bbox.max_lat - bbox.max_lat) / res_y)
+        let min_row = ((grid_bbox.max_lat - norm_bbox.max_lat) / res_y)
             .floor()
             .max(0.0) as usize;
-        let max_row = ((grid_bbox.max_lat - bbox.min_lat) / res_y)
+        let max_row = ((grid_bbox.max_lat - norm_bbox.min_lat) / res_y)
             .ceil()
             .min(grid_h as f64) as usize;
 
@@ -396,12 +403,27 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 #[async_trait]
 impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGridProcessor<S> {
     async fn read_region(&self, bbox: &BoundingBox) -> Result<GridRegion> {
+        // Check if this request crosses the dateline on a 0-360 grid
+        // If so, we need to read the FULL grid and let the caller handle resampling
+        let effective_bbox = if bbox.crosses_dateline_on_360_grid(&self.metadata.bbox) {
+            tracing::debug!(
+                path = %self.path,
+                request_bbox = ?bbox,
+                grid_bbox = ?self.metadata.bbox,
+                "Request crosses dateline on 0-360 grid, reading full grid"
+            );
+            // Use the full grid bbox instead of the request bbox
+            &self.metadata.bbox
+        } else {
+            bbox
+        };
+
         // 1. Calculate needed chunks
-        let chunks = self.chunks_for_bbox(bbox);
+        let chunks = self.chunks_for_bbox(effective_bbox);
 
         tracing::debug!(
             path = %self.path,
-            bbox = ?bbox,
+            bbox = ?effective_bbox,
             chunks = ?chunks,
             "Reading region from {} chunks",
             chunks.len()
@@ -412,7 +434,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
                 vec![],
                 0,
                 0,
-                *bbox,
+                *effective_bbox,
                 self.metadata.resolution(),
             ));
         }
@@ -425,7 +447,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         }
 
         // 3. Assemble chunks into contiguous region
-        self.assemble_region(bbox, &chunks, &chunk_data)
+        self.assemble_region(effective_bbox, &chunks, &chunk_data)
     }
 
     async fn read_point(&self, lon: f64, lat: f64) -> Result<Option<f32>> {

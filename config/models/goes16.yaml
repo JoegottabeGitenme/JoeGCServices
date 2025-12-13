@@ -5,7 +5,7 @@ model:
   id: goes16
   name: "GOES-16 - GOES East"
   description: "GOES-16 (GOES East) satellite imagery, ABI CONUS product"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
