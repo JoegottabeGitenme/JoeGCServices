@@ -354,6 +354,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             &state.grib_cache,
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             layer,
             bbox_array,
             width,

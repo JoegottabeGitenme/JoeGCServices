@@ -2418,9 +2418,6 @@ pub async fn full_config_handler() -> impl IntoResponse {
 }
 
 async fn load_full_configuration() -> anyhow::Result<FullConfigurationResponse> {
-    use std::fs;
-    use std::path::Path;
-    
     // Load model configurations
     let models = load_all_model_configs().await?;
     

@@ -2051,6 +2051,135 @@ async fn load_grid_data_from_zarr(
     })
 }
 
+/// Query a single point value from Zarr storage.
+/// 
+/// This is optimized for GetFeatureInfo requests - it reads only the single chunk
+/// containing the requested point, making it much more efficient than loading
+/// the entire grid.
+/// 
+/// # Arguments
+/// * `factory` - Grid processor factory with chunk cache
+/// * `entry` - Catalog entry with zarr_metadata
+/// * `lon` - Longitude in degrees (-180 to 180 or 0 to 360)
+/// * `lat` - Latitude in degrees (-90 to 90)
+/// 
+/// # Returns
+/// * `Ok(Some(value))` - The data value at the point
+/// * `Ok(None)` - Point is outside grid bounds or contains fill/NaN value
+/// * `Err(...)` - Failed to read data
+#[tracing::instrument(skip(factory, entry), fields(
+    model = %entry.model,
+    parameter = %entry.parameter,
+    level = %entry.level,
+    storage_path = %entry.storage_path,
+))]
+pub async fn query_point_from_zarr(
+    factory: &GridProcessorFactory,
+    entry: &CatalogEntry,
+    lon: f64,
+    lat: f64,
+) -> Result<Option<f32>, String> {
+    use grid_processor::{
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+    };
+
+    // Parse zarr_metadata from catalog entry
+    let zarr_json = entry.zarr_metadata.as_ref()
+        .ok_or_else(|| {
+            error!(model = %entry.model, parameter = %entry.parameter, "No zarr_metadata in catalog entry");
+            "No zarr_metadata in catalog entry".to_string()
+        })?;
+    
+    let zarr_meta = ZarrMetadata::from_json(zarr_json)
+        .map_err(|e| {
+            error!(model = %entry.model, parameter = %entry.parameter, error = %e, "Failed to parse zarr_metadata");
+            format!("Failed to parse zarr_metadata: {}", e)
+        })?;
+    
+    // Check if source grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = zarr_meta.bbox.min_lon >= 0.0 && zarr_meta.bbox.max_lon > 180.0;
+    
+    // Normalize longitude to match grid coordinate system
+    let query_lon = if grid_uses_360 && lon < 0.0 {
+        lon + 360.0
+    } else if !grid_uses_360 && lon > 180.0 {
+        lon - 360.0
+    } else {
+        lon
+    };
+    
+    debug!(
+        lon = lon,
+        lat = lat,
+        query_lon = query_lon,
+        grid_uses_360 = grid_uses_360,
+        grid_bbox = ?zarr_meta.bbox,
+        "Querying point from Zarr"
+    );
+    
+    // Build storage path
+    let zarr_path = if entry.storage_path.starts_with('/') {
+        entry.storage_path.clone()
+    } else {
+        format!("/{}", entry.storage_path)
+    };
+    
+    // Create MinIO storage
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| {
+            error!(error = %e, "Failed to create MinIO storage");
+            format!("Failed to create MinIO storage: {}", e)
+        })?;
+    
+    // Convert zarr_meta to GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: zarr_meta.model.clone(),
+        parameter: zarr_meta.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // Create processor with metadata from catalog
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &zarr_path,
+        grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| {
+        error!(error = %e, zarr_path = %zarr_path, "Failed to open Zarr array");
+        format!("Failed to open Zarr: {}", e)
+    })?;
+    
+    // Query the point value (reads only the chunk containing this point)
+    let start = Instant::now();
+    let value = processor.read_point(query_lon, lat).await
+        .map_err(|e| {
+            error!(error = %e, lon = query_lon, lat = lat, "Failed to read point from Zarr");
+            format!("Failed to read point: {}", e)
+        })?;
+    let read_duration = start.elapsed();
+    
+    info!(
+        lon = lon,
+        lat = lat,
+        value = ?value,
+        read_ms = read_duration.as_millis(),
+        "Zarr point query complete"
+    );
+    
+    Ok(value)
+}
+
 /// Load GOES NetCDF data from storage with parsed grid caching
 /// 
 /// This uses ncdump to extract data since we don't have direct HDF5 support.
@@ -3057,8 +3186,10 @@ pub async fn render_numbers_tile(
 /// Query data value at a specific point for GetFeatureInfo
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: Cache for GRIB2/NetCDF file data
 /// - `catalog`: Catalog for finding datasets
+/// - `metrics`: Metrics collector
+/// - `grid_processor_factory`: Optional factory for Zarr-based point queries (more efficient)
 /// - `layer`: Layer name (e.g., "gfs_TMP")
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// - `width`: Map width in pixels
@@ -3075,6 +3206,7 @@ pub async fn query_point_value(
     grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     layer: &str,
     bbox: [f64; 4],
     width: u32,
@@ -3158,13 +3290,39 @@ pub async fn query_point_value(
         }
     };
     
-    // Check if this is a NetCDF file (GOES, MRMS observation data)
+    // Determine data source type and load value
+    // Priority: Zarr (most efficient for point queries) > NetCDF > GRIB2
+    let has_zarr = entry.zarr_metadata.is_some() && grid_processor_factory.is_some();
     let is_netcdf = entry.storage_path.ends_with(".nc") || 
                     entry.parameter.starts_with("CMI_") ||
                     model.starts_with("goes");
     
     // Load and sample grid data
-    let value = if is_netcdf {
+    let value = if has_zarr {
+        // Use Zarr for efficient point query (reads only one chunk)
+        let factory = grid_processor_factory.unwrap();
+        match query_point_from_zarr(factory, &entry, lon, lat).await? {
+            Some(v) => v,
+            None => {
+                // Point outside grid or fill value - return no-data response
+                return Ok(vec![wms_protocol::FeatureInfo {
+                    layer_name: layer.to_string(),
+                    parameter: parameter.clone(),
+                    value: f64::NAN,
+                    unit: "N/A".to_string(),
+                    raw_value: f64::NAN,
+                    raw_unit: "no data".to_string(),
+                    location: wms_protocol::Location {
+                        longitude: lon,
+                        latitude: lat,
+                    },
+                    forecast_hour: Some(entry.forecast_hour),
+                    reference_time: Some(entry.reference_time.to_rfc3339()),
+                    level: Some(entry.level.clone()),
+                }]);
+            }
+        }
+    } else if is_netcdf {
         // Handle NetCDF (GOES satellite) data
         let grid_result = load_grid_data(grib_cache, None, metrics, &entry, &parameter).await?;
         let grid_data = grid_result.data;
@@ -3175,7 +3333,7 @@ pub async fn query_point_value(
         // Sample value at the point using projection-aware sampling
         sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
     } else {
-        // Handle GRIB2 data
+        // Handle GRIB2 data (legacy fallback)
         let grib_data = grib_cache
             .get(&entry.storage_path)
             .await
