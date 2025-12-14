@@ -261,7 +261,9 @@ async fn warm_single_tile(
         let style_file = format!("{}/temperature.json", style_config_dir);
         rendering::render_isolines_tile(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord), // tile_coord
@@ -272,6 +274,7 @@ async fn warm_single_tile(
             "isolines",  // style name within the file
             Some(forecast_hour),
             true, // use_mercator
+            Some(&state.grid_processor_factory),
         )
         .await
     } else {

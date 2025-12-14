@@ -3634,7 +3634,9 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
 /// PNG image data as bytes
 pub async fn render_isolines_tile(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     tile_coord: Option<wms_common::TileCoord>,
@@ -3645,17 +3647,20 @@ pub async fn render_isolines_tile(
     style_name: &str,
     forecast_hour: Option<u32>,
     use_mercator: bool,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     render_isolines_tile_with_level(
-        grib_cache, catalog, model, parameter, tile_coord, width, height, bbox,
-        style_path, style_name, forecast_hour, None, use_mercator
+        grib_cache, grid_cache, catalog, metrics, model, parameter, tile_coord, width, height, bbox,
+        style_path, style_name, forecast_hour, None, use_mercator, grid_processor_factory
     ).await
 }
 
 /// Render isolines (contour lines) for a single tile with optional level.
 pub async fn render_isolines_tile_with_level(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     _tile_coord: Option<wms_common::TileCoord>,
@@ -3667,6 +3672,7 @@ pub async fn render_isolines_tile_with_level(
     forecast_hour: Option<u32>,
     level: Option<&str>,
     use_mercator: bool,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::crop_center_tile;
     
@@ -3706,23 +3712,21 @@ pub async fn render_isolines_tile_with_level(
         }
     };
     
-    // Load GRIB2 file from cache
-    let grib_data = grib_cache
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    // Load grid data using the unified loader (handles GRIB2, NetCDF, and Zarr)
+    // Pass None for bbox to get full grid (isolines need global min/max for level generation)
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        None,  // No bbox subset - we need full grid for contour level calculation
+    ).await?;
     
-    // Parse GRIB2 and find parameter with matching level
-    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
-    
-    // Unpack grid data
-    let grid_data = msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking failed: {}", e))?;
-    
-    let (grid_height, grid_width) = msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
+    let grid_data = grid_result.data;
+    let grid_width = grid_result.width;
+    let grid_height = grid_result.height;
     
     // Find global min/max for level generation
     let (min_val, max_val) = grid_data
@@ -3735,6 +3739,8 @@ pub async fn render_isolines_tile_with_level(
         parameter = parameter,
         min_val = min_val,
         max_val = max_val,
+        grid_width = grid_width,
+        grid_height = grid_height,
         "Loaded grid data for isolines"
     );
     
@@ -3745,16 +3751,16 @@ pub async fn render_isolines_tile_with_level(
     // Instead, we render each tile independently
     let (render_bbox, render_width, render_height, needs_crop) = (bbox, width as usize, height as usize, None);
     
-    // Get data bounds from catalog entry
-    let data_bounds = [
+    // Use actual bbox from grid data if available, otherwise fall back to entry.bbox
+    let data_bounds = grid_result.bbox.unwrap_or_else(|| [
         entry.bbox.min_x as f32,
         entry.bbox.min_y as f32,
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
-    ];
+    ]);
     
-    // Check if grid uses 0-360 longitude (like GFS)
-    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
+    // Use grid_uses_360 from result (for proper coordinate handling)
+    let grid_uses_360 = grid_result.grid_uses_360;
     
     info!(
         render_width = render_width,

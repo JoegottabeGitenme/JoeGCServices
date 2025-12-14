@@ -792,7 +792,9 @@ async fn wmts_get_tile(
         
         crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -804,6 +806,7 @@ async fn wmts_get_tile(
             forecast_hour,
             elevation,
             true,  // WMTS tiles are always in Web Mercator
+            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
@@ -1517,7 +1520,9 @@ async fn render_weather_data(
         // For WMS, we don't have tile coordinates, so pass None
         return crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             None,  // No tile coordinate - render full bbox
@@ -1529,6 +1534,7 @@ async fn render_weather_data(
             forecast_hour,
             level.as_deref(),
             use_mercator,
+            Some(&state.grid_processor_factory),
         )
         .await;
     }
@@ -2677,7 +2683,9 @@ async fn prefetch_single_tile(
         
         crate::rendering::render_isolines_tile(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord),
@@ -2688,6 +2696,7 @@ async fn prefetch_single_tile(
             "isolines",  // style name within the file
             None,
             true,
+            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
