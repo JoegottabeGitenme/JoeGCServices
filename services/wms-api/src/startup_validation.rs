@@ -426,6 +426,7 @@ async fn run_single_validation(
         rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             &target.model,
             Some(coord),
             256,

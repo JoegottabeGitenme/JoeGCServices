@@ -767,6 +767,7 @@ async fn wmts_get_tile(
         crate::rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),  // Pass tile coordinate for expanded rendering
             256,  // tile width
@@ -1465,6 +1466,7 @@ async fn render_weather_data(
         return crate::rendering::render_wind_barbs_layer(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             width,
             height,
@@ -2674,6 +2676,7 @@ async fn prefetch_single_tile(
         crate::rendering::render_wind_barbs_tile(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),
             256,

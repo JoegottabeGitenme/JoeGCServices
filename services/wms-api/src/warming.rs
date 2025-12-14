@@ -247,6 +247,7 @@ async fn warm_single_tile(
         rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),
             256,
