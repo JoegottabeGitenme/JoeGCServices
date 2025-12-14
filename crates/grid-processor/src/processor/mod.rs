@@ -27,7 +27,7 @@ pub trait GridProcessor: Send + Sync {
     /// * `GridRegion` containing the data and metadata for the region
     async fn read_region(&self, bbox: &BoundingBox) -> Result<GridRegion>;
 
-    /// Read a single point value (for GetFeatureInfo).
+    /// Read a single point value with bilinear interpolation (for GetFeatureInfo).
     ///
     /// # Arguments
     /// * `lon` - Longitude in degrees
@@ -37,6 +37,18 @@ pub trait GridProcessor: Send + Sync {
     /// * `Some(value)` if the point is within the grid and has data
     /// * `None` if the point is outside the grid or is a fill value
     async fn read_point(&self, lon: f64, lat: f64) -> Result<Option<f32>>;
+
+    /// Read the raw value at a specific grid cell index (for numbers style).
+    /// No interpolation is performed - returns the exact stored value.
+    ///
+    /// # Arguments
+    /// * `col` - Column index (longitude direction)
+    /// * `row` - Row index (latitude direction)
+    ///
+    /// # Returns
+    /// * `Some(value)` if the cell has valid data
+    /// * `None` if the index is out of bounds or is a fill value
+    async fn read_grid_cell(&self, col: usize, row: usize) -> Result<Option<f32>>;
 
     /// Get metadata about the grid.
     fn metadata(&self) -> &GridMetadata;

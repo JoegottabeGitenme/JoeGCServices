@@ -45,3 +45,6 @@ dotenvy = { workspace = true }
 zarrs_filesystem = "0.2"
 walkdir = "2.5"
 tempfile = "3.14"
+image = { workspace = true }
+imageproc = { workspace = true }
+rusttype = { workspace = true }

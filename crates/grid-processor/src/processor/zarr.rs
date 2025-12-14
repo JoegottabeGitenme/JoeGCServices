@@ -473,6 +473,30 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             (res_x, res_y),
         ))
     }
+    
+    /// Read a single value at grid coordinates (used for bilinear interpolation)
+    async fn read_single_value(&self, col: usize, row: usize) -> Result<f32> {
+        let (grid_w, grid_h) = self.metadata.shape;
+        if col >= grid_w || row >= grid_h {
+            return Ok(f32::NAN);
+        }
+        
+        let (chunk_w, chunk_h) = self.metadata.chunk_shape;
+        let chunk_x = col / chunk_w;
+        let chunk_y = row / chunk_h;
+
+        let chunk_data = self.read_chunk(chunk_x, chunk_y).await?;
+
+        let chunk_start_col = chunk_x * chunk_w;
+        let chunk_start_row = chunk_y * chunk_h;
+        let local_col = col - chunk_start_col;
+        let local_row = row - chunk_start_row;
+
+        let chunk_actual_w = chunk_w.min(grid_w - chunk_start_col);
+        let idx = local_row * chunk_actual_w + local_col;
+        
+        Ok(chunk_data.get(idx).copied().unwrap_or(f32::NAN))
+    }
 }
 
 #[async_trait]
@@ -531,44 +555,89 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
             return Ok(None);
         }
 
-        // Calculate grid indices
+        // Calculate grid indices (floating point for interpolation)
         let (res_x, res_y) = self.metadata.resolution();
         let grid_bbox = &self.metadata.bbox;
         let (grid_w, grid_h) = self.metadata.shape;
 
-        let col = ((lon - grid_bbox.min_lon) / res_x).floor() as usize;
-        let row = ((grid_bbox.max_lat - lat) / res_y).floor() as usize;
+        let grid_x = (lon - grid_bbox.min_lon) / res_x;
+        let grid_y = (grid_bbox.max_lat - lat) / res_y;
 
-        if col >= grid_w || row >= grid_h {
+        // Check if we're very close to an exact grid point (within 1% of cell size)
+        // If so, return the exact grid cell value without interpolation
+        let dx_frac = grid_x - grid_x.floor();
+        let dy_frac = grid_y - grid_y.floor();
+        let snap_threshold = 0.01; // 1% of cell size
+        
+        let near_grid_point = (dx_frac < snap_threshold || dx_frac > (1.0 - snap_threshold)) &&
+                              (dy_frac < snap_threshold || dy_frac > (1.0 - snap_threshold));
+        
+        if near_grid_point {
+            // Snap to nearest grid point and return exact value
+            let col = grid_x.round() as usize;
+            let row = grid_y.round() as usize;
+            if col >= grid_w || row >= grid_h {
+                return Ok(None);
+            }
+            let value = self.read_single_value(col, row).await?;
+            let fill = self.metadata.fill_value;
+            if value.is_nan() || value == fill {
+                return Ok(None);
+            }
+            return Ok(Some(value));
+        }
+
+        // Calculate the four corners for bilinear interpolation
+        let x1 = grid_x.floor() as usize;
+        let y1 = grid_y.floor() as usize;
+        
+        // For global grids (like GFS 0-360), wrap x2 around
+        let is_global = grid_bbox.max_lon - grid_bbox.min_lon > 359.0;
+        let x2 = if is_global && x1 + 1 >= grid_w {
+            0 // Wrap to column 0
+        } else {
+            (x1 + 1).min(grid_w - 1)
+        };
+        let y2 = (y1 + 1).min(grid_h - 1);
+
+        if x1 >= grid_w || y1 >= grid_h {
             return Ok(None);
         }
 
-        // Calculate chunk coordinates
-        let (chunk_w, chunk_h) = self.metadata.chunk_shape;
-        let chunk_x = col / chunk_w;
-        let chunk_y = row / chunk_h;
+        // Calculate interpolation weights
+        let dx = (grid_x - x1 as f64) as f32;
+        let dy = (grid_y - y1 as f64) as f32;
 
-        // Read chunk
-        let chunk_data = self.read_chunk(chunk_x, chunk_y).await?;
+        // Read values at the four corners
+        // We may need to read up to 4 chunks if the point is near chunk boundaries
+        let v11 = self.read_single_value(x1, y1).await?;
+        let v21 = self.read_single_value(x2, y1).await?;
+        let v12 = self.read_single_value(x1, y2).await?;
+        let v22 = self.read_single_value(x2, y2).await?;
 
-        // Calculate position within chunk
-        let chunk_start_col = chunk_x * chunk_w;
-        let chunk_start_row = chunk_y * chunk_h;
-        let local_col = col - chunk_start_col;
-        let local_row = row - chunk_start_row;
-
-        // Calculate actual chunk width (may be partial at edges)
-        let chunk_actual_w = chunk_w.min(grid_w - chunk_start_col);
-
-        let idx = local_row * chunk_actual_w + local_col;
-        let value = chunk_data.get(idx).copied().unwrap_or(f32::NAN);
-
-        // Return None for fill/NaN values
-        if value.is_nan() || value == self.metadata.fill_value {
-            Ok(None)
-        } else {
-            Ok(Some(value))
+        // Check for fill/NaN values
+        let fill = self.metadata.fill_value;
+        if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() 
+            || v11 == fill || v21 == fill || v12 == fill || v22 == fill {
+            // If any corner is missing, fall back to nearest neighbor
+            let col = grid_x.round() as usize;
+            let row = grid_y.round() as usize;
+            if col >= grid_w || row >= grid_h {
+                return Ok(None);
+            }
+            let value = self.read_single_value(col, row).await?;
+            if value.is_nan() || value == fill {
+                return Ok(None);
+            }
+            return Ok(Some(value));
         }
+
+        // Bilinear interpolation
+        let v1 = v11 * (1.0 - dx) + v21 * dx;
+        let v2 = v12 * (1.0 - dx) + v22 * dx;
+        let value = v1 * (1.0 - dy) + v2 * dy;
+
+        Ok(Some(value))
     }
 
     fn metadata(&self) -> &GridMetadata {
@@ -598,6 +667,23 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         // For now, return default stats. A more sophisticated implementation
         // would use a separate stats tracker.
         CacheStats::default()
+    }
+
+    async fn read_grid_cell(&self, col: usize, row: usize) -> Result<Option<f32>> {
+        let (grid_w, grid_h) = self.metadata.shape;
+        if col >= grid_w || row >= grid_h {
+            return Ok(None);
+        }
+
+        let value = self.read_single_value(col, row).await?;
+        
+        // Check for fill value
+        let fill = self.metadata.fill_value;
+        if value.is_nan() || value == fill {
+            return Ok(None);
+        }
+
+        Ok(Some(value))
     }
 }
 

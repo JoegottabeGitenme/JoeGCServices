@@ -814,13 +814,16 @@ async fn wmts_get_tile(
         // Get appropriate style file for color mapping from layer config registry
         let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_numbers_tile(
+        // Use buffered rendering to avoid clipped numbers at tile edges
+        crate::rendering::render_numbers_tile_with_buffer(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             model,
             &parameter,
+            Some(coord),  // Pass tile coordinate for expanded rendering
             256,  // tile width
             256,  // tile height
             bbox_array,
@@ -1549,6 +1552,7 @@ async fn render_weather_data(
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             model,
             &parameter,
             width,
@@ -2704,13 +2708,16 @@ async fn prefetch_single_tile(
         // Use layer config registry to get style file
         let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_numbers_tile(
+        // Use buffered rendering to avoid clipped numbers at tile edges
+        crate::rendering::render_numbers_tile_with_buffer(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             model,
             &parameter,
+            Some(coord),  // Pass tile coordinate for expanded rendering
             256,
             256,
             bbox_array,
