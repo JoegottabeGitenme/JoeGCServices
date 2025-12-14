@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use async_trait::async_trait;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info};
 use zarrs::array::Array;
 use zarrs::array_subset::ArraySubset;
 use zarrs::storage::ReadableStorageTraits;
