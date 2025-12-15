@@ -406,6 +406,9 @@ pub async fn render_weather_data_with_lut(
         } else if parameter.starts_with("CMI_C") {
             // GOES IR bands (7-16) and others
             Path::new(&style_config_dir).join("goes_ir.json")
+        } else if parameter.contains("HGT") {
+            // Geopotential height
+            Path::new(&style_config_dir).join("geopotential.json")
         } else {
             Path::new(&style_config_dir).join("temperature.json")
         };
@@ -3851,6 +3854,11 @@ pub async fn render_numbers_tile_with_buffer(
             "pa_to_hpa" => numbers::UnitTransform::Divide(100.0),
             "m_to_km" => numbers::UnitTransform::Divide(1000.0),
             "mps_to_knots" => numbers::UnitTransform::Divide(0.514444), // multiply by ~1.94
+            "linear" => {
+                let scale = t.scale.unwrap_or(1.0);
+                let offset = t.offset.unwrap_or(0.0);
+                numbers::UnitTransform::Linear { scale, offset }
+            },
             _ => numbers::UnitTransform::None,
         }
     }).unwrap_or_else(|| {
@@ -4545,6 +4553,11 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
         (value as f64, "m/s".to_string(), "m/s".to_string(), "U Wind Component".to_string())
     } else if parameter.contains("VGRD") {
         (value as f64, "m/s".to_string(), "m/s".to_string(), "V Wind Component".to_string())
+    } else if parameter.contains("HGT") {
+        // Geopotential height: raw units to decameters (dkm)
+        // Data appears to be ~60x larger than expected, so divide by 60 (~0.0167)
+        let dkm = value * 0.0167;
+        (dkm as f64, "dkm".to_string(), "gpm".to_string(), "Geopotential Height".to_string())
     } else {
         // Generic parameter
         (value as f64, "".to_string(), "".to_string(), parameter.to_string())

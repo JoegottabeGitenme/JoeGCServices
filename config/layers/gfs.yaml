@@ -139,7 +139,7 @@ layers:
     parameter: HGT
     title: "Geopotential Height"
     abstract: "Height of pressure surfaces"
-    style_file: atmospheric.json
+    style_file: geopotential.json
     units:
       native: gpm
       display: m

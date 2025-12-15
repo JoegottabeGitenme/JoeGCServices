@@ -42,6 +42,12 @@ pub struct StyleDefinition {
 pub struct Transform {
     #[serde(rename = "type")]
     pub transform_type: String,
+    /// Scale factor for linear transform (value * scale)
+    #[serde(default)]
+    pub scale: Option<f32>,
+    /// Offset for linear transform (value * scale + offset)
+    #[serde(default)]
+    pub offset: Option<f32>,
 }
 
 /// Color stop for gradient
@@ -455,6 +461,11 @@ pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
                 value / 1000.0
             } else if transform_type == "mps_to_knots" {
                 value * 1.94384
+            } else if transform_type == "linear" {
+                // Linear transform: value * scale + offset
+                let scale = t.scale.unwrap_or(1.0);
+                let offset = t.offset.unwrap_or(0.0);
+                value * scale + offset
             } else {
                 value
             }
@@ -623,5 +634,44 @@ mod tests {
         assert_eq!(hex_to_rgb("#0000FF"), Some((0, 0, 255)));
         assert_eq!(hex_to_rgb("FF0000"), Some((255, 0, 0)));
         assert_eq!(hex_to_rgb("#GGGGGG"), None);
+    }
+    
+    #[test]
+    fn test_linear_transform() {
+        let json = r##"{
+            "version": "1.0",
+            "styles": {
+                "gradient": {
+                    "default": true,
+                    "name": "Test",
+                    "type": "gradient",
+                    "transform": {
+                        "type": "linear",
+                        "scale": 0.0167,
+                        "offset": 0
+                    },
+                    "stops": [
+                        {"value": 0, "color": "#000000"},
+                        {"value": 100, "color": "#FFFFFF"}
+                    ]
+                }
+            }
+        }"##;
+        
+        let config = StyleConfig::from_json(json).unwrap();
+        let style = config.get_style("gradient").unwrap();
+        
+        // Verify transform is parsed
+        assert!(style.transform.is_some());
+        let t = style.transform.as_ref().unwrap();
+        assert_eq!(t.transform_type, "linear");
+        assert_eq!(t.scale, Some(0.0167));
+        assert_eq!(t.offset, Some(0.0));
+        
+        // Test transform application
+        let raw_value: f32 = 35500.0;
+        let transformed = apply_transform(raw_value, style.transform.as_ref());
+        let expected = 35500.0 * 0.0167;
+        assert!((transformed - expected).abs() < 0.01, "Expected {}, got {}", expected, transformed);
     }
 }

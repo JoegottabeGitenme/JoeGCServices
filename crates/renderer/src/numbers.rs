@@ -11,7 +11,7 @@ pub use crate::style::ColorStop;
 const FONT_DATA: &[u8] = include_bytes!("../assets/DejaVuSansMono.ttf");
 
 /// Unit transformation for converting raw data values to display values.
-/// Supports subtraction (K→C) and division (Pa→hPa).
+/// Supports subtraction (K→C), division (Pa→hPa), and linear (scale + offset).
 #[derive(Debug, Clone, Copy)]
 pub enum UnitTransform {
     /// No transformation
@@ -20,6 +20,8 @@ pub enum UnitTransform {
     Subtract(f32),
     /// Divide by a value (e.g., Pa→hPa: divide by 100)
     Divide(f32),
+    /// Linear transform: value * scale + offset
+    Linear { scale: f32, offset: f32 },
 }
 
 impl UnitTransform {
@@ -29,6 +31,7 @@ impl UnitTransform {
             Self::None => value,
             Self::Subtract(offset) => value - offset,
             Self::Divide(divisor) => value / divisor,
+            Self::Linear { scale, offset } => value * scale + offset,
         }
     }
     

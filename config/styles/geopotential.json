@@ -1,0 +1,91 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Geopotential Height Styles",
+    "description": "Styles for geopotential height in decameters (dkm). Standard meteorological unit for upper-air charts. 500mb typically ~540-580 dkm."
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Geopotential Height",
+      "description": "Geopotential height colored by elevation in decameters (optimized for 500mb: 480-600 dkm range)",
+      "type": "gradient",
+      "units": "dkm",
+      "transform": {
+        "type": "linear",
+        "scale": 0.0167,
+        "offset": 0
+      },
+      "range": {
+        "min": 480,
+        "max": 600
+      },
+      "stops": [
+        { "value": 480, "color": "#313695", "label": "480" },
+        { "value": 500, "color": "#4575B4", "label": "500" },
+        { "value": 520, "color": "#74ADD1", "label": "520" },
+        { "value": 540, "color": "#ABD9E9", "label": "540" },
+        { "value": 550, "color": "#E0F3F8", "label": "550" },
+        { "value": 560, "color": "#FFFFBF", "label": "560" },
+        { "value": 570, "color": "#FEE090", "label": "570" },
+        { "value": 580, "color": "#FDAE61", "label": "580" },
+        { "value": 590, "color": "#F46D43", "label": "590" },
+        { "value": 600, "color": "#D73027", "label": "600" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Geopotential Height (dkm)",
+        "labels": ["480", "520", "560", "600"]
+      }
+    },
+    "isolines": {
+      "name": "Geopotential Contours",
+      "description": "Geopotential height contour lines at 6 dkm intervals (standard)",
+      "type": "contour",
+      "units": "dkm",
+      "transform": {
+        "type": "linear",
+        "scale": 0.0167,
+        "offset": 0
+      },
+      "contour": {
+        "interval": 6,
+        "base": 504,
+        "min_value": 400,
+        "max_value": 700,
+        "line_width": 1.5,
+        "line_color": "#000000",
+        "major_interval": 12,
+        "major_line_width": 2.5,
+        "labels": true,
+        "label_font_size": 11.0,
+        "smoothing_passes": 2
+      },
+      "legend": {
+        "title": "Geopotential Height (dkm)"
+      }
+    },
+    "numbers": {
+      "name": "Geopotential Values",
+      "description": "Display geopotential height values as numbers in decameters",
+      "type": "numbers",
+      "units": "dkm",
+      "transform": {
+        "type": "linear",
+        "scale": 0.0167,
+        "offset": 0
+      },
+      "numbers": {
+        "spacing": 80,
+        "font_size": 10.0,
+        "font_color": "#000000",
+        "background_color": "#FFFFFFCC",
+        "decimal_places": 0
+      },
+      "legend": {
+        "title": "Geopotential Height (dkm)"
+      }
+    }
+  }
+}
