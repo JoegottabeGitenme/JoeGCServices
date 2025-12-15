@@ -5,7 +5,8 @@
     "description": "Standard NOAA radar reflectivity color scales"
   },
   "styles": {
-    "default": {
+    "standard": {
+      "default": true,
       "name": "Radar Reflectivity",
       "description": "Standard NOAA radar reflectivity color scale (dBZ)",
       "type": "gradient",

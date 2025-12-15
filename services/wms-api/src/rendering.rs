@@ -390,8 +390,8 @@ pub async fn render_weather_data_with_lut(
             Path::new(&style_config_dir).join("temperature.json")
         } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
             Path::new(&style_config_dir).join("wind.json")
-        } else if parameter.contains("PRES") || parameter.contains("PRESS") {
-            Path::new(&style_config_dir).join("atmospheric.json")
+        } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+            Path::new(&style_config_dir).join("mslp.json")
         } else if parameter.contains("RH") || parameter.contains("HUMID") {
             Path::new(&style_config_dir).join("precipitation.json")
         } else if parameter.contains("REFL") {
@@ -469,8 +469,8 @@ fn render_by_parameter(
     } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
         // Wind speed in m/s
         renderer::gradient::render_wind_speed(data, width, height, min_val, max_val)
-    } else if parameter.contains("PRES") || parameter.contains("PRESS") {
-        // Pressure in Pa, convert to hPa
+    } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+        // Pressure in Pa, convert to hPa (PRMSL = Pressure Reduced to Mean Sea Level)
         let hpa_data: Vec<f32> = data.iter().map(|pa| pa / 100.0).collect();
         let min_hpa = min_val / 100.0;
         let max_hpa = max_val / 100.0;
@@ -3440,7 +3440,7 @@ async fn render_numbers_direct_zarr(
     render_bbox: [f64; 4],
     visible_bbox: Option<[f64; 4]>,
     color_stops: &[renderer::numbers::ColorStop],
-    unit_conversion: Option<f32>,
+    unit_transform: numbers::UnitTransform,
     min_pixel_spacing: u32,
 ) -> Result<image::RgbaImage, String> {
     use grid_processor::{
@@ -3629,18 +3629,14 @@ async fn render_numbers_direct_zarr(
                 }
             };
             
-            // Apply unit conversion
-            let display_value = if let Some(offset) = unit_conversion {
-                value - offset
-            } else {
-                value
-            };
+            // Apply unit transformation
+            let display_value = unit_transform.apply(value);
             
             // Format the value
             let text = renderer::numbers::format_value(display_value);
             
-            // Get color for this value
-            let color = renderer::numbers::get_color_for_value(value, color_stops);
+            // Get color for this value (use transformed value for color mapping)
+            let color = renderer::numbers::get_color_for_value(display_value, color_stops);
             
             // Calculate text dimensions for centering
             let char_width = (font_size * 0.6) as i32;
@@ -3847,12 +3843,29 @@ pub async fn render_numbers_tile_with_buffer(
         })
         .collect();
 
-    // Determine unit conversion (e.g., K to C for temperature)
-    let unit_conversion = if parameter.contains("TMP") || parameter.contains("TEMP") {
-        Some(273.15f32) // Kelvin to Celsius
-    } else {
-        None
-    };
+    // Determine unit transform from style config
+    // The transform field specifies how to convert native units (e.g., Pa) to display units (e.g., hPa)
+    let unit_transform = style_def.transform.as_ref().map(|t| {
+        match t.transform_type.to_lowercase().as_str() {
+            "k_to_c" | "kelvin_to_celsius" => numbers::UnitTransform::Subtract(273.15),
+            "pa_to_hpa" => numbers::UnitTransform::Divide(100.0),
+            "m_to_km" => numbers::UnitTransform::Divide(1000.0),
+            "mps_to_knots" => numbers::UnitTransform::Divide(0.514444), // multiply by ~1.94
+            _ => numbers::UnitTransform::None,
+        }
+    }).unwrap_or_else(|| {
+        // Fallback: detect from parameter name for backwards compatibility
+        if parameter.contains("TMP") || parameter.contains("TEMP") {
+            numbers::UnitTransform::Subtract(273.15)
+        } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+            numbers::UnitTransform::Divide(100.0)
+        } else {
+            numbers::UnitTransform::None
+        }
+    });
+    
+    // Legacy format for backwards compatibility (None means use unit_transform)
+    let unit_conversion: Option<f32> = None;
 
     // Render numbers at exact source grid point locations
     // For accurate display, we query the Zarr data directly at each grid point
@@ -3888,7 +3901,7 @@ pub async fn render_numbers_tile_with_buffer(
                 [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
                 Some(visible_bbox),
                 &style_def.stops,
-                unit_conversion,
+                unit_transform,
                 40, // min_pixel_spacing
             ).await {
                 Ok(img) => img,
@@ -3899,6 +3912,7 @@ pub async fn render_numbers_tile_with_buffer(
                         font_size: 12.0,
                         color_stops: style_def.stops.clone(),
                         unit_conversion,
+                        unit_transform,
                         render_bbox: [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
                         source_bbox,
                         source_dims: full_source_dims,
@@ -3915,6 +3929,7 @@ pub async fn render_numbers_tile_with_buffer(
                 font_size: 12.0,
                 color_stops: style_def.stops.clone(),
                 unit_conversion,
+                unit_transform,
                 render_bbox: [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
                 source_bbox,
                 source_dims: full_source_dims,
@@ -4693,7 +4708,7 @@ pub async fn render_isolines_tile_with_level(
     
     // Resample data to the render bbox
     // Use Mercator projection when rendering for Web Mercator display
-    let resampled_data = resample_grid_for_bbox(
+    let resampled_data_raw = resample_grid_for_bbox(
         &grid_data,
         grid_width,
         grid_height,
@@ -4706,7 +4721,17 @@ pub async fn render_isolines_tile_with_level(
         grid_uses_360,
     );
     
-    // Log resampled data stats for debugging
+    // Apply transform to convert data to display units (e.g., Pa -> hPa, K -> C)
+    // This ensures contour levels (defined in display units) match the data
+    let resampled_data: Vec<f32> = resampled_data_raw.iter()
+        .map(|&v| renderer::style::apply_transform(v, style_config.transform.as_ref()))
+        .collect();
+    
+    // Also transform min/max for level generation
+    let transformed_min = renderer::style::apply_transform(min_val, style_config.transform.as_ref());
+    let transformed_max = renderer::style::apply_transform(max_val, style_config.transform.as_ref());
+    
+    // Log resampled data stats for debugging (now in display units)
     let resampled_valid: Vec<f32> = resampled_data.iter().filter(|v| !v.is_nan()).copied().collect();
     let resampled_min = resampled_valid.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     let resampled_max = resampled_valid.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
@@ -4718,11 +4743,12 @@ pub async fn render_isolines_tile_with_level(
         valid_count = resampled_valid.len(),
         nan_count = nan_count,
         total = resampled_data.len(),
-        "Resampled data stats for isolines"
+        transform = ?style_config.transform,
+        "Resampled data stats for isolines (in display units)"
     );
     
-    // Generate contour levels from style config
-    let levels = style_config.generate_levels(min_val, max_val);
+    // Generate contour levels from style config (using transformed min/max)
+    let levels = style_config.generate_levels(transformed_min, transformed_max);
     
     info!(
         num_levels = levels.len(),
@@ -4732,18 +4758,13 @@ pub async fn render_isolines_tile_with_level(
     );
     
     // Build special level configs from style
+    // Since data is now in display units, special levels are used directly (no conversion needed)
     let special_levels: Vec<contour::SpecialLevelConfig> = style_config.contour.special_levels
         .as_ref()
         .map(|levels| {
             levels.iter().map(|sl| {
-                // Convert from display units to data units
-                let level_in_data_units = if let Some(conv) = style_config.contour.unit_conversion {
-                    sl.value + conv
-                } else {
-                    sl.value
-                };
                 contour::SpecialLevelConfig {
-                    level: level_in_data_units,
+                    level: sl.value,  // Already in display units
                     line_color: sl.line_color,
                     line_width: sl.line_width,
                     label: sl.label.clone(),
@@ -4752,9 +4773,8 @@ pub async fn render_isolines_tile_with_level(
         })
         .unwrap_or_default();
     
-    // Calculate label unit offset (to display in user-friendly units)
-    // If unit_conversion is 273.15 (K to C), offset should be -273.15
-    let label_unit_offset = style_config.contour.unit_conversion.map(|c| -c).unwrap_or(0.0);
+    // No label offset needed since data is already in display units
+    let label_unit_offset = 0.0;
     
     // Build ContourConfig
     let contour_config = contour::ContourConfig {

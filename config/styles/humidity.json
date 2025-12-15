@@ -5,7 +5,8 @@
     "description": "Styles for relative humidity and moisture parameters"
   },
   "styles": {
-    "default": {
+    "gradient": {
+      "default": true,
       "name": "Relative Humidity",
       "description": "Relative humidity from dry (brown) to saturated (blue)",
       "type": "gradient",

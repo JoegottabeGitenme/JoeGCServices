@@ -430,6 +430,17 @@ impl GridProcessorFactory {
     pub fn config(&self) -> &GridProcessorConfig {
         &self.config
     }
+    
+    /// Clear the chunk cache (for hot reload / cache invalidation).
+    /// Returns the number of entries and bytes cleared.
+    pub async fn clear_chunk_cache(&self) -> (usize, u64) {
+        let mut cache = self.chunk_cache.write().await;
+        let stats = cache.stats();
+        let entries = stats.entries;
+        let bytes = stats.memory_bytes;
+        cache.clear();
+        (entries, bytes)
+    }
 }
 
 /// Shared application state.
@@ -450,7 +461,7 @@ pub struct AppState {
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
     pub ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
-    pub layer_configs: LayerConfigRegistry,  // Layer configurations (from YAML) - styles, units, levels
+    pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
 }
 
 impl AppState {
@@ -548,12 +559,15 @@ impl AppState {
         );
         
         // Load layer configurations from YAML files (styles, units, levels)
-        let layer_configs = LayerConfigRegistry::load_from_directory(&config_dir);
-        info!(
-            models = layer_configs.models().len(),
-            total_layers = layer_configs.total_layers(),
-            "Loaded layer configurations"
-        );
+        let layer_configs = tokio::sync::RwLock::new(LayerConfigRegistry::load_from_directory(&config_dir));
+        {
+            let configs = layer_configs.read().await;
+            info!(
+                models = configs.models().len(),
+                total_layers = configs.total_layers(),
+                "Loaded layer configurations"
+            );
+        }
 
         Ok(Self {
             catalog,

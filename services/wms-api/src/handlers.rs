@@ -137,7 +137,8 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         }
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes, &state.model_dimensions, &state.layer_configs);
+    let layer_configs = state.layer_configs.read().await;
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes, &state.model_dimensions, &layer_configs);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -608,7 +609,8 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions, &state.layer_configs);
+    let layer_configs = state.layer_configs.read().await;
+    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions, &layer_configs);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -790,7 +792,7 @@ async fn wmts_get_tile(
         
         // Render isolines (contours) for this parameter
         // Use the layer config registry to get the style file
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
@@ -813,7 +815,7 @@ async fn wmts_get_tile(
         .await
     } else if style == "numbers" {
         // Get appropriate style file for color mapping from layer config registry
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         // Use buffered rendering to avoid clipped numbers at tile edges
         crate::rendering::render_numbers_tile_with_buffer(
@@ -1521,7 +1523,7 @@ async fn render_weather_data(
         }
         
         // Use layer config registry to get style file
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         // For WMS, we don't have tile coordinates, so pass None
         return crate::rendering::render_isolines_tile_with_level(
@@ -1547,7 +1549,7 @@ async fn render_weather_data(
     
     if style == "numbers" {
         // Use layer config registry to get style file
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         return crate::rendering::render_numbers_tile(
             &state.grib_cache,
@@ -2687,7 +2689,7 @@ async fn prefetch_single_tile(
         .await
     } else if style == "isolines" {
         // Use layer config registry to get style file
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         crate::rendering::render_isolines_tile(
             &state.grib_cache,
@@ -2709,7 +2711,7 @@ async fn prefetch_single_tile(
         .await
     } else if style == "numbers" {
         // Use layer config registry to get style file
-        let style_file = state.layer_configs.get_style_file_for_parameter(model, &parameter);
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         // Use buffered rendering to avoid clipped numbers at tile edges
         crate::rendering::render_numbers_tile_with_buffer(
@@ -2807,6 +2809,131 @@ pub async fn cache_clear_handler(
             "grid_cache": grid_before,
         },
         "message": "All in-memory caches cleared. Redis L2 cache was not affected."
+    }))
+}
+
+/// Reload layer configurations from disk (hot reload)
+/// POST /api/config/reload/layers
+/// 
+/// This endpoint reloads all layer config YAML files from config/layers/
+/// without requiring a service restart.
+#[instrument(skip(state))]
+pub async fn config_reload_layers_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    info!("Reloading layer configurations from disk");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+    
+    // Get stats before reload
+    let before = {
+        let configs = state.layer_configs.read().await;
+        (configs.models().len(), configs.total_layers())
+    };
+    
+    // Reload configs
+    let (models, layers) = {
+        let mut configs = state.layer_configs.write().await;
+        configs.reload_from_directory(&config_dir)
+    };
+    
+    info!(
+        models_before = before.0,
+        layers_before = before.1,
+        models_after = models,
+        layers_after = layers,
+        "Layer configurations reloaded"
+    );
+    
+    Json(json!({
+        "success": true,
+        "before": {
+            "models": before.0,
+            "layers": before.1
+        },
+        "after": {
+            "models": models,
+            "layers": layers
+        },
+        "message": "Layer configurations reloaded from disk"
+    }))
+}
+
+/// Reload all configs and clear all caches (full hot reload)
+/// POST /api/config/reload
+/// 
+/// This endpoint:
+/// 1. Reloads layer configs from config/layers/*.yaml
+/// 2. Clears all in-memory caches (L1, GRIB, Grid, Chunk)
+/// 
+/// Note: Style configs (config/styles/*.json) are loaded fresh on each
+/// render request, so they don't need explicit reloading.
+#[instrument(skip(state))]
+pub async fn config_reload_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    info!("Performing full configuration reload");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+    
+    // Get stats before
+    let layers_before = {
+        let configs = state.layer_configs.read().await;
+        (configs.models().len(), configs.total_layers())
+    };
+    let l1_before = state.tile_memory_cache.len().await;
+    let grib_before = state.grib_cache.len().await;
+    let grid_before = state.grid_cache.len().await;
+    let _chunk_stats_before = state.grid_processor_factory.cache_stats().await;
+    
+    // 1. Reload layer configs
+    let (models, layers) = {
+        let mut configs = state.layer_configs.write().await;
+        configs.reload_from_directory(&config_dir)
+    };
+    
+    // 2. Clear all caches
+    state.tile_memory_cache.clear().await;
+    state.grib_cache.clear().await;
+    state.grid_cache.clear().await;
+    let (chunk_entries, chunk_bytes) = state.grid_processor_factory.clear_chunk_cache().await;
+    
+    info!(
+        models = models,
+        layers = layers,
+        l1_cleared = l1_before,
+        grib_cleared = grib_before,
+        grid_cleared = grid_before,
+        chunk_cleared = chunk_entries,
+        "Full configuration reload complete"
+    );
+    
+    Json(json!({
+        "success": true,
+        "layers": {
+            "before": {
+                "models": layers_before.0,
+                "layers": layers_before.1
+            },
+            "after": {
+                "models": models,
+                "layers": layers
+            }
+        },
+        "caches_cleared": {
+            "l1_tile_cache": l1_before,
+            "grib_cache": grib_before,
+            "grid_cache": grid_before,
+            "chunk_cache": {
+                "entries": chunk_entries,
+                "bytes": chunk_bytes
+            }
+        },
+        "message": "All configs reloaded and caches cleared. Style configs are always loaded fresh from disk."
     }))
 }
 

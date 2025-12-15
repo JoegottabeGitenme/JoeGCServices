@@ -126,7 +126,7 @@ layers:
     parameter: PRMSL
     title: "Mean Sea Level Pressure"
     abstract: "Atmospheric pressure reduced to mean sea level"
-    style_file: atmospheric.json
+    style_file: mslp.json
     units:
       native: Pa
       display: hPa

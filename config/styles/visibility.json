@@ -5,7 +5,8 @@
     "description": "Styles for visibility data, commonly used in aviation weather"
   },
   "styles": {
-    "default": {
+    "gradient": {
+      "default": true,
       "name": "Visibility",
       "description": "Visibility in meters, colored from poor (red) to excellent (transparent)",
       "type": "gradient",

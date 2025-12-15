@@ -20,6 +20,8 @@
       "name": "Example Gradient Style",
       "description": "Human-readable description of what this style visualizes",
       "type": "gradient",
+      "default": true,
+      "_default_comment": "Set to true to mark this as the default style for this file (only one per file)",
       "units": "K",
 
       "range": {
@@ -191,6 +193,13 @@
       "type": "object",
       "required": true,
       "description": "Map of style_id -> style definition"
+    },
+    "style_fields": {
+      "default": {
+        "type": "boolean",
+        "required": false,
+        "description": "Set to true to mark this style as the default. Only one style per file should have default: true."
+      }
     },
     "style_types": {
       "gradient": "Continuous color interpolation between stops",

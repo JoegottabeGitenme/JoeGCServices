@@ -6,6 +6,7 @@
   },
   "styles": {
     "precipitation_rate": {
+      "default": true,
       "name": "Precipitation Rate",
       "description": "Precipitation intensity in mm/hr",
       "type": "gradient",

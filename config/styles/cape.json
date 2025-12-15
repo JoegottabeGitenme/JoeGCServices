@@ -5,7 +5,8 @@
     "description": "Styles for convective stability parameters (CAPE and CIN)"
   },
   "styles": {
-    "default": {
+    "cape": {
+      "default": true,
       "name": "CAPE",
       "description": "Convective Available Potential Energy - indicates severe weather potential",
       "type": "gradient",

@@ -5,33 +5,8 @@
     "description": "All visualization styles for temperature parameters"
   },
   "styles": {
-    "default": {
-      "name": "Temperature Gradient",
-      "description": "Temperature color scale from cold (blue) to hot (red)",
-      "type": "gradient",
-      "range": {
-        "min": 233.15,
-        "max": 313.15
-      },
-      "stops": [
-        { "value": 233.15, "color": "#1E0082", "label": "-40°C" },
-        { "value": 243.15, "color": "#0032C8", "label": "-30°C" },
-        { "value": 253.15, "color": "#0096FF", "label": "-20°C" },
-        { "value": 263.15, "color": "#32C8FF", "label": "-10°C" },
-        { "value": 273.15, "color": "#96FFC8", "label": "0°C" },
-        { "value": 283.15, "color": "#FFFF32", "label": "10°C" },
-        { "value": 293.15, "color": "#FF9600", "label": "20°C" },
-        { "value": 303.15, "color": "#FF3200", "label": "30°C" },
-        { "value": 313.15, "color": "#960000", "label": "40°C" }
-      ],
-      "interpolation": "linear",
-      "out_of_range": "clamp",
-      "legend": {
-        "title": "Temperature (°C)",
-        "labels": ["-40", "-20", "0", "20", "40"]
-      }
-    },
     "gradient": {
+      "default": true,
       "name": "Temperature Gradient",
       "description": "Temperature color scale from cold (blue) to hot (red)",
       "type": "gradient",

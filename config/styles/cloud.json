@@ -5,7 +5,8 @@
     "description": "Styles for cloud cover visualization"
   },
   "styles": {
-    "default": {
+    "total": {
+      "default": true,
       "name": "Cloud Cover",
       "description": "Cloud cover percentage from clear to overcast",
       "type": "gradient",

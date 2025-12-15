@@ -24,6 +24,9 @@ pub struct StyleDefinition {
     pub description: Option<String>,
     #[serde(rename = "type")]
     pub style_type: String,
+    /// Marks this style as the default for the file
+    #[serde(default)]
+    pub default: bool,
     pub units: Option<String>,
     pub range: Option<ValueRange>,
     pub transform: Option<Transform>,
@@ -74,6 +77,25 @@ impl StyleConfig {
     /// Get a specific style definition
     pub fn get_style(&self, name: &str) -> Option<&StyleDefinition> {
         self.styles.get(name)
+    }
+    
+    /// Get the default style (the one with `default: true`)
+    /// Falls back to looking for a style named "default" for backwards compatibility
+    pub fn get_default_style(&self) -> Option<(&String, &StyleDefinition)> {
+        // First, look for a style with default: true
+        for (name, style) in &self.styles {
+            if style.default {
+                return Some((name, style));
+            }
+        }
+        // Fallback: look for style named "default" (backwards compat)
+        self.styles.get_key_value("default")
+            .or_else(|| self.styles.iter().next())
+    }
+    
+    /// Get the default style name
+    pub fn default_style_name(&self) -> Option<&str> {
+        self.get_default_style().map(|(name, _)| name.as_str())
     }
 }
 
@@ -128,6 +150,9 @@ pub struct ContourStyleDefinition {
     pub description: Option<String>,
     #[serde(rename = "type")]
     pub style_type: String,
+    /// Marks this style as the default for the file
+    #[serde(default)]
+    pub default: bool,
     pub units: Option<String>,
     pub transform: Option<Transform>,
     pub contour: ContourOptions,
@@ -143,6 +168,7 @@ pub struct ContourStyle {
     #[serde(rename = "type")]
     pub style_type: String,
     pub units: Option<String>,
+    pub transform: Option<Transform>,
     pub contour: ContourOptions,
 }
 
@@ -302,10 +328,32 @@ where
 }
 
 impl ContourStyle {
-    /// Load contour style from JSON file
-    /// Supports both nested format (with styles.default) and flat format
+    /// Load the default contour style from JSON file
+    /// Looks for a style with `default: true`, falls back to "default" name
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::from_file_with_style(path, "default")
+        let content = std::fs::read_to_string(path)?;
+        let json: serde_json::Value = serde_json::from_str(&content)?;
+        
+        // Find the default style name
+        if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+            // First look for a style with default: true
+            for (name, style) in styles {
+                if style.get("default").and_then(|d| d.as_bool()).unwrap_or(false) {
+                    return Self::from_file_with_style(path, name);
+                }
+            }
+            // Fallback to "default" name for backwards compat
+            if styles.contains_key("default") {
+                return Self::from_file_with_style(path, "default");
+            }
+            // Last resort: use first style
+            if let Some(name) = styles.keys().next() {
+                return Self::from_file_with_style(path, name);
+            }
+        }
+        
+        // Fall back to flat format (direct ContourStyle)
+        Ok(serde_json::from_str(&content)?)
     }
     
     /// Load a specific style variant from JSON file
@@ -329,6 +377,7 @@ impl ContourStyle {
                     description: style_def.description.clone(),
                     style_type: style_def.style_type.clone(),
                     units: style_def.units.clone(),
+                    transform: style_def.transform.clone(),
                     contour: style_def.contour.clone(),
                 });
             } else {
@@ -393,6 +442,27 @@ impl ContourStyle {
 /// Common missing value markers for weather data
 const MISSING_VALUE_THRESHOLD: f32 = -90.0;
 
+/// Apply a unit transform to a single value
+pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
+    match transform {
+        Some(t) => {
+            let transform_type = t.transform_type.to_lowercase();
+            if transform_type == "pa_to_hpa" {
+                value / 100.0
+            } else if transform_type == "k_to_c" || transform_type == "kelvin_to_celsius" {
+                value - 273.15
+            } else if transform_type == "m_to_km" {
+                value / 1000.0
+            } else if transform_type == "mps_to_knots" {
+                value * 1.94384
+            } else {
+                value
+            }
+        }
+        None => value,
+    }
+}
+
 /// Apply style-based color mapping to data
 pub fn apply_style_gradient(
     data: &[f32],
@@ -414,11 +484,14 @@ pub fn apply_style_gradient(
     let colors: Vec<Option<(u8, u8, u8, u8)>> = stops.iter().map(|s| hex_to_rgba(&s.color)).collect();
     let stop_values: Vec<f32> = stops.iter().map(|s| s.value).collect();
     
+    // Get the transform from the style
+    let transform = style.transform.as_ref();
+    
     let min_stop = stop_values[0];
     let max_stop = stop_values[stop_values.len() - 1];
     
     // Render each pixel
-    for (idx, &value) in data.iter().enumerate() {
+    for (idx, &raw_value) in data.iter().enumerate() {
         if idx >= width * height {
             break;
         }
@@ -427,13 +500,16 @@ pub fn apply_style_gradient(
         
         // Handle NaN and common missing values as transparent
         // MRMS uses -99 and -999, other datasets may use different markers
-        if value.is_nan() || value <= MISSING_VALUE_THRESHOLD {
+        if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
             pixels[pixel_offset] = 0;     // R
             pixels[pixel_offset + 1] = 0; // G
             pixels[pixel_offset + 2] = 0; // B
             pixels[pixel_offset + 3] = 0; // A (transparent)
             continue;
         }
+        
+        // Apply transform to convert to display units (e.g., Pa -> hPa, K -> C)
+        let value = apply_transform(raw_value, transform);
         
         // Map value directly to color stops (no normalization needed)
         // Find the two surrounding color stops based on actual data value

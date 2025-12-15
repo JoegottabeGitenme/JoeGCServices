@@ -6,6 +6,7 @@
   },
   "styles": {
     "wind_speed_knots": {
+      "default": true,
       "name": "Wind Speed (Knots)",
       "description": "Wind speed gradient in knots",
       "type": "gradient",

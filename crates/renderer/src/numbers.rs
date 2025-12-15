@@ -10,6 +10,45 @@ pub use crate::style::ColorStop;
 /// Embedded font data - DejaVu Sans Mono (a clean, readable monospace font)
 const FONT_DATA: &[u8] = include_bytes!("../assets/DejaVuSansMono.ttf");
 
+/// Unit transformation for converting raw data values to display values.
+/// Supports subtraction (K→C) and division (Pa→hPa).
+#[derive(Debug, Clone, Copy)]
+pub enum UnitTransform {
+    /// No transformation
+    None,
+    /// Subtract a value (e.g., K→C: subtract 273.15)
+    Subtract(f32),
+    /// Divide by a value (e.g., Pa→hPa: divide by 100)
+    Divide(f32),
+}
+
+impl UnitTransform {
+    /// Apply the transformation to a value
+    pub fn apply(&self, value: f32) -> f32 {
+        match self {
+            Self::None => value,
+            Self::Subtract(offset) => value - offset,
+            Self::Divide(divisor) => value / divisor,
+        }
+    }
+    
+    /// Create from legacy Option<f32> format for backwards compatibility.
+    /// Positive values are subtraction, negative values indicate division (abs value).
+    pub fn from_legacy(offset: Option<f32>) -> Self {
+        match offset {
+            None => Self::None,
+            Some(v) if v < 0.0 => Self::Divide(v.abs()),
+            Some(v) => Self::Subtract(v),
+        }
+    }
+}
+
+impl Default for UnitTransform {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// Configuration for numbers rendering
 #[derive(Debug, Clone)]
 pub struct NumbersConfig {
@@ -20,6 +59,7 @@ pub struct NumbersConfig {
     /// Color stops for value-to-color mapping
     pub color_stops: Vec<ColorStop>,
     /// Optional unit conversion offset (e.g., 273.15 for K to C)
+    /// DEPRECATED: Use unit_transform instead
     pub unit_conversion: Option<f32>,
 }
 
@@ -438,7 +478,10 @@ pub struct GridPointNumbersConfig {
     /// Color stops for value-to-color mapping
     pub color_stops: Vec<ColorStop>,
     /// Optional unit conversion offset (e.g., 273.15 for K to C)
+    /// DEPRECATED: Use unit_transform instead for new code
     pub unit_conversion: Option<f32>,
+    /// Unit transformation to apply to values before display
+    pub unit_transform: UnitTransform,
     /// Render bounding box [min_lon, min_lat, max_lon, max_lat] in -180 to 180 range
     pub render_bbox: [f64; 4],
     /// Original source grid bounding box [min_lon, min_lat, max_lon, max_lat]
@@ -619,18 +662,25 @@ pub fn render_numbers_at_grid_points(
                 continue;
             }
 
-            // Apply unit conversion if configured
-            let display_value = if let Some(offset) = config.unit_conversion {
-                value - offset
-            } else {
-                value
+            // Apply unit transformation if configured
+            // Prefer new unit_transform field, fall back to legacy unit_conversion
+            let display_value = match config.unit_transform {
+                UnitTransform::None => {
+                    // Fall back to legacy conversion if present
+                    if let Some(offset) = config.unit_conversion {
+                        value - offset
+                    } else {
+                        value
+                    }
+                }
+                ref transform => transform.apply(value),
             };
 
             // Format the value
             let text = format_value(display_value);
 
-            // Get color for this value
-            let color = get_color_for_value(value, &config.color_stops);
+            // Get color for this value (use transformed value for color mapping)
+            let color = get_color_for_value(display_value, &config.color_stops);
 
             // Calculate text dimensions for centering
             let char_width = (config.font_size * 0.6) as i32;

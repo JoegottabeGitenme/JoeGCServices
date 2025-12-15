@@ -5,7 +5,8 @@
     "description": "Styles for storm-relative helicity, updraft helicity, and severe weather parameters"
   },
   "styles": {
-    "default": {
+    "updraft": {
+      "default": true,
       "name": "Updraft Helicity",
       "description": "Maximum updraft helicity (2-5km) - tornado/supercell potential",
       "type": "gradient",

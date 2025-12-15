@@ -119,7 +119,7 @@ async fn async_main(args: Args) -> Result<()> {
             model_params.insert(model.clone(), params);
         }
         
-        if let Err(e) = state.layer_configs.validate_catalog_coverage(&models, &model_params) {
+        if let Err(e) = state.layer_configs.read().await.validate_catalog_coverage(&models, &model_params) {
             // Check if we should fail on missing configs (default: warn only)
             let strict_validation = env::var("STRICT_LAYER_VALIDATION")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
@@ -325,6 +325,9 @@ async fn async_main(args: Args) -> Result<()> {
         // Cache API endpoints
         .route("/api/cache/list", get(handlers::cache_list_handler))
         .route("/api/cache/clear", post(handlers::cache_clear_handler))
+        // Config reload endpoints (hot reload)
+        .route("/api/config/reload", post(handlers::config_reload_handler))
+        .route("/api/config/reload/layers", post(handlers::config_reload_layers_handler))
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route("/api/loadtest/results", get(handlers::loadtest_results_handler))

@@ -377,6 +377,11 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
             ValidationError(file, f"{path}.description", "Description must be string")
         )
 
+    if "default" in style and not isinstance(style["default"], bool):
+        errors.append(
+            ValidationError(file, f"{path}.default", "Default must be boolean")
+        )
+
     if "units" in style and not isinstance(style["units"], str):
         errors.append(ValidationError(file, f"{path}.units", "Units must be string"))
 
@@ -511,12 +516,37 @@ def validate_file(filepath: Path, verbose: bool = False) -> list:
             )
         )
     else:
+        # Track styles marked as default
+        default_styles = []
+
         # Validate each style
         for style_id, style_def in data["styles"].items():
             # Skip comment keys
             if style_id.startswith("_"):
                 continue
             validate_style(style_id, style_def, f"styles.{style_id}", errors, filename)
+
+            # Track default styles
+            if isinstance(style_def, dict) and style_def.get("default") is True:
+                default_styles.append(style_id)
+
+        # Check for exactly one default
+        if len(default_styles) == 0:
+            errors.append(
+                ValidationError(
+                    filename,
+                    "styles",
+                    "No default style specified. Add 'default: true' to one style.",
+                )
+            )
+        elif len(default_styles) > 1:
+            errors.append(
+                ValidationError(
+                    filename,
+                    "styles",
+                    f"Multiple default styles found: {default_styles}. Only one style should have 'default: true'.",
+                )
+            )
 
     return errors
 

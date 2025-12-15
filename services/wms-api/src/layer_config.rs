@@ -241,24 +241,34 @@ impl LayerConfigRegistry {
     /// Load layer configurations from a directory (e.g., config/layers/)
     pub fn load_from_directory<P: AsRef<Path>>(config_dir: P) -> Self {
         let mut registry = Self::new();
+        registry.reload_from_directory(config_dir);
+        registry
+    }
+    
+    /// Reload layer configurations from a directory (hot reload support)
+    /// Returns the number of models loaded and total layers
+    pub fn reload_from_directory<P: AsRef<Path>>(&mut self, config_dir: P) -> (usize, usize) {
         let layers_dir = config_dir.as_ref().join("layers");
         
         // Set style directory relative to config dir
-        registry.style_dir = config_dir.as_ref()
+        self.style_dir = config_dir.as_ref()
             .join("styles")
             .to_string_lossy()
             .to_string();
+        
+        // Clear existing configs before reload
+        self.configs.clear();
 
         if !layers_dir.exists() {
             warn!(path = ?layers_dir, "Layers config directory not found");
-            return registry;
+            return (0, 0);
         }
 
         let entries = match fs::read_dir(&layers_dir) {
             Ok(entries) => entries,
             Err(e) => {
                 warn!(error = %e, path = ?layers_dir, "Failed to read layers directory");
-                return registry;
+                return (0, 0);
             }
         };
 
@@ -271,18 +281,21 @@ impl LayerConfigRegistry {
                         layers = config.layers.len(),
                         "Loaded layer config"
                     );
-                    registry.configs.insert(config.model.clone(), config);
+                    self.configs.insert(config.model.clone(), config);
                 }
             }
         }
 
+        let models = self.configs.len();
+        let layers = self.total_layers();
+        
         info!(
-            models = registry.configs.len(),
-            total_layers = registry.total_layers(),
+            models = models,
+            total_layers = layers,
             "Layer config registry loaded"
         );
 
-        registry
+        (models, layers)
     }
 
     /// Load a single layer config file
