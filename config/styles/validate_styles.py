@@ -138,7 +138,7 @@ def validate_transform(transform: Any, path: str, errors: list, file: str):
 
     if "type" not in transform:
         errors.append(ValidationError(file, path, "Missing required field 'type'"))
-    elif transform["type"] not in VALID_TRANSFORM_TYPES:
+    elif transform["type"].lower() not in VALID_TRANSFORM_TYPES:
         errors.append(
             ValidationError(
                 file,

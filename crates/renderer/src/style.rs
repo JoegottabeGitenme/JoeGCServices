@@ -487,8 +487,12 @@ pub fn apply_style_gradient(
     // Get the transform from the style
     let transform = style.transform.as_ref();
     
-    let min_stop = stop_values[0];
-    let max_stop = stop_values[stop_values.len() - 1];
+    // Use range from style if specified, otherwise use stop boundaries
+    let min_range = style.range.as_ref().map(|r| r.min).unwrap_or(stop_values[0]);
+    let max_range = style.range.as_ref().map(|r| r.max).unwrap_or(stop_values[stop_values.len() - 1]);
+    
+    // Get out_of_range behavior: "clamp" (default), "transparent", or "extend"
+    let out_of_range = style.out_of_range.as_deref().unwrap_or("clamp");
     
     // Render each pixel
     for (idx, &raw_value) in data.iter().enumerate() {
@@ -511,7 +515,53 @@ pub fn apply_style_gradient(
         // Apply transform to convert to display units (e.g., Pa -> hPa, K -> C)
         let value = apply_transform(raw_value, transform);
         
-        // Map value directly to color stops (no normalization needed)
+        // Handle out-of-range values based on style setting
+        if value < min_range {
+            match out_of_range {
+                "transparent" => {
+                    // Make out-of-range values transparent
+                    pixels[pixel_offset] = 0;
+                    pixels[pixel_offset + 1] = 0;
+                    pixels[pixel_offset + 2] = 0;
+                    pixels[pixel_offset + 3] = 0;
+                    continue;
+                }
+                "clamp" | _ => {
+                    // Use first stop's color
+                    if let Some((r, g, b, a)) = colors[0] {
+                        pixels[pixel_offset] = r;
+                        pixels[pixel_offset + 1] = g;
+                        pixels[pixel_offset + 2] = b;
+                        pixels[pixel_offset + 3] = a;
+                    }
+                    continue;
+                }
+            }
+        }
+        
+        if value > max_range {
+            match out_of_range {
+                "transparent" => {
+                    // Make out-of-range values transparent
+                    pixels[pixel_offset] = 0;
+                    pixels[pixel_offset + 1] = 0;
+                    pixels[pixel_offset + 2] = 0;
+                    pixels[pixel_offset + 3] = 0;
+                    continue;
+                }
+                "clamp" | _ => {
+                    // Use last stop's color
+                    if let Some((r, g, b, a)) = colors[colors.len() - 1] {
+                        pixels[pixel_offset] = r;
+                        pixels[pixel_offset + 1] = g;
+                        pixels[pixel_offset + 2] = b;
+                        pixels[pixel_offset + 3] = a;
+                    }
+                    continue;
+                }
+            }
+        }
+        
         // Find the two surrounding color stops based on actual data value
         let mut low_idx = 0;
         let mut high_idx = stop_values.len() - 1;
@@ -524,29 +574,6 @@ pub fn apply_style_gradient(
                 high_idx = i;
                 break;
             }
-        }
-        
-        // Handle out-of-range values
-        if value <= min_stop {
-            // Below minimum - use first stop's color
-            if let Some((r, g, b, a)) = colors[0] {
-                pixels[pixel_offset] = r;
-                pixels[pixel_offset + 1] = g;
-                pixels[pixel_offset + 2] = b;
-                pixels[pixel_offset + 3] = a;
-            }
-            continue;
-        }
-        
-        if value >= max_stop {
-            // Above maximum - use last stop's color
-            if let Some((r, g, b, a)) = colors[colors.len() - 1] {
-                pixels[pixel_offset] = r;
-                pixels[pixel_offset + 1] = g;
-                pixels[pixel_offset + 2] = b;
-                pixels[pixel_offset + 3] = a;
-            }
-            continue;
         }
         
         // Interpolate color between two stops

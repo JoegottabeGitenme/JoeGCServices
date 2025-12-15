@@ -393,7 +393,7 @@ pub async fn render_weather_data_with_lut(
         } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
             Path::new(&style_config_dir).join("mslp.json")
         } else if parameter.contains("RH") || parameter.contains("HUMID") {
-            Path::new(&style_config_dir).join("precipitation.json")
+            Path::new(&style_config_dir).join("humidity.json")
         } else if parameter.contains("REFL") {
             Path::new(&style_config_dir).join("reflectivity.json")
         } else if parameter.contains("PRECIP_RATE") {
