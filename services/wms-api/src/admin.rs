@@ -1062,7 +1062,8 @@ async fn ingest_file_tracked(
             let gp_bbox = if model == "hrrr" {
                 // HRRR uses Lambert Conformal projection
                 let proj = LambertConformal::hrrr();
-                let (min_lon, max_lon, min_lat, max_lat) = proj.geographic_bounds();
+                // geographic_bounds() returns (min_lon, min_lat, max_lon, max_lat)
+                let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
                 GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
             } else {
                 // Standard lat/lon grid (GFS, MRMS, etc.)

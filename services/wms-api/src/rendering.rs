@@ -1039,6 +1039,16 @@ fn resample_grid_for_bbox_with_proj(
 ) -> Vec<f32> {
     // Use Lambert Conformal resampling for HRRR (native projection)
     if model == "hrrr" {
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_width = output_width,
+            output_height = output_height,
+            output_bbox = ?output_bbox,
+            "Using Lambert Conformal resampling for HRRR"
+        );
         if use_mercator {
             resample_lambert_to_mercator(data, data_width, data_height, output_width, output_height, output_bbox)
         } else {
@@ -1968,13 +1978,29 @@ async fn load_grid_data_from_zarr(
         })?;
     
     // Determine bbox to read
+    // For HRRR (Lambert Conformal) and other non-geographic projections,
+    // we must read the full grid because the relationship between grid indices
+    // and geographic coordinates is non-linear. Partial bbox reads only work
+    // for regular lat/lon grids like GFS.
+    let is_geographic_grid = entry.model != "hrrr"; // HRRR uses Lambert Conformal
+    
     let read_bbox = if let Some(bbox_arr) = bbox {
-        GpBoundingBox::new(
-            bbox_arr[0] as f64,
-            bbox_arr[1] as f64, 
-            bbox_arr[2] as f64,
-            bbox_arr[3] as f64,
-        )
+        if is_geographic_grid {
+            GpBoundingBox::new(
+                bbox_arr[0] as f64,
+                bbox_arr[1] as f64, 
+                bbox_arr[2] as f64,
+                bbox_arr[3] as f64,
+            )
+        } else {
+            // For non-geographic grids (HRRR Lambert), always read full grid
+            // The resampling step will handle the projection transformation
+            debug!(
+                model = %entry.model,
+                "Using full grid read for non-geographic projection"
+            );
+            zarr_meta.bbox
+        }
     } else {
         // Read full grid
         zarr_meta.bbox
