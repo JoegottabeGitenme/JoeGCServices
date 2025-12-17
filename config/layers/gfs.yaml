@@ -1,6 +1,13 @@
 # GFS Layer Configuration
 # Defines WMS/WMTS layers exposed for the GFS model
 # Each layer maps to a parameter and defines available styles
+#
+# All pressure levels available for ELEVATION dimension (in mb):
+# Surface/Near-surface: surface, 2m above ground, 10m above ground
+# Lower troposphere: 1000, 975, 950, 925, 900, 850
+# Mid troposphere: 800, 750, 700, 650, 600, 550, 500, 450, 400, 350
+# Upper troposphere: 300, 250, 200, 150
+# Stratosphere: 100, 70, 50, 30, 20, 10
 
 model: gfs
 display_name: "GFS - Global Forecast System"
@@ -29,14 +36,26 @@ layers:
     levels:
       - value: "2 m above ground"
         default: true
+      # Lower troposphere
       - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
       - value: "925 mb"
+      - value: "900 mb"
       - value: "850 mb"
+      # Mid troposphere
       - value: "700 mb"
       - value: "500 mb"
       - value: "300 mb"
       - value: "250 mb"
       - value: "200 mb"
+      # Upper atmosphere / Stratosphere
+      - value: "100 mb"
+      - value: "70 mb"
+      - value: "50 mb"
+      - value: "30 mb"
+      - value: "20 mb"
+      - value: "10 mb"
 
   - id: gfs_DPT
     parameter: DPT
@@ -66,14 +85,21 @@ layers:
     levels:
       - value: "10 m above ground"
         default: true
+      # Lower troposphere
       - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
       - value: "925 mb"
+      - value: "900 mb"
       - value: "850 mb"
+      # Mid troposphere
       - value: "700 mb"
       - value: "500 mb"
       - value: "300 mb"
       - value: "250 mb"
       - value: "200 mb"
+      # Upper atmosphere (jet stream levels)
+      - value: "100 mb"
 
   - id: gfs_VGRD
     parameter: VGRD
@@ -86,14 +112,21 @@ layers:
     levels:
       - value: "10 m above ground"
         default: true
+      # Lower troposphere
       - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
       - value: "925 mb"
+      - value: "900 mb"
       - value: "850 mb"
+      # Mid troposphere
       - value: "700 mb"
       - value: "500 mb"
       - value: "300 mb"
       - value: "250 mb"
       - value: "200 mb"
+      # Upper atmosphere (jet stream levels)
+      - value: "100 mb"
 
   - id: gfs_GUST
     parameter: GUST
@@ -117,6 +150,12 @@ layers:
     levels:
       - value: "10 m above ground"
         default: true
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
 
   # ==========================================================================
   # Pressure Layers
@@ -146,13 +185,22 @@ layers:
     levels:
       - value: "500 mb"
         default: true
+      # Lower troposphere
       - value: "1000 mb"
       - value: "925 mb"
       - value: "850 mb"
       - value: "700 mb"
+      # Upper troposphere
       - value: "300 mb"
       - value: "250 mb"
       - value: "200 mb"
+      # Stratosphere
+      - value: "100 mb"
+      - value: "70 mb"
+      - value: "50 mb"
+      - value: "30 mb"
+      - value: "20 mb"
+      - value: "10 mb"
 
   # ==========================================================================
   # Moisture Layers
@@ -169,11 +217,17 @@ layers:
     levels:
       - value: "2 m above ground"
         default: true
+      # Lower troposphere
       - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
       - value: "925 mb"
+      - value: "900 mb"
       - value: "850 mb"
+      # Mid troposphere
       - value: "700 mb"
       - value: "500 mb"
+      - value: "300 mb"
 
   - id: gfs_PWAT
     parameter: PWAT
@@ -211,7 +265,7 @@ layers:
   - id: gfs_CAPE
     parameter: CAPE
     title: "CAPE"
-    abstract: "Convective Available Potential Energy"
+    abstract: "Convective Available Potential Energy - indicates thunderstorm potential"
     style_file: cape.json
     units:
       native: "J/kg"
@@ -223,7 +277,7 @@ layers:
   - id: gfs_CIN
     parameter: CIN
     title: "CIN"
-    abstract: "Convective Inhibition"
+    abstract: "Convective Inhibition - energy barrier to convection initiation"
     style_file: cape.json
     units:
       native: "J/kg"
@@ -239,7 +293,7 @@ layers:
   - id: gfs_TCDC
     parameter: TCDC
     title: "Total Cloud Cover"
-    abstract: "Total cloud cover percentage"
+    abstract: "Total cloud cover percentage for entire atmospheric column"
     style_file: cloud.json
     units:
       native: "%"
@@ -251,7 +305,7 @@ layers:
   - id: gfs_LCDC
     parameter: LCDC
     title: "Low Cloud Cover"
-    abstract: "Low cloud cover (below 2km)"
+    abstract: "Low cloud cover (surface to ~2km / 800mb)"
     style_file: cloud.json
     units:
       native: "%"
@@ -263,7 +317,7 @@ layers:
   - id: gfs_MCDC
     parameter: MCDC
     title: "Middle Cloud Cover"
-    abstract: "Middle cloud cover (2-6km)"
+    abstract: "Middle cloud cover (~2-6km / 800-400mb)"
     style_file: cloud.json
     units:
       native: "%"
@@ -275,7 +329,7 @@ layers:
   - id: gfs_HCDC
     parameter: HCDC
     title: "High Cloud Cover"
-    abstract: "High cloud cover (above 6km)"
+    abstract: "High cloud cover (above ~6km / 400mb)"
     style_file: cloud.json
     units:
       native: "%"
@@ -291,7 +345,7 @@ layers:
   - id: gfs_VIS
     parameter: VIS
     title: "Visibility"
-    abstract: "Surface visibility"
+    abstract: "Surface visibility - important for aviation and transportation"
     style_file: visibility.json
     units:
       native: m

@@ -30,6 +30,7 @@
 
 - [Overview](./crates/README.md)
   - [grib2-parser](./crates/grib2-parser.md)
+  - [grid-processor](./crates/grid-processor.md)
   - [netcdf-parser](./crates/netcdf-parser.md)
   - [projection](./crates/projection.md)
   - [renderer](./crates/renderer.md)

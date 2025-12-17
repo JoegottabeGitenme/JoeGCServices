@@ -8,13 +8,13 @@ Weather WMS is built on a foundation of reusable Rust libraries (crates) that ha
 graph TB
     subgraph "Services"
         API[wms-api]
-        ING[ingester]
         DL[downloader]
         WORKER[renderer-worker]
     end
     
     subgraph "Domain Crates"
         GRIB[grib2-parser]
+        GRIDPROC[grid-processor]
         NETCDF[netcdf-parser]
         RENDERER[renderer]
         STORAGE[storage]
@@ -29,16 +29,17 @@ graph TB
     API --> PROTOCOL
     API --> RENDERER
     API --> STORAGE
+    API --> GRIDPROC
+    API --> GRIB
+    API --> NETCDF
     API --> COMMON
-    
-    ING --> GRIB
-    ING --> NETCDF
-    ING --> STORAGE
-    ING --> COMMON
     
     WORKER --> RENDERER
     WORKER --> STORAGE
     WORKER --> COMMON
+    
+    GRIDPROC --> PROJ
+    GRIDPROC --> COMMON
     
     RENDERER --> PROJ
     RENDERER --> COMMON
@@ -58,10 +59,11 @@ graph TB
 | Crate | Purpose | Lines of Code | Dependencies |
 |-------|---------|---------------|--------------|
 | [grib2-parser](./grib2-parser.md) | Parse GRIB2 weather data files | ~2,500 | bytes, thiserror |
+| [grid-processor](./grid-processor.md) | Zarr V3 grid storage with pyramids | ~4,000 | zarrs, object_store, ndarray |
 | [netcdf-parser](./netcdf-parser.md) | Parse NetCDF-4 satellite data | ~800 | netcdf, ndarray |
 | [projection](./projection.md) | Coordinate system transformations | ~1,200 | None (pure math) |
 | [renderer](./renderer.md) | Weather visualization engine | ~3,000 | image, imageproc |
-| [storage](./storage.md) | Storage abstractions (S3, Redis, DB) | ~1,500 | aws-sdk-s3, redis, sqlx |
+| [storage](./storage.md) | Storage abstractions (S3, Redis, DB) | ~2,000 | aws-sdk-s3, redis, sqlx |
 | [wms-common](./wms-common.md) | Shared types and utilities | ~600 | serde, chrono |
 | [wms-protocol](./wms-protocol.md) | OGC WMS/WMTS protocol implementation | ~1,000 | quick-xml, serde |
 

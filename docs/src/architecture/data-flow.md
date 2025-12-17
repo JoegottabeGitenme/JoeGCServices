@@ -4,7 +4,7 @@ This page describes the two primary data flows in Weather WMS: **ingestion** (ho
 
 ## Ingestion Flow
 
-The ingestion pipeline fetches data from NOAA, parses it, shreds it, and stores it in the catalog.
+The ingestion pipeline fetches data from NOAA, parses it, converts it to Zarr V3 format with multi-resolution pyramids, and stores it in MinIO with metadata in PostgreSQL.
 
 ### High-Level Ingestion Flow
 
@@ -13,279 +13,220 @@ sequenceDiagram
     participant NOAA
     participant Downloader
     participant FileSystem
-    participant Ingester
+    participant WmsApi as WMS API (Ingester)
+    participant ZarrWriter
     participant MinIO
     participant PostgreSQL
-    participant Redis
     
     Note over Downloader: Scheduled or manual trigger
     Downloader->>NOAA: HTTP GET with Range header
     NOAA-->>Downloader: GRIB2/NetCDF bytes
-    Downloader->>FileSystem: Save to /data/incoming/
-    Downloader->>Ingester: POST /admin/ingest
+    Downloader->>FileSystem: Save to /data/downloads/
+    Downloader->>WmsApi: POST /admin/ingest
     
-    Note over Ingester: Parse and process
-    Ingester->>FileSystem: Read file
-    Ingester->>Ingester: Parse GRIB2/NetCDF
-    Ingester->>Ingester: Extract parameters
-    Ingester->>Ingester: Shard grid data
+    Note over WmsApi: Parse and process
+    WmsApi->>FileSystem: Read file
+    WmsApi->>WmsApi: Parse GRIB2/NetCDF
+    WmsApi->>WmsApi: Extract parameters
     
-    loop For each shard
-        Ingester->>MinIO: PUT shard_NNNN.bin
+    loop For each parameter
+        WmsApi->>ZarrWriter: Write grid data
+        ZarrWriter->>ZarrWriter: Generate pyramids (2-4 levels)
+        ZarrWriter->>FileSystem: Write Zarr array to temp
     end
     
-    Ingester->>PostgreSQL: INSERT INTO grid_catalog
-    Ingester->>Redis: PUBLISH cache:invalidate
-    Ingester-->>Downloader: 200 OK (ingestion complete)
+    WmsApi->>MinIO: Copy Zarr directories
+    WmsApi->>PostgreSQL: INSERT INTO grid_catalog
+    WmsApi-->>Downloader: 200 OK (ingestion complete)
 ```
 
 ### Step-by-Step Ingestion
 
 #### 1. Download
 
-**Trigger**: Cron schedule or manual API call
+**Trigger**: Cron schedule or automatic polling by Downloader service
+
+```rust
+// Downloader checks for new files every poll_interval_secs
+let url = format!(
+    "https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{date}/{cycle}/atmos/gfs.t{cycle}z.pgrb2.0p25.f{fhr:03}",
+    date = "20241217",
+    cycle = "12",
+    fhr = 3
+);
+
+// Download with resume support
+let response = client.get(&url)
+    .header("Range", format!("bytes={}-", downloaded_bytes))
+    .send()
+    .await?;
+```
+
+**Output**: `/data/downloads/gfs_20241217_12z_f003.grib2` (~550 MB)
+
+---
+
+#### 2. Trigger Ingestion
 
 ```bash
-# Automated (cron)
-0 * * * * /app/scripts/download_gfs.sh
+# Downloader automatically calls this after download completes
+POST http://localhost:8080/admin/ingest
+Content-Type: application/json
 
-# Manual
-curl -X POST http://localhost:8081/download \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gfs", "cycle": "00"}'
-```
-
-**Download Process**:
-```rust
-async fn download_file(url: &str, dest: &Path) -> Result<()> {
-    let client = reqwest::Client::new();
-    
-    // Check if partial file exists
-    let downloaded = if dest.exists() {
-        dest.metadata()?.len()
-    } else {
-        0
-    };
-    
-    // Resume from where we left off
-    let response = client.get(url)
-        .header("Range", format!("bytes={}-", downloaded))
-        .send()
-        .await?;
-    
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dest)?;
-    
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        file.write_all(&chunk?)?;
-    }
-    
-    Ok(())
-}
-```
-
-**Output**: `/data/incoming/gfs.t00z.pgrb2.0p25.f000`
-
----
-
-#### 2. Parse
-
-**Trigger**: HTTP POST to `/admin/ingest` with file path
-
-```bash
-curl -X POST http://localhost:8080/admin/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/data/incoming/gfs.t00z.pgrb2.0p25.f000", "model": "gfs"}'
-```
-
-**Parse Process**:
-
-For **GRIB2** (GFS, HRRR, MRMS):
-```rust
-async fn parse_grib2(path: &Path) -> Result<Vec<GribMessage>> {
-    let bytes = tokio::fs::read(path).await?;
-    let parser = Grib2Parser::new(&bytes)?;
-    
-    let mut messages = Vec::new();
-    for message in parser.messages() {
-        let metadata = extract_metadata(&message)?;
-        let grid = decode_grid_data(&message)?;
-        let projection = determine_projection(&message)?;
-        
-        messages.push(GribMessage {
-            parameter: metadata.parameter,
-            level: metadata.level,
-            forecast_time: metadata.forecast_time,
-            valid_time: metadata.valid_time,
-            grid,
-            projection,
-        });
-    }
-    
-    Ok(messages)
-}
-```
-
-For **NetCDF** (GOES):
-```rust
-async fn parse_netcdf(path: &Path) -> Result<GoesData> {
-    let file = netcdf::open(path)?;
-    
-    let variable = file.variable("CMI")?;  // Channel data
-    let data: Array2<f32> = variable.get()?;
-    
-    let projection = GeoStationaryProjection {
-        satellite_height: file.attribute("satellite_height")?,
-        longitude: file.attribute("longitude_of_projection_origin")?,
-        sweep_angle: file.attribute("sweep_angle_axis")?,
-    };
-    
-    Ok(GoesData { data, projection })
+{
+  "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2",
+  "model": "gfs"
 }
 ```
 
 ---
 
-#### 3. Shard
+#### 3. Parse File
 
-Split large grids into ~1MB chunks for efficient partial access.
-
-**Shredding Algorithm**:
+**GRIB2 Parsing** (GFS, HRRR, MRMS):
 ```rust
-fn shard_grid(grid: &Array2<f32>, target_size_bytes: usize) -> Vec<GridShard> {
-    let (ny, nx) = grid.dim();
-    let bytes_per_cell = std::mem::size_of::<f32>();
+let bytes = Bytes::from(fs::read(&path)?);
+let mut reader = grib2_parser::Grib2Reader::new(bytes);
+
+while let Some(message) = reader.next_message().ok().flatten() {
+    let param = &message.product_definition.parameter_short_name;  // "TMP"
+    let level = &message.product_definition.level_description;     // "2 m above ground"
+    let level_type = message.product_definition.level_type;        // 103
     
-    // Calculate optimal shard width
-    let cells_per_shard = target_size_bytes / (bytes_per_cell * ny);
-    let num_shards = (nx + cells_per_shard - 1) / cells_per_shard;
-    
-    let mut shards = Vec::new();
-    for i in 0..num_shards {
-        let x_start = i * cells_per_shard;
-        let x_end = usize::min((i + 1) * cells_per_shard, nx);
+    // Check if this parameter/level is in our target list
+    if should_ingest(param, level_type, level_value) {
+        let grid_data = message.unpack_data()?;  // Decompress grid values
+        let width = message.grid_definition.num_points_longitude;  // 1440
+        let height = message.grid_definition.num_points_latitude;  // 721
         
-        // Extract column range
-        let shard_data = grid.slice(s![.., x_start..x_end]).to_owned();
-        
-        // Calculate geographic bounds for this shard
-        let bounds = calculate_bounds(projection, x_start, x_end, ny);
-        
-        shards.push(GridShard {
-            index: i,
-            data: shard_data,
-            bounds,
-        });
+        // Process this parameter...
     }
-    
-    shards
 }
 ```
 
-**Example**:
-- GFS grid: 1440 × 721 (lon × lat) = 1,038,240 cells
-- Cell size: 4 bytes (f32)
-- Total: ~4 MB
-- Target shard size: 1 MB
-- Shards: 4 (each ~260,000 cells)
+**NetCDF Parsing** (GOES satellites):
+```rust
+let parser = netcdf_parser::GoesParser::open(&path)?;
+let data = parser.read_data()?;           // 5424x5424 grid
+let projection = parser.get_projection()?; // Geostationary projection
+let channel = parser.get_channel()?;       // e.g., "C13"
+```
 
 ---
 
-#### 4. Store
+#### 4. Write to Zarr
 
-Upload shards to MinIO and register in PostgreSQL catalog.
+Grid data is written to Zarr V3 format with multi-resolution pyramids:
 
-**MinIO Upload**:
 ```rust
-async fn store_shards(
-    storage: &ObjectStorage,
-    shards: Vec<GridShard>,
-    metadata: &GridMetadata,
-) -> Result<String> {
-    let path_prefix = format!(
-        "{}/{}/{}_f{:03}",
-        metadata.model,
-        metadata.parameter,
-        metadata.forecast_time.format("%Y%m%d%H"),
-        metadata.forecast_hour
-    );
-    
-    // Upload shards in parallel
-    let handles: Vec<_> = shards.into_iter().enumerate().map(|(i, shard)| {
-        let storage = storage.clone();
-        let path = format!("{}_shard_{:04}.bin", path_prefix, i);
-        
-        tokio::spawn(async move {
-            let bytes = serialize_shard(&shard)?;
-            storage.put(&path, bytes).await
-        })
-    }).collect();
-    
-    // Wait for all uploads
-    for handle in handles {
-        handle.await??;
-    }
-    
-    Ok(path_prefix)
-}
+use grid_processor::{ZarrWriter, GridProcessorConfig, PyramidConfig, DownsampleMethod};
+
+let config = GridProcessorConfig {
+    zarr_chunk_size: 512,           // 512x512 chunks
+    pyramid: Some(PyramidConfig {
+        levels: 2,                  // Full + 2x downsampled
+        method: DownsampleMethod::Average,
+        min_dimension: 256,
+    }),
+    compression: ZarrCompression::BloscLz4 { level: 5 },
+    ..Default::default()
+};
+
+let writer = ZarrWriter::new(config);
+
+// Write with pyramids
+let result = writer.write_with_pyramids(
+    filesystem_store,    // Write to local temp first
+    &grid_data,
+    width, height,
+    &bbox,
+    model, parameter, level, units,
+    reference_time, forecast_hour,
+)?;
 ```
 
-**Catalog Registration**:
+**Zarr Output Structure**:
+```
+/tmp/zarr/tmp_2_m_above_ground_f003.zarr/
+├── zarr.json                    # Root group metadata with multiscale info
+├── 0/                           # Level 0: Full resolution (1440×721)
+│   ├── zarr.json               # Array metadata (shape, chunks, codecs)
+│   └── c/                      # Chunks directory
+│       ├── 0/0                 # Chunk (0,0) - compressed f32 data
+│       ├── 0/1                 # Chunk (0,1)
+│       ├── 1/0                 # Chunk (1,0)
+│       └── 1/1                 # Chunk (1,1) - 4 chunks for 512×512 chunk size
+└── 1/                           # Level 1: 2x downsampled (720×360)
+    ├── zarr.json
+    └── c/
+        ├── 0/0                 # Single chunk (720×360 < 512×512)
+        └── ...
+```
+
+---
+
+#### 5. Upload to MinIO
+
+```rust
+// Copy entire Zarr directory tree to MinIO
+let minio_path = format!(
+    "grids/{}/{}/{}_{}_f{:03}.zarr",
+    model,                           // "gfs"
+    run_date,                        // "20241217_12z"
+    param.to_lowercase(),           // "tmp"
+    level_sanitized,                // "2_m_above_ground"
+    forecast_hour                   // 3
+);
+
+// Recursive copy preserving directory structure
+copy_dir_to_minio(&local_zarr_path, &minio_path, &storage).await?;
+
+// Result: s3://weather-data/grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr/
+```
+
+---
+
+#### 6. Register in Catalog
+
+```rust
+let entry = CatalogEntry {
+    model: "gfs".to_string(),
+    parameter: "TMP".to_string(),
+    level: "2 m above ground".to_string(),
+    reference_time,               // 2024-12-17T12:00:00Z
+    forecast_hour: 3,
+    storage_path: minio_path,     // "grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr"
+    bbox: serde_json::json!({
+        "min_lon": 0.0, "max_lon": 360.0,
+        "min_lat": -90.0, "max_lat": 90.0
+    }),
+    grid_shape: serde_json::json!([1440, 721]),
+    zarr_metadata: Some(result.metadata.to_json()),
+    created_at: Utc::now(),
+};
+
+catalog.insert(&entry).await?;
+```
+
+**PostgreSQL Record**:
 ```sql
 INSERT INTO grid_catalog (
-    model, parameter, level_type, level_value,
-    forecast_time, valid_time, forecast_hour,
-    projection, grid_shape, bbox,
-    storage_path, shard_count
+    model, parameter, level, reference_time, forecast_hour,
+    storage_path, bbox, grid_shape, zarr_metadata
 ) VALUES (
-    'gfs', 'TMP', '2m', 2.0,
-    '2024-12-03 00:00:00', '2024-12-03 00:00:00', 0,
-    '{"type": "latlon", "resolution": 0.25}'::jsonb,
-    '{"nx": 1440, "ny": 721}'::jsonb,
-    '{"west": -180, "south": -90, "east": 180, "north": 90}'::jsonb,
-    'gfs/TMP_2m/2024120300_f000',
-    4
+    'gfs', 'TMP', '2 m above ground', '2024-12-17 12:00:00+00', 3,
+    'grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr',
+    '{"min_lon": 0, "max_lon": 360, "min_lat": -90, "max_lat": 90}',
+    '[1440, 721]',
+    '{"shape": [1440, 721], "chunk_shape": [512, 512], "compression": "blosc_lz4"}'
 );
-```
-
----
-
-#### 5. Invalidate Caches
-
-Notify all WMS API instances to invalidate cached tiles for updated data.
-
-```rust
-// Publisher (ingester)
-redis.publish("cache:invalidate", json!({
-    "model": "gfs",
-    "parameter": "TMP_2m",
-    "forecast_time": "2024-12-03T00:00:00Z"
-})).await?;
-
-// Subscriber (wms-api)
-let mut pubsub = redis.get_async_connection().await?.into_pubsub();
-pubsub.subscribe("cache:invalidate").await?;
-
-while let Some(msg) = pubsub.on_message().next().await {
-    let payload: CacheInvalidation = serde_json::from_str(msg.get_payload())?;
-    
-    // Clear L1 cache
-    l1_cache.invalidate(&payload.model, &payload.parameter).await?;
-    
-    // Clear L2 cache
-    let pattern = format!("wms:tile:{}_{}_*", payload.model, payload.parameter);
-    redis.del_pattern(&pattern).await?;
-}
 ```
 
 ---
 
 ## Request Flow
 
-Client requests go through multiple cache layers before falling back to rendering from source data.
+Client requests go through multiple cache layers before falling back to Zarr data reads and rendering.
 
 ### High-Level Request Flow
 
@@ -296,12 +237,13 @@ sequenceDiagram
     participant L1 as L1 Cache (Memory)
     participant L2 as L2 Cache (Redis)
     participant PG as PostgreSQL
+    participant Zarr as Zarr Processor
     participant MinIO
     participant Renderer
     
-    Client->>API: GET /wms?...&LAYERS=gfs_TMP_2m&...
+    Client->>API: GET /wms?...&LAYERS=gfs_TMP&...
     
-    API->>L1: Check cache
+    API->>L1: Check tile cache
     alt L1 Hit (< 1ms)
         L1-->>API: PNG bytes
         API-->>Client: 200 OK (PNG)
@@ -311,17 +253,22 @@ sequenceDiagram
             L2-->>API: PNG bytes
             API->>L1: Store
             API-->>Client: 200 OK (PNG)
-        else L2 Miss (20-100ms)
-            API->>PG: Query catalog
-            PG-->>API: Grid metadata
+        else L2 Miss (render path)
+            API->>PG: Query catalog for storage_path
+            PG-->>API: CatalogEntry with Zarr path
             
-            API->>MinIO: Fetch required shards
-            MinIO-->>API: Grid data
+            API->>Zarr: read_region(bbox, output_size)
+            Note over Zarr: Select pyramid level based on zoom
+            Zarr->>MinIO: Byte-range requests for chunks
+            MinIO-->>Zarr: Compressed chunk data
+            Zarr->>Zarr: Decompress (Blosc LZ4)
+            Zarr->>Zarr: Assemble chunks into region
+            Zarr-->>API: GridRegion with data + bounds
             
-            API->>Renderer: Render tile
-            Renderer->>Renderer: Apply projection
-            Renderer->>Renderer: Interpolate values
-            Renderer->>Renderer: Apply style (colors)
+            API->>Renderer: render_tile(region, style)
+            Renderer->>Renderer: Resample to output size
+            Renderer->>Renderer: Apply colormap
+            Renderer->>Renderer: Encode PNG
             Renderer-->>API: PNG bytes
             
             par Store in caches
@@ -339,290 +286,271 @@ sequenceDiagram
 #### 1. Parse Request
 
 ```rust
-#[derive(Deserialize)]
-struct WmsGetMapParams {
-    service: String,         // "WMS"
-    version: String,         // "1.3.0"
-    request: String,         // "GetMap"
-    layers: String,          // "gfs_TMP_2m"
-    styles: String,          // "temperature"
-    crs: String,             // "EPSG:3857"
-    bbox: String,            // "-180,-90,180,90"
-    width: u32,              // 256
-    height: u32,             // 256
-    format: String,          // "image/png"
-    time: Option<String>,    // "2024-12-03T00:00:00Z"
-}
+// WMS GetMap request
+GET /wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0
+    &LAYERS=gfs_TMP
+    &STYLES=temperature
+    &CRS=EPSG:3857
+    &BBOX=-10018754,2504688,-7514066,5009377
+    &WIDTH=256
+    &HEIGHT=256
+    &FORMAT=image/png
+    &ELEVATION=2%20m%20above%20ground
 
-async fn wms_get_map(
-    Query(params): Query<WmsGetMapParams>,
-    State(state): State<AppState>,
-) -> Result<Response<Body>> {
-    // Validate parameters
-    validate_wms_params(&params)?;
-    
-    // Generate cache key
-    let cache_key = format!(
-        "wms:tile:{}:{}:{}:{}:{}:{}:{}",
-        params.layers, params.styles, params.crs,
-        params.bbox, params.width, params.height,
-        params.time.as_deref().unwrap_or("latest")
-    );
-    
-    // Check caches and render
-    let tile = get_or_render_tile(&cache_key, &params, &state).await?;
-    
-    Ok(Response::builder()
-        .header("Content-Type", "image/png")
-        .header("Cache-Control", "public, max-age=3600")
-        .body(Body::from(tile))?)
-}
+// Parse into struct
+let params = WmsGetMapParams {
+    layers: "gfs_TMP",
+    styles: "temperature",
+    crs: CrsCode::EPSG3857,
+    bbox: BoundingBox::new(-10018754, 2504688, -7514066, 5009377),
+    width: 256,
+    height: 256,
+    elevation: Some("2 m above ground"),
+    ...
+};
 ```
 
 ---
 
-#### 2. Check L1 Cache
+#### 2. Generate Cache Key
 
 ```rust
-async fn check_l1_cache(cache: &TileMemoryCache, key: &str) -> Option<Vec<u8>> {
-    cache.get(key).await
-}
+let cache_key = CacheKey::new(
+    &params.layers,      // "gfs_TMP"
+    &params.styles,      // "temperature"
+    &params.crs,         // EPSG:3857
+    &params.bbox,        // Tile bounds
+    params.width,        // 256
+    params.height,       // 256
+    reference_time,      // Latest or specified
+    forecast_hour,       // 0-384
+    &params.elevation,   // "2 m above ground"
+);
 
-// L1 cache implementation (LRU)
-pub struct TileMemoryCache {
-    cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
-}
-
-impl TileMemoryCache {
-    pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let mut cache = self.cache.lock().await;
-        cache.get(key).cloned()
-    }
-    
-    pub async fn set(&self, key: String, value: Vec<u8>) {
-        let mut cache = self.cache.lock().await;
-        cache.put(key, value);
-    }
-}
+// Result: "wms:tile:gfs_TMP:temperature:EPSG3857:-10018754,2504688,-7514066,5009377:256x256:20241217T12:f003:2_m_above_ground"
 ```
-
-**Performance**: <1ms (in-process memory access)
 
 ---
 
-#### 3. Check L2 Cache (Redis)
+#### 3. Check Caches
 
+**L1 (Memory) - < 1ms**:
 ```rust
-async fn check_l2_cache(redis: &RedisCache, key: &str) -> Result<Option<Vec<u8>>> {
-    redis.get_bytes(key).await
-}
-
-// Redis cache implementation
-impl RedisCache {
-    pub async fn get_bytes(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let mut conn = self.pool.get().await?;
-        let value: Option<Vec<u8>> = conn.get(key).await?;
-        Ok(value)
-    }
-    
-    pub async fn set_bytes(&self, key: &str, value: &[u8], ttl: u64) -> Result<()> {
-        let mut conn = self.pool.get().await?;
-        conn.set_ex(key, value, ttl).await?;
-        Ok(())
-    }
+if let Some(tile) = memory_cache.get(&cache_key).await {
+    return Ok(tile);
 }
 ```
 
-**Performance**: 2-5ms (network + Redis lookup)
+**L2 (Redis) - 2-5ms**:
+```rust
+if let Some(tile) = redis_cache.get(&cache_key).await? {
+    memory_cache.set(cache_key.clone(), tile.clone()).await;
+    return Ok(tile);
+}
+```
 
 ---
 
 #### 4. Query Catalog
 
-Find grid metadata for the requested layer and time.
+Find the Zarr storage path:
 
 ```rust
-async fn find_grid(
-    catalog: &Catalog,
-    model: &str,
-    parameter: &str,
-    time: DateTime<Utc>,
-) -> Result<GridMetadata> {
-    let sql = "
-        SELECT id, model, parameter, level_type, level_value,
-               forecast_time, valid_time, forecast_hour,
-               projection, grid_shape, bbox,
-               storage_path, shard_count
-        FROM grid_catalog
-        WHERE model = $1 AND parameter = $2
-          AND forecast_time <= $3
-        ORDER BY forecast_time DESC, forecast_hour ASC
-        LIMIT 1
-    ";
-    
-    let row = sqlx::query(sql)
-        .bind(model)
-        .bind(parameter)
-        .bind(time)
-        .fetch_one(&catalog.pool)
-        .await?;
-    
-    Ok(GridMetadata::from_row(&row)?)
-}
-```
+let entry = catalog.find_grid(
+    "gfs",                    // model (from layer name)
+    "TMP",                    // parameter
+    "2 m above ground",       // level (from ELEVATION)
+    reference_time,           // From RUN dimension or latest
+    forecast_hour,            // From FORECAST dimension
+).await?;
 
-**Performance**: 5-20ms (indexed query)
+// entry.storage_path = "grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr"
+```
 
 ---
 
-#### 5. Fetch Shards
+#### 5. Read Grid Region
 
-Fetch only the shards intersecting the requested bbox.
+The Zarr processor reads only the needed data with automatic pyramid selection:
 
 ```rust
-async fn fetch_shards(
-    storage: &ObjectStorage,
-    metadata: &GridMetadata,
-    bbox: &BoundingBox,
-) -> Result<Vec<GridShard>> {
-    // Determine which shards intersect bbox
-    let shard_indices = calculate_intersecting_shards(metadata, bbox);
-    
-    // Fetch shards in parallel
-    let handles: Vec<_> = shard_indices.into_iter().map(|i| {
-        let storage = storage.clone();
-        let path = format!("{}_shard_{:04}.bin", metadata.storage_path, i);
-        
-        tokio::spawn(async move {
-            let bytes = storage.get(&path).await?;
-            deserialize_shard(&bytes)
-        })
-    }).collect();
-    
-    let mut shards = Vec::new();
-    for handle in handles {
-        shards.push(handle.await??);
-    }
-    
-    Ok(shards)
-}
+use grid_processor::{ZarrGridProcessor, BoundingBox};
+
+// Convert Web Mercator bbox to geographic
+let geo_bbox = project_bbox(&params.bbox, CrsCode::EPSG3857, CrsCode::EPSG4326)?;
+// geo_bbox = BoundingBox { min_lon: -90, min_lat: 20, max_lon: -67.5, max_lat: 40 }
+
+// Open Zarr array (auto-detects pyramid levels)
+let processor = ZarrGridProcessor::open(
+    minio_store,
+    &entry.storage_path,
+    config,
+).await?;
+
+// Read region with automatic pyramid level selection
+// For a 256x256 tile covering this area, level 0 (full res) is appropriate
+let region = processor.read_region(
+    &geo_bbox,
+    Some((256, 256)),  // Target output size (for pyramid selection)
+).await?;
+
+// region contains:
+// - data: Vec<f32> with grid values
+// - width, height: actual grid dimensions read
+// - bounds: actual geographic bounds (may be larger due to chunk alignment)
 ```
 
-**Performance**: 10-50ms (parallel S3 fetches)
+**Zarr Partial Read Process**:
+```
+1. Calculate which chunks overlap the bbox
+   - Bbox: [-90, 20] to [-67.5, 40] (22.5° × 20°)
+   - Grid: 0.25° resolution, chunks 512×512 (128° × 128°)
+   - Need chunks: (0,0) only (covers -90 to +90 lat, 0 to 128 lon)
+
+2. Select pyramid level based on output resolution
+   - Tile: 256×256 px covering 22.5° × 20°
+   - Needed resolution: ~0.09°/px
+   - Level 0: 0.25°/px ✓ (close enough)
+   - Level 1: 0.50°/px (too coarse)
+   
+3. Fetch chunks via byte-range requests
+   GET s3://weather-data/grids/gfs/.../0/c/0/0
+   Range: bytes=0-262144
+   
+4. Decompress with Blosc LZ4
+   
+5. Assemble into GridRegion
+```
 
 ---
 
 #### 6. Render Tile
 
-Apply projection, interpolation, and styling to generate PNG.
-
 ```rust
-async fn render_tile(
-    shards: Vec<GridShard>,
-    params: &RenderParams,
-    style: &Style,
-) -> Result<Vec<u8>> {
-    // This is CPU-intensive, run in blocking thread pool
-    tokio::task::spawn_blocking(move || {
-        // 1. Reproject to target CRS
-        let reprojected = reproject_grid(&shards, &params.source_crs, &params.target_crs)?;
-        
-        // 2. Interpolate to tile grid
-        let interpolated = interpolate_to_grid(
-            &reprojected,
-            params.width,
-            params.height,
-            &params.bbox,
-        )?;
-        
-        // 3. Apply colormap/style
-        let colored = apply_style(&interpolated, style)?;
-        
-        // 4. Encode as PNG
-        let mut encoder = png::Encoder::new(Vec::new(), params.width, params.height);
-        encoder.set_color(png::ColorType::Rgba);
-        let png_bytes = encoder.write_header()?.write_image_data(&colored)?;
-        
-        Ok(png_bytes)
-    }).await?
-}
+use renderer::{render_tile, Style, ColorRamp};
+
+// Load style configuration
+let style = Style::from_file("config/styles/temperature.json")?;
+
+// Render with bilinear resampling
+let png_bytes = render_tile(
+    &region.data,           // Grid values
+    region.width,           // Data dimensions
+    region.height,
+    &region.bounds,         // Data geographic bounds
+    &params.bbox,           // Output tile bounds (EPSG:3857)
+    params.width,           // Output dimensions (256)
+    params.height,
+    &style,                 // Color ramp + stops
+    params.crs,             // Target CRS
+)?;
 ```
 
-**Performance**: 20-100ms (CPU-bound)
+**Rendering Steps**:
+```
+1. Create output buffer (256×256 RGBA)
+
+2. For each output pixel (x, y):
+   a. Convert pixel to geographic coordinates
+      - (x, y) in tile → Web Mercator coords → lat/lon
+   
+   b. Convert to data coordinates
+      - lat/lon → grid column/row (fractional)
+      - Handle 0-360 longitude wrap for GFS
+   
+   c. Bilinear interpolate grid value
+      - Sample 4 neighboring grid cells
+      - Weight by distance
+   
+   d. Apply style colormap
+      - Value 285K → RGB(0, 100, 255) using temperature ramp
+
+3. Encode as PNG with alpha channel
+```
 
 ---
 
 #### 7. Store in Caches
 
 ```rust
-// Store in both caches
-let ttl = calculate_ttl(&metadata);
+// Store in both cache layers (parallel)
+let ttl = 3600;  // 1 hour for forecast data
+
 tokio::join!(
-    l1_cache.set(cache_key.clone(), tile.clone()),
-    l2_cache.set_bytes(&cache_key, &tile, ttl),
+    redis_cache.set(&cache_key, &png_bytes, ttl),
+    memory_cache.set(cache_key.clone(), png_bytes.clone()),
 );
 ```
 
 ---
 
-## Performance Optimization Strategies
+## Performance Characteristics
 
-### 1. Tile Prefetching
+### Cache Hit Rates
 
-When a tile is requested, prefetch surrounding tiles:
+| Cache Layer | Typical Hit Rate | Latency |
+|-------------|------------------|---------|
+| L1 (Memory) | 60-80% | < 1ms |
+| L2 (Redis) | 85-95% | 2-5ms |
+| Miss (Render) | 5-15% | 50-150ms |
+
+### Render Time Breakdown
+
+| Step | Time | Notes |
+|------|------|-------|
+| Catalog query | 2-5ms | Indexed lookup |
+| Zarr open | 5-10ms | Read metadata |
+| Chunk fetch | 10-30ms | S3 byte-range per chunk |
+| Decompress | 2-5ms | Blosc LZ4 |
+| Resample | 10-30ms | Bilinear interpolation |
+| Apply style | 5-10ms | Color lookup |
+| PNG encode | 10-20ms | Compression |
+| **Total** | **50-120ms** | Cold cache |
+
+### Storage Efficiency
+
+| Model | Grid Size | Raw | Zarr (compressed) | With Pyramids |
+|-------|-----------|-----|-------------------|---------------|
+| GFS | 1440×721 | 4.1 MB | 1.8 MB | 2.5 MB |
+| HRRR | 1799×1059 | 7.6 MB | 3.2 MB | 4.5 MB |
+| GOES | 5424×5424 | 117 MB | 45 MB | 60 MB |
+
+## Coordinate System Handling
+
+### GFS 0-360 Longitude Convention
+
+GFS data uses 0-360 longitude while WMS clients use -180 to 180:
 
 ```rust
-async fn prefetch_neighbors(
-    z: u32, x: u32, y: u32,
-    rings: u32,
-    params: &RenderParams,
-) {
-    let neighbors = calculate_neighbor_tiles(z, x, y, rings);
-    
-    for (nx, ny) in neighbors {
-        tokio::spawn(async move {
-            let _ = get_or_render_tile(&cache_key(z, nx, ny), params).await;
-        });
+// When reading GFS data for bbox covering -100 to -90 longitude:
+fn normalize_bbox_for_gfs(bbox: &BoundingBox) -> BoundingBox {
+    BoundingBox {
+        min_lon: if bbox.min_lon < 0.0 { bbox.min_lon + 360.0 } else { bbox.min_lon },
+        max_lon: if bbox.max_lon < 0.0 { bbox.max_lon + 360.0 } else { bbox.max_lon },
+        min_lat: bbox.min_lat,
+        max_lat: bbox.max_lat,
     }
 }
+
+// -100 to -90 becomes 260 to 270 in GFS coordinates
 ```
 
-### 2. Cache Warming
+### Prime Meridian Wrap
 
-Pre-render popular tiles at startup:
+For tiles crossing the prime meridian (0° longitude):
 
 ```rust
-async fn warm_cache(layers: Vec<String>, max_zoom: u32) {
-    for layer in layers {
-        for z in 0..=max_zoom {
-            let tiles = all_tiles_at_zoom(z);
-            for (x, y) in tiles {
-                render_tile(layer, z, x, y).await;
-            }
-        }
-    }
+if bbox.min_lon < 0.0 && bbox.max_lon > 0.0 {
+    // Split into two reads:
+    // 1. bbox.min_lon to 0 (becomes 360+min_lon to 360)
+    // 2. 0 to bbox.max_lon
+    // Then stitch together
 }
-```
-
-### 3. Partial Grid Loading
-
-Only load shards intersecting the request bbox:
-
-```
-Requested bbox: [-100, 30, -90, 40]
-Grid extent: [-180, -90, 180, 90]
-Shards: 0, 1, 2, 3
-
-Shard 0: [-180, -90, -90, 90]  ❌ No overlap
-Shard 1: [-90, -90, 0, 90]     ✓ Overlaps
-Shard 2: [0, -90, 90, 90]      ❌ No overlap
-Shard 3: [90, -90, 180, 90]    ❌ No overlap
-
-Only fetch shard 1 (25% of data)
 ```
 
 ## Next Steps
 
 - [Caching Strategy](./caching.md) - Detailed cache configuration
+- [Rendering Pipeline](./rendering-pipeline.md) - Coordinate handling details
+- [grid-processor](../crates/grid-processor.md) - Zarr format details
 - [Services](../services/README.md) - Individual service deep-dives
-- [API Reference](../api-reference/README.md) - Complete API documentation

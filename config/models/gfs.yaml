@@ -1,5 +1,11 @@
 # GFS - Global Forecast System Configuration
 # NCEP Global Forecast System, 0.25° resolution
+#
+# Pressure levels available for ingestion:
+# Lower troposphere: 1000, 975, 950, 925, 900, 850 mb
+# Mid troposphere: 800, 750, 700, 650, 600, 550, 500, 450, 400, 350 mb
+# Upper troposphere: 300, 250, 200, 150 mb
+# Stratosphere: 100, 70, 50, 30, 20, 10 mb
 
 model:
   id: gfs
@@ -37,7 +43,7 @@ schedule:
   cycles: [0, 6, 12, 18]              # UTC hours (00z, 06z, 12z, 18z)
   forecast_hours: 
     start: 0
-    end: 15                          # 10 days
+    end: 15                          # ~15 hours of forecast
     step: 3                           # Every 3 hours
   poll_interval_secs: 3600            # Check for new data every hour
   delay_hours: 4                      # Data typically available 4 hours after cycle time
@@ -56,7 +62,7 @@ precaching:
 
 parameters:
   # ==========================================================================
-  # Surface & Near-Surface Parameters
+  # Temperature Parameters
   # ==========================================================================
   
   # Surface Temperature (2m)
@@ -76,7 +82,7 @@ parameters:
     description: "Temperature"
     levels:
       - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
         display_template: "{value} mb"
     style: temperature
     units: K
@@ -95,6 +101,10 @@ parameters:
     display_units: °C
     conversion: K_to_C
 
+  # ==========================================================================
+  # Wind Parameters
+  # ==========================================================================
+
   # U-component wind at 10m and pressure levels
   - name: UGRD
     description: "U-Component of Wind"
@@ -103,7 +113,7 @@ parameters:
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
     style: wind
     units: m/s
@@ -116,10 +126,23 @@ parameters:
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
     style: wind
     units: m/s
+
+  # Surface wind gust
+  - name: GUST
+    description: "Wind Speed (Gust)"
+    levels:
+      - type: surface
+        display: "surface"
+    style: wind
+    units: m/s
+
+  # ==========================================================================
+  # Pressure Parameters
+  # ==========================================================================
 
   # Mean sea level pressure
   - name: PRMSL
@@ -132,6 +155,20 @@ parameters:
     display_units: hPa
     conversion: Pa_to_hPa
 
+  # Geopotential height
+  - name: HGT
+    description: "Geopotential Height"
+    levels:
+      - type: isobaric
+        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        display_template: "{value} mb"
+    style: geopotential
+    units: gpm
+
+  # ==========================================================================
+  # Moisture Parameters
+  # ==========================================================================
+
   # Relative humidity
   - name: RH
     description: "Relative Humidity"
@@ -140,29 +177,20 @@ parameters:
         value: 2
         display: "2 m above ground"
       - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
         display_template: "{value} mb"
     style: humidity
     units: "%"
 
-  # Geopotential height
-  - name: HGT
-    description: "Geopotential Height"
+  # Precipitable Water (entire atmosphere column)
+  - name: PWAT
+    description: "Precipitable Water"
     levels:
-      - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 50, 10]
-        display_template: "{value} mb"
-    style: default
-    units: gpm
-
-  # Surface wind gust
-  - name: GUST
-    description: "Wind Speed (Gust)"
-    levels:
-      - type: surface
-        display: "surface"
-    style: wind
-    units: m/s
+      - type: entire_atmosphere
+        display: "entire atmosphere"
+    style: humidity
+    units: kg/m^2
+    display_units: mm
 
   # ==========================================================================
   # Precipitation Parameters
@@ -178,16 +206,6 @@ parameters:
     units: kg/m^2
     display_units: mm
     accumulation: true
-
-  # Precipitable Water (entire atmosphere column)
-  - name: PWAT
-    description: "Precipitable Water"
-    levels:
-      - type: entire_atmosphere
-        display: "entire atmosphere"
-    style: precipitation
-    units: kg/m^2
-    display_units: mm
 
   # ==========================================================================
   # Convective/Stability Parameters

@@ -939,14 +939,45 @@ async fn ingest_file_tracked(
     ].into_iter().collect();
     
     // Target parameters and their level specs
+    // Level types: 1=surface, 100=isobaric, 101=MSL, 103=height above ground,
+    //              200=entire atmosphere, 212=low cloud, 222=middle cloud, 232=high cloud
     let target_params: Vec<(&str, Vec<(u8, Option<u32>)>)> = vec![
+        // Pressure
         ("PRMSL", vec![(101, None)]),                    // Mean sea level pressure
+        
+        // Temperature
         ("TMP", vec![(103, Some(2)), (100, None)]),      // 2m temp + pressure levels
+        ("DPT", vec![(103, Some(2))]),                   // Dew point at 2m
+        
+        // Wind
         ("UGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
         ("VGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
-        ("RH", vec![(103, Some(2)), (100, None)]),       // 2m RH + pressure levels
-        ("HGT", vec![(100, None)]),                      // Geopotential height
         ("GUST", vec![(1, None)]),                       // Surface wind gust
+        
+        // Moisture
+        ("RH", vec![(103, Some(2)), (100, None)]),       // 2m RH + pressure levels
+        ("PWAT", vec![(200, None)]),                     // Precipitable water (entire atmosphere)
+        
+        // Geopotential
+        ("HGT", vec![(100, None)]),                      // Geopotential height at pressure levels
+        
+        // Precipitation
+        ("APCP", vec![(1, None)]),                       // Total precipitation (surface)
+        
+        // Convective/Stability - surface-based CAPE/CIN
+        ("CAPE", vec![(1, None), (180, None)]),          // CAPE: surface (1) and surface-based (180)
+        ("CIN", vec![(1, None), (180, None)]),           // CIN: surface (1) and surface-based (180)
+        
+        // Cloud cover
+        ("TCDC", vec![(200, None), (10, None)]),         // Total cloud cover (entire atmosphere)
+        ("LCDC", vec![(212, None), (214, None)]),        // Low cloud cover (layer or top)
+        ("MCDC", vec![(222, None), (224, None)]),        // Middle cloud cover (layer or top)
+        ("HCDC", vec![(232, None), (234, None)]),        // High cloud cover (layer or top)
+        
+        // Visibility
+        ("VIS", vec![(1, None)]),                        // Visibility (surface)
+        
+        // MRMS-specific (keep existing)
         ("REFL", vec![(200, None), (1, None)]),          // Reflectivity (MRMS)
         ("PRECIP_RATE", vec![(1, None)]),                // Precip rate (MRMS)
     ];
