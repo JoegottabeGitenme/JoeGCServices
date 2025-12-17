@@ -130,14 +130,14 @@ pub struct ModelLayerConfig {
 }
 
 impl ModelLayerConfig {
-    /// Find a layer by parameter code
+    /// Find a layer by parameter code (case-insensitive)
     pub fn get_layer_by_parameter(&self, parameter: &str) -> Option<&LayerConfig> {
-        self.layers.iter().find(|l| l.parameter == parameter)
+        self.layers.iter().find(|l| l.parameter.eq_ignore_ascii_case(parameter))
     }
 
-    /// Find a layer by layer ID
+    /// Find a layer by layer ID (case-insensitive)
     pub fn get_layer_by_id(&self, id: &str) -> Option<&LayerConfig> {
-        self.layers.iter().find(|l| l.id == id)
+        self.layers.iter().find(|l| l.id.eq_ignore_ascii_case(id))
     }
 }
 

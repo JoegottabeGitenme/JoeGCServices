@@ -4139,7 +4139,8 @@ pub async fn query_point_value(
     }
     
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage
+    let parameter = parts[1..].join("_").to_uppercase();
     
     // Convert pixel coordinates to geographic coordinates
     // Note: bbox is already in [min_lon, min_lat, max_lon, max_lat] format

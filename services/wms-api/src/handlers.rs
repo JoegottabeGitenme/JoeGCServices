@@ -351,6 +351,28 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     let mut all_features = Vec::new();
     
     for layer in layers {
+        // For each layer, determine the effective elevation (use default if not specified)
+        // This ensures consistent data selection (prevents random level selection from database)
+        let effective_elevation: Option<String> = match &elevation {
+            Some(elev) => Some(elev.clone()),
+            None => {
+                // Parse layer name to get model and parameter
+                let parts: Vec<&str> = layer.split('_').collect();
+                if parts.len() >= 2 {
+                    let model = parts[0];
+                    // Uppercase parameter to match database storage
+                    let parameter = parts[1..].join("_").to_uppercase();
+                    let configs = state.layer_configs.read().await;
+                    configs
+                        .get_layer_by_param(model, &parameter)
+                        .and_then(|l| l.default_level())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            }
+        };
+        
         match crate::rendering::query_point_value(
             &state.grib_cache,
             &state.catalog,
@@ -364,7 +386,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             j,
             crs,
             forecast_hour,
-            elevation.as_deref(),
+            effective_elevation.as_deref(),
         )
         .await
         {
@@ -636,6 +658,29 @@ async fn wmts_get_tile(
     state.metrics.record_wmts_request();
     let timer = Timer::start();
     
+    // Parse layer name to get model and parameter for default level lookup
+    // Uppercase parameter to match database storage (parameters stored as uppercase, e.g., "TMP", "UGRD")
+    let parts: Vec<&str> = layer.split('_').collect();
+    let (model, parameter) = if parts.len() >= 2 {
+        (parts[0], parts[1..].join("_").to_uppercase())
+    } else {
+        (layer, "".to_string())
+    };
+    
+    // If no elevation specified, use the default level from layer config
+    // This ensures consistent data selection (prevents random level selection from database)
+    let effective_elevation: Option<String> = match elevation {
+        Some(elev) => Some(elev.to_string()),
+        None => {
+            let configs = state.layer_configs.read().await;
+            configs
+                .get_layer_by_param(model, &parameter)
+                .and_then(|l| l.default_level())
+                .map(|s| s.to_string())
+        }
+    };
+    let elevation = effective_elevation.as_deref();
+    
     info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, observation_time = ?observation_time, elevation = ?elevation, "GetTile request");
     
     // Build cache key for this tile, including time and elevation for uniqueness
@@ -751,18 +796,14 @@ async fn wmts_get_tile(
         "Tile bbox"
     );
     
-    // Parse layer name (format: "model_parameter")
-    let parts: Vec<&str> = layer.split('_').collect();
-    if parts.len() < 2 {
+    // Validate layer format (already parsed model/parameter above for default level lookup)
+    if parameter.is_empty() {
         return wmts_exception(
             "InvalidParameterValue",
             "Invalid layer format",
             StatusCode::BAD_REQUEST,
         );
     }
-    
-    let model = parts[0];
-    let parameter = parts[1..].join("_");
     
     // Check if this is a wind barbs composite layer
     let result = if parameter == "WIND_BARBS" {
@@ -1430,13 +1471,26 @@ async fn render_weather_data(
     }
 
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage (parameters stored as uppercase, e.g., "TMP", "UGRD")
+    let parameter = parts[1..].join("_").to_uppercase();
     
     // Parse dimensions based on layer type (using config-driven dimension registry)
     let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
     
     // ELEVATION parameter is the level string (e.g., "500 mb", "2 m above ground")
-    let level = dimensions.elevation.clone();
+    // If no level specified, use the default level from layer config to ensure consistent
+    // data selection (prevents random level selection from database)
+    let level = match &dimensions.elevation {
+        Some(elev) => Some(elev.clone()),
+        None => {
+            // Get default level from layer config
+            let configs = state.layer_configs.read().await;
+            configs
+                .get_layer_by_param(model, &parameter)
+                .and_then(|l| l.default_level())
+                .map(|s| s.to_string())
+        }
+    };
     
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
@@ -2671,7 +2725,17 @@ async fn prefetch_single_tile(
     }
     
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage
+    let parameter = parts[1..].join("_").to_uppercase();
+    
+    // Get default level from layer config for consistent data selection
+    let default_level: Option<String> = {
+        let configs = state.layer_configs.read().await;
+        configs
+            .get_layer_by_param(model, &parameter)
+            .and_then(|l| l.default_level())
+            .map(|s| s.to_string())
+    };
     
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
@@ -2691,7 +2755,7 @@ async fn prefetch_single_tile(
         // Use layer config registry to get style file
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_isolines_tile(
+        crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
@@ -2704,7 +2768,8 @@ async fn prefetch_single_tile(
             bbox_array,
             &style_file,
             "isolines",  // style name within the file
-            None,
+            None,  // forecast_hour
+            default_level.as_deref(),  // Use default level
             true,
             Some(&state.grid_processor_factory),
         )
@@ -2727,8 +2792,8 @@ async fn prefetch_single_tile(
             256,
             bbox_array,
             &style_file,
-            None,
-            None,
+            None,  // forecast_hour
+            default_level.as_deref(),  // Use default level
             true,
         )
         .await
@@ -2743,7 +2808,7 @@ async fn prefetch_single_tile(
             &parameter,
             None,  // forecast_hour
             None,  // observation_time
-            None,  // level/elevation
+            default_level.as_deref(),  // Use default level for consistent data selection
             256,
             256,
             Some(bbox_array),
