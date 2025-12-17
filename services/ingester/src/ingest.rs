@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument, warn};
 
-use grid_processor::{GridProcessorConfig, ZarrWriter};
+use grid_processor::{DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter};
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 use wms_common::BoundingBox;
 use zarrs_filesystem::FilesystemStore;
@@ -465,8 +465,15 @@ impl IngestionPipeline {
                     bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y
                 );
                 
-                // Write Zarr data using sharded format (single file)
-                let write_result = writer.write_sharded(
+                // Configure pyramid generation
+                let pyramid_config = PyramidConfig::from_env();
+                
+                // Determine downsampling method based on parameter type
+                // NOTE: This mapping may need refinement for specific parameters
+                let downsample_method = DownsampleMethod::for_parameter(&param_config.name);
+                
+                // Write Zarr data with multi-resolution pyramids
+                let write_result = writer.write_multiscale(
                     store,
                     "/",
                     &grid_data,
@@ -479,6 +486,8 @@ impl IngestionPipeline {
                     units,
                     reference_time,
                     fhr,
+                    &pyramid_config,
+                    downsample_method,
                 ).map_err(|e| anyhow!("Failed to write Zarr: {}", e))?;
                 
                 info!(
@@ -486,13 +495,25 @@ impl IngestionPipeline {
                     width = width,
                     height = height,
                     bytes = write_result.bytes_written,
-                    "Wrote Zarr grid"
+                    num_levels = write_result.num_levels,
+                    "Wrote multiscale Zarr grid with pyramid"
                 );
                 
                 // Upload Zarr files to object storage
                 let zarr_file_size = self.upload_zarr_directory(&zarr_path, &zarr_storage_path).await?;
                 
                 // Create catalog entry with Zarr metadata
+                // Include both basic zarr_metadata and the full multiscale info
+                let mut zarr_json = write_result.zarr_metadata.to_json();
+                // Add multiscale metadata for the reader to use
+                if let serde_json::Value::Object(ref mut map) = zarr_json {
+                    map.insert(
+                        "multiscale".to_string(),
+                        serde_json::to_value(&write_result.multiscale_metadata)
+                            .unwrap_or_default(),
+                    );
+                }
+                
                 let entry = CatalogEntry {
                     model: model_id.to_string(),
                     parameter: param_config.name.clone(),
@@ -502,7 +523,7 @@ impl IngestionPipeline {
                     bbox,
                     storage_path: zarr_storage_path.clone(),
                     file_size: zarr_file_size,
-                    zarr_metadata: Some(write_result.metadata.to_json()),
+                    zarr_metadata: Some(zarr_json),
                 };
 
                 self.catalog.register_dataset(&entry).await?;

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use storage::CatalogEntry;
 use wms_common::BoundingBox;
-use grid_processor::{GridProcessorConfig, ZarrWriter, BoundingBox as GpBoundingBox};
+use grid_processor::{DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter, BoundingBox as GpBoundingBox};
 use zarrs_filesystem::FilesystemStore;
 use projection::LambertConformal;
 
@@ -1102,8 +1102,12 @@ async fn ingest_file_tracked(
             // Get units (default if not available)
             let units = "unknown"; // TODO: extract from GRIB2 metadata
             
-            // Write Zarr data using sharded format (single file for all chunks)
-            let write_result = match writer.write_sharded(
+            // Configure pyramid generation
+            let pyramid_config = PyramidConfig::from_env();
+            let downsample_method = DownsampleMethod::for_parameter(param);
+            
+            // Write Zarr data with multi-resolution pyramid levels
+            let write_result = match writer.write_multiscale(
                 store,
                 "/",
                 &grid_data,
@@ -1116,6 +1120,8 @@ async fn ingest_file_tracked(
                 units,
                 reference_time,
                 forecast_hour,
+                &pyramid_config,
+                downsample_method,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1129,7 +1135,8 @@ async fn ingest_file_tracked(
                 level = %level,
                 width = width,
                 height = height,
-                "Wrote Zarr grid to temp directory"
+                pyramid_levels = write_result.num_levels,
+                "Wrote Zarr grid with pyramid levels to temp directory"
             );
             
             // Update status: uploading to MinIO
@@ -1151,7 +1158,8 @@ async fn ingest_file_tracked(
                 size = zarr_file_size,
                 width = width,
                 height = height,
-                "Stored Zarr grid"
+                pyramid_levels = write_result.num_levels,
+                "Stored Zarr grid with pyramid levels"
             );
             
             // Update status: registering
@@ -1169,7 +1177,7 @@ async fn ingest_file_tracked(
                 bbox,
                 storage_path: zarr_storage_path,
                 file_size: zarr_file_size,
-                zarr_metadata: Some(write_result.metadata.to_json()),
+                zarr_metadata: Some(write_result.zarr_metadata.to_json()),
             };
             
             match state.catalog.register_dataset(&entry).await {

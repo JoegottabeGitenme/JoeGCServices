@@ -12,7 +12,7 @@ use zarrs::storage::ReadableStorageTraits;
 use crate::cache::{hash_path, ChunkCache};
 use crate::config::GridProcessorConfig;
 use crate::error::{GridProcessorError, Result};
-use crate::types::{BoundingBox, CacheStats, GridMetadata, GridRegion};
+use crate::types::{BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata};
 
 use super::GridProcessor;
 
@@ -48,10 +48,24 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     ///
     /// # Returns
     /// A new ZarrGridProcessor instance
+    /// 
+    /// For multiscale (pyramid) stores, this will automatically open level 0 (native resolution).
     pub fn open(storage: S, path: &str, config: GridProcessorConfig) -> Result<Self> {
-        // Open the Zarr array
-        let array = Array::open(Arc::new(storage), path)
-            .map_err(|e| GridProcessorError::open_failed(e.to_string()))?;
+        let store = Arc::new(storage);
+        
+        // Try to open as an array first, if that fails try level 0 for pyramid stores
+        let array = match Array::open(store.clone(), path) {
+            Ok(arr) => arr,
+            Err(e) => {
+                // Might be a group (pyramid store), try level 0
+                let level0_path = format!("{}/0", path.trim_end_matches('/'));
+                Array::open(store, &level0_path).map_err(|e2| {
+                    GridProcessorError::open_failed(format!(
+                        "Failed to open as array ({}) or level 0 ({})", e, e2
+                    ))
+                })?
+            }
+        };
 
         // Extract metadata from Zarr attributes
         let metadata = Self::extract_metadata(&array)?;
@@ -76,6 +90,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     /// Create a processor with pre-populated metadata (for use with catalog-cached metadata).
     ///
     /// This avoids reading metadata from MinIO by using metadata stored in PostgreSQL.
+    /// 
+    /// For multiscale (pyramid) stores, this will automatically open level 0 (native resolution).
     pub fn with_metadata(
         storage: S,
         path: &str,
@@ -92,15 +108,36 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             "Opening Zarr array with pre-populated metadata"
         );
         
-        let array = Array::open(Arc::new(storage), path)
-            .map_err(|e| {
-                error!(
+        let store = Arc::new(storage);
+        
+        // Try to open as an array first
+        let array = match Array::open(store.clone(), path) {
+            Ok(arr) => arr,
+            Err(e) => {
+                // If it fails, it might be a group (multiscale pyramid)
+                // Try opening level 0 instead
+                let level0_path = format!("{}/0", path.trim_end_matches('/'));
+                debug!(
                     path = %path,
+                    level0_path = %level0_path,
                     error = %e,
-                    "Failed to open Zarr array"
+                    "Failed to open as array, trying level 0 for pyramid store"
                 );
-                GridProcessorError::open_failed(e.to_string())
-            })?;
+                
+                Array::open(store, &level0_path).map_err(|e2| {
+                    error!(
+                        path = %path,
+                        level0_path = %level0_path,
+                        error = %e2,
+                        original_error = %e,
+                        "Failed to open Zarr array (tried both root and level 0)"
+                    );
+                    GridProcessorError::open_failed(format!(
+                        "Failed to open as array ({}) or level 0 ({})", e, e2
+                    ))
+                })?
+            }
+        };
 
         let path_hash = hash_path(path);
 
@@ -685,6 +722,145 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
 
         Ok(Some(value))
     }
+}
+
+// ============================================================================
+// Multi-Resolution Pyramid Support
+// ============================================================================
+
+/// A factory for creating ZarrGridProcessors at different pyramid levels.
+///
+/// This struct holds the multiscale metadata and provides methods to:
+/// 1. Select the optimal pyramid level for a given request
+/// 2. Create a processor for reading from that level
+pub struct MultiscaleGridProcessorFactory<S: ReadableStorageTraits + Clone> {
+    /// Base storage
+    storage: S,
+    /// Base path to the multiscale group (e.g., "grids/gfs/...")
+    base_path: String,
+    /// Multiscale metadata describing all pyramid levels
+    multiscale: MultiscaleMetadata,
+    /// Shared chunk cache across all levels
+    chunk_cache: Arc<RwLock<ChunkCache>>,
+    /// Configuration
+    config: GridProcessorConfig,
+}
+
+impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridProcessorFactory<S> {
+    /// Create a new factory from multiscale metadata.
+    ///
+    /// The metadata should be deserialized from the catalog's zarr_metadata.multiscale field.
+    pub fn new(
+        storage: S,
+        base_path: &str,
+        multiscale: MultiscaleMetadata,
+        chunk_cache: Arc<RwLock<ChunkCache>>,
+        config: GridProcessorConfig,
+    ) -> Self {
+        Self {
+            storage,
+            base_path: base_path.to_string(),
+            multiscale,
+            chunk_cache,
+            config,
+        }
+    }
+
+    /// Get the multiscale metadata.
+    pub fn metadata(&self) -> &MultiscaleMetadata {
+        &self.multiscale
+    }
+
+    /// Select the optimal pyramid level for a given request.
+    ///
+    /// Returns the level number (0 = native, 1 = 2x downsampled, etc.)
+    pub fn optimal_level_for(&self, bbox: &BoundingBox, output_size: (usize, usize)) -> u32 {
+        self.multiscale.optimal_level_for(bbox, output_size)
+    }
+
+    /// Read a region at the optimal resolution for the given output size.
+    ///
+    /// This is the main entry point for resolution-aware reading.
+    /// It selects the appropriate pyramid level and returns data from that level.
+    pub async fn read_region_for_output(
+        &self,
+        bbox: &BoundingBox,
+        output_size: (usize, usize),
+    ) -> Result<(GridRegion, u32)> {
+        let level = self.optimal_level_for(bbox, output_size);
+        let region = self.read_region_at_level(level, bbox).await?;
+        Ok((region, level))
+    }
+
+    /// Read a region from a specific pyramid level.
+    pub async fn read_region_at_level(&self, level: u32, bbox: &BoundingBox) -> Result<GridRegion> {
+        let level_info = self.multiscale.get_level(level)
+            .ok_or_else(|| GridProcessorError::invalid_metadata(
+                format!("Pyramid level {} not found", level)
+            ))?;
+
+        // Construct path to this level's array
+        let level_path = format!("{}/{}", self.base_path.trim_end_matches('/'), level_info.path);
+
+        // Create GridMetadata for this level
+        let level_metadata = self.metadata_for_level(level_info);
+
+        debug!(
+            base_path = %self.base_path,
+            level = level,
+            level_path = %level_path,
+            shape = ?level_info.shape,
+            scale = level_info.scale,
+            "Opening pyramid level"
+        );
+
+        // Create processor for this level
+        let processor = ZarrGridProcessor::with_metadata(
+            self.storage.clone(),
+            &level_path,
+            level_metadata,
+            self.chunk_cache.clone(),
+            self.config.clone(),
+        )?;
+
+        processor.read_region(bbox).await
+    }
+
+    /// Create GridMetadata for a specific pyramid level.
+    fn metadata_for_level(&self, level: &crate::types::PyramidLevel) -> GridMetadata {
+        // Note: level.resolution() returns the resolution at this pyramid level,
+        // but GridMetadata calculates resolution from bbox/shape, so we don't need it here
+        
+        GridMetadata {
+            model: self.multiscale.name.split('_').next().unwrap_or("unknown").to_string(),
+            parameter: self.multiscale.name.split('_').nth(1).unwrap_or("unknown").to_string(),
+            level: format!("pyramid_level_{}", level.level),
+            units: String::new(),
+            reference_time: chrono::Utc::now(), // Will be overwritten if available
+            forecast_hour: 0,
+            bbox: self.multiscale.bbox,
+            shape: level.shape,
+            chunk_shape: level.chunk_shape,
+            num_chunks: level.num_chunks(),
+            fill_value: f32::NAN,
+        }
+    }
+
+    /// Check if multiscale data is available (has more than just native level).
+    pub fn has_pyramids(&self) -> bool {
+        self.multiscale.num_levels() > 1
+    }
+
+    /// Get the number of available pyramid levels.
+    pub fn num_levels(&self) -> usize {
+        self.multiscale.num_levels()
+    }
+}
+
+/// Helper function to parse MultiscaleMetadata from catalog JSON.
+pub fn parse_multiscale_metadata(zarr_json: &serde_json::Value) -> Option<MultiscaleMetadata> {
+    zarr_json.get("multiscale")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
 #[cfg(test)]

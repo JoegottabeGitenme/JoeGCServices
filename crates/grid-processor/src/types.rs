@@ -392,3 +392,158 @@ mod tests {
         assert!((stats.hit_rate() - 0.8).abs() < f64::EPSILON);
     }
 }
+
+// ============================================================================
+// Multi-Resolution Pyramid Types
+// ============================================================================
+
+/// Information about a single pyramid level.
+///
+/// Pyramid levels allow efficient access to data at different resolutions.
+/// Level 0 is always the native (full) resolution, with subsequent levels
+/// downsampled by factors of 2.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PyramidLevel {
+    /// Level index (0 = native, 1 = 2x downsampled, 2 = 4x, etc.)
+    pub level: u32,
+    /// Path to this level's data relative to the group root (e.g., "0", "1")
+    pub path: String,
+    /// Grid dimensions at this level (width, height)
+    pub shape: (usize, usize),
+    /// Scale factor relative to native resolution (1.0, 2.0, 4.0, ...)
+    pub scale: f64,
+    /// Chunk dimensions at this level
+    pub chunk_shape: (usize, usize),
+}
+
+impl PyramidLevel {
+    /// Create a new pyramid level descriptor.
+    pub fn new(
+        level: u32,
+        path: impl Into<String>,
+        shape: (usize, usize),
+        scale: f64,
+        chunk_shape: (usize, usize),
+    ) -> Self {
+        Self {
+            level,
+            path: path.into(),
+            shape,
+            scale,
+            chunk_shape,
+        }
+    }
+
+    /// Calculate the resolution at this level given native resolution.
+    pub fn resolution(&self, native_resolution: (f64, f64)) -> (f64, f64) {
+        (
+            native_resolution.0 * self.scale,
+            native_resolution.1 * self.scale,
+        )
+    }
+
+    /// Calculate how many chunks exist at this level.
+    pub fn num_chunks(&self) -> (usize, usize) {
+        let chunks_x = (self.shape.0 + self.chunk_shape.0 - 1) / self.chunk_shape.0;
+        let chunks_y = (self.shape.1 + self.chunk_shape.1 - 1) / self.chunk_shape.1;
+        (chunks_x, chunks_y)
+    }
+}
+
+/// Axis information following Zarr multiscales convention.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AxisInfo {
+    /// Axis name (e.g., "x", "y")
+    pub name: String,
+    /// Axis type (e.g., "space", "time")
+    #[serde(rename = "type")]
+    pub axis_type: String,
+    /// Physical unit (e.g., "degree", "meter")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+impl AxisInfo {
+    /// Create a spatial axis with degree units.
+    pub fn spatial_degrees(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            axis_type: "space".to_string(),
+            unit: Some("degree".to_string()),
+        }
+    }
+}
+
+/// Metadata for a multi-resolution (pyramid) dataset.
+///
+/// This follows the Zarr multiscales convention for storing
+/// resolution pyramids in a Zarr group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiscaleMetadata {
+    /// Dataset name
+    pub name: String,
+    /// Axis descriptions
+    pub axes: Vec<AxisInfo>,
+    /// All pyramid levels, ordered from native (0) to coarsest
+    pub levels: Vec<PyramidLevel>,
+    /// Downsampling method used (for documentation/reproducibility)
+    pub downsample_method: String,
+    /// Native resolution in degrees (lon, lat)
+    pub native_resolution: (f64, f64),
+    /// Full extent bounding box
+    pub bbox: BoundingBox,
+}
+
+impl MultiscaleMetadata {
+    /// Get a specific pyramid level by index.
+    pub fn get_level(&self, level: u32) -> Option<&PyramidLevel> {
+        self.levels.iter().find(|l| l.level == level)
+    }
+
+    /// Get the native (level 0) metadata.
+    pub fn native_level(&self) -> Option<&PyramidLevel> {
+        self.get_level(0)
+    }
+
+    /// Get the coarsest (highest level number) pyramid level.
+    pub fn coarsest_level(&self) -> Option<&PyramidLevel> {
+        self.levels.iter().max_by_key(|l| l.level)
+    }
+
+    /// Find the optimal pyramid level for a given output size.
+    ///
+    /// Returns the coarsest level that still has sufficient resolution
+    /// to render the requested bbox at the given output size.
+    ///
+    /// # Arguments
+    /// * `bbox` - The geographic region being requested
+    /// * `output_size` - The desired output dimensions (width, height)
+    ///
+    /// # Returns
+    /// The pyramid level to use, or level 0 if no suitable level is found.
+    pub fn optimal_level_for(&self, bbox: &BoundingBox, output_size: (usize, usize)) -> u32 {
+        // Calculate how many native pixels would cover this bbox
+        let native_pixels_x = (bbox.width() / self.native_resolution.0).ceil() as usize;
+        let native_pixels_y = (bbox.height() / self.native_resolution.1).ceil() as usize;
+
+        // Find the coarsest level where the level's pixels >= output_size
+        // Iterate from coarsest to finest to find the coarsest acceptable level
+        for level in self.levels.iter().rev() {
+            let level_pixels_x = (native_pixels_x as f64 / level.scale).ceil() as usize;
+            let level_pixels_y = (native_pixels_y as f64 / level.scale).ceil() as usize;
+
+            // This level is acceptable if it has at least as many pixels as output
+            if level_pixels_x >= output_size.0 && level_pixels_y >= output_size.1 {
+                return level.level;
+            }
+        }
+
+        // Fall back to native resolution
+        0
+    }
+
+    /// Get the number of pyramid levels.
+    pub fn num_levels(&self) -> usize {
+        self.levels.len()
+    }
+}

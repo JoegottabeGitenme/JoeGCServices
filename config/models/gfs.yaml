@@ -45,7 +45,7 @@ schedule:
 retention:
   hours: 6                          # Keep data for 6 hours
 
-# Precaching configuration - disabled for now (focus on observation data first)
+# Precaching configuration - disabled for now
 precaching:
   enabled: false
   keep_recent_cycles: 1               # Only most recent model cycle

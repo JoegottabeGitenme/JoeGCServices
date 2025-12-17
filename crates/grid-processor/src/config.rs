@@ -1,5 +1,6 @@
 //! Configuration for the grid processor.
 
+use crate::downsample::DownsampleMethod;
 use crate::types::InterpolationMethod;
 use serde::{Deserialize, Serialize};
 
@@ -148,6 +149,107 @@ impl ZarrCompression {
 impl std::fmt::Display for ZarrCompression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+// ============================================================================
+// Pyramid Configuration
+// ============================================================================
+
+/// Configuration for multi-resolution pyramid generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PyramidConfig {
+    /// Whether to generate pyramids during ingestion.
+    pub enabled: bool,
+
+    /// Minimum dimension threshold - stop generating levels when the
+    /// smaller dimension falls below this value.
+    pub min_dimension: usize,
+
+    /// Downscale factor per level (typically 2 for halving each level).
+    pub downscale_factor: usize,
+
+    /// Default downsampling method (can be overridden per parameter).
+    pub default_method: DownsampleMethod,
+}
+
+impl Default for PyramidConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_dimension: 256,
+            downscale_factor: 2,
+            default_method: DownsampleMethod::Mean,
+        }
+    }
+}
+
+impl PyramidConfig {
+    /// Load pyramid configuration from environment variables.
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Ok(val) = std::env::var("PYRAMID_ENABLED") {
+            config.enabled = val.to_lowercase() == "true" || val == "1";
+        }
+
+        if let Ok(val) = std::env::var("PYRAMID_MIN_DIMENSION") {
+            if let Ok(size) = val.parse() {
+                config.min_dimension = size;
+            }
+        }
+
+        if let Ok(val) = std::env::var("PYRAMID_DOWNSCALE_FACTOR") {
+            if let Ok(factor) = val.parse() {
+                config.downscale_factor = factor;
+            }
+        }
+
+        if let Ok(val) = std::env::var("PYRAMID_DOWNSAMPLE_METHOD") {
+            config.default_method = match val.to_lowercase().as_str() {
+                "max" => DownsampleMethod::Max,
+                "nearest" => DownsampleMethod::Nearest,
+                _ => DownsampleMethod::Mean,
+            };
+        }
+
+        config
+    }
+
+    /// Validate the pyramid configuration.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.min_dimension == 0 {
+            return Err("pyramid min_dimension must be > 0".to_string());
+        }
+
+        if self.downscale_factor < 2 {
+            return Err("pyramid downscale_factor must be >= 2".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Calculate how many pyramid levels would be generated for a given grid size.
+    ///
+    /// Returns the total number of levels including level 0 (native).
+    pub fn calculate_num_levels(&self, width: usize, height: usize) -> usize {
+        if !self.enabled {
+            return 1; // Just native
+        }
+
+        let mut levels = 1; // Start with native
+        let mut w = width;
+        let mut h = height;
+
+        while w.min(h) >= self.min_dimension {
+            w /= self.downscale_factor;
+            h /= self.downscale_factor;
+            if w > 0 && h > 0 {
+                levels += 1;
+            }
+        }
+
+        levels
     }
 }
 

@@ -12,11 +12,12 @@ use zarrs::array::codec::bytes_to_bytes::blosc::{
     BloscCodec, BloscCompressionLevel, BloscCompressor, BloscShuffleMode,
 };
 use zarrs::array_subset::ArraySubset;
-use zarrs::storage::{ReadableStorageTraits, WritableStorageTraits};
+use zarrs::storage::{ReadableStorageTraits, StoreKey, WritableStorageTraits};
 
-use crate::config::{GridProcessorConfig, ZarrCompression};
+use crate::config::{GridProcessorConfig, PyramidConfig, ZarrCompression};
+use crate::downsample::{DownsampleMethod, generate_pyramid};
 use crate::error::{GridProcessorError, Result};
-use crate::types::BoundingBox;
+use crate::types::{AxisInfo, BoundingBox, MultiscaleMetadata, PyramidLevel};
 
 /// Helper for serde to skip NaN values.
 fn is_nan_f32(v: &f32) -> bool {
@@ -424,6 +425,390 @@ impl ZarrWriter {
 
         Ok(builder)
     }
+
+    /// Write grid data as a multi-resolution pyramid.
+    ///
+    /// This writes the native resolution plus downsampled pyramid levels
+    /// following the Zarr multiscales convention. Each level is stored
+    /// as a separate array within a group (paths "0", "1", "2", etc.).
+    ///
+    /// # Arguments
+    /// * `storage` - The storage backend to write to
+    /// * `group_path` - Path for the Zarr group containing all levels
+    /// * `data` - Grid data at native resolution
+    /// * `width` - Native grid width
+    /// * `height` - Native grid height
+    /// * `bbox` - Geographic bounding box
+    /// * `model` - Model identifier
+    /// * `parameter` - Parameter name
+    /// * `level` - Level description (e.g., "2 m above ground")
+    /// * `units` - Physical units
+    /// * `reference_time` - Reference time
+    /// * `forecast_hour` - Forecast hour
+    /// * `pyramid_config` - Configuration for pyramid generation
+    /// * `downsample_method` - Method to use for downsampling
+    ///
+    /// # Returns
+    /// `MultiscaleWriteResult` containing metadata and bytes written
+    pub fn write_multiscale<S: ReadableStorageTraits + WritableStorageTraits + 'static>(
+        &self,
+        storage: S,
+        group_path: &str,
+        data: &[f32],
+        width: usize,
+        height: usize,
+        bbox: &BoundingBox,
+        model: &str,
+        parameter: &str,
+        level: &str,
+        units: &str,
+        reference_time: DateTime<Utc>,
+        forecast_hour: u32,
+        pyramid_config: &PyramidConfig,
+        downsample_method: DownsampleMethod,
+    ) -> Result<MultiscaleWriteResult> {
+        let store = Arc::new(storage);
+        let chunk_size = self.config.zarr_chunk_size;
+
+        // Calculate native resolution
+        let native_resolution = (
+            bbox.width() / width as f64,
+            bbox.height() / height as f64,
+        );
+
+        // Generate pyramid levels
+        let pyramid_levels = if pyramid_config.enabled {
+            generate_pyramid(data, width, height, pyramid_config.min_dimension, downsample_method)
+        } else {
+            // Just native level
+            vec![crate::downsample::PyramidLevelData {
+                data: Vec::new(),
+                width,
+                height,
+                level: 0,
+                scale: 1,
+            }]
+        };
+
+        let mut pyramid_metadata = Vec::new();
+        let mut total_bytes_written = 0u64;
+
+        // Write each level
+        for (idx, level_data) in pyramid_levels.iter().enumerate() {
+            // Build the level path - must start with / for zarrs node paths
+            let level_path = if group_path == "/" || group_path.is_empty() {
+                format!("/{}", idx)
+            } else {
+                format!("{}/{}", group_path.trim_end_matches('/'), idx)
+            };
+            
+            // For level 0, use the original data; for others, use the downsampled data
+            let level_data_slice = if level_data.level == 0 {
+                data
+            } else {
+                &level_data.data
+            };
+
+            let level_width = if level_data.level == 0 { width } else { level_data.width };
+            let level_height = if level_data.level == 0 { height } else { level_data.height };
+
+            // Write this level as a sharded array
+            let result = self.write_level_sharded(
+                store.clone(),
+                &level_path,
+                level_data_slice,
+                level_width,
+                level_height,
+                bbox,
+                model,
+                parameter,
+                level,
+                units,
+                reference_time,
+                forecast_hour,
+                level_data.level,
+                level_data.scale as f64,
+            )?;
+
+            total_bytes_written += result.bytes_written;
+
+            // Track pyramid level metadata
+            pyramid_metadata.push(PyramidLevel::new(
+                level_data.level,
+                idx.to_string(),
+                (level_width, level_height),
+                level_data.scale as f64,
+                (chunk_size, chunk_size),
+            ));
+        }
+
+        // Write group metadata with multiscales info
+        self.write_group_metadata(
+            store.clone(),
+            group_path,
+            &pyramid_metadata,
+            native_resolution,
+            bbox,
+            model,
+            parameter,
+            level,
+            units,
+            reference_time,
+            forecast_hour,
+            downsample_method,
+        )?;
+
+        // Create multiscale metadata for catalog
+        let multiscale_metadata = MultiscaleMetadata {
+            name: format!("{}_{}", model, parameter),
+            axes: vec![
+                AxisInfo::spatial_degrees("y"),
+                AxisInfo::spatial_degrees("x"),
+            ],
+            levels: pyramid_metadata,
+            downsample_method: format!("{:?}", downsample_method).to_lowercase(),
+            native_resolution,
+            bbox: *bbox,
+        };
+
+        // Create ZarrMetadata for backward compatibility with existing catalog code
+        let zarr_metadata = ZarrMetadata {
+            shape: (width, height),
+            chunk_shape: (chunk_size, chunk_size),
+            num_chunks: (
+                (width + chunk_size - 1) / chunk_size,
+                (height + chunk_size - 1) / chunk_size,
+            ),
+            dtype: "float32".to_string(),
+            fill_value: f32::NAN,
+            bbox: *bbox,
+            compression: format!("multiscale_sharded_{}", self.config.zarr_compression.as_str()),
+            model: model.to_string(),
+            parameter: parameter.to_string(),
+            level: level.to_string(),
+            units: units.to_string(),
+            reference_time,
+            forecast_hour,
+        };
+
+        Ok(MultiscaleWriteResult {
+            zarr_metadata,
+            multiscale_metadata,
+            bytes_written: total_bytes_written,
+            num_levels: pyramid_levels.len(),
+        })
+    }
+
+    /// Write a single pyramid level as a sharded array.
+    fn write_level_sharded<S: ReadableStorageTraits + WritableStorageTraits + 'static>(
+        &self,
+        storage: Arc<S>,
+        path: &str,
+        data: &[f32],
+        width: usize,
+        height: usize,
+        bbox: &BoundingBox,
+        model: &str,
+        parameter: &str,
+        level: &str,
+        units: &str,
+        reference_time: DateTime<Utc>,
+        forecast_hour: u32,
+        pyramid_level: u32,
+        scale: f64,
+    ) -> Result<ZarrWriteResult> {
+        let chunk_size = self.config.zarr_chunk_size;
+
+        // Calculate number of chunks
+        let chunks_x = (width + chunk_size - 1) / chunk_size;
+        let chunks_y = (height + chunk_size - 1) / chunk_size;
+
+        // Shard shape covers entire grid (single shard per level)
+        let shard_shape = vec![
+            (chunks_y * chunk_size) as u64,
+            (chunks_x * chunk_size) as u64,
+        ];
+
+        // Build sharding codec
+        let sharding_codec = self.build_sharding_codec(chunk_size)?;
+
+        // Build attributes for this level
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("model".to_string(), serde_json::json!(model));
+        attrs.insert("parameter".to_string(), serde_json::json!(parameter));
+        attrs.insert("level".to_string(), serde_json::json!(level));
+        attrs.insert("units".to_string(), serde_json::json!(units));
+        attrs.insert(
+            "reference_time".to_string(),
+            serde_json::json!(reference_time.to_rfc3339()),
+        );
+        attrs.insert("forecast_hour".to_string(), serde_json::json!(forecast_hour));
+        attrs.insert(
+            "bbox".to_string(),
+            serde_json::json!([bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat]),
+        );
+        attrs.insert("pyramid_level".to_string(), serde_json::json!(pyramid_level));
+        attrs.insert("scale".to_string(), serde_json::json!(scale));
+
+        // Create chunk grid for shard
+        let chunk_grid: zarrs::array::ChunkGrid = shard_shape
+            .clone()
+            .try_into()
+            .map_err(|e| GridProcessorError::ConfigError(format!("{:?}", e)))?;
+
+        // Create array with sharding
+        let mut binding = ArrayBuilder::new(
+            vec![height as u64, width as u64],
+            DataType::Float32,
+            chunk_grid,
+            FillValue::from(f32::NAN),
+        );
+        let array = binding
+            .array_to_bytes_codec(Arc::new(sharding_codec))
+            .attributes(attrs)
+            .build(storage, path)
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        // Store metadata
+        array
+            .store_metadata()
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        // Write data
+        let subset = ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        array
+            .store_array_subset_elements(&subset, data)
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        // Calculate bytes written
+        let bytes_written = (data.len() * std::mem::size_of::<f32>()) as u64;
+
+        // Create metadata for this level
+        let metadata = ZarrMetadata {
+            shape: (width, height),
+            chunk_shape: (chunk_size, chunk_size),
+            num_chunks: (chunks_x, chunks_y),
+            dtype: "float32".to_string(),
+            fill_value: f32::NAN,
+            bbox: *bbox,
+            compression: format!("sharded_{}", self.config.zarr_compression.as_str()),
+            model: model.to_string(),
+            parameter: parameter.to_string(),
+            level: level.to_string(),
+            units: units.to_string(),
+            reference_time,
+            forecast_hour,
+        };
+
+        Ok(ZarrWriteResult {
+            metadata,
+            bytes_written,
+        })
+    }
+
+    /// Write group-level metadata following the Zarr multiscales convention.
+    fn write_group_metadata<S: ReadableStorageTraits + WritableStorageTraits + 'static>(
+        &self,
+        storage: Arc<S>,
+        group_path: &str,
+        levels: &[PyramidLevel],
+        native_resolution: (f64, f64),
+        bbox: &BoundingBox,
+        model: &str,
+        parameter: &str,
+        level: &str,
+        units: &str,
+        reference_time: DateTime<Utc>,
+        forecast_hour: u32,
+        downsample_method: DownsampleMethod,
+    ) -> Result<()> {
+        // Build datasets array for multiscales
+        let datasets: Vec<serde_json::Value> = levels
+            .iter()
+            .map(|l| {
+                let scale_y = native_resolution.1 * l.scale;
+                let scale_x = native_resolution.0 * l.scale;
+                serde_json::json!({
+                    "path": l.path,
+                    "coordinateTransformations": [
+                        {
+                            "type": "scale",
+                            "scale": [scale_y, scale_x]
+                        }
+                    ]
+                })
+            })
+            .collect();
+
+        // Build multiscales metadata following OME-Zarr/Zarr convention
+        let multiscales = serde_json::json!([{
+            "name": format!("{}_{}", model, parameter),
+            "version": "0.5",
+            "axes": [
+                {"name": "y", "type": "space", "unit": "degree"},
+                {"name": "x", "type": "space", "unit": "degree"}
+            ],
+            "datasets": datasets,
+            "type": format!("{:?}", downsample_method).to_lowercase(),
+            "metadata": {
+                "method": "weather-wms pyramid",
+                "description": "Downsampled using 2x2 block aggregation"
+            }
+        }]);
+
+        // Build full group attributes
+        let group_attrs = serde_json::json!({
+            "multiscales": multiscales,
+            "model": model,
+            "parameter": parameter,
+            "level": level,
+            "units": units,
+            "reference_time": reference_time.to_rfc3339(),
+            "forecast_hour": forecast_hour,
+            "bbox": [bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat],
+            "native_resolution": [native_resolution.1, native_resolution.0],
+            "num_levels": levels.len()
+        });
+
+        // Write zarr.json for the group
+        let group_metadata = serde_json::json!({
+            "zarr_format": 3,
+            "node_type": "group",
+            "attributes": group_attrs
+        });
+
+        // Handle root path specially - strip leading slash for store key
+        let metadata_path = if group_path == "/" || group_path.is_empty() {
+            "zarr.json".to_string()
+        } else {
+            format!("{}/zarr.json", group_path.trim_start_matches('/').trim_end_matches('/'))
+        };
+        let store_key = StoreKey::new(&metadata_path)
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+        let metadata_bytes = serde_json::to_vec_pretty(&group_metadata)
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        storage
+            .set(&store_key, metadata_bytes.into())
+            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+/// Result of writing a multi-resolution pyramid.
+#[derive(Debug)]
+pub struct MultiscaleWriteResult {
+    /// Basic Zarr metadata (for backward compatibility with catalog)
+    pub zarr_metadata: ZarrMetadata,
+    /// Full multiscale metadata including all pyramid levels
+    pub multiscale_metadata: MultiscaleMetadata,
+    /// Total bytes written across all levels
+    pub bytes_written: u64,
+    /// Number of pyramid levels written
+    pub num_levels: usize,
 }
 
 #[cfg(test)]

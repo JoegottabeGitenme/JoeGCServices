@@ -283,6 +283,7 @@ pub async fn render_weather_data_with_lut(
         &entry,
         parameter,
         bbox,
+        Some((width as usize, height as usize)),  // Output tile size for pyramid selection
     ).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
@@ -1682,6 +1683,7 @@ async fn load_grid_data(
 /// * `entry` - Catalog entry
 /// * `parameter` - Parameter name
 /// * `bbox` - Optional bounding box (for Zarr partial reads)
+/// * `output_size` - Optional output tile dimensions (for pyramid level selection)
 pub async fn load_grid_data_with_zarr_support(
     factory: Option<&GridProcessorFactory>,
     grib_cache: &GribCache,
@@ -1690,6 +1692,7 @@ pub async fn load_grid_data_with_zarr_support(
     entry: &CatalogEntry,
     parameter: &str,
     bbox: Option<[f32; 4]>,
+    output_size: Option<(usize, usize)>,
 ) -> Result<GridData, String> {
     // Determine loader type for logging
     let loader_type = if entry.zarr_metadata.is_some() && factory.is_some() {
@@ -1720,7 +1723,7 @@ pub async fn load_grid_data_with_zarr_support(
                 loader = "zarr",
                 "Using Zarr loader for grid data"
             );
-            return load_grid_data_from_zarr(factory, entry, bbox).await;
+            return load_grid_data_from_zarr(factory, entry, bbox, output_size).await;
         } else {
             warn!(
                 storage_path = %entry.storage_path,
@@ -1913,11 +1916,13 @@ async fn load_grid_data_from_zarr(
     factory: &GridProcessorFactory,
     entry: &CatalogEntry,
     bbox: Option<[f32; 4]>,
+    output_size: Option<(usize, usize)>,
 ) -> Result<GridData, String> {
     use grid_processor::{
         BoundingBox as GpBoundingBox,
         GridProcessor, ZarrGridProcessor, ZarrMetadata,
         MinioConfig, create_minio_storage,
+        MultiscaleGridProcessorFactory, parse_multiscale_metadata,
     };
 
     // Parse zarr_metadata from catalog entry
@@ -1962,39 +1967,6 @@ async fn load_grid_data_from_zarr(
             format!("Failed to create MinIO storage: {}", e)
         })?;
     
-    // Convert zarr_meta to GridMetadata for the processor
-    let grid_metadata = grid_processor::GridMetadata {
-        model: zarr_meta.model.clone(),
-        parameter: zarr_meta.parameter.clone(),
-        level: zarr_meta.level.clone(),
-        units: zarr_meta.units.clone(),
-        reference_time: zarr_meta.reference_time,
-        forecast_hour: zarr_meta.forecast_hour,
-        bbox: zarr_meta.bbox,
-        shape: zarr_meta.shape,
-        chunk_shape: zarr_meta.chunk_shape,
-        num_chunks: zarr_meta.num_chunks,
-        fill_value: zarr_meta.fill_value,
-    };
-    
-    // Create processor with metadata from catalog (avoids metadata fetch from MinIO)
-    let processor = ZarrGridProcessor::with_metadata(
-        store,
-        &zarr_path,
-        grid_metadata.clone(),
-        factory.chunk_cache(),
-        factory.config().clone(),
-    ).map_err(|e| {
-        error!(
-            error = %e,
-            zarr_path = %zarr_path,
-            shape = ?grid_metadata.shape,
-            chunk_shape = ?grid_metadata.chunk_shape,
-            "Failed to open Zarr array"
-        );
-        format!("Failed to open Zarr: {}", e)
-    })?;
-    
     // Determine bbox to read
     let read_bbox = if let Some(bbox_arr) = bbox {
         GpBoundingBox::new(
@@ -2007,20 +1979,67 @@ async fn load_grid_data_from_zarr(
         // Read full grid
         zarr_meta.bbox
     };
+
+    // Check if this dataset has multiscale (pyramid) data
+    // If so, use resolution-aware loading to fetch from the optimal pyramid level
+    let multiscale_metadata = parse_multiscale_metadata(zarr_json);
     
-    // Read the region
-    let start = Instant::now();
-    let region = processor.read_region(&read_bbox).await
-        .map_err(|e| {
-            error!(
-                error = %e,
-                zarr_path = %zarr_path,
-                bbox = ?read_bbox,
-                "Failed to read Zarr region"
+    let (region, pyramid_level_used) = if let (Some(ms_meta), Some(out_size)) = (multiscale_metadata, output_size) {
+        // Use multiscale loading - select optimal pyramid level based on output size
+        if ms_meta.num_levels() > 1 {
+            let ms_factory = MultiscaleGridProcessorFactory::new(
+                store.clone(),
+                &zarr_path,
+                ms_meta,
+                factory.chunk_cache(),
+                factory.config().clone(),
             );
-            format!("Failed to read Zarr region: {}", e)
-        })?;
-    let read_duration = start.elapsed();
+            
+            let start = Instant::now();
+            let (region, level) = ms_factory.read_region_for_output(&read_bbox, out_size).await
+                .map_err(|e| {
+                    error!(
+                        error = %e,
+                        zarr_path = %zarr_path,
+                        bbox = ?read_bbox,
+                        output_size = ?out_size,
+                        "Failed to read multiscale Zarr region"
+                    );
+                    format!("Failed to read multiscale Zarr region: {}", e)
+                })?;
+            let read_duration = start.elapsed();
+            
+            info!(
+                width = region.width,
+                height = region.height,
+                pyramid_level = level,
+                read_ms = read_duration.as_millis(),
+                output_size = ?out_size,
+                "Loaded from pyramid level {} (optimal for output size {:?})",
+                level, out_size
+            );
+            
+            (region, Some(level))
+        } else {
+            // Only native level available, use standard loading
+            let region = load_region_from_native(store.clone(), &zarr_path, &zarr_meta, &read_bbox, factory).await?;
+            (region, Some(0u32))
+        }
+    } else {
+        // No multiscale metadata or no output_size specified - use standard single-level loading
+        let region = load_region_from_native(store.clone(), &zarr_path, &zarr_meta, &read_bbox, factory).await?;
+        (region, None)
+    };
+    
+    if let Some(level) = pyramid_level_used {
+        debug!(
+            zarr_path = %zarr_path,
+            pyramid_level = level,
+            region_width = region.width,
+            region_height = region.height,
+            "Used pyramid level for data loading"
+        );
+    }
     
     // Return actual bbox from the region (important for partial reads)
     let actual_bbox = [
@@ -2034,9 +2053,9 @@ async fn load_grid_data_from_zarr(
         width = region.width,
         height = region.height,
         data_points = region.data.len(),
-        read_ms = read_duration.as_millis(),
         actual_bbox_min_lon = actual_bbox[0],
         actual_bbox_max_lon = actual_bbox[2],
+        pyramid_level = ?pyramid_level_used,
         "Loaded Zarr region"
     );
     
@@ -2052,6 +2071,86 @@ async fn load_grid_data_from_zarr(
         goes_projection: None, // Zarr data is always pre-projected to geographic
         grid_uses_360,
     })
+}
+
+/// Helper to load a region from the native (level 0) Zarr array.
+/// Used when multiscale is not available or not needed.
+async fn load_region_from_native<S>(
+    store: S,
+    zarr_path: &str,
+    zarr_meta: &grid_processor::ZarrMetadata,
+    read_bbox: &grid_processor::BoundingBox,
+    factory: &GridProcessorFactory,
+) -> Result<grid_processor::GridRegion, String> 
+where
+    S: grid_processor::ReadableStorageTraits + Clone + Send + Sync + 'static
+{
+    use grid_processor::{GridProcessor, ZarrGridProcessor};
+    
+    // Convert zarr_meta to GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: zarr_meta.model.clone(),
+        parameter: zarr_meta.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // For native loading, we need to append /0 to get level 0
+    // Check if zarr_path already ends with a level number
+    let level_path = if zarr_path.ends_with(".zarr") || zarr_path.ends_with(".zarr/") {
+        format!("{}/0", zarr_path.trim_end_matches('/'))
+    } else {
+        zarr_path.to_string()
+    };
+    
+    // Create processor with metadata from catalog (avoids metadata fetch from MinIO)
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &level_path,
+        grid_metadata.clone(),
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| {
+        error!(
+            error = %e,
+            level_path = %level_path,
+            shape = ?grid_metadata.shape,
+            chunk_shape = ?grid_metadata.chunk_shape,
+            "Failed to open Zarr array"
+        );
+        format!("Failed to open Zarr: {}", e)
+    })?;
+    
+    // Read the region
+    let start = std::time::Instant::now();
+    let region = processor.read_region(read_bbox).await
+        .map_err(|e| {
+            error!(
+                error = %e,
+                level_path = %level_path,
+                bbox = ?read_bbox,
+                "Failed to read Zarr region"
+            );
+            format!("Failed to read Zarr region: {}", e)
+        })?;
+    let read_duration = start.elapsed();
+    
+    debug!(
+        level_path = %level_path,
+        width = region.width,
+        height = region.height,
+        read_ms = read_duration.as_millis(),
+        "Loaded native Zarr region"
+    );
+    
+    Ok(region)
 }
 
 /// Query a single point value from Zarr storage.
@@ -3361,6 +3460,7 @@ pub async fn render_numbers_tile(
         &entry,
         parameter,
         Some(bbox),
+        Some((width as usize, height as usize)),  // Output tile size for pyramid selection
     ).await?;
     
     let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);
@@ -3799,6 +3899,7 @@ pub async fn render_numbers_tile_with_buffer(
         &entry,
         parameter,
         Some(render_bbox),
+        Some((render_width as usize, render_height as usize)),  // Output tile size for pyramid selection
     ).await?;
     
     let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);
@@ -4662,6 +4763,7 @@ pub async fn render_isolines_tile_with_level(
     
     // Load grid data using the unified loader (handles GRIB2, NetCDF, and Zarr)
     // Pass None for bbox to get full grid (isolines need global min/max for level generation)
+    // Also pass None for output_size since we need full resolution for contour extraction
     let grid_result = load_grid_data_with_zarr_support(
         grid_processor_factory,
         grib_cache,
@@ -4670,6 +4772,7 @@ pub async fn render_isolines_tile_with_level(
         &entry,
         parameter,
         None,  // No bbox subset - we need full grid for contour level calculation
+        None,  // No output_size - use native resolution for accurate contours
     ).await?;
     
     let grid_data = grid_result.data;

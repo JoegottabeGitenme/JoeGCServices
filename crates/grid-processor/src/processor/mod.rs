@@ -2,7 +2,7 @@
 
 mod zarr;
 
-pub use zarr::ZarrGridProcessor;
+pub use zarr::{MultiscaleGridProcessorFactory, parse_multiscale_metadata, ZarrGridProcessor};
 
 use async_trait::async_trait;
 
