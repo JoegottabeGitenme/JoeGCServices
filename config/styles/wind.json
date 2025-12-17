@@ -66,6 +66,33 @@
         "title": "Wind Speed (m/s)",
         "labels": ["Calm", "5", "10", "20", "30", "50+"]
       }
+    },
+    "wind_component": {
+      "name": "Wind Component (m/s)",
+      "description": "Wind component gradient (U/V) showing direction with diverging color scale",
+      "type": "gradient",
+      "units": "m/s",
+      "range": {
+        "min": -30,
+        "max": 30
+      },
+      "stops": [
+        { "value": -30, "color": "#0000AA", "label": "-30" },
+        { "value": -20, "color": "#0055FF", "label": "-20" },
+        { "value": -10, "color": "#00AAFF", "label": "-10" },
+        { "value": -5, "color": "#88DDFF", "label": "-5" },
+        { "value": 0, "color": "#FFFFFF", "label": "0" },
+        { "value": 5, "color": "#FFDD88", "label": "5" },
+        { "value": 10, "color": "#FFAA00", "label": "10" },
+        { "value": 20, "color": "#FF5500", "label": "20" },
+        { "value": 30, "color": "#AA0000", "label": "30" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Wind Component (m/s)",
+        "labels": ["-30", "-10", "0", "10", "30"]
+      }
     }
   }
 }

@@ -389,7 +389,8 @@ pub async fn render_weather_data_with_lut(
         // Try to load and apply custom style
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
             Path::new(&style_config_dir).join("temperature.json")
-        } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
+        } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") 
+                || parameter == "UGRD" || parameter == "VGRD" {
             Path::new(&style_config_dir).join("wind.json")
         } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
             Path::new(&style_config_dir).join("mslp.json")
@@ -470,8 +471,9 @@ fn render_by_parameter(
         let max_c = max_val - 273.15;
 
         renderer::gradient::render_temperature(&celsius_data, width, height, min_c, max_c)
-    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
-        // Wind speed in m/s
+    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED")
+            || parameter == "UGRD" || parameter == "VGRD" {
+        // Wind speed/component in m/s
         renderer::gradient::render_wind_speed(data, width, height, min_val, max_val)
     } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
         // Pressure in Pa, convert to hPa (PRMSL = Pressure Reduced to Mean Sea Level)

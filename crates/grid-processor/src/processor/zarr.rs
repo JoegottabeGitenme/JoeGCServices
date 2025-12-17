@@ -549,13 +549,39 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
                 "Request crosses dateline on 0-360 grid, reading full grid"
             );
             // Use the full grid bbox instead of the request bbox
-            &self.metadata.bbox
+            self.metadata.bbox.clone()
         } else {
-            bbox
+            // Add a buffer of 2 grid cells around the requested bbox to ensure
+            // bilinear interpolation works correctly at tile boundaries.
+            // Without this buffer, edge pixels would clamp to the last available
+            // grid cell value instead of interpolating with neighbors.
+            let (res_x, res_y) = self.metadata.resolution();
+            let buffer_cells = 2.0; // 2 cells on each side for safety
+            
+            // First, normalize the request bbox to the grid's coordinate system
+            // (e.g., convert -180/180 to 0/360 if needed)
+            let norm_bbox = bbox.normalize_to_grid(&self.metadata.bbox);
+            
+            // Then apply the buffer and clamp to grid bounds
+            let buffered = BoundingBox::new(
+                (norm_bbox.min_lon - res_x * buffer_cells).max(self.metadata.bbox.min_lon),
+                (norm_bbox.min_lat - res_y * buffer_cells).max(self.metadata.bbox.min_lat),
+                (norm_bbox.max_lon + res_x * buffer_cells).min(self.metadata.bbox.max_lon),
+                (norm_bbox.max_lat + res_y * buffer_cells).min(self.metadata.bbox.max_lat),
+            );
+            tracing::debug!(
+                path = %self.path,
+                request_bbox = ?bbox,
+                normalized_bbox = ?norm_bbox,
+                buffered_bbox = ?buffered,
+                buffer_cells = buffer_cells,
+                "Added interpolation buffer to bbox"
+            );
+            buffered
         };
 
         // 1. Calculate needed chunks
-        let chunks = self.chunks_for_bbox(effective_bbox);
+        let chunks = self.chunks_for_bbox(&effective_bbox);
 
         tracing::debug!(
             path = %self.path,
@@ -570,7 +596,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
                 vec![],
                 0,
                 0,
-                *effective_bbox,
+                effective_bbox,
                 self.metadata.resolution(),
             ));
         }
@@ -583,7 +609,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         }
 
         // 3. Assemble chunks into contiguous region
-        self.assemble_region(effective_bbox, &chunks, &chunk_data)
+        self.assemble_region(&effective_bbox, &chunks, &chunk_data)
     }
 
     async fn read_point(&self, lon: f64, lat: f64) -> Result<Option<f32>> {
