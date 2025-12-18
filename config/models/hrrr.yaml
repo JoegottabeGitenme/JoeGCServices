@@ -63,6 +63,21 @@ precaching:
 
 parameters:
   # ==========================================================================
+  # Pressure
+  # ==========================================================================
+  
+  # Mean Sea Level Pressure
+  - name: PRMSL
+    description: "Mean Sea Level Pressure"
+    levels:
+      - type: mean_sea_level
+        display: "mean sea level"
+    style: atmospheric
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+
+  # ==========================================================================
   # Surface & Near-Surface Parameters
   # ==========================================================================
   
@@ -125,6 +140,16 @@ parameters:
         display: "2 m above ground"
     style: humidity
     units: "%"
+
+  # Precipitable Water (entire atmosphere)
+  - name: PWAT
+    description: "Precipitable Water"
+    levels:
+      - type: entire_atmosphere
+        display: "entire atmosphere"
+    style: humidity
+    units: kg/m^2
+    display_units: mm
 
   # Surface wind gust
   - name: GUST
@@ -234,6 +259,46 @@ parameters:
     units: m
     display_units: km
     conversion: m_to_km
+
+  # ==========================================================================
+  # Cloud Cover
+  # ==========================================================================
+  
+  # Total Cloud Cover
+  - name: TCDC
+    description: "Total Cloud Cover"
+    levels:
+      - type: entire_atmosphere
+        display: "entire atmosphere"
+    style: cloud
+    units: "%"
+
+  # Low Cloud Cover
+  - name: LCDC
+    description: "Low Cloud Cover"
+    levels:
+      - type: low_cloud_layer
+        display: "low cloud layer"
+    style: cloud
+    units: "%"
+
+  # Middle Cloud Cover
+  - name: MCDC
+    description: "Middle Cloud Cover"
+    levels:
+      - type: middle_cloud_layer
+        display: "middle cloud layer"
+    style: cloud
+    units: "%"
+
+  # High Cloud Cover
+  - name: HCDC
+    description: "High Cloud Cover"
+    levels:
+      - type: high_cloud_layer
+        display: "high cloud layer"
+    style: cloud
+    units: "%"
 
   # ==========================================================================
   # Upper-Air Temperature

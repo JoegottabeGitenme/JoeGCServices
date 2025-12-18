@@ -977,6 +977,13 @@ async fn ingest_file_tracked(
         // Visibility
         ("VIS", vec![(1, None)]),                        // Visibility (surface)
         
+        // HRRR-specific radar/convective parameters
+        // Level types: 103=height above ground, 200=entire atmosphere, 10=entire atm single layer
+        ("REFC", vec![(200, None), (10, None), (103, Some(1000)), (103, Some(4000))]),  // Composite reflectivity
+        ("RETOP", vec![(3, None), (200, None), (10, None)]),   // Echo top height
+        ("LTNG", vec![(200, None), (1, None)]),                // Lightning threat (entire atmosphere)
+        ("MXUPHL", vec![(103, None), (106, None)]),            // Max updraft helicity (height above ground layer)
+        
         // MRMS-specific (keep existing)
         ("REFL", vec![(200, None), (1, None)]),          // Reflectivity (MRMS)
         ("PRECIP_RATE", vec![(1, None)]),                // Precip rate (MRMS)

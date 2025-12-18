@@ -110,6 +110,23 @@ layers:
         default: true
 
   # ==========================================================================
+  # Pressure Layers
+  # ==========================================================================
+  
+  - id: hrrr_PRMSL
+    parameter: PRMSL
+    title: "Mean Sea Level Pressure"
+    abstract: "Atmospheric pressure reduced to mean sea level"
+    style_file: mslp.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "mean sea level"
+        default: true
+
+  # ==========================================================================
   # Moisture Layers
   # ==========================================================================
   
@@ -123,6 +140,18 @@ layers:
       display: "%"
     levels:
       - value: "2 m above ground"
+        default: true
+
+  - id: hrrr_PWAT
+    parameter: PWAT
+    title: "Precipitable Water"
+    abstract: "Total column precipitable water"
+    style_file: humidity.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    levels:
+      - value: "entire atmosphere"
         default: true
 
   # ==========================================================================
@@ -155,7 +184,7 @@ layers:
       native: dBZ
       display: dBZ
     levels:
-      - value: "1000 m above ground"
+      - value: "entire atmosphere"
         default: true
 
   - id: hrrr_RETOP
@@ -242,6 +271,58 @@ layers:
       conversion: m_to_km
     levels:
       - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Cloud Layers
+  # ==========================================================================
+  
+  - id: hrrr_TCDC
+    parameter: TCDC
+    title: "Total Cloud Cover"
+    abstract: "Total cloud cover percentage for entire atmospheric column"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  - id: hrrr_LCDC
+    parameter: LCDC
+    title: "Low Cloud Cover"
+    abstract: "Low cloud cover (surface to ~2km / 800mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "low cloud top"
+        default: true
+
+  - id: hrrr_MCDC
+    parameter: MCDC
+    title: "Middle Cloud Cover"
+    abstract: "Middle cloud cover (~2-6km / 800-400mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "middle cloud top"
+        default: true
+
+  - id: hrrr_HCDC
+    parameter: HCDC
+    title: "High Cloud Cover"
+    abstract: "High cloud cover (above ~6km / 400mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "high cloud top"
         default: true
 
   # ==========================================================================

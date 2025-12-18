@@ -311,7 +311,7 @@ layers:
       native: "%"
       display: "%"
     levels:
-      - value: "low cloud layer"
+      - value: "low cloud top"
         default: true
 
   - id: gfs_MCDC
@@ -323,7 +323,7 @@ layers:
       native: "%"
       display: "%"
     levels:
-      - value: "middle cloud layer"
+      - value: "middle cloud top"
         default: true
 
   - id: gfs_HCDC
@@ -335,7 +335,7 @@ layers:
       native: "%"
       display: "%"
     levels:
-      - value: "high cloud layer"
+      - value: "high cloud top"
         default: true
 
   # ==========================================================================
