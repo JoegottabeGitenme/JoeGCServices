@@ -66,6 +66,7 @@ pub use minio_storage::{create_minio_storage, MinioConfig};
 pub use processor::{GridProcessor, MultiscaleGridProcessorFactory, parse_multiscale_metadata, ZarrGridProcessor};
 pub use projection::{
     bilinear_interpolate, cubic_interpolate, nearest_interpolate, tile_to_bbox,
+    reproject_geostationary_to_geographic,
 };
 pub use projection::interpolation::resample_grid;
 pub use types::{

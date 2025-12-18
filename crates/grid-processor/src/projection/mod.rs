@@ -4,8 +4,10 @@
 //! for re-projecting grids to geographic coordinates.
 
 pub mod interpolation;
+pub mod reproject;
 
 pub use interpolation::{bilinear_interpolate, cubic_interpolate, nearest_interpolate};
+pub use reproject::reproject_geostationary_to_geographic;
 
 use crate::types::BoundingBox;
 

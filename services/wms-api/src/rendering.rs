@@ -1057,9 +1057,11 @@ fn resample_grid_for_bbox_with_proj(
             resample_lambert_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox)
         }
     } else if model == "goes16" || model == "goes18" || model == "goes" {
-        // Use Geostationary projection for GOES satellite data
-        // Prefer dynamic projection parameters if available
+        // GOES satellite data handling
+        // If goes_projection is present, data is in native geostationary projection (raw NetCDF)
+        // If goes_projection is None, data has been pre-projected to geographic (Zarr)
         if let Some(params) = goes_projection {
+            // Native geostationary data - use projection transform
             let proj = Geostationary::from_goes(
                 params.perspective_point_height,
                 params.semi_major_axis,
@@ -1078,12 +1080,18 @@ fn resample_grid_for_bbox_with_proj(
                 resample_geostationary_to_geographic_with_proj(data, data_width, data_height, output_width, output_height, output_bbox, &proj)
             }
         } else {
-            // Fallback to preset projections
-            let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
+            // Pre-projected geographic data (from Zarr) - treat as regular lat/lon grid
+            // This is the path for GOES data that was reprojected during ingestion
+            debug!(
+                model = model,
+                data_width = data_width,
+                data_height = data_height,
+                "GOES data from Zarr (pre-projected to geographic), using geographic resampling"
+            );
             if use_mercator {
-                resample_geostationary_to_mercator(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
+                resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
             } else {
-                resample_geostationary_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
+                resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
             }
         }
     } else {

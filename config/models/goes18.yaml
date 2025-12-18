@@ -5,7 +5,7 @@ model:
   id: goes18
   name: "GOES-18 - GOES West"
   description: "GOES-18 (GOES West) satellite imagery, ABI CONUS product"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -20,15 +20,15 @@ source:
   product: "ABI-L2-CMIPC"                # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [1, 2, 8, 13]                   # Blue, Red, WV, IR
+  bands: [13]                            # Start with Clean IR only for testing
 
 grid:
   projection: geostationary
   resolution: "1km"                      # Approximate
   bbox:
-    min_lon: -143.0
+    min_lon: -175.0
     min_lat: 14.5
-    max_lon: -53.0
+    max_lon: -100.0
     max_lat: 55.5
   projection_params:
     satellite_longitude: -137.0          # GOES-West orbital position

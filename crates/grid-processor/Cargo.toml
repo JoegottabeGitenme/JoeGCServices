@@ -45,6 +45,7 @@ bytemuck = { version = "1", features = ["derive"] }
 # Internal dependencies
 wms-common = { path = "../wms-common" }
 storage = { path = "../storage" }
+projection = { path = "../projection" }
 
 [dev-dependencies]
 tokio-test.workspace = true

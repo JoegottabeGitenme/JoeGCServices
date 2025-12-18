@@ -286,6 +286,18 @@ layers:
       - value: "surface"
         default: true
 
+  - id: gfs_REFC
+    parameter: REFC
+    title: "Composite Reflectivity"
+    abstract: "Maximum simulated radar reflectivity in the atmospheric column"
+    style_file: reflectivity.json
+    units:
+      native: dBZ
+      display: dBZ
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
   # ==========================================================================
   # Cloud Layers
   # ==========================================================================

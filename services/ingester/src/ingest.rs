@@ -8,7 +8,11 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument, warn};
 
-use grid_processor::{DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter};
+use grid_processor::{
+    DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter,
+    reproject_geostationary_to_geographic,
+};
+use projection::Geostationary;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 use wms_common::BoundingBox;
 use zarrs_filesystem::FilesystemStore;
@@ -224,13 +228,14 @@ impl IngestionPipeline {
         let is_goes = model_config.source.is_goes();
 
         if is_goes {
-            // Process GOES NetCDF file
+            // Process GOES NetCDF file - reproject and write as Zarr
             if let Err(e) = self
                 .extract_goes_parameter(
                     model_id,
                     date,
                     cycle,
                     file,
+                    &data,
                     &storage_path,
                     file_size,
                 )
@@ -269,19 +274,26 @@ impl IngestionPipeline {
         Ok(())
     }
 
-    /// Extract parameter from GOES NetCDF file.
+    /// Extract parameter from GOES NetCDF file, reproject to geographic, and write as Zarr.
     /// 
     /// GOES files are self-describing - the filename contains the band and timestamp info.
     /// Format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
-    #[instrument(skip(self), fields(path = %file.path))]
+    /// 
+    /// This function:
+    /// 1. Parses the NetCDF file to extract data and projection parameters
+    /// 2. Reprojects from geostationary to geographic (lat/lon) coordinates
+    /// 3. Writes the reprojected data as Zarr with multi-resolution pyramids
+    /// 4. Registers the dataset in the catalog with full zarr_metadata
+    #[instrument(skip(self, file_data), fields(path = %file.path))]
     async fn extract_goes_parameter(
         &self,
         model_id: &str,
         date: &str,
-        cycle: u32,
+        _cycle: u32,
         file: &RemoteFile,
-        storage_path: &str,
-        file_size: u64,
+        file_data: &Bytes,
+        _raw_storage_path: &str,
+        _file_size: u64,
     ) -> Result<()> {
         // Parse filename to extract band and time info
         let filename = file.path.split('/').next_back().unwrap_or(&file.path);
@@ -325,10 +337,10 @@ impl IngestionPipeline {
             })
             .unwrap_or_else(|| {
                 // Fallback: use date and cycle
-                let date = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")
+                let date_parsed = chrono::NaiveDate::parse_from_str(date, "%Y%m%d")
                     .unwrap_or_else(|_| chrono::Utc::now().date_naive());
-                let time = chrono::NaiveTime::from_hms_opt(cycle, 0, 0).unwrap();
-                chrono::Utc.from_utc_datetime(&date.and_time(time))
+                let time = chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+                chrono::Utc.from_utc_datetime(&date_parsed.and_time(time))
             });
 
         // Determine parameter name based on band
@@ -357,25 +369,160 @@ impl IngestionPipeline {
             satellite = satellite,
             parameter = parameter,
             observation_time = %observation_time,
-            "Processing GOES file"
+            "Processing GOES file - parsing NetCDF"
         );
 
-        // Create catalog entry
-        // For GOES, forecast_hour is 0 (observational data)
+        // Parse the NetCDF file to extract data and projection parameters
+        let (raw_data, width, height, projection, x_offset, y_offset, x_scale, y_scale) =
+            netcdf_parser::load_goes_netcdf_from_bytes(file_data)
+                .map_err(|e| anyhow!("Failed to parse GOES NetCDF: {}", e))?;
+
+        info!(
+            width = width,
+            height = height,
+            x_offset = x_offset,
+            y_offset = y_offset,
+            x_scale = x_scale,
+            y_scale = y_scale,
+            longitude_origin = projection.longitude_origin,
+            "Parsed GOES NetCDF data"
+        );
+
+        // Create Geostationary projection for reprojection
+        let proj = Geostationary::from_goes(
+            projection.perspective_point_height,
+            projection.semi_major_axis,
+            projection.semi_minor_axis,
+            projection.longitude_origin,
+            x_offset as f64,
+            y_offset as f64,
+            x_scale as f64,
+            y_scale as f64,
+            width,
+            height,
+        );
+
+        // Reproject from geostationary to geographic coordinates
+        info!("Reprojecting GOES data from geostationary to geographic coordinates");
+        let (reprojected_data, out_width, out_height, gp_bbox) =
+            reproject_geostationary_to_geographic(&raw_data, width, height, &proj);
+
+        info!(
+            out_width = out_width,
+            out_height = out_height,
+            bbox_min_lon = gp_bbox.min_lon,
+            bbox_max_lon = gp_bbox.max_lon,
+            bbox_min_lat = gp_bbox.min_lat,
+            bbox_max_lat = gp_bbox.max_lat,
+            "Reprojection complete"
+        );
+
+        // Create Zarr storage path: grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+        let hour = observation_time.format("%H").to_string();
+        let minute = observation_time.format("%M").to_string();
+        let zarr_storage_path = format!(
+            "grids/{}/{}/{}/{}_{}.zarr",
+            model_id, date, hour, parameter, minute
+        );
+
+        // Create a temporary directory for Zarr output
+        let temp_dir = tempfile::tempdir()?;
+        let zarr_path = temp_dir.path().join("grid.zarr");
+        std::fs::create_dir_all(&zarr_path)?;
+
+        // Create Zarr writer with default config
+        let config = GridProcessorConfig::default();
+        let writer = ZarrWriter::new(config);
+
+        // Create filesystem store for the temp directory
+        let store = FilesystemStore::new(&zarr_path)
+            .map_err(|e| anyhow!("Failed to create filesystem store: {}", e))?;
+
+        // Determine units based on band type
+        let units = if band <= 6 {
+            "reflectance" // Visible/near-IR bands
+        } else {
+            "K" // IR bands (brightness temperature)
+        };
+
+        // Configure pyramid generation
+        let pyramid_config = PyramidConfig::from_env();
+
+        // Use Mean downsampling for all GOES bands
+        let downsample_method = DownsampleMethod::Mean;
+
+        // Write Zarr data with multi-resolution pyramids
+        let write_result = writer
+            .write_multiscale(
+                store,
+                "/",
+                &reprojected_data,
+                out_width,
+                out_height,
+                &gp_bbox,
+                model_id,
+                parameter,
+                level,
+                units,
+                observation_time,
+                0, // forecast_hour = 0 for observational data
+                &pyramid_config,
+                downsample_method,
+            )
+            .map_err(|e| anyhow!("Failed to write Zarr: {}", e))?;
+
+        info!(
+            path = %zarr_storage_path,
+            width = out_width,
+            height = out_height,
+            bytes = write_result.bytes_written,
+            num_levels = write_result.num_levels,
+            "Wrote multiscale Zarr grid with pyramid"
+        );
+
+        // Upload Zarr files to object storage
+        let zarr_file_size = self
+            .upload_zarr_directory(&zarr_path, &zarr_storage_path)
+            .await?;
+
+        // Create catalog entry with Zarr metadata
+        // Include both basic zarr_metadata and the full multiscale info
+        let mut zarr_json = write_result.zarr_metadata.to_json();
+        // Add multiscale metadata for the reader to use
+        if let serde_json::Value::Object(ref mut map) = zarr_json {
+            map.insert(
+                "multiscale".to_string(),
+                serde_json::to_value(&write_result.multiscale_metadata).unwrap_or_default(),
+            );
+        }
+
+        // Convert grid-processor BoundingBox to wms-common BoundingBox
+        let catalog_bbox = BoundingBox::new(
+            gp_bbox.min_lon,
+            gp_bbox.min_lat,
+            gp_bbox.max_lon,
+            gp_bbox.max_lat,
+        );
+
         let entry = CatalogEntry {
             model: model_id.to_string(),
             parameter: parameter.to_string(),
             level: level.to_string(),
             reference_time: observation_time,
             forecast_hour: 0, // Observational data
-            bbox: get_model_bbox(model_id),
-            storage_path: storage_path.to_string(),
-            file_size,
-            zarr_metadata: None,
+            bbox: catalog_bbox,
+            storage_path: zarr_storage_path.clone(),
+            file_size: zarr_file_size,
+            zarr_metadata: Some(zarr_json),
         };
 
         self.catalog.register_dataset(&entry).await?;
-        info!(parameter = parameter, band = band, "Registered GOES parameter in catalog");
+        info!(
+            parameter = parameter,
+            band = band,
+            path = %zarr_storage_path,
+            "Registered GOES Zarr dataset in catalog"
+        );
 
         Ok(())
     }
