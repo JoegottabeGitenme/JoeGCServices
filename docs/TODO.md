@@ -11,8 +11,6 @@
   something to provide a colormap in a get request
 - mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile
   then just compress to that b64 string, ofc this would rely on the frontend being able to render it
-- grid cache section in the web dashboard needs to go away
-- can we combine the crates and services folders?
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
 - we have a bunch of stuff in the wms-validation folder i don't think we're using, could be expanded
 - some of the scripts in the scripts folder could be moved somewhere into validation
