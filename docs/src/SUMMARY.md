@@ -24,7 +24,6 @@
   - [WMS API](./services/wms-api.md)
   - [Ingester](./services/ingester.md)
   - [Downloader](./services/downloader.md)
-  - [Renderer Worker](./services/renderer-worker.md)
 
 # Crates (Libraries)
 

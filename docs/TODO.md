@@ -26,3 +26,6 @@
 - load testing needs to simulate real user scenarios
 - need to consider actually deploying this to ec2 or something
   - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
+- implement renderer queue after we've deleted the renderer worker stuff???
+  - The Renderer Worker is a background service that consumes render jobs from a Redis queue and generates PNG tiles for caching. It enables cache warming, prefetching, and scheduled tile rendering without blocking client requests.
+  - seems neat we can implement it if we feel like it later

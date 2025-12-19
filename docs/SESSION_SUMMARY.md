@@ -14,7 +14,7 @@ This session focused on **temporal testing infrastructure** for the Weather WMS 
 **Solution**: Updated all three service Dockerfiles to copy the `validation` directory:
 - `services/wms-api/Dockerfile`
 - `services/ingester/Dockerfile`
-- `services/renderer-worker/Dockerfile`
+- `services/
 
 **Files Modified**: 3 Dockerfiles
 
@@ -222,7 +222,7 @@ OR_ABI-L1b-RadC-M6C08_G19_s20253321456174_e20253321458547_c20253321459041.nc
 3. `validation/load-test/src/main.rs` - Config struct updates
 4. `services/wms-api/Dockerfile` - Copy validation directory
 5. `services/ingester/Dockerfile` - Copy validation directory
-6. `services/renderer-worker/Dockerfile` - Copy validation directory
+6. `services/
 7. `crates/storage/src/grib_cache.rs` - LRU cache (from Phase 4, already existed)
 
 ### Scripts Created (3 files)

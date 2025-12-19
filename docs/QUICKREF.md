@@ -121,7 +121,6 @@ crates/              # Shared libraries
 services/            # Deployable microservices
   ├── wms-api/      # HTTP server
   ├── ingester/     # Data import
-  └── renderer-worker/  # Tile rendering
 
 deploy/helm/         # Kubernetes manifests
 scripts/             # Automation scripts

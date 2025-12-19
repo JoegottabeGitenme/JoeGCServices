@@ -19,7 +19,6 @@ COPY crates/renderer/Cargo.toml /app/crates/renderer/
 COPY crates/wms-protocol/Cargo.toml /app/crates/wms-protocol/
 COPY crates/storage/Cargo.toml /app/crates/storage/
 COPY services/ingester/Cargo.toml /app/services/ingester/
-COPY services/renderer-worker/Cargo.toml /app/services/renderer-worker/
 COPY services/wms-api/Cargo.toml /app/services/wms-api/
 COPY validation/load-test/Cargo.toml /app/validation/load-test/
 
@@ -32,7 +31,6 @@ RUN mkdir -p /app/crates/renderer/src && echo "pub fn dummy() {}" > /app/crates/
 RUN mkdir -p /app/crates/wms-protocol/src && echo "pub fn dummy() {}" > /app/crates/wms-protocol/src/lib.rs
 RUN mkdir -p /app/crates/storage/src && echo "pub fn dummy() {}" > /app/crates/storage/src/lib.rs
 RUN mkdir -p /app/services/ingester/src && echo "fn main() {}" > /app/services/ingester/src/main.rs
-RUN mkdir -p /app/services/renderer-worker/src && echo "fn main() {}" > /app/services/renderer-worker/src/main.rs
 RUN mkdir -p /app/services/wms-api/src && echo "fn main() {}" > /app/services/wms-api/src/main.rs
 RUN mkdir -p /app/validation/load-test/src && echo "fn main() {}" > /app/validation/load-test/src/main.rs
 

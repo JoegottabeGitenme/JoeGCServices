@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
-use storage::{Catalog, GribCache, GridDataCache, JobQueue, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use storage::{Catalog, GribCache, GridDataCache, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
@@ -448,8 +448,6 @@ pub struct AppState {
     pub catalog: Catalog,
     pub cache: Mutex<TileCache>,
     pub tile_memory_cache: TileMemoryCache,  // L1 cache for rendered tiles
-    #[allow(dead_code)]
-    pub queue: JobQueue,
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,
     pub grid_cache: GridDataCache,  // Cache for parsed grid data (GOES/NetCDF)
@@ -500,7 +498,6 @@ impl AppState {
 
         let catalog = Catalog::connect_with_pool_size(&database_url, db_pool_size).await?;
         let cache = TileCache::connect(&redis_url).await?;
-        let queue = JobQueue::connect(&redis_url).await?;
         let storage = Arc::new(ObjectStorage::new(&storage_config)?);
         let metrics = Arc::new(MetricsCollector::new());
         
@@ -573,7 +570,6 @@ impl AppState {
             catalog,
             cache: Mutex::new(cache),
             tile_memory_cache,
-            queue,
             storage,
             grib_cache,
             grid_cache,

@@ -3882,29 +3882,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "renderer-worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "clap",
- "crc32fast",
- "flate2",
- "grib2-parser",
- "projection",
- "renderer",
- "serde",
- "serde_json",
- "storage",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wms-common",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

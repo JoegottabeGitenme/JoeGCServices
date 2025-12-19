@@ -241,7 +241,6 @@ loop {
 }
 ```
 
-**Code Reference**: `services/renderer-worker/src/main.rs`
 
 ---
 

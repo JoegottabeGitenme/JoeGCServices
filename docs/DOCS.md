@@ -169,7 +169,6 @@ weather-wms/
 ├── services/               # Deployable services
 │   ├── wms-api/           # HTTP server
 │   ├── ingester/          # Data import
-│   └── renderer-worker/   # Tile rendering
 ├── deploy/                 # Kubernetes manifests
 ├── scripts/                # Automation
 ├── docs/                   # Documentation (this folder)

@@ -39,7 +39,6 @@ crates/renderer/
 
 ### Renderer-Worker Service (Non-functional)
 ```
-services/renderer-worker/
 ├── main.rs (215 lines) ✗ MOSTLY PLACEHOLDER
 │   ├── main() - Service startup & job loop (line 31)
 │   ├── render_tile() - BROKEN (line 127) TODO
@@ -79,11 +78,9 @@ services/renderer-worker/
 | Only first message | handlers.rs | 348-352 | Bug |
 | Silent error fallback | handlers.rs | 124-140 | Design issue |
 | Fragile substring match | handlers.rs | 397-429 | Bug |
-| Test pattern output | renderer-worker/main.rs | 127-155 | Non-functional |
 | TODO in lib | crates/renderer/src/lib.rs | 14 | Documentation |
 | Empty contour stub | crates/renderer/src/contour.rs | 1-2 | Not implemented |
 | Empty barbs stub | crates/renderer/src/barbs.rs | 1-2 | Not implemented |
-| Duplicate PNG code | renderer-worker/main.rs | 158-211 | Duplication |
 
 ---
 
@@ -219,7 +216,6 @@ match render_weather_data(...).await {
 ## TODOs in Code
 
 ### CRITICAL
-- `renderer-worker/src/main.rs:128` - "TODO: Implement actual rendering"
   - **Impact**: Worker doesn't actually render anything
   - **Status**: Non-functional placeholder
   - **Priority**: CRITICAL
@@ -236,7 +232,6 @@ match render_weather_data(...).await {
   - **Priority**: MEDIUM
 
 ### MEDIUM
-- `renderer-worker/src/main.rs:153` - "TODO: Use proper PNG encoder from renderer crate"
   - **Impact**: Duplicated code
   - **Status**: Should remove local encoder
   - **Priority**: MEDIUM
@@ -321,7 +316,6 @@ S3_SECRET_KEY=minioadmin
 
 ### Docker Images
 - `wms-api:latest` - HTTP server
-- `renderer-worker:latest` - Tile renderer (currently broken)
 
 ### Kubernetes (Helm)
 ```

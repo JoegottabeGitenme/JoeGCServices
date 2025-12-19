@@ -9,7 +9,6 @@ graph TB
     subgraph "Services"
         API[wms-api]
         DL[downloader]
-        WORKER[renderer-worker]
     end
     
     subgraph "Domain Crates"

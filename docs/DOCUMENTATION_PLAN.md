@@ -45,7 +45,7 @@ docs/
 │   │   ├── wms-api.md       # WMS API service
 │   │   ├── ingester.md      # Ingestion service
 │   │   ├── downloader.md    # Download service
-│   │   └── renderer-worker.md # Render worker
+│   │   └── 
 │   │
 │   ├── crates/
 │   │   ├── README.md        # Crates overview

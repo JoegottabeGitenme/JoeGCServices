@@ -11,7 +11,6 @@ members = [
     "crates/grid-processor",
     "services/downloader",
     "services/ingester",
-    "services/renderer-worker",
     "services/wms-api",
     "validation/load-test",
 ]

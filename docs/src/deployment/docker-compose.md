@@ -35,7 +35,6 @@ services:
   wms-api:       # WMS/WMTS API server
   ingester:      # Data ingestion service
   downloader:    # Data download service
-  renderer-worker: # Background tile rendering
   web:           # Web dashboard (Python)
 ```
 
@@ -58,7 +57,6 @@ docker-compose down
 docker-compose down -v
 
 # Scale a service
-docker-compose up -d --scale renderer-worker=3
 
 # Check service status
 docker-compose ps

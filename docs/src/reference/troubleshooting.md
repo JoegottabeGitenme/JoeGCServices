@@ -205,7 +205,6 @@ docker stats minio
 TOKIO_WORKER_THREADS=16
 
 # Scale horizontally
-docker-compose up -d --scale wms-api=5 --scale renderer-worker=3
 ```
 
 ---
