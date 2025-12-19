@@ -552,7 +552,8 @@ def validate_file(filepath: Path, verbose: bool = False) -> list:
 
 
 def main():
-    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    # Always verbose to show any warnings
+    verbose = True
 
     # Find styles directory
     script_dir = Path(__file__).parent
