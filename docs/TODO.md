@@ -1,5 +1,3 @@
-- keep getting 'ingester is its own standalone service' and 'need to trigger the ingester after the downloader' or
-  something maybe we need to create an 'ingester' crate now that we're doing all this zarr processing
 - Need to come up with some more validation for OGC compliance, and look into whatever hot new MAP api specs there are
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
@@ -36,6 +34,5 @@
     - The Renderer Worker is a background service that consumes render jobs from a Redis queue and generates PNG tiles
       for caching. It enables cache warming, prefetching, and scheduled tile rendering without blocking client requests.
     - seems neat we can implement it if we feel like it later
-- front end viewer needs to pass a default style otherwise wms wont work
-- BUG? passing 'default' to a style should be a valid option for a WMS request, add this to validation tests too
 - implement the crazy radar diffing stuff to try and reduce bandwidth for radar loops
+- some kind of mismatch where MRMS is using REFD which then causes HRRR reflectivity to not render
