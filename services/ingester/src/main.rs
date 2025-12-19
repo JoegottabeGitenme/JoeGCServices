@@ -125,6 +125,11 @@ async fn main() -> Result<()> {
 }
 
 /// Ingest a local GRIB2 or NetCDF test file with shredding (extract individual parameters)
+/// 
+/// TODO: This function stores GRIB2 files as shredded GRIB2 format, not Zarr.
+/// It should be refactored to use the IngestionPipeline with Zarr output,
+/// or removed in favor of the IngestionPipeline for all ingestion paths.
+/// See MRMS Zarr ingestion implementation for context.
 async fn test_file_ingestion(
     config: &IngesterConfig, 
     test_file: &str, 

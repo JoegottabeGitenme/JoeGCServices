@@ -248,10 +248,26 @@ impl IngestionPipeline {
             }
         } else {
             // Parse and extract parameters from GRIB2
+            // Filter parameters by product match (for models like MRMS where each file is one product)
+            let file_path = &file.path;
             for param_config in &model_config.parameters {
+                // If parameter has a product filter, only process if file path contains it
+                if let Some(ref product) = param_config.product {
+                    if !file_path.contains(product) {
+                        debug!(
+                            parameter = %param_config.name,
+                            product = %product,
+                            file = %file_path,
+                            "Skipping parameter - product mismatch"
+                        );
+                        continue;
+                    }
+                }
+                
                 if let Err(e) = self
                     .extract_parameter(
                         model_id,
+                        model_config.is_observation,
                         date,
                         cycle,
                         fhr,
@@ -532,6 +548,7 @@ impl IngestionPipeline {
     async fn extract_parameter(
         &self,
         model_id: &str,
+        is_observation: bool,
         date: &str,
         cycle: u32,
         fhr: u32,
@@ -573,6 +590,14 @@ impl IngestionPipeline {
                     }
                 };
                 
+                // Convert sentinel missing values to NaN
+                // MRMS uses -999 and -99 for missing/no-coverage data
+                // This ensures proper handling in downsampling and rendering
+                let grid_data: Vec<f32> = grid_data
+                    .into_iter()
+                    .map(|v| if v <= -90.0 { f32::NAN } else { v })
+                    .collect();
+                
                 if grid_data.len() != width * height {
                     warn!(
                         expected = width * height,
@@ -585,11 +610,21 @@ impl IngestionPipeline {
                 // Calculate bounding box from grid definition
                 let bbox = get_bbox_from_grid(&message.grid_definition);
                 
-                // Create Zarr storage path: grids/{model}/{date}/{param}_f{fhr:03}.zarr
-                let zarr_storage_path = format!(
-                    "grids/{}/{}/{:02}/{}_f{:03}.zarr",
-                    model_id, date, cycle, param_config.name, fhr
-                );
+                // Create Zarr storage path
+                // For observation data: grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+                // For forecast data: grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+                let zarr_storage_path = if is_observation {
+                    let minute = reference_time.format("%M").to_string();
+                    format!(
+                        "grids/{}/{}/{:02}/{}_{}.zarr",
+                        model_id, date, cycle, param_config.name, minute
+                    )
+                } else {
+                    format!(
+                        "grids/{}/{}/{:02}/{}_f{:03}.zarr",
+                        model_id, date, cycle, param_config.name, fhr
+                    )
+                };
                 
                 // Create a temporary directory for Zarr output
                 let temp_dir = tempfile::tempdir()?;
@@ -615,9 +650,14 @@ impl IngestionPipeline {
                 // Configure pyramid generation
                 let pyramid_config = PyramidConfig::from_env();
                 
-                // Determine downsampling method based on parameter type
-                // NOTE: This mapping may need refinement for specific parameters
-                let downsample_method = DownsampleMethod::for_parameter(&param_config.name);
+                // Determine downsampling method from config, or fall back to auto-detection
+                let downsample_method = param_config.downsample.as_ref()
+                    .map(|s| match s.to_lowercase().as_str() {
+                        "max" => DownsampleMethod::Max,
+                        "nearest" => DownsampleMethod::Nearest,
+                        _ => DownsampleMethod::Mean,
+                    })
+                    .unwrap_or_else(|| DownsampleMethod::for_parameter(&param_config.name));
                 
                 // Write Zarr data with multi-resolution pyramids
                 let write_result = writer.write_multiscale(

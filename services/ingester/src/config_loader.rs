@@ -127,6 +127,23 @@ pub struct ModelConfig {
     pub parameters: Vec<ParameterConfig>,
     #[serde(default)]
     pub composites: Vec<CompositeConfig>,
+    #[serde(default)]
+    pub dimensions: Option<DimensionsConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DimensionsConfig {
+    /// "forecast" or "observation"
+    #[serde(rename = "type")]
+    pub dimension_type: Option<String>,
+    #[serde(default)]
+    pub time: bool,
+    #[serde(default)]
+    pub run: bool,
+    #[serde(default)]
+    pub forecast: bool,
+    #[serde(default)]
+    pub elevation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +226,10 @@ pub struct ParameterConfig {
     pub units: String,
     pub display_units: Option<String>,
     pub conversion: Option<String>,
+    /// Downsampling method for pyramid generation: "mean", "max", or "nearest"
+    pub downsample: Option<String>,
+    /// Product path filter (for MRMS where each file is one product)
+    pub product: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -671,6 +692,8 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
                     parameter: param.name.clone(),
                 },
                 units: Some(param.units.clone()),
+                downsample: param.downsample.clone(),
+                product: param.product.clone(),
             });
         }
     }
@@ -687,6 +710,12 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
         vec![0]
     };
     
+    // Determine if this is observation data based on dimensions.type
+    let is_observation = cfg.dimensions.as_ref()
+        .and_then(|d| d.dimension_type.as_ref())
+        .map(|t| t == "observation")
+        .unwrap_or(false);
+    
     Ok(RuntimeModelConfig {
         name: cfg.model.name.clone(),
         source,
@@ -697,6 +726,7 @@ fn convert_model_config(cfg: &ModelConfig) -> Result<RuntimeModelConfig> {
             .unwrap_or_else(|| "default".to_string()),
         file_pattern: cfg.source.file_pattern.clone(),
         poll_interval_secs: cfg.schedule.poll_interval_secs,
+        is_observation,
     })
 }
 

@@ -5,7 +5,7 @@ model:
   id: hrrr
   name: "HRRR - High-Resolution Rapid Refresh"
   description: "NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS coverage"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -69,6 +69,7 @@ parameters:
   # Mean Sea Level Pressure
   - name: PRMSL
     description: "Mean Sea Level Pressure"
+    downsample: mean
     levels:
       - type: mean_sea_level
         display: "mean sea level"
@@ -84,6 +85,7 @@ parameters:
   # Surface Temperature (2m)
   - name: TMP
     description: "Temperature"
+    downsample: mean
     levels:
       - type: height_above_ground
         value: 2
@@ -96,6 +98,7 @@ parameters:
   # Dew Point Temperature (2m)
   - name: DPT
     description: "Dew Point Temperature"
+    downsample: mean
     levels:
       - type: height_above_ground
         value: 2
@@ -108,6 +111,7 @@ parameters:
   # U-component wind (10m)
   - name: UGRD
     description: "U-Component of Wind"
+    downsample: mean
     levels:
       - type: height_above_ground
         value: 10
@@ -121,6 +125,7 @@ parameters:
   # V-component wind (10m)
   - name: VGRD
     description: "V-Component of Wind"
+    downsample: mean
     levels:
       - type: height_above_ground
         value: 10
@@ -134,6 +139,7 @@ parameters:
   # Relative Humidity (2m)
   - name: RH
     description: "Relative Humidity"
+    downsample: mean
     levels:
       - type: height_above_ground
         value: 2
@@ -144,6 +150,7 @@ parameters:
   # Precipitable Water (entire atmosphere)
   - name: PWAT
     description: "Precipitable Water"
+    downsample: mean
     levels:
       - type: entire_atmosphere
         display: "entire atmosphere"
@@ -154,6 +161,7 @@ parameters:
   # Surface wind gust
   - name: GUST
     description: "Wind Speed (Gust)"
+    downsample: max
     levels:
       - type: surface
         display: "surface"
@@ -167,6 +175,7 @@ parameters:
   # Composite Reflectivity  
   - name: REFC
     description: "Composite Reflectivity"
+    downsample: max
     levels:
       - type: height_above_ground
         value: 1000
@@ -177,6 +186,7 @@ parameters:
   # Echo Top Height
   - name: RETOP
     description: "Echo Top Height"
+    downsample: max
     levels:
       - type: cloud_top
         display: "cloud top"
@@ -192,6 +202,7 @@ parameters:
   # Total Precipitation
   - name: APCP
     description: "Total Precipitation"
+    downsample: mean
     levels:
       - type: surface
         display: "surface"
@@ -207,6 +218,7 @@ parameters:
   # Convective Available Potential Energy (surface-based)
   - name: CAPE
     description: "Convective Available Potential Energy"
+    downsample: max
     levels:
       - type: surface
         display: "surface"
@@ -216,6 +228,7 @@ parameters:
   # Convective Inhibition
   - name: CIN
     description: "Convective Inhibition"
+    downsample: mean
     levels:
       - type: surface
         display: "surface"
@@ -225,6 +238,7 @@ parameters:
   # Updraft Helicity (2-5km layer) - Severe weather/tornado potential
   - name: MXUPHL
     description: "Maximum Updraft Helicity"
+    downsample: max
     levels:
       - type: height_above_ground_layer
         value: [2000, 5000]
@@ -239,6 +253,7 @@ parameters:
   # Lightning Threat (LTNG) - Total lightning density
   - name: LTNG
     description: "Lightning Threat"
+    downsample: max
     levels:
       - type: entire_atmosphere
         display: "entire atmosphere"
@@ -252,6 +267,7 @@ parameters:
   # Visibility
   - name: VIS
     description: "Visibility"
+    downsample: mean
     levels:
       - type: surface
         display: "surface"
@@ -267,6 +283,7 @@ parameters:
   # Total Cloud Cover
   - name: TCDC
     description: "Total Cloud Cover"
+    downsample: mean
     levels:
       - type: entire_atmosphere
         display: "entire atmosphere"
@@ -276,6 +293,7 @@ parameters:
   # Low Cloud Cover
   - name: LCDC
     description: "Low Cloud Cover"
+    downsample: mean
     levels:
       - type: low_cloud_layer
         display: "low cloud layer"
@@ -285,6 +303,7 @@ parameters:
   # Middle Cloud Cover
   - name: MCDC
     description: "Middle Cloud Cover"
+    downsample: mean
     levels:
       - type: middle_cloud_layer
         display: "middle cloud layer"
@@ -294,6 +313,7 @@ parameters:
   # High Cloud Cover
   - name: HCDC
     description: "High Cloud Cover"
+    downsample: mean
     levels:
       - type: high_cloud_layer
         display: "high cloud layer"
@@ -307,6 +327,7 @@ parameters:
   # Temperature at pressure levels
   - name: TMP
     description: "Temperature"
+    downsample: mean
     levels:
       - type: isobaric
         values: [850, 700, 500, 300, 250]
@@ -319,6 +340,7 @@ parameters:
   # Geopotential Height at pressure levels
   - name: HGT
     description: "Geopotential Height"
+    downsample: mean
     levels:
       - type: isobaric
         values: [850, 700, 500, 300, 250]

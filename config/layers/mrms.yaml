@@ -23,13 +23,13 @@ layers:
   - id: mrms_REFL
     parameter: REFL
     title: "Radar Reflectivity"
-    abstract: "Merged radar reflectivity composite (QC'd)"
+    abstract: "Seamless Hybrid Scan Reflectivity - continuous radar mosaic"
     style_file: reflectivity.json
     units:
       native: dBZ
       display: dBZ
     levels:
-      - value: "composite"
+      - value: "0 m above MSL"
         default: true
 
   # ==========================================================================
@@ -45,7 +45,7 @@ layers:
       native: "mm/hr"
       display: "mm/hr"
     levels:
-      - value: "surface"
+      - value: "0 m above MSL"
         default: true
 
   - id: mrms_QPE_01H
@@ -58,5 +58,18 @@ layers:
       display: mm
     accumulation: true
     levels:
-      - value: "surface"
+      - value: "0 m above MSL"
+        default: true
+
+  - id: mrms_QPE_24H
+    parameter: QPE_24H
+    title: "24-Hour QPE"
+    abstract: "24-hour quantitative precipitation estimate"
+    style_file: precipitation.json
+    units:
+      native: mm
+      display: mm
+    accumulation: true
+    levels:
+      - value: "0 m above MSL"
         default: true

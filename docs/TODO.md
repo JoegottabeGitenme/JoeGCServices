@@ -9,4 +9,16 @@
 - we have a projection crate and also reprojecting logic in the grid processor crate 
 - could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or something to provide a colormap in a get request
 - mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile then just compress to that b64 string, ofc this would rely on the frontend being able to render it
-- 
+- grid cache section in the web dashboard needs to go away
+- can we combine the crates and services folders?
+- we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
+- we have a bunch of stuff in the wms-validation folder i don't think we're using, could be expanded
+- some of the scripts in the scripts folder could be moved somewhere into validation
+- i guess the idea of the validation folder is to help ensure the code and system are behaving as expected
+- need to come up with plan to de-crapify the codebase, look through files one by one and consolidate functionality where possible
+- unit tests for EVERYTHING 
+- integration tests
+- various web ui links can be cleaned up into a dropdown or something on the web dashboard
+- wms-api container takes the longest to start
+- MRMS data is still in circles idfk
+- satellite data still using the old grid cache

@@ -1082,6 +1082,14 @@ async fn ingest_file_tracked(
                 }
             };
             
+            // Convert sentinel missing values to NaN
+            // MRMS uses -999 and -99 for missing/no-coverage data
+            // This ensures proper handling in downsampling and rendering
+            let grid_data: Vec<f32> = grid_data
+                .into_iter()
+                .map(|v| if v <= -90.0 { f32::NAN } else { v })
+                .collect();
+            
             if grid_data.len() != width * height {
                 warn!(
                     expected = width * height,
@@ -1501,7 +1509,10 @@ fn extract_mrms_param_from_filename(file_path: &str) -> Option<String> {
         .and_then(|s| s.to_str())?;
     
     let lower = filename.to_lowercase();
-    if lower.contains("reflectivity") || lower.contains("refl") {
+    // SeamlessHSR is the fully merged radar composite - map to REFL
+    if lower.contains("seamlesshsr") {
+        Some("REFL".to_string())
+    } else if lower.contains("reflectivity") || lower.contains("refl") {
         Some("REFL".to_string())
     } else if lower.contains("preciprate") || lower.contains("precip_rate") {
         Some("PRECIP_RATE".to_string())

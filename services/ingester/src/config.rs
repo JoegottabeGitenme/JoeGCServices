@@ -81,6 +81,8 @@ impl IngesterConfig {
                             parameter: "TMP".to_string(),
                         },
                         units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "wind_u_10m".to_string(),
@@ -89,6 +91,8 @@ impl IngesterConfig {
                             parameter: "UGRD".to_string(),
                         },
                         units: Some("m/s".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "wind_v_10m".to_string(),
@@ -97,6 +101,8 @@ impl IngesterConfig {
                             parameter: "VGRD".to_string(),
                         },
                         units: Some("m/s".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "pressure_msl".to_string(),
@@ -105,6 +111,8 @@ impl IngesterConfig {
                             parameter: "PRMSL".to_string(),
                         },
                         units: Some("Pa".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: vec![0, 6, 12, 18],
@@ -112,6 +120,7 @@ impl IngesterConfig {
                 resolution: "0.25deg".to_string(),
                 file_pattern: Some("gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}".to_string()),
                 poll_interval_secs: 3600, // 1 hour
+                is_observation: false,
             },
         );
 
@@ -131,6 +140,8 @@ impl IngesterConfig {
                             parameter: "TMP".to_string(),
                         },
                         units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "reflectivity".to_string(),
@@ -139,6 +150,8 @@ impl IngesterConfig {
                             parameter: "REFC".to_string(),
                         },
                         units: Some("dBZ".to_string()),
+                        downsample: Some("max".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(),
@@ -146,6 +159,7 @@ impl IngesterConfig {
                 resolution: "3km".to_string(),
                 file_pattern: Some("hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2".to_string()),
                 poll_interval_secs: 3600,
+                is_observation: false,
             },
         );
 
@@ -167,6 +181,8 @@ impl IngesterConfig {
                             parameter: "CMI_C02".to_string(), // 0.64µm red visible
                         },
                         units: None, // Reflectance factor (dimensionless)
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -175,6 +191,8 @@ impl IngesterConfig {
                             parameter: "CMI_C13".to_string(), // 10.3µm clean IR
                         },
                         units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(), // Hourly
@@ -182,6 +200,7 @@ impl IngesterConfig {
                 resolution: "1km".to_string(),
                 file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300, // 5 minutes - GOES updates every 5-15 min
+                is_observation: true,
             },
         );
 
@@ -203,6 +222,8 @@ impl IngesterConfig {
                             parameter: "CMI_C02".to_string(),
                         },
                         units: None,
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -211,6 +232,8 @@ impl IngesterConfig {
                             parameter: "CMI_C13".to_string(),
                         },
                         units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(),
@@ -218,6 +241,7 @@ impl IngesterConfig {
                 resolution: "1km".to_string(),
                 file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300,
+                is_observation: true,
             },
         );
 
@@ -262,6 +286,11 @@ pub struct ModelConfig {
 
     /// Model-specific polling interval
     pub poll_interval_secs: u64,
+    
+    /// Whether this is observation data (vs forecast data)
+    /// Observation data uses minute-level timestamps in storage paths
+    #[serde(default)]
+    pub is_observation: bool,
 }
 
 /// Data source configuration.
@@ -306,6 +335,14 @@ pub struct ParameterConfig {
     /// Physical units (e.g., "K", "m/s", "Pa")
     #[serde(default)]
     pub units: Option<String>,
+    
+    /// Downsampling method for pyramid generation: "mean", "max", or "nearest"
+    #[serde(default)]
+    pub downsample: Option<String>,
+    
+    /// Product path filter (for MRMS where each file is one product)
+    #[serde(default)]
+    pub product: Option<String>,
 }
 
 /// GRIB2 message filter criteria.

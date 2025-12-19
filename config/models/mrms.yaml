@@ -5,7 +5,7 @@ model:
   id: mrms
   name: "MRMS - Multi-Radar Multi-Sensor"
   description: "CONUS-wide radar mosaic and precipitation analysis at ~1km resolution"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -50,19 +50,20 @@ precaching:
   parameters: []
 
 parameters:
-  # Composite Reflectivity at 0.5° elevation
+  # Seamless Hybrid Scan Reflectivity - the fully composited radar mosaic
+  # This is the product that shows continuous coverage like Windy/NWS
   - name: REFL
-    description: "Merged Reflectivity QC (0.5° elevation)"
+    description: "Seamless Hybrid Scan Reflectivity"
+    downsample: max
     grib2:
       discipline: 209                    # MRMS local table
       category: 0
-      parameter: 16                      # MergedReflectivityQC
-    product: "MergedReflectivityQC_00.50"
+      parameter: 16                      # SeamlessHSR uses same parameter ID
+    product: "SeamlessHSR_00.00"
     levels:
-      - type: height_above_ground
-        value: 500
-        units: "m"
-        display: "composite"
+      - type: height_above_msl
+        value: 0
+        display: "0 m above MSL"
     style: reflectivity
     units: "dBZ"
     display_units: "dBZ"
@@ -71,15 +72,16 @@ parameters:
   # Precipitation Rate
   - name: PRECIP_RATE
     description: "Precipitation Rate"
+    downsample: max
     grib2:
       discipline: 209
       category: 1
       parameter: 0                       # PrecipRate
     product: "PrecipRate_00.00"
     levels:
-      - type: surface
+      - type: height_above_msl
         value: 0
-        display: "surface"
+        display: "0 m above MSL"
     style: precip_rate
     units: "mm/hr"
     display_units: "mm/hr"
@@ -88,15 +90,16 @@ parameters:
   # Quantitative Precipitation Estimate - 1 hour
   - name: QPE_01H
     description: "1-Hour Precipitation Accumulation"
+    downsample: mean
     grib2:
       discipline: 209
       category: 1
       parameter: 1                       # QPE
-    product: "MultiSensor_QPE_01H_Pass2"
+    product: "MultiSensor_QPE_01H_Pass2_00.00"
     levels:
-      - type: surface
+      - type: height_above_msl
         value: 0
-        display: "1hr"
+        display: "0 m above MSL"
     style: precipitation
     units: "mm"
     display_units: "mm"
@@ -105,15 +108,16 @@ parameters:
   # Quantitative Precipitation Estimate - 24 hour
   - name: QPE_24H
     description: "24-Hour Precipitation Accumulation"
+    downsample: mean
     grib2:
       discipline: 209
       category: 1
       parameter: 1
-    product: "MultiSensor_QPE_24H_Pass2"
+    product: "MultiSensor_QPE_24H_Pass2_00.00"
     levels:
-      - type: surface
+      - type: height_above_msl
         value: 0
-        display: "24hr"
+        display: "0 m above MSL"
     style: precipitation
     units: "mm"
     display_units: "mm"
