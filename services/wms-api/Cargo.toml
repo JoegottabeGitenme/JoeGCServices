@@ -24,7 +24,7 @@ tower-http = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
+serde_yaml.workspace = true
 quick-xml = { workspace = true }
 num_cpus = "1.16"
 bytes = { workspace = true }
@@ -42,9 +42,9 @@ anyhow = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
 dotenvy = { workspace = true }
-zarrs_filesystem = "0.2"
-walkdir = "2.5"
-tempfile = "3.14"
+zarrs_filesystem.workspace = true
+walkdir.workspace = true
+tempfile.workspace = true
 image = { workspace = true }
 imageproc = { workspace = true }
 rusttype = { workspace = true }

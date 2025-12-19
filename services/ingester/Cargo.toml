@@ -22,7 +22,7 @@ reqwest = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
+serde_yaml.workspace = true
 bytes = { workspace = true }
 chrono = { workspace = true }
 shellexpand = "3.1"
@@ -35,6 +35,6 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 
 # Zarr writing support
-zarrs_filesystem = "0.2"
-tempfile = "3"
-walkdir = "2"
+zarrs_filesystem.workspace = true
+tempfile.workspace = true
+walkdir.workspace = true

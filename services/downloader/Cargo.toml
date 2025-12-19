@@ -35,7 +35,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 wms-common = { path = "../../crates/wms-common" }
 
 # YAML config parsing
-serde_yaml = "0.9"
+serde_yaml.workspace = true
 
 # HTTP server for status API
 axum = { workspace = true }
