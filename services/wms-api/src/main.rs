@@ -16,6 +16,9 @@ mod state;
 mod validation;
 mod warming;
 
+#[cfg(test)]
+mod rendering_tests;
+
 use anyhow::Result;
 use axum::{extract::Extension, routing::{get, post}, Router};
 use clap::Parser;

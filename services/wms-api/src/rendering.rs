@@ -355,7 +355,7 @@ pub async fn render_weather_data_with_lut(
 }
 
 /// Render data based on parameter type using built-in color scales
-fn render_by_parameter(
+pub(crate) fn render_by_parameter(
     data: &[f32],
     parameter: &str,
     min_val: f32,
@@ -629,7 +629,7 @@ fn render_goes_ir(data: &[f32], width: usize, height: usize) -> Vec<u8> {
 /// Pixels outside data_bounds are set to NaN for transparent rendering.
 /// 
 /// For Web Mercator output, use `resample_for_mercator` instead.
-fn resample_from_geographic(
+pub(crate) fn resample_from_geographic(
     data: &[f32],
     data_width: usize,
     data_height: usize,
@@ -761,7 +761,7 @@ fn resample_from_geographic(
 /// 
 /// Supports both global and regional datasets by respecting data_bounds.
 /// Pixels outside data_bounds are set to NaN for transparent rendering.
-fn resample_for_mercator(
+pub(crate) fn resample_for_mercator(
     data: &[f32],
     data_width: usize,
     data_height: usize,
@@ -893,14 +893,14 @@ fn resample_for_mercator(
 }
 
 /// Convert latitude to Web Mercator Y coordinate
-fn lat_to_mercator_y(lat: f64) -> f64 {
+pub(crate) fn lat_to_mercator_y(lat: f64) -> f64 {
     let lat_rad = lat.to_radians();
     let y = ((std::f64::consts::PI / 4.0) + (lat_rad / 2.0)).tan().ln();
     y * 6378137.0  // Earth radius in meters
 }
 
 /// Convert Web Mercator Y coordinate to latitude
-fn mercator_y_to_lat(y: f64) -> f64 {
+pub(crate) fn mercator_y_to_lat(y: f64) -> f64 {
     let y_normalized = y / 6378137.0;  // Normalize by Earth radius
     (2.0 * y_normalized.exp().atan() - std::f64::consts::PI / 2.0).to_degrees()
 }
@@ -1418,7 +1418,7 @@ fn resample_for_model_geographic(
 }
 
 /// Convert HSV to RGB (simplified version)
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+pub(crate) fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     let h = h % 360.0;
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
@@ -4514,7 +4514,7 @@ fn sample_grid_value_with_projection(
 }
 
 /// Perform bilinear interpolation at grid coordinates
-fn bilinear_interpolate(
+pub(crate) fn bilinear_interpolate(
     grid_data: &[f32],
     grid_width: usize,
     grid_height: usize,
@@ -4549,7 +4549,7 @@ fn bilinear_interpolate(
 }
 
 /// Convert parameter value to display format with appropriate units
-fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String, String) {
+pub(crate) fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String, String) {
     if parameter.contains("TMP") || parameter.contains("TEMP") {
         // Temperature: Kelvin to Celsius
         let celsius = value - 273.15;
