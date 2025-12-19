@@ -13,7 +13,7 @@ sequenceDiagram
     participant NOAA
     participant Downloader
     participant FileSystem
-    participant WmsApi as WMS API (Ingester)
+    participant Ingester as Ingester Service
     participant ZarrWriter
     participant MinIO
     participant PostgreSQL
@@ -22,23 +22,44 @@ sequenceDiagram
     Downloader->>NOAA: HTTP GET with Range header
     NOAA-->>Downloader: GRIB2/NetCDF bytes
     Downloader->>FileSystem: Save to /data/downloads/
-    Downloader->>WmsApi: POST /admin/ingest
+    Downloader->>Ingester: POST /ingest
     
-    Note over WmsApi: Parse and process
-    WmsApi->>FileSystem: Read file
-    WmsApi->>WmsApi: Parse GRIB2/NetCDF
-    WmsApi->>WmsApi: Extract parameters
+    Note over Ingester: Parse and process
+    Ingester->>FileSystem: Read file
+    Ingester->>Ingester: Parse GRIB2/NetCDF
+    Ingester->>Ingester: Extract parameters
     
     loop For each parameter
-        WmsApi->>ZarrWriter: Write grid data
+        Ingester->>ZarrWriter: Write grid data
         ZarrWriter->>ZarrWriter: Generate pyramids (2-4 levels)
         ZarrWriter->>FileSystem: Write Zarr array to temp
     end
     
-    WmsApi->>MinIO: Copy Zarr directories
-    WmsApi->>PostgreSQL: INSERT INTO grid_catalog
-    WmsApi-->>Downloader: 200 OK (ingestion complete)
+    Ingester->>MinIO: Upload Zarr directories
+    Ingester->>PostgreSQL: INSERT INTO datasets
+    Ingester-->>Downloader: 200 OK (ingestion complete)
 ```
+
+### Service Architecture
+
+The ingestion system uses a dedicated service for better separation of concerns:
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Downloader    │────▶│    Ingester     │────▶│     MinIO       │
+│   Port 8081     │     │   Port 8082     │     │   Port 9000     │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                               │
+                               ▼
+                        ┌─────────────────┐
+                        │   PostgreSQL    │
+                        │   Port 5432     │
+                        └─────────────────┘
+```
+
+The WMS API can also proxy ingestion requests for backward compatibility:
+- `POST /admin/ingest` on wms-api (port 8080) proxies to ingester (port 8082)
+- `GET /api/admin/ingestion/active` on wms-api proxies to ingester's `/status`
 
 ### Step-by-Step Ingestion
 
@@ -69,8 +90,8 @@ let response = client.get(&url)
 #### 2. Trigger Ingestion
 
 ```bash
-# Downloader automatically calls this after download completes
-POST http://localhost:8080/admin/ingest
+# Downloader automatically calls the Ingester service after download completes
+POST http://ingester:8082/ingest
 Content-Type: application/json
 
 {
@@ -78,6 +99,8 @@ Content-Type: application/json
   "model": "gfs"
 }
 ```
+
+> **Note**: The Downloader sends requests directly to the Ingester service. The WMS API also exposes `/admin/ingest` which proxies to the Ingester for backward compatibility.
 
 ---
 

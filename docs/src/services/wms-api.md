@@ -16,8 +16,10 @@ The WMS API service is the primary HTTP server that implements OGC Web Map Servi
 2. **Tile Serving**: Renders and caches weather map tiles
 3. **Cache Management**: Maintains L1 (in-memory) cache
 4. **Metadata**: Provides GetCapabilities and layer information
-5. **Admin API**: Triggers ingestion, clears caches, provides statistics
+5. **Admin API**: Dashboard endpoints, cache management, proxies to ingester service
 6. **Metrics**: Exposes Prometheus metrics for monitoring
+
+> **Note**: Ingestion is handled by the dedicated [Ingester Service](./ingester.md). The wms-api proxies ingestion requests and status queries to the ingester.
 
 ## Architecture
 
@@ -205,18 +207,20 @@ Exposes Prometheus-format metrics.
 
 ---
 
-#### Trigger Ingestion
+#### Trigger Ingestion (Proxy)
 ```http
 POST /admin/ingest
 Content-Type: application/json
 
 {
-  "path": "/data/incoming/gfs.t00z.pgrb2.0p25.f000",
+  "file_path": "/data/downloads/gfs.t00z.pgrb2.0p25.f000",
   "model": "gfs"
 }
 ```
 
-Triggers manual ingestion of a data file.
+Proxies ingestion request to the [Ingester Service](./ingester.md) at `http://ingester:8082/ingest`.
+
+> **Note**: This endpoint forwards requests to the dedicated ingester service. Direct calls to the ingester are also supported.
 
 ---
 
@@ -626,17 +630,22 @@ curl http://localhost:9000/minio/health/live
 
 ```
 services/wms-api/src/
-├── main.rs              # Entry point, server setup
-├── state.rs             # Application state (connections, config)
-├── handlers.rs          # HTTP request handlers
-├── admin.rs             # Admin API handlers
-├── rendering.rs         # Tile rendering logic
-├── validation.rs        # Request validation
-├── warming.rs           # Cache warming
-├── cleanup.rs           # Background cleanup tasks
-├── metrics.rs           # Prometheus metrics
-└── startup_validation.rs  # Startup health checks
+├── main.rs               # Entry point, server setup
+├── state.rs              # Application state (connections, config)
+├── handlers.rs           # HTTP request handlers
+├── admin.rs              # Admin API handlers (proxies to ingester for ingestion)
+├── rendering.rs          # Tile rendering logic
+├── validation.rs         # Request validation
+├── warming.rs            # Cache warming
+├── cleanup.rs            # Background cleanup tasks
+├── grid_warming.rs       # Grid data pre-caching
+├── memory_pressure.rs    # Memory management
+├── metrics.rs            # Prometheus metrics
+├── layer_config.rs       # Layer configuration loading
+└── startup_validation.rs # Startup health checks
 ```
+
+> **Note**: Ingestion logic has been moved to the `crates/ingestion` library and `services/ingester` service. The `admin.rs` file now proxies ingestion requests to the ingester service.
 
 ## Dependencies
 

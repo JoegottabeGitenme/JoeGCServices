@@ -8,6 +8,7 @@ Weather WMS is built on a foundation of reusable Rust libraries (crates) that ha
 graph TB
     subgraph "Services"
         API[wms-api]
+        ING[ingester]
         DL[downloader]
     end
     
@@ -18,6 +19,7 @@ graph TB
         RENDERER[renderer]
         STORAGE[storage]
         PROTOCOL[wms-protocol]
+        INGESTION[ingestion]
     end
     
     subgraph "Foundation Crates"
@@ -29,13 +31,16 @@ graph TB
     API --> RENDERER
     API --> STORAGE
     API --> GRIDPROC
-    API --> GRIB
-    API --> NETCDF
     API --> COMMON
     
-    WORKER --> RENDERER
-    WORKER --> STORAGE
-    WORKER --> COMMON
+    ING --> INGESTION
+    ING --> STORAGE
+    
+    INGESTION --> GRIB
+    INGESTION --> NETCDF
+    INGESTION --> GRIDPROC
+    INGESTION --> STORAGE
+    INGESTION --> PROJ
     
     GRIDPROC --> PROJ
     GRIDPROC --> COMMON
@@ -59,6 +64,7 @@ graph TB
 |-------|---------|---------------|--------------|
 | [grib2-parser](./grib2-parser.md) | Parse GRIB2 weather data files | ~2,500 | bytes, thiserror |
 | [grid-processor](./grid-processor.md) | Zarr V3 grid storage with pyramids | ~4,000 | zarrs, object_store, ndarray |
+| [ingestion](./ingestion.md) | Core ingestion logic (GRIB2/NetCDF to Zarr) | ~1,500 | grib2-parser, netcdf-parser, grid-processor |
 | [netcdf-parser](./netcdf-parser.md) | Parse NetCDF-4 satellite data | ~800 | netcdf, ndarray |
 | [projection](./projection.md) | Coordinate system transformations | ~1,200 | None (pure math) |
 | [renderer](./renderer.md) | Weather visualization engine | ~3,000 | image, imageproc |

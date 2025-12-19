@@ -8,33 +8,30 @@ name = "ingester"
 path = "src/main.rs"
 
 [dependencies]
-wms-common = { path = "../../crates/wms-common" }
+# Internal crates
 storage = { path = "../../crates/storage" }
-grib2-parser = { path = "../../crates/grib2-parser" }
-grid-processor = { path = "../../crates/grid-processor" }
-netcdf-parser = { path = "../../crates/netcdf-parser" }
-projection = { path = "../../crates/projection" }
+ingestion = { path = "../../crates/ingestion" }
 
+# Async runtime
 tokio = { workspace = true }
-async-trait = { workspace = true }
-futures = { workspace = true }
-reqwest = { workspace = true }
 
+# HTTP server
+axum = { workspace = true }
+
+# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml.workspace = true
-bytes = { workspace = true }
 chrono = { workspace = true }
-shellexpand = "3.1"
 
+# Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# CLI
 clap = { workspace = true }
-thiserror = { workspace = true }
+
+# Error handling
 anyhow = { workspace = true }
 
-# Zarr writing support
-zarrs_filesystem.workspace = true
-tempfile.workspace = true
-walkdir.workspace = true
+# UUID for tracking
+uuid = { workspace = true }

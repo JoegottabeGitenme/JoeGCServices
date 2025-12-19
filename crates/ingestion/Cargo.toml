@@ -1,0 +1,49 @@
+[package]
+name = "ingestion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core ingestion logic for weather data (GRIB2, NetCDF) into Zarr format"
+
+[dependencies]
+# Internal crates
+storage = { path = "../storage" }
+grid-processor = { path = "../grid-processor" }
+grib2-parser = { path = "../grib2-parser" }
+netcdf-parser = { path = "../netcdf-parser" }
+projection = { path = "../projection" }
+wms-common = { path = "../wms-common" }
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Zarr filesystem
+zarrs_filesystem.workspace = true
+
+# File utilities
+walkdir.workspace = true
+tempfile.workspace = true
+
+# Compression (for .grib2.gz files)
+flate2.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true

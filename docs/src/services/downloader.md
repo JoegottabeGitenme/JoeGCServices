@@ -15,7 +15,7 @@ The Downloader service fetches weather data files from NOAA sources with robust 
 2. **Resume Support**: HTTP Range requests for interrupted downloads
 3. **Retry Logic**: Exponential backoff for transient failures
 4. **Progress Tracking**: Persistent state across restarts
-5. **Ingestion Trigger**: Notifies WMS API when downloads complete
+5. **Ingestion Trigger**: Notifies [Ingester Service](./ingester.md) when downloads complete
 6. **Status API**: HTTP endpoints for monitoring and control
 
 ## Architecture
@@ -32,10 +32,11 @@ graph TB
         W4["Worker 4"]
     end
     
-    State[("SQLite State DB")]
+    State[("State DB")]
     NOAA["NOAA Sources"]
     FS["File System"]
-    API["WMS API"]
+    Ingester["Ingester Service
+    Port 8082"]
     HTTP["HTTP Status Server
     Port 8081"]
     
@@ -53,7 +54,7 @@ graph TB
     W4 --> NOAA
     
     NOAA --> FS
-    FS --> API
+    FS --> Ingester
 ```
 
 ## Data Sources
@@ -283,23 +284,23 @@ async fn download_with_retry(
 
 ### 5. Ingestion Trigger
 
-After successful download:
+After successful download, the downloader sends a request to the [Ingester Service](./ingester.md):
 
 ```rust
 async fn trigger_ingestion(
-    ingester_url: &str,
+    ingester_url: &str,  // http://ingester:8082/ingest
     file_path: &Path,
     model: &str,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     
     let request_body = serde_json::json!({
-        "path": file_path.to_string_lossy(),
+        "file_path": file_path.to_string_lossy(),
         "model": model,
     });
     
     let response = client
-        .post(format!("{}/admin/ingest", ingester_url))
+        .post(ingester_url)  // POST http://ingester:8082/ingest
         .json(&request_body)
         .send()
         .await?;
@@ -449,7 +450,7 @@ MAX_RETRIES=5                         # Retry attempts
 DOWNLOAD_TIMEOUT_SECS=300             # Per-file timeout
 
 # Ingestion
-INGESTER_URL=http://wms-api:8080      # WMS API URL for ingestion triggers
+INGESTER_URL=http://ingester:8082/ingest  # Ingester service URL for triggering ingestion
 
 # HTTP server
 STATUS_PORT=8081                      # Status API port

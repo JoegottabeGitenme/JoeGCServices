@@ -1,12 +1,12 @@
 # Ingester Service
 
-The Ingester service parses weather data files (GRIB2 and NetCDF), extracts parameters, and writes them to Zarr V3 format with multi-resolution pyramids for efficient tile rendering.
+The Ingester service is a standalone HTTP service that parses weather data files (GRIB2 and NetCDF), extracts parameters, and writes them to Zarr V3 format with multi-resolution pyramids for efficient tile rendering.
 
 ## Overview
 
-**Location**: `services/wms-api/src/admin.rs` (integrated into WMS API)  
+**Location**: `services/ingester/`  
 **Language**: Rust  
-**Port**: None (HTTP endpoint on WMS API: `POST /admin/ingest`)  
+**Port**: 8082 (HTTP API)  
 **Scaling**: Vertical (CPU/Memory intensive)
 
 ## Responsibilities
@@ -16,7 +16,146 @@ The Ingester service parses weather data files (GRIB2 and NetCDF), extracts para
 3. **Zarr Conversion**: Writes grid data as Zarr V3 arrays with sharding
 4. **Pyramid Generation**: Creates multi-resolution pyramids for fast rendering
 5. **Cataloging**: Registers metadata in PostgreSQL
-6. **Cache Invalidation**: Triggers cache warming for new data
+6. **Status Tracking**: Tracks active and completed ingestions
+
+## Architecture
+
+```mermaid
+graph TB
+    Downloader["Downloader Service"]
+    HTTP["HTTP Server
+    Port 8082"]
+    
+    subgraph Ingester["Ingester Service"]
+        Server["HTTP Handler"]
+        Tracker["Ingestion Tracker"]
+        
+        subgraph Processing
+            Parse["File Parser"]
+            Extract["Extract Messages"]
+            Decode["Decode Grids"]
+        end
+        
+        subgraph Writing
+            Zarr["Write Zarr Array"]
+            Pyramid["Generate Pyramids"]
+        end
+    end
+    
+    subgraph StorageLayer["Storage"]
+        Upload["Upload to MinIO"]
+        Catalog["Register in PostgreSQL"]
+    end
+    
+    Downloader -->|POST /ingest| HTTP
+    HTTP --> Server
+    Server --> Tracker
+    Server --> Parse
+    Parse --> Extract
+    Extract --> Decode
+    Decode --> Zarr
+    Zarr --> Pyramid
+    Pyramid --> Upload
+    Upload --> Catalog
+```
+
+## HTTP API
+
+### POST /ingest - Trigger Ingestion
+
+Processes a downloaded file and stores it as Zarr format.
+
+```bash
+POST http://ingester:8082/ingest
+Content-Type: application/json
+
+{
+  "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2",
+  "model": "gfs",
+  "source_url": "https://noaa-gfs-bdp-pds.s3.amazonaws.com/...",
+  "forecast_hour": 3
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Ingested 47 datasets",
+  "datasets_registered": 47,
+  "model": "gfs",
+  "reference_time": "2024-12-17T12:00:00Z",
+  "parameters": ["TMP", "UGRD", "VGRD", "RH", "HGT", ...]
+}
+```
+
+---
+
+### GET /status - Ingestion Status
+
+Returns currently active and recently completed ingestions.
+
+```bash
+GET http://ingester:8082/status
+```
+
+**Response**:
+```json
+{
+  "active": [
+    {
+      "id": "abc123-...",
+      "file_path": "/data/downloads/gfs_20241217_12z_f006.grib2",
+      "model": "gfs",
+      "started_at": "2024-12-17T19:54:00Z",
+      "status": "writing_zarr",
+      "parameters_found": 25,
+      "datasets_registered": 20
+    }
+  ],
+  "recent": [
+    {
+      "id": "def456-...",
+      "file_path": "/data/downloads/mrms_MRMS_SeamlessHSR_00.00_20241217-143000.grib2.gz",
+      "started_at": "2024-12-17T19:53:00Z",
+      "completed_at": "2024-12-17T19:53:01Z",
+      "duration_ms": 450,
+      "success": true,
+      "datasets_registered": 1,
+      "parameters": ["REFL"],
+      "error_message": null
+    }
+  ],
+  "total_completed": 156
+}
+```
+
+---
+
+### GET /health - Health Check
+
+```bash
+GET http://ingester:8082/health
+```
+
+**Response**:
+```json
+{
+  "status": "ok",
+  "service": "ingester",
+  "version": "0.1.0"
+}
+```
+
+---
+
+### GET /metrics - Prometheus Metrics
+
+Returns metrics in Prometheus format.
+
+```bash
+GET http://ingester:8082/metrics
+```
 
 ## Supported Formats
 
@@ -46,40 +185,6 @@ The Ingester service parses weather data files (GRIB2 and NetCDF), extracts para
 
 **Parser**: Custom Rust implementation (`netcdf-parser` crate)
 
-## Architecture
-
-```mermaid
-graph TB
-    Input["Data File
-    GRIB2 or NetCDF"]
-    
-    subgraph Parsing
-        Parse["File Parser"]
-        Extract["Extract Messages"]
-        Decode["Decode Grids"]
-    end
-    
-    subgraph Processing
-        Zarr["Write Zarr Array"]
-        Pyramid["Generate Pyramids"]
-    end
-    
-    subgraph StorageLayer["Storage"]
-        Upload["Upload to MinIO"]
-        Catalog["Register in PostgreSQL"]
-        Warm["Trigger Cache Warming"]
-    end
-    
-    Input --> Parse
-    Parse --> Extract
-    Extract --> Decode
-    Decode --> Zarr
-    Zarr --> Pyramid
-    Pyramid --> Upload
-    Upload --> Catalog
-    Catalog --> Warm
-```
-
 ## Ingestion Flow
 
 ### 1. File Detection
@@ -88,7 +193,7 @@ Ingestion is triggered when the Downloader service completes a download:
 
 ```rust
 // Downloader triggers after successful download
-POST http://wms-api:8080/admin/ingest
+POST http://ingester:8082/ingest
 {
   "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2",
   "model": "gfs",
@@ -131,7 +236,7 @@ let projection = parser.get_projection()?;
 
 ### 3. Parameter Filtering
 
-Only configured parameters are ingested. The filter is defined in `admin.rs`:
+Only configured parameters are ingested. The filter is defined in `crates/ingestion/src/config.rs`:
 
 ```rust
 // Pressure levels to ingest
@@ -154,28 +259,7 @@ let target_params = vec![
     ("VGRD", vec![(103, Some(10)), (100, None)]),    // 10m + pressure levels
     ("GUST", vec![(1, None)]),                       // Surface gust
     
-    // Moisture
-    ("RH", vec![(103, Some(2)), (100, None)]),       // 2m + pressure levels
-    ("PWAT", vec![(200, None)]),                     // Precipitable water
-    
-    // Geopotential
-    ("HGT", vec![(100, None)]),                      // Pressure levels
-    
-    // Precipitation
-    ("APCP", vec![(1, None)]),                       // Total precipitation
-    
-    // Convective
-    ("CAPE", vec![(1, None), (180, None)]),          // Surface CAPE
-    ("CIN", vec![(1, None), (180, None)]),           // Surface CIN
-    
-    // Clouds
-    ("TCDC", vec![(200, None), (10, None)]),         // Total cloud cover
-    ("LCDC", vec![(212, None)]),                     // Low cloud
-    ("MCDC", vec![(222, None)]),                     // Middle cloud
-    ("HCDC", vec![(232, None)]),                     // High cloud
-    
-    // Visibility
-    ("VIS", vec![(1, None)]),                        // Surface visibility
+    // ... more parameters
 ];
 ```
 
@@ -195,11 +279,6 @@ let grid_data: Vec<f32> = raw_data.iter().map(|&v| {
     }
 }).collect();
 ```
-
-This ensures:
-- Proper rendering (NaN pixels are transparent)
-- Correct pyramid generation (NaN propagates correctly through downsampling)
-- Standard missing data representation
 
 **Common sentinel values by source**:
 | Source | Sentinel | Meaning |
@@ -246,8 +325,8 @@ let result = writer.write_with_pyramids(
     reference_time, forecast_hour,
 )?;
 
-// Copy to MinIO
-copy_dir_to_minio(&local_path, &minio_path, &storage).await?;
+// Upload to MinIO
+upload_zarr_directory(&local_path, &minio_path, &storage).await?;
 ```
 
 **Zarr Output Structure**:
@@ -285,99 +364,53 @@ let entry = CatalogEntry {
 catalog.insert(&entry).await?;
 ```
 
-**Catalog Schema**:
-```sql
-CREATE TABLE grid_catalog (
-    id SERIAL PRIMARY KEY,
-    model VARCHAR(50) NOT NULL,
-    parameter VARCHAR(50) NOT NULL,
-    level VARCHAR(100) NOT NULL,
-    reference_time TIMESTAMPTZ NOT NULL,
-    forecast_hour INTEGER NOT NULL,
-    storage_path VARCHAR(500) NOT NULL,
-    bbox JSONB NOT NULL,
-    grid_shape JSONB NOT NULL,
-    zarr_metadata JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    UNIQUE(model, parameter, level, reference_time, forecast_hour)
-);
-```
-
----
-
-### 6. Cache Warming
-
-After ingestion, the grid warmer pre-caches popular tiles:
-
-```rust
-// Notify warmer of new data
-if let Some(warmer) = &state.grid_warmer {
-    warmer.warm_grid(
-        &model,
-        &param,
-        &level,
-        reference_time,
-        forecast_hour,
-    ).await;
-}
-```
-
 ## Configuration
 
 ### Environment Variables
 
 ```bash
+# Server
+PORT=8082                              # HTTP server port
+
 # Database
 DATABASE_URL=postgresql://weatherwms:password@postgres:5432/weatherwms
 
 # Object Storage (MinIO)
-MINIO_ENDPOINT=http://minio:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=weather-data
-
-# Zarr settings
-ZARR_CHUNK_SIZE=512
-ZARR_PYRAMID_LEVELS=2
+S3_ENDPOINT=http://minio:9000
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_BUCKET=weather-data
+S3_REGION=us-east-1
+S3_ALLOW_HTTP=true
 
 # Logging
-RUST_LOG=info,wms_api::admin=debug
+RUST_LOG=info,ingestion=debug
 ```
 
-### Model Configuration
+### Command-Line Arguments
 
-Model configurations in `config/models/*.yaml` define which parameters to ingest:
+```bash
+ingester --help
 
-```yaml
-# config/models/gfs.yaml
-model:
-  id: gfs
-  name: "GFS - Global Forecast System"
-  enabled: true
+USAGE:
+    ingester [OPTIONS]
 
-parameters:
-  - name: TMP
-    description: "Temperature"
-    levels:
-      - type: height_above_ground
-        value: 2
-        display: "2 m above ground"
-      - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
-    style: temperature
-    units: K
-    
-  - name: UGRD
-    description: "U-Component of Wind"
-    levels:
-      - type: height_above_ground
-        value: 10
-        display: "10 m above ground"
-      - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100]
-    style: wind
-    units: m/s
+OPTIONS:
+    -p, --port <PORT>           HTTP server port [default: 8082]
+        --test-file <PATH>      Test with local file (bypasses HTTP server)
+        --test-model <MODEL>    Model name for test file
+        --forecast-hour <HOUR>  Forecast hour for test file
+        --log-level <LEVEL>     Log level [default: info]
+    -h, --help                  Print help information
+```
+
+### Test File Mode
+
+For development and testing, you can ingest a file directly without the HTTP server:
+
+```bash
+# Ingest a local file directly
+ingester --test-file /data/downloads/gfs_20241217_12z_f003.grib2 --test-model gfs
 ```
 
 ## Storage Path Format
@@ -386,31 +419,28 @@ Path format differs by data type:
 
 ### Forecast Models (GFS, HRRR)
 ```
-grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+grids/{model}/{date}_{HH}z/{param}_{level}_f{fhr:03}.zarr
 ```
 
 **Examples**:
 ```
-grids/gfs/2024-12-17/12/tmp_f003.zarr
-grids/gfs/2024-12-17/12/ugrd_f003.zarr
-grids/hrrr/2024-12-17/18/refl_f001.zarr
+grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr
+grids/hrrr/20241217_18z/refc_entire_atmosphere_f001.zarr
 ```
 
 ### Observation Models (MRMS, GOES)
 ```
-grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+grids/{model}/{date}_{HH}{MM}z/{param}_{level}_f000.zarr
 ```
 
 The `{MM}` component stores the minute of observation, allowing minute-level temporal resolution:
 
 **Examples**:
 ```
-grids/mrms/2024-12-17/12/REFL_05.zarr    # 12:05 UTC observation
-grids/mrms/2024-12-17/12/REFL_07.zarr    # 12:07 UTC observation
-grids/goes18/2024-12-17/18/CMI_C13_30.zarr  # 18:30 UTC scan
+grids/mrms/20241217_1205z/refl_0_m_above_msl_f000.zarr    # 12:05 UTC observation
+grids/mrms/20241217_1207z/refl_0_m_above_msl_f000.zarr    # 12:07 UTC observation
+grids/goes18/20241217_1830z/cmi_c13_ir_f000.zarr          # 18:30 UTC scan
 ```
-
-This enables MRMS to store 2-minute update frequency data without overwriting previous observations within the same hour.
 
 ## Performance
 
@@ -418,9 +448,10 @@ This enables MRMS to store 2-minute update frequency data without overwriting pr
 
 | Format | File Size | Grid Size | Parameters | Time |
 |--------|-----------|-----------|------------|------|
-| GRIB2 (GFS) | 550 MB | 1440×721 | ~50 | ~30s |
-| GRIB2 (HRRR) | 250 MB | 1799×1059 | ~20 | ~15s |
-| NetCDF (GOES) | 50 MB | 5424×5424 | 1 | ~8s |
+| GRIB2 (GFS) | 550 MB | 1440x721 | ~50 | ~30s |
+| GRIB2 (HRRR) | 250 MB | 1799x1059 | ~20 | ~15s |
+| GRIB2 (MRMS) | 3 MB | 3500x7000 | 1 | ~0.5s |
+| NetCDF (GOES) | 50 MB | 5424x5424 | 1 | ~8s |
 
 ### Resource Usage
 
@@ -432,7 +463,7 @@ This enables MRMS to store 2-minute update frequency data without overwriting pr
 ### Storage Efficiency
 
 Zarr with Blosc LZ4 compression:
-- GFS TMP grid (1440×721 f32): ~1.8 MB (from 4.1 MB raw)
+- GFS TMP grid (1440x721 f32): ~1.8 MB (from 4.1 MB raw)
 - With 2 pyramid levels: ~2.5 MB total
 - Compression ratio: ~2:1 typical for weather data
 
@@ -470,7 +501,7 @@ docker compose restart downloader
 ```yaml
 # docker-compose.yml
 services:
-  wms-api:
+  ingester:
     mem_limit: 8g
     mem_reservation: 4g
 ```
@@ -505,12 +536,12 @@ ZARR_PYRAMID_LEVELS=1
 **Symptom**: Parameter in GRIB2 not appearing in catalog
 
 **Causes**:
-- Not in `target_params` list
+- Not in `target_params` list in `crates/ingestion/src/config.rs`
 - Level type mismatch
 - Pressure level not in `pressure_levels` set
 
 **Solution**:
-1. Check `admin.rs` `target_params` configuration
+1. Check `crates/ingestion/src/config.rs` for `should_ingest_parameter()` configuration
 2. Verify level type codes match GRIB2 table 4.5
 3. Add pressure level if needed
 
@@ -524,10 +555,10 @@ Structured JSON logs to stdout:
 {
   "timestamp": "2024-12-17T19:53:36Z",
   "level": "INFO",
-  "target": "wms_api::admin",
-  "message": "Admin: Ingesting file",
-  "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2",
-  "model": "gfs"
+  "target": "ingester::server",
+  "message": "Received ingest request",
+  "id": "abc123-...",
+  "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2"
 }
 ```
 
@@ -535,90 +566,75 @@ Structured JSON logs to stdout:
 {
   "timestamp": "2024-12-17T19:53:45Z",
   "level": "INFO",
-  "message": "Ingestion complete",
+  "target": "ingestion::grib2",
+  "message": "GRIB2 ingestion complete",
   "model": "gfs",
-  "datasets_registered": 47,
-  "duration_ms": 8823
+  "datasets": 47,
+  "parameters": "[\"TMP\", \"UGRD\", \"VGRD\", ...]"
 }
 ```
 
 ### Metrics
 
-Track ingestion via database queries:
+Track ingestion via the `/status` endpoint or database queries:
 
 ```sql
 -- Recent ingestions
 SELECT model, parameter, level, reference_time, created_at
-FROM grid_catalog
+FROM datasets
 ORDER BY created_at DESC
 LIMIT 20;
 
 -- Ingestion counts by model
 SELECT model, COUNT(*) as count, MAX(created_at) as last_ingestion
-FROM grid_catalog
+FROM datasets
 GROUP BY model;
 
 -- Storage usage by model
 SELECT model, 
        COUNT(*) as datasets,
        COUNT(DISTINCT parameter) as parameters
-FROM grid_catalog
+FROM datasets
 GROUP BY model;
 ```
 
 ### Admin Dashboard
 
-The web dashboard at `http://localhost:8080/admin.html` shows:
-- Active ingestions in progress
+The web dashboard at `http://localhost:8000/admin.html` shows:
+- Active ingestions in progress (via wms-api proxy to ingester)
 - Recent ingestion history
 - Parameter counts per model
 - Storage tree visualization
 
-## API Endpoints
+## Code Structure
 
-### Trigger Ingestion
+```
+services/ingester/src/
+├── main.rs              # Entry point, HTTP server or test-file mode
+└── server.rs            # HTTP endpoints (/ingest, /status, /health)
 
-```bash
-POST /admin/ingest
-Content-Type: application/json
-
-{
-  "file_path": "/data/downloads/gfs_20241217_12z_f003.grib2",
-  "model": "gfs",
-  "source_url": "https://...",
-  "forecast_hour": 3
-}
-
-Response:
-{
-  "success": true,
-  "message": "Ingested 47 datasets",
-  "datasets_registered": 47,
-  "model": "gfs",
-  "reference_time": "2024-12-17T12:00:00Z",
-  "parameters": ["TMP", "UGRD", "VGRD", ...]
-}
+crates/ingestion/src/
+├── lib.rs               # Public API exports
+├── ingester.rs          # Core Ingester struct
+├── grib2.rs             # GRIB2 file ingestion
+├── netcdf.rs            # NetCDF file ingestion  
+├── metadata.rs          # File type detection, model/param extraction
+├── config.rs            # Parameter filtering rules
+├── upload.rs            # Upload Zarr to MinIO
+└── error.rs             # Error types
 ```
 
-### Check Ingestion Status
+## Dependencies
 
-```bash
-GET /api/admin/ingestion/active
+Key Rust crates used:
 
-Response:
-{
-  "active_ingestions": [
-    {
-      "id": "abc123",
-      "file": "gfs_20241217_12z_f006.grib2",
-      "model": "gfs",
-      "status": "shredding",
-      "progress": 45,
-      "started_at": "2024-12-17T19:54:00Z"
-    }
-  ]
-}
-```
+- **axum**: Web framework
+- **tokio**: Async runtime
+- **grib2-parser**: GRIB2 parsing
+- **netcdf-parser**: NetCDF parsing
+- **grid-processor**: Zarr writing with pyramids
+- **storage**: MinIO/PostgreSQL access
+- **tracing**: Structured logging
 
 ## Next Steps
 

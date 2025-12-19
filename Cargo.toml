@@ -9,6 +9,7 @@ members = [
     "crates/wms-protocol",
     "crates/storage",
     "crates/grid-processor",
+    "crates/ingestion",
     "services/downloader",
     "services/ingester",
     "services/wms-api",
