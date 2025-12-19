@@ -38,3 +38,4 @@
     - seems neat we can implement it if we feel like it later
 - front end viewer needs to pass a default style otherwise wms wont work
 - BUG? passing 'default' to a style should be a valid option for a WMS request, add this to validation tests too
+- implement the crazy radar diffing stuff to try and reduce bandwidth for radar loops

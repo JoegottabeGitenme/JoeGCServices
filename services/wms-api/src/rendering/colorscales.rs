@@ -91,7 +91,8 @@ pub fn render_with_style_file(
         .map_err(|e| format!("Failed to load style file '{}': {}", style_file_path, e))?;
     
     // Get requested style or default style
-    let style = if let Some(name) = style_name {
+    // When style_name is "default" or None, use the default style from the config
+    let style = if let Some(name) = style_name.filter(|n| *n != "default") {
         config.get_style(name).ok_or_else(|| {
             format!(
                 "Style '{}' not found in style file '{}'. Available styles: {:?}",
