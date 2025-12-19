@@ -634,12 +634,16 @@ services/wms-api/src/
 ├── state.rs              # Application state (connections, config)
 ├── handlers.rs           # HTTP request handlers
 ├── admin.rs              # Admin API handlers (proxies to ingester for ingestion)
-├── rendering.rs          # Tile rendering logic
+├── rendering/            # Tile rendering logic
+│   ├── mod.rs            # Main rendering functions
+│   ├── loaders.rs        # Zarr data loading
+│   ├── resampling.rs     # Grid resampling for tiles
+│   └── ...
 ├── validation.rs         # Request validation
-├── warming.rs            # Cache warming
+├── warming.rs            # Tile cache warming at startup
 ├── cleanup.rs            # Background cleanup tasks
-├── grid_warming.rs       # Grid data pre-caching
-├── memory_pressure.rs    # Memory management
+├── chunk_warming.rs      # Zarr chunk pre-caching for observation data
+├── memory_pressure.rs    # Memory management and cache eviction
 ├── metrics.rs            # Prometheus metrics
 ├── layer_config.rs       # Layer configuration loading
 └── startup_validation.rs # Startup health checks

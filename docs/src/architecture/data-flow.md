@@ -280,7 +280,7 @@ sequenceDiagram
     participant L1 as L1 Cache (Memory)
     participant L2 as L2 Cache (Redis)
     participant PG as PostgreSQL
-    participant Zarr as Zarr Processor
+    participant ChunkCache as Chunk Cache
     participant MinIO
     participant Renderer
     
@@ -297,24 +297,28 @@ sequenceDiagram
             API->>L1: Store
             API-->>Client: 200 OK (PNG)
         else L2 Miss (render path)
-            API->>PG: Query catalog for storage_path
-            PG-->>API: CatalogEntry with Zarr path
+            API->>PG: Query catalog for Zarr path
+            PG-->>API: CatalogEntry with zarr_metadata
             
-            API->>Zarr: read_region(bbox, output_size)
-            Note over Zarr: Select pyramid level based on zoom
-            Zarr->>MinIO: Byte-range requests for chunks
-            MinIO-->>Zarr: Compressed chunk data
-            Zarr->>Zarr: Decompress (Blosc LZ4)
-            Zarr->>Zarr: Assemble chunks into region
-            Zarr-->>API: GridRegion with data + bounds
+            Note over API,ChunkCache: Zarr Processor reads grid data
+            API->>ChunkCache: Check for cached chunks
+            alt Chunk Cache Hit
+                ChunkCache-->>API: Decompressed chunk data
+            else Chunk Cache Miss
+                API->>MinIO: Byte-range requests for chunks
+                MinIO-->>API: Compressed chunk data
+                API->>API: Decompress (Blosc LZ4)
+                API->>ChunkCache: Cache decompressed chunks
+            end
             
+            API->>API: Assemble chunks into region
             API->>Renderer: render_tile(region, style)
             Renderer->>Renderer: Resample to output size
             Renderer->>Renderer: Apply colormap
             Renderer->>Renderer: Encode PNG
             Renderer-->>API: PNG bytes
             
-            par Store in caches
+            par Store in tile caches
                 API->>L2: SET with TTL
                 API->>L1: INSERT with LRU
             end

@@ -37,12 +37,16 @@ RUST_BACKTRACE=1                   # Enable backtraces
 
 ### Caching
 ```bash
-# L1 (In-Memory) Cache
+# L1 (In-Memory) Tile Cache
 ENABLE_L1_CACHE=true
 TILE_CACHE_SIZE=10000              # Max tiles (~300 MB)
 TILE_CACHE_TTL_SECS=300            # TTL: 5 minutes
 
-# GRIB Data Cache
+# Zarr Chunk Cache (decompressed grid data chunks)
+ENABLE_CHUNK_CACHE=true
+CHUNK_CACHE_SIZE_MB=1024           # ~1 GB for decompressed chunks
+
+# GRIB Data Cache (raw file cache, used for ingestion fallback)
 ENABLE_GRIB_CACHE=true
 GRIB_CACHE_SIZE=500                # Max GRIB files (~2.5 GB)
 
@@ -52,7 +56,7 @@ PREFETCH_RINGS=2                   # Surrounding tile rings (1=8, 2=24)
 PREFETCH_MIN_ZOOM=3
 PREFETCH_MAX_ZOOM=12
 
-# Cache Warming
+# Tile Cache Warming (at startup)
 ENABLE_CACHE_WARMING=true
 CACHE_WARMING_MAX_ZOOM=4           # Warm zooms 0-4 (341 tiles)
 CACHE_WARMING_HOURS=0,3,6          # Forecast hours to warm
