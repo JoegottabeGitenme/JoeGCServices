@@ -134,20 +134,6 @@ impl GridWarmer {
         configs
     }
     
-    /// Check if a model has precaching enabled.
-    #[allow(dead_code)]
-    pub fn is_enabled(&self, model: &str) -> bool {
-        self.configs.get(model).map(|c| c.enabled).unwrap_or(false)
-    }
-    
-    /// Check if warm_on_ingest is enabled for a model.
-    #[allow(dead_code)]
-    pub fn should_warm_on_ingest(&self, model: &str) -> bool {
-        self.configs.get(model)
-            .map(|c| c.enabled && c.warm_on_ingest)
-            .unwrap_or(false)
-    }
-    
     /// Warm a specific dataset (called on ingestion).
     /// This loads and parses the data, storing it in GridDataCache.
     pub async fn warm_dataset(
@@ -403,28 +389,4 @@ impl GridWarmer {
             );
         }
     }
-    
-    /// Get stats about the warmer.
-    #[allow(dead_code)]
-    pub async fn stats(&self) -> GridWarmerStats {
-        let warmed_count = self.warmed_keys.read().await.len();
-        let cache_stats = self.state.grid_cache.stats().await;
-        
-        GridWarmerStats {
-            enabled_models: self.configs.iter().filter(|(_, c)| c.enabled).count(),
-            tracked_keys: warmed_count,
-            cache_entries: cache_stats.entries,
-            cache_hit_rate: cache_stats.hit_rate(),
-        }
-    }
-}
-
-/// Statistics about the grid warmer.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct GridWarmerStats {
-    pub enabled_models: usize,
-    pub tracked_keys: usize,
-    pub cache_entries: usize,
-    pub cache_hit_rate: f64,
 }

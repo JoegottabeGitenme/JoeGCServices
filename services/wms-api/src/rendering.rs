@@ -13,71 +13,10 @@ use projection::{LambertConformal, Geostationary};
 use crate::metrics::{MetricsCollector, DataSourceType};
 use crate::state::{GridProcessorFactory, ProjectionLuts};
 
-/// Render weather data from GRIB2 grid to PNG.
-///
-/// # Arguments
-/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
-/// - `catalog`: Catalog for finding datasets
-/// - `model`: Weather model name
-/// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
-/// - `forecast_hour`: Optional forecast hour; if None, uses latest
-/// - `width`: Output image width
-/// - `height`: Output image height
-/// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]
-///
-/// # Returns
-/// PNG image data as bytes
-#[allow(dead_code)]
-pub async fn render_weather_data(
-    grib_cache: &GribCache,
-    catalog: &Catalog,
-    metrics: &MetricsCollector,
-    model: &str,
-    parameter: &str,
-    forecast_hour: Option<u32>,
-    width: u32,
-    height: u32,
-    bbox: Option<[f32; 4]>,
-) -> Result<Vec<u8>, String> {
-    render_weather_data_with_style(grib_cache, catalog, metrics, model, parameter, forecast_hour, width, height, bbox, None, false).await
-}
-
-/// Render weather data with optional style configuration.
-///
-/// # Arguments
-/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
-/// - `catalog`: Catalog for finding datasets
-/// - `model`: Weather model name
-/// - `parameter`: Parameter name (e.g., "TMP", "WIND_SPEED")
-/// - `forecast_hour`: Optional forecast hour; if None, uses latest
-/// - `width`: Output image width
-/// - `height`: Output image height
-/// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]; if None, renders full globe
-/// - `style_name`: Optional style name to apply from configuration
-/// - `use_mercator`: Use Web Mercator projection for resampling
-///
-/// # Returns
-/// PNG image data as bytes
-#[allow(dead_code)]
-pub async fn render_weather_data_with_style(
-    grib_cache: &GribCache,
-    catalog: &Catalog,
-    metrics: &MetricsCollector,
-    model: &str,
-    parameter: &str,
-    forecast_hour: Option<u32>,
-    width: u32,
-    height: u32,
-    bbox: Option<[f32; 4]>,
-    style_name: Option<&str>,
-    use_mercator: bool,
-) -> Result<Vec<u8>, String> {
-    render_weather_data_with_level(
-        grib_cache, catalog, metrics, model, parameter, forecast_hour, None, width, height, bbox, style_name, use_mercator
-    ).await
-}
-
 /// Render weather data with optional style configuration and level.
+///
+/// This is a convenience wrapper for callers that don't need observation time,
+/// tile coordinates, projection LUTs, or Zarr factory access.
 ///
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving GRIB2 files
@@ -108,51 +47,9 @@ pub async fn render_weather_data_with_level(
     style_name: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    render_weather_data_with_time(
-        grib_cache, None, catalog, metrics, model, parameter, forecast_hour, None, level, width, height, bbox, style_name, use_mercator
-    ).await
-}
-
-/// Render weather data with support for both forecast hours and observation times.
-///
-/// This is the main rendering function that supports:
-/// - Forecast models (GFS, HRRR): Use `forecast_hour` parameter
-/// - Observation data (MRMS, GOES): Use `observation_time` parameter
-///
-/// # Arguments
-/// - `grib_cache`: GRIB cache for retrieving files
-/// - `catalog`: Catalog for finding datasets
-/// - `model`: Weather model name
-/// - `parameter`: Parameter name
-/// - `forecast_hour`: Optional forecast hour for forecast models
-/// - `observation_time`: Optional observation time (ISO8601) for observation data
-/// - `level`: Optional vertical level
-/// - `width`: Output image width
-/// - `height`: Output image height
-/// - `bbox`: Optional bounding box
-/// - `style_name`: Optional style name
-/// - `use_mercator`: Use Web Mercator projection
-pub async fn render_weather_data_with_time(
-    grib_cache: &GribCache,
-    grid_cache: Option<&GridDataCache>,
-    catalog: &Catalog,
-    metrics: &MetricsCollector,
-    model: &str,
-    parameter: &str,
-    forecast_hour: Option<u32>,
-    observation_time: Option<chrono::DateTime<chrono::Utc>>,
-    level: Option<&str>,
-    width: u32,
-    height: u32,
-    bbox: Option<[f32; 4]>,
-    style_name: Option<&str>,
-    use_mercator: bool,
-) -> Result<Vec<u8>, String> {
-    // Call the LUT-aware version without tile coords, LUT, or Zarr factory
-    // (This path is for legacy callers that don't have Zarr support)
     render_weather_data_with_lut(
-        grib_cache, grid_cache, catalog, metrics, model, parameter,
-        forecast_hour, observation_time, level, width, height, bbox,
+        grib_cache, None, catalog, metrics, model, parameter,
+        forecast_hour, None, level, width, height, bbox,
         style_name, use_mercator, None, None, None,
     ).await
 }
@@ -1409,29 +1306,6 @@ fn resample_geostationary_to_geographic_with_proj(
     }
     
     output
-}
-
-/// Resample from Geostationary grid (GOES) to Web Mercator output
-/// 
-/// This handles the projection transformation from GOES native geostationary
-/// grid to Web Mercator (EPSG:3857) for WMTS tiles.
-#[allow(dead_code)]
-fn resample_geostationary_to_mercator(
-    data: &[f32],
-    data_width: usize,
-    data_height: usize,
-    output_width: usize,
-    output_height: usize,
-    output_bbox: [f32; 4],
-    satellite_lon: f64,
-) -> Vec<f32> {
-    // Create GOES projection based on satellite position (fallback if no dynamic projection)
-    let proj = if satellite_lon < -100.0 {
-        Geostationary::goes18_conus()
-    } else {
-        Geostationary::goes16_conus()
-    };
-    resample_geostationary_to_mercator_with_proj(data, data_width, data_height, output_width, output_height, output_bbox, &proj)
 }
 
 /// Resample from Geostationary grid (GOES) to Web Mercator output with custom projection
@@ -4703,46 +4577,6 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
         // Generic parameter
         (value as f64, "".to_string(), "".to_string(), parameter.to_string())
     }
-}
-
-/// Render isolines (contours) for a parameter using expanded tile rendering.
-/// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
-///
-/// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
-/// - `catalog`: Catalog for finding datasets
-/// - `model`: Weather model name (e.g., "gfs")
-/// - `parameter`: Parameter name (e.g., "TMP")
-/// - `tile_coord`: Optional tile coordinate for expanded rendering
-/// - `width`: Output image width (single tile)
-/// - `height`: Output image height (single tile)
-/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
-/// - `style_path`: Path to contour style configuration file
-///
-/// # Returns
-/// PNG image data as bytes
-#[allow(dead_code)]
-pub async fn render_isolines_tile(
-    grib_cache: &GribCache,
-    grid_cache: Option<&GridDataCache>,
-    catalog: &Catalog,
-    metrics: &MetricsCollector,
-    model: &str,
-    parameter: &str,
-    tile_coord: Option<wms_common::TileCoord>,
-    width: u32,
-    height: u32,
-    bbox: [f32; 4],
-    style_path: &str,
-    style_name: &str,
-    forecast_hour: Option<u32>,
-    use_mercator: bool,
-    grid_processor_factory: Option<&GridProcessorFactory>,
-) -> Result<Vec<u8>, String> {
-    render_isolines_tile_with_level(
-        grib_cache, grid_cache, catalog, metrics, model, parameter, tile_coord, width, height, bbox,
-        style_path, style_name, forecast_hour, None, use_mercator, grid_processor_factory
-    ).await
 }
 
 /// Render isolines (contour lines) for a single tile with optional level.

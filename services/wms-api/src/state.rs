@@ -1,9 +1,6 @@
 //! Application state and shared resources.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::Serialize;
-use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
@@ -18,135 +15,6 @@ use storage::{Catalog, GribCache, GridDataCache, ObjectStorage, ObjectStorageCon
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
-
-// ============================================================================
-// Ingestion Tracking
-// ============================================================================
-
-/// Status of an active ingestion job
-#[derive(Debug, Clone, Serialize)]
-pub struct ActiveIngestion {
-    pub id: String,
-    pub file_path: String,
-    pub model: String,
-    pub started_at: DateTime<Utc>,
-    pub status: String,  // "parsing", "shredding", "storing", "registering"
-    pub parameters_found: u32,
-    pub parameters_stored: u32,
-}
-
-/// A completed ingestion record
-#[derive(Debug, Clone, Serialize)]
-pub struct CompletedIngestion {
-    pub id: String,
-    pub file_path: String,
-    pub model: String,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: DateTime<Utc>,
-    pub duration_ms: u64,
-    pub parameters_registered: u32,
-    pub success: bool,
-    pub error_message: Option<String>,
-}
-
-/// Tracks ingestion activity for the dashboard
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct IngestionTracker {
-    /// Currently active ingestions (keyed by ID)
-    active: Mutex<std::collections::HashMap<String, ActiveIngestion>>,
-    /// Recently completed ingestions (ring buffer, max 50)
-    completed: Mutex<VecDeque<CompletedIngestion>>,
-    /// Maximum completed entries to keep
-    max_completed: usize,
-}
-
-impl IngestionTracker {
-    pub fn new() -> Self {
-        Self {
-            active: Mutex::new(std::collections::HashMap::new()),
-            completed: Mutex::new(VecDeque::new()),
-            max_completed: 50,
-        }
-    }
-    
-    /// Start tracking an ingestion job
-    #[allow(dead_code)]
-    pub async fn start(&self, id: String, file_path: String, model: String) {
-        let ingestion = ActiveIngestion {
-            id: id.clone(),
-            file_path,
-            model,
-            started_at: Utc::now(),
-            status: "parsing".to_string(),
-            parameters_found: 0,
-            parameters_stored: 0,
-        };
-        self.active.lock().await.insert(id, ingestion);
-    }
-    
-    /// Update ingestion status
-    #[allow(dead_code)]
-    pub async fn update(&self, id: &str, status: &str, found: u32, stored: u32) {
-        if let Some(ingestion) = self.active.lock().await.get_mut(id) {
-            ingestion.status = status.to_string();
-            ingestion.parameters_found = found;
-            ingestion.parameters_stored = stored;
-        }
-    }
-    
-    /// Complete an ingestion job (success or failure)
-    #[allow(dead_code)]
-    pub async fn complete(&self, id: &str, success: bool, error_message: Option<String>, parameters_registered: u32) {
-        let mut active = self.active.lock().await;
-        if let Some(ingestion) = active.remove(id) {
-            let completed_at = Utc::now();
-            let duration_ms = (completed_at - ingestion.started_at).num_milliseconds() as u64;
-            
-            let completed = CompletedIngestion {
-                id: ingestion.id,
-                file_path: ingestion.file_path,
-                model: ingestion.model,
-                started_at: ingestion.started_at,
-                completed_at,
-                duration_ms,
-                parameters_registered,
-                success,
-                error_message,
-            };
-            
-            let mut completed_list = self.completed.lock().await;
-            completed_list.push_front(completed);
-            
-            // Keep only the most recent entries
-            while completed_list.len() > self.max_completed {
-                completed_list.pop_back();
-            }
-        }
-    }
-    
-    /// Get current ingestion status for the dashboard
-    #[allow(dead_code)]
-    pub async fn get_status(&self) -> IngestionTrackerStatus {
-        let active = self.active.lock().await;
-        let completed = self.completed.lock().await;
-        
-        IngestionTrackerStatus {
-            active: active.values().cloned().collect(),
-            recent: completed.iter().take(10).cloned().collect(),
-            total_completed: completed.len(),
-        }
-    }
-}
-
-/// Response for ingestion status endpoint
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize)]
-pub struct IngestionTrackerStatus {
-    pub active: Vec<ActiveIngestion>,
-    pub recent: Vec<CompletedIngestion>,
-    pub total_completed: usize,
-}
 
 /// Configuration for performance optimizations.
 /// Each optimization can be toggled on/off via environment variables.
@@ -393,9 +261,6 @@ impl ProjectionLuts {
 ///
 /// For datasets without `zarr_metadata`, the legacy GRIB2/NetCDF path is used.
 pub struct GridProcessorFactory {
-    /// Object storage client for MinIO access.
-    #[allow(dead_code)]
-    storage: Arc<ObjectStorage>,
     /// Grid processor configuration.
     pub config: GridProcessorConfig,
     /// Shared chunk cache for decompressed Zarr chunks.
@@ -404,7 +269,7 @@ pub struct GridProcessorFactory {
 
 impl GridProcessorFactory {
     /// Create a new GridProcessorFactory.
-    pub fn new(storage: Arc<ObjectStorage>, chunk_cache_size_mb: usize) -> Self {
+    pub fn new(_storage: Arc<ObjectStorage>, chunk_cache_size_mb: usize) -> Self {
         let chunk_cache = Arc::new(RwLock::new(ChunkCache::new(
             chunk_cache_size_mb * 1024 * 1024,
         )));
@@ -412,7 +277,6 @@ impl GridProcessorFactory {
         let config = GridProcessorConfig::default();
         
         Self {
-            storage,
             config,
             chunk_cache,
         }
@@ -421,12 +285,6 @@ impl GridProcessorFactory {
     /// Get chunk cache statistics for monitoring.
     pub async fn cache_stats(&self) -> grid_processor::CacheStats {
         self.chunk_cache.read().await.stats()
-    }
-    
-    /// Get memory usage of the chunk cache.
-    #[allow(dead_code)]
-    pub async fn cache_memory_bytes(&self) -> u64 {
-        self.chunk_cache.read().await.stats().memory_bytes
     }
     
     /// Get the shared chunk cache reference (for creating processors).
@@ -465,8 +323,6 @@ pub struct AppState {
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
-    #[allow(dead_code)]
-    ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
 }
@@ -588,7 +444,6 @@ impl AppState {
             prefetch_rings,
             optimization_config,
             grid_warmer: tokio::sync::RwLock::new(None),
-            ingestion_tracker: IngestionTracker::new(),
             model_dimensions,
             layer_configs,
         })
