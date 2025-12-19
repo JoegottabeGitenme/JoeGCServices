@@ -3,7 +3,7 @@
 //! Creates minimal synthetic GRIB2 files for testing the parser.
 //! The generated files have valid structure but minimal data.
 
-use std::io::Write;
+
 
 /// Build a minimal GRIB2 message with the specified parameters
 pub struct Grib2Builder {
@@ -94,16 +94,6 @@ impl Grib2Builder {
         }
     }
 
-    pub fn with_discipline(mut self, discipline: u8) -> Self {
-        self.discipline = discipline;
-        self
-    }
-
-    pub fn with_center(mut self, center: u16) -> Self {
-        self.center = center;
-        self
-    }
-
     pub fn with_reference_time(mut self, year: u16, month: u8, day: u8, hour: u8) -> Self {
         self.year = year;
         self.month = month;
@@ -116,23 +106,6 @@ impl Grib2Builder {
         self.ni = ni;
         self.nj = nj;
         self.data_values = vec![0.0; (ni * nj) as usize];
-        self
-    }
-
-    pub fn with_bounds_degrees(
-        mut self,
-        first_lat: f64,
-        first_lon: f64,
-        last_lat: f64,
-        last_lon: f64,
-    ) -> Self {
-        self.la1 = (first_lat * 1_000_000.0) as i32;
-        self.lo1 = (first_lon * 1_000_000.0) as i32;
-        self.la2 = (last_lat * 1_000_000.0) as i32;
-        self.lo2 = (last_lon * 1_000_000.0) as i32;
-        // Calculate increments
-        self.di = ((last_lon - first_lon).abs() * 1_000_000.0 / (self.ni - 1) as f64) as u32;
-        self.dj = ((first_lat - last_lat).abs() * 1_000_000.0 / (self.nj - 1) as f64) as u32;
         self
     }
 
@@ -419,58 +392,9 @@ impl Grib2Builder {
     }
 }
 
-/// Generate all test data files to a directory
-pub fn generate_all_test_files(dir: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-
-    // GFS sample - temperature
-    let gfs_data = Grib2Builder::new_gfs()
-        .with_reference_time(2025, 12, 10, 12)
-        .with_parameter(0, 0) // TMP
-        .with_level(103, 2)   // 2m above ground
-        .with_gradient(273.15, 303.15) // 0°C to 30°C
-        .build();
-
-    let mut f = std::fs::File::create(dir.join("gfs_sample.grib2"))?;
-    f.write_all(&gfs_data)?;
-
-    // MRMS sample - reflectivity
-    let mrms_data = Grib2Builder::new_mrms()
-        .with_reference_time(2025, 12, 10, 12)
-        .with_gradient(-10.0, 60.0) // dBZ range
-        .build();
-
-    let mut f = std::fs::File::create(dir.join("mrms_refl.grib2"))?;
-    f.write_all(&mrms_data)?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Run this test explicitly to generate test data files:
-    /// cargo test --package grib2-parser generate_test_files -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn generate_test_files() {
-        let testdata_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
-        println!("Generating test data in: {:?}", testdata_dir);
-        
-        generate_all_test_files(&testdata_dir).expect("Failed to generate test files");
-        
-        // Verify files exist
-        assert!(testdata_dir.join("gfs_sample.grib2").exists());
-        assert!(testdata_dir.join("mrms_refl.grib2").exists());
-        
-        println!("Generated:");
-        for entry in std::fs::read_dir(&testdata_dir).unwrap() {
-            let entry = entry.unwrap();
-            let metadata = entry.metadata().unwrap();
-            println!("  {} ({} bytes)", entry.file_name().to_string_lossy(), metadata.len());
-        }
-    }
 
     #[test]
     fn test_build_gfs_message() {

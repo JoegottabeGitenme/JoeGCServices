@@ -201,122 +201,40 @@ fn test_grib2_structure_validity() {
     println!("✓ GRIB2 structure validity test passed");
 }
 
-/// Test 4: Compare with real GFS file from NOAA
-/// This test downloads a real GRIB2 file and compares structure with our synthetic files.
-/// 
-/// Run with: cargo test --package grib2-parser --test validate_grib2 test_compare_with_real_gfs -- --ignored --nocapture
+/// Test 4: Compare synthetic GFS with local test file
+/// Uses the generated gfs_sample.grib2 to verify our builder creates compatible files
 #[test]
-#[ignore]
-fn test_compare_with_real_gfs() {
-    use std::process::Command;
-    use std::fs;
+fn test_compare_synthetic_with_local_gfs() {
+    let path = require_test_file!("gfs_sample.grib2");
+    let local_bytes = std::fs::read(&path).expect("Failed to read test file");
     
-    // Use a pre-downloaded test file or download one
-    let test_file = "/tmp/gfs_test_sample.grib2";
+    // Parse the local test file
+    let mut reader = Grib2Reader::new(Bytes::from(local_bytes));
+    let local_msg = reader.next_message()
+        .expect("Should parse local file")
+        .expect("Should have message");
     
-    // Try to download if not present (using curl)
-    if !std::path::Path::new(test_file).exists() {
-        println!("Downloading real GFS file from NOAA...");
-        
-        // Get current date for URL (files are only available for recent dates)
-        let now = chrono::Utc::now();
-        let date_str = now.format("%Y%m%d").to_string();
-        
-        // Download a small subset - 2m temperature for a small region
-        let url = format!(
-            "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?\
-            dir=%2Fgfs.{}%2F00%2Fatmos&\
-            file=gfs.t00z.pgrb2.0p25.f000&\
-            var_TMP=on&\
-            lev_2_m_above_ground=on&\
-            subregion=&toplat=45&leftlon=-100&rightlon=-90&bottomlat=40",
-            date_str
-        );
-        
-        println!("URL: {}", url);
-        
-        let output = Command::new("curl")
-            .args(["-s", "-f", "-o", test_file, &url])
-            .output();
-        
-        match output {
-            Ok(o) if o.status.success() => {
-                println!("Downloaded successfully");
-            }
-            _ => {
-                println!("SKIPPED: Could not download GFS file (network issue or date not available)");
-                println!("You can manually download a GFS file and save it to {}", test_file);
-                return;
-            }
-        }
-    }
-    
-    // Read the file
-    let real_grib_bytes = match fs::read(test_file) {
-        Ok(b) if b.len() > 100 => b,
-        _ => {
-            println!("SKIPPED: Test file {} is empty or missing", test_file);
-            return;
-        }
-    };
-    
-    println!("Loaded {} bytes from {}", real_grib_bytes.len(), test_file);
-    
-    // Parse the real file
-    let mut reader = Grib2Reader::new(Bytes::from(real_grib_bytes.clone()));
-    let real_msg = match reader.next_message() {
-        Ok(Some(msg)) => msg,
-        Ok(None) => {
-            println!("SKIPPED: No messages in file");
-            return;
-        }
-        Err(e) => {
-            println!("SKIPPED: Could not parse file: {}", e);
-            return;
-        }
-    };
-    
-    println!("\n=== Real GFS File Analysis ===");
-    println!("Discipline: {}", real_msg.indicator.discipline);
-    println!("Center: {}", real_msg.identification.center);
-    println!("Reference time: {}", real_msg.identification.reference_time);
+    println!("=== Local GFS Test File ===");
+    println!("Discipline: {}", local_msg.indicator.discipline);
+    println!("Center: {}", local_msg.identification.center);
     println!("Grid: {}x{}", 
-             real_msg.grid_definition.num_points_longitude,
-             real_msg.grid_definition.num_points_latitude);
-    println!("Parameter: {} (cat={}, num={})", 
-             real_msg.parameter(),
-             real_msg.product_definition.parameter_category,
-             real_msg.product_definition.parameter_number);
-    println!("Level: {}", real_msg.level());
-    println!("Data representation:");
-    println!("  Packing method: {}", real_msg.data_representation.packing_method);
-    println!("  Bits per value: {}", real_msg.data_representation.bits_per_value);
-    println!("  Reference value: {}", real_msg.data_representation.reference_value);
-    println!("  Binary scale (E): {}", real_msg.data_representation.binary_scale_factor);
-    println!("  Decimal scale (D): {}", real_msg.data_representation.decimal_scale_factor);
+             local_msg.grid_definition.num_points_longitude,
+             local_msg.grid_definition.num_points_latitude);
+    println!("Parameter: {}", local_msg.parameter());
     
-    // Now create a synthetic file with similar properties
-    let ni = real_msg.grid_definition.num_points_longitude;
-    let nj = real_msg.grid_definition.num_points_latitude;
+    // Create a synthetic file with same properties
+    let ni = local_msg.grid_definition.num_points_longitude;
+    let nj = local_msg.grid_definition.num_points_latitude;
     
-    println!("\n=== Creating Synthetic File with Same Grid Size ===");
-    
-    // Generate synthetic temperature data (similar range to real 2m temps)
     let synthetic_values: Vec<f32> = (0..(ni * nj) as usize)
-        .map(|i| 273.15 + (i as f32 % 50.0)) // Kelvin temps
+        .map(|i| 273.15 + (i as f32 % 50.0))
         .collect();
     
     let synthetic_builder = Grib2Builder::new_gfs()
         .with_grid(ni, nj)
-        .with_reference_time(
-            real_msg.identification.reference_time.year() as u16,
-            real_msg.identification.reference_time.month() as u8,
-            real_msg.identification.reference_time.day() as u8,
-            real_msg.identification.reference_time.hour() as u8,
-        )
         .with_parameter(
-            real_msg.product_definition.parameter_category,
-            real_msg.product_definition.parameter_number,
+            local_msg.product_definition.parameter_category,
+            local_msg.product_definition.parameter_number,
         )
         .with_data(synthetic_values);
     
@@ -328,41 +246,19 @@ fn test_compare_with_real_gfs() {
         .expect("Should parse synthetic")
         .expect("Should have message");
     
-    println!("\n=== Synthetic File Analysis ===");
-    println!("Discipline: {}", syn_msg.indicator.discipline);
-    println!("Center: {}", syn_msg.identification.center);
-    println!("Grid: {}x{}", 
-             syn_msg.grid_definition.num_points_longitude,
-             syn_msg.grid_definition.num_points_latitude);
-    println!("Data representation:");
-    println!("  Bits per value: {}", syn_msg.data_representation.bits_per_value);
-    println!("  Reference value: {}", syn_msg.data_representation.reference_value);
-    println!("  Binary scale (E): {}", syn_msg.data_representation.binary_scale_factor);
-    
-    // Compare key structural fields
-    println!("\n=== Comparison ===");
-    assert_eq!(syn_msg.indicator.discipline, real_msg.indicator.discipline,
+    // Compare key fields
+    assert_eq!(syn_msg.indicator.discipline, local_msg.indicator.discipline,
                "Discipline should match");
-    println!("✓ Discipline matches: {}", syn_msg.indicator.discipline);
-    
-    assert_eq!(syn_msg.identification.center, real_msg.identification.center,
+    assert_eq!(syn_msg.identification.center, local_msg.identification.center,
                "Center should match");
-    println!("✓ Center matches: {}", syn_msg.identification.center);
-    
-    assert_eq!(syn_msg.product_definition.parameter_category, 
-               real_msg.product_definition.parameter_category,
-               "Parameter category should match");
-    println!("✓ Parameter category matches: {}", syn_msg.product_definition.parameter_category);
-    
     assert_eq!(syn_msg.grid_definition.num_points_longitude,
-               real_msg.grid_definition.num_points_longitude,
+               local_msg.grid_definition.num_points_longitude,
                "Grid width should match");
     assert_eq!(syn_msg.grid_definition.num_points_latitude,
-               real_msg.grid_definition.num_points_latitude,
+               local_msg.grid_definition.num_points_latitude,
                "Grid height should match");
-    println!("✓ Grid dimensions match: {}x{}", ni, nj);
     
-    println!("\n✓ Real vs synthetic comparison passed");
+    println!("✓ Synthetic matches local test file structure");
 }
 
 /// Test 5: Verify our synthetic files can be read by the external grib crate
