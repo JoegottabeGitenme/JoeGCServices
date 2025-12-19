@@ -1,8 +1,14 @@
-//! Grid data cache warming module.
+//! Chunk cache warming module.
 //!
-//! This module proactively warms the GridDataCache by parsing and caching
-//! recent observation data (GOES, HRRR, MRMS) before tile requests arrive.
-//! This eliminates the cold-start latency of NetCDF/GRIB2 parsing.
+//! This module proactively warms the chunk cache by reading Zarr data at
+//! configurable zoom levels before tile requests arrive. This eliminates
+//! the cold-start latency of chunk fetching and decompression.
+//!
+//! Key features:
+//! - Configurable zoom levels for warming (e.g., warm overviews at zoom 0-4)
+//! - Parameter filtering to focus on most-used data
+//! - Background polling for new data
+//! - On-ingest warming for immediate cache population
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -14,7 +20,8 @@ use std::time::Instant;
 use tokio::time::{interval, Duration};
 use tracing::{debug, info, warn};
 
-use storage::{CachedGridData, GoesProjectionParams as StorageGoesProjectionParams};
+use storage::CatalogEntry;
+use crate::rendering::loaders::load_grid_data;
 use crate::state::AppState;
 
 /// Precaching configuration from model YAML files.
@@ -24,7 +31,7 @@ pub struct PrecacheConfig {
     #[serde(default)]
     pub enabled: bool,
     
-    /// Number of recent observations to keep warm
+    /// Number of recent observations/forecasts to keep warm
     #[serde(default = "default_keep_recent")]
     pub keep_recent: usize,
     
@@ -39,10 +46,17 @@ pub struct PrecacheConfig {
     /// Parameters to precache (empty = all)
     #[serde(default)]
     pub parameters: Vec<String>,
+    
+    /// Zoom levels to warm chunks for (e.g., [0, 2, 4] for overview tiles)
+    /// Each zoom level corresponds to an output tile size that determines
+    /// which pyramid level is read, thus which chunks get cached.
+    #[serde(default = "default_zoom_levels")]
+    pub zoom_levels: Vec<u32>,
 }
 
 fn default_keep_recent() -> usize { 10 }
 fn default_poll_interval() -> u64 { 60 }
+fn default_zoom_levels() -> Vec<u32> { vec![0, 2, 4] }
 
 /// Structure matching model YAML files for precaching config.
 #[derive(Debug, Deserialize)]
@@ -57,8 +71,8 @@ struct ModelConfigModel {
     id: String,
 }
 
-/// Grid warmer for proactive cache population.
-pub struct GridWarmer {
+/// Chunk warmer for proactive cache population.
+pub struct ChunkWarmer {
     state: Arc<AppState>,
     /// Per-model precaching configuration
     configs: HashMap<String, PrecacheConfig>,
@@ -66,8 +80,8 @@ pub struct GridWarmer {
     warmed_keys: tokio::sync::RwLock<HashSet<String>>,
 }
 
-impl GridWarmer {
-    /// Create a new grid warmer by loading configs from YAML files.
+impl ChunkWarmer {
+    /// Create a new chunk warmer by loading configs from YAML files.
     pub fn new(state: Arc<AppState>, config_dir: &str) -> Self {
         let configs = Self::load_precache_configs(config_dir);
         
@@ -75,7 +89,7 @@ impl GridWarmer {
             models_with_precaching = configs.iter()
                 .filter(|(_, c)| c.enabled)
                 .count(),
-            "Initialized GridWarmer"
+            "Initialized ChunkWarmer"
         );
         
         for (model, config) in &configs {
@@ -85,7 +99,8 @@ impl GridWarmer {
                     keep_recent = config.keep_recent,
                     warm_on_ingest = config.warm_on_ingest,
                     poll_interval_secs = config.poll_interval_secs,
-                    "Precaching enabled"
+                    zoom_levels = ?config.zoom_levels,
+                    "Chunk precaching enabled"
                 );
             }
         }
@@ -134,8 +149,8 @@ impl GridWarmer {
         configs
     }
     
-    /// Warm a specific dataset (called on ingestion).
-    /// This loads and parses the data, storing it in GridDataCache.
+    /// Warm a specific dataset by reading at configured zoom levels.
+    /// This loads and caches chunks through the normal Zarr read path.
     pub async fn warm_dataset(
         &self,
         model: &str,
@@ -158,8 +173,8 @@ impl GridWarmer {
             return;
         }
         
-        // Build cache key (same format as rendering.rs)
-        let cache_key = format!("{}:{}", storage_path, reference_time.timestamp());
+        // Build cache key
+        let cache_key = format!("{}:{}:{}", storage_path, reference_time.timestamp(), config.zoom_levels.iter().map(|z| z.to_string()).collect::<Vec<_>>().join(","));
         
         // Check if already warmed
         {
@@ -170,93 +185,137 @@ impl GridWarmer {
             }
         }
         
-        // Check if already in grid cache
-        if self.state.grid_cache.get(&cache_key).await.is_some() {
-            debug!(cache_key = %cache_key, "Already in grid cache");
-            // Mark as warmed so we don't check again
-            self.warmed_keys.write().await.insert(cache_key);
-            return;
-        }
-        
         info!(
             model = %model,
             parameter = %parameter,
             storage_path = %storage_path,
-            "Warming grid cache"
+            zoom_levels = ?config.zoom_levels,
+            "Warming chunk cache"
         );
         
         let start = Instant::now();
         
-        // Load the file from storage
-        let file_data = match self.state.grib_cache.get(storage_path).await {
-            Ok(data) => data,
+        // Query catalog for this specific entry
+        let entry = match self.state.catalog
+            .find_by_time(model, parameter, reference_time)
+            .await
+        {
+            Ok(Some(e)) => e,
+            Ok(None) => {
+                debug!(
+                    model = %model,
+                    parameter = %parameter,
+                    reference_time = ?reference_time,
+                    "No catalog entry found for warming"
+                );
+                return;
+            }
             Err(e) => {
                 warn!(
-                    storage_path = %storage_path,
+                    model = %model,
+                    parameter = %parameter,
                     error = %e,
-                    "Failed to load file for warming"
+                    "Catalog query failed during warming"
                 );
                 return;
             }
         };
         
-        // Parse based on file type
-        let result = if storage_path.ends_with(".nc") {
-            // NetCDF (GOES)
-            self.parse_and_cache_netcdf(&cache_key, &file_data).await
-        } else {
-            // GRIB2 - not implemented yet for warming
-            debug!(storage_path = %storage_path, "GRIB2 warming not yet implemented");
+        // Check if entry has zarr_metadata
+        if entry.zarr_metadata.is_none() {
+            debug!(
+                model = %model,
+                parameter = %parameter,
+                "Entry has no zarr_metadata, skipping warm"
+            );
             return;
-        };
+        }
         
-        match result {
-            Ok(()) => {
-                let elapsed = start.elapsed();
-                info!(
-                    model = %model,
-                    parameter = %parameter,
-                    cache_key = %cache_key,
-                    elapsed_ms = elapsed.as_millis(),
-                    "Grid cache warmed successfully"
-                );
-                self.warmed_keys.write().await.insert(cache_key);
-            }
-            Err(e) => {
-                warn!(
-                    model = %model,
-                    parameter = %parameter,
-                    error = %e,
-                    "Failed to warm grid cache"
-                );
+        // Warm at each configured zoom level
+        let mut success_count = 0;
+        for &zoom in &config.zoom_levels {
+            match self.warm_at_zoom(&entry, zoom).await {
+                Ok(()) => success_count += 1,
+                Err(e) => {
+                    debug!(
+                        model = %model,
+                        parameter = %parameter,
+                        zoom = zoom,
+                        error = %e,
+                        "Failed to warm at zoom level"
+                    );
+                }
             }
         }
+        
+        let elapsed = start.elapsed();
+        info!(
+            model = %model,
+            parameter = %parameter,
+            cache_key = %cache_key,
+            zoom_levels_warmed = success_count,
+            zoom_levels_total = config.zoom_levels.len(),
+            elapsed_ms = elapsed.as_millis(),
+            "Chunk cache warmed"
+        );
+        
+        self.warmed_keys.write().await.insert(cache_key);
     }
     
-    /// Parse NetCDF file and store in grid cache.
-    async fn parse_and_cache_netcdf(&self, cache_key: &str, file_data: &[u8]) -> Result<()> {
-        let (data, width, height, projection, x_offset, y_offset, x_scale, y_scale) = 
-            netcdf_parser::load_goes_netcdf_from_bytes(file_data)
-                .map_err(|e| anyhow::anyhow!("Failed to parse NetCDF: {}", e))?;
+    /// Warm chunks for a specific zoom level by reading the full extent.
+    async fn warm_at_zoom(&self, entry: &CatalogEntry, zoom: u32) -> Result<(), String> {
+        // Calculate output size based on zoom level
+        // This determines which pyramid level gets read
+        let output_size = self.zoom_level_to_output_size(zoom, entry);
         
-        let cached_data = CachedGridData {
-            data: Arc::new(data),
-            width,
-            height,
-            goes_projection: Some(StorageGoesProjectionParams {
-                x_origin: x_offset as f64,
-                y_origin: y_offset as f64,
-                dx: x_scale as f64,
-                dy: y_scale as f64,
-                perspective_point_height: projection.perspective_point_height,
-                semi_major_axis: projection.semi_major_axis,
-                semi_minor_axis: projection.semi_minor_axis,
-                longitude_origin: projection.longitude_origin,
-            }),
-        };
+        // Calculate bbox for full extent
+        let bbox = Some([
+            entry.bbox.min_x as f32,
+            entry.bbox.min_y as f32,
+            entry.bbox.max_x as f32,
+            entry.bbox.max_y as f32,
+        ]);
         
-        self.state.grid_cache.insert(cache_key.to_string(), cached_data).await;
+        // Read through the normal Zarr path - this populates the chunk cache
+        let start = Instant::now();
+        let result = load_grid_data(
+            &self.state.grid_processor_factory,
+            entry,
+            bbox,
+            Some(output_size),
+        ).await?;
+        
+        let read_duration = start.elapsed();
+        
+        debug!(
+            storage_path = %entry.storage_path,
+            zoom = zoom,
+            output_size = ?output_size,
+            result_width = result.width,
+            result_height = result.height,
+            read_ms = read_duration.as_millis(),
+            "Warmed chunks at zoom level"
+        );
+        
         Ok(())
+    }
+    
+    /// Convert a web map zoom level to an output tile size.
+    /// This determines which pyramid level gets read and cached.
+    fn zoom_level_to_output_size(&self, zoom: u32, entry: &CatalogEntry) -> (usize, usize) {
+        // At zoom 0, approximate output as 256x256 for the world
+        // Each zoom level doubles the resolution
+        let base_size = 256usize << zoom;
+        
+        // Scale based on bbox extent relative to world
+        let lon_extent = entry.bbox.max_x - entry.bbox.min_x;
+        let lat_extent = entry.bbox.max_y - entry.bbox.min_y;
+        
+        let width = ((lon_extent / 360.0) * base_size as f64) as usize;
+        let height = ((lat_extent / 180.0) * base_size as f64) as usize;
+        
+        // Ensure minimum size
+        (width.max(256), height.max(256))
     }
     
     /// Warm all recent observations for enabled models.
@@ -289,6 +348,7 @@ impl GridWarmer {
             model = %model,
             entries_found = entries.len(),
             keep_recent = config.keep_recent,
+            zoom_levels = ?config.zoom_levels,
             "Warming recent observations"
         );
         
@@ -302,11 +362,21 @@ impl GridWarmer {
                 continue;
             }
             
-            // Build cache key
-            let cache_key = format!("{}:{}", entry.storage_path, entry.reference_time.timestamp());
+            // Check if entry has zarr_metadata
+            if entry.zarr_metadata.is_none() {
+                skipped += 1;
+                continue;
+            }
             
-            // Skip if already in cache
-            if self.state.grid_cache.get(&cache_key).await.is_some() {
+            // Build cache key
+            let cache_key = format!("{}:{}:{}", 
+                entry.storage_path, 
+                entry.reference_time.timestamp(),
+                config.zoom_levels.iter().map(|z| z.to_string()).collect::<Vec<_>>().join(",")
+            );
+            
+            // Skip if already warmed
+            if self.warmed_keys.read().await.contains(&cache_key) {
                 skipped += 1;
                 continue;
             }
@@ -343,7 +413,7 @@ impl GridWarmer {
         
         info!(
             poll_interval_secs = min_poll_secs,
-            "Starting grid warming background task"
+            "Starting chunk warming background task"
         );
         
         // Initial warm on startup
@@ -354,29 +424,30 @@ impl GridWarmer {
         loop {
             ticker.tick().await;
             
-            debug!("Grid warming poll tick");
+            debug!("Chunk warming poll tick");
             self.warm_recent_all().await;
             
             // Periodically clean up the warmed_keys set to prevent unbounded growth
-            // Keep only keys that are still in the grid cache
             self.cleanup_warmed_keys().await;
         }
     }
     
-    /// Clean up warmed_keys set by removing entries no longer in cache.
+    /// Clean up warmed_keys set by removing old entries.
+    /// Since we track by storage_path+timestamp, old entries naturally become stale
+    /// when the catalog no longer contains them.
     async fn cleanup_warmed_keys(&self) {
         let mut warmed = self.warmed_keys.write().await;
         let before = warmed.len();
         
-        let mut to_remove = Vec::new();
-        for key in warmed.iter() {
-            if self.state.grid_cache.get(key).await.is_none() {
-                to_remove.push(key.clone());
+        // Keep set size bounded - remove oldest entries if too large
+        const MAX_WARMED_KEYS: usize = 10000;
+        if warmed.len() > MAX_WARMED_KEYS {
+            // Just clear half the entries (simple approach)
+            let to_keep: Vec<_> = warmed.iter().take(MAX_WARMED_KEYS / 2).cloned().collect();
+            warmed.clear();
+            for key in to_keep {
+                warmed.insert(key);
             }
-        }
-        
-        for key in to_remove {
-            warmed.remove(&key);
         }
         
         let after = warmed.len();

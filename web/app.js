@@ -83,13 +83,6 @@ const infoL2RateEl = document.getElementById('info-l2-rate');
 const infoL2TilesEl = document.getElementById('info-l2-tiles');
 const infoL2SizeEl = document.getElementById('info-l2-size');
 
-// Info Bar Grid Cache Elements
-const infoGridEntriesEl = document.getElementById('info-grid-entries');
-const infoGridMemoryEl = document.getElementById('info-grid-memory');
-const infoGridHitsEl = document.getElementById('info-grid-hits');
-const infoGridRateEl = document.getElementById('info-grid-rate');
-const infoGridEvictionsEl = document.getElementById('info-grid-evictions');
-
 // Info Bar Chunk Cache Elements (Zarr)
 const infoChunkEntriesEl = document.getElementById('info-chunk-entries');
 const infoChunkMemoryEl = document.getElementById('info-chunk-memory');
@@ -1921,28 +1914,6 @@ async function fetchBackendMetrics() {
         }
         if (infoL2SizeEl) {
             infoL2SizeEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
-        }
-        
-        // Update Info Bar grid cache stats from new grid_cache API response
-        const gridCache = data.grid_cache || {};
-        if (infoGridEntriesEl) {
-            const entries = gridCache.entries ?? 0;
-            const capacity = gridCache.capacity ?? 100;
-            infoGridEntriesEl.textContent = `${entries}/${capacity}`;
-        }
-        if (infoGridMemoryEl) {
-            const memoryMb = gridCache.memory_mb ?? 0;
-            infoGridMemoryEl.textContent = memoryMb < 1 ? '<1 MB' : memoryMb.toFixed(1) + ' MB';
-        }
-        if (infoGridHitsEl) {
-            infoGridHitsEl.textContent = (gridCache.hits ?? 0).toLocaleString();
-        }
-        if (infoGridRateEl) {
-            const rate = gridCache.hit_rate ?? 0;
-            infoGridRateEl.textContent = rate.toFixed(1) + '%';
-        }
-        if (infoGridEvictionsEl) {
-            infoGridEvictionsEl.textContent = (gridCache.evictions ?? 0).toLocaleString();
         }
         
         // Update Info Bar chunk cache stats (Zarr)
@@ -4371,10 +4342,10 @@ function renderPerfWidget(metrics, modelsConfig, optConfig) {
     const memThreshold = memPressure.threshold || 0.80;
     const memTarget = memPressure.target || 0.60;
     
-    // Update header memory usage
+    // Update header memory usage (using chunk cache now)
     const memUsageEl = document.getElementById('perf-memory-usage');
-    if (memUsageEl && metrics.grid_cache) {
-        const memMB = metrics.grid_cache.memory_mb || 0;
+    if (memUsageEl && metrics.chunk_cache) {
+        const memMB = metrics.chunk_cache.memory_mb || 0;
         memUsageEl.textContent = formatMemory(memMB * 1024 * 1024);
         
         // Color based on usage relative to threshold
@@ -4389,19 +4360,9 @@ function renderPerfWidget(metrics, modelsConfig, optConfig) {
         }
     }
     
-    // Grid Cache Stats
-    if (metrics.grid_cache) {
-        const gc = metrics.grid_cache;
-        updateElement('perf-grid-memory', formatMemory(gc.memory_bytes || 0));
-        updateElement('perf-grid-entries', `${gc.entries || 0}`);
-        updateElement('perf-grid-capacity', `${gc.capacity || 0}`);
-        updateElement('perf-grid-hitrate', `${(gc.hit_rate || 0).toFixed(1)}%`);
-        updateElement('perf-grid-evictions', `${gc.evictions || 0}`);
-    }
-    
-    // Memory Pressure Stats
-    const gridMemMB = metrics.grid_cache?.memory_mb || 0;
-    const usageRatio = gridMemMB / memLimitMB;
+    // Memory Pressure Stats (using chunk cache now)
+    const chunkMemMB = metrics.chunk_cache?.memory_mb || 0;
+    const usageRatio = chunkMemMB / memLimitMB;
     
     const pressureEl = document.getElementById('perf-mem-pressure');
     if (pressureEl) {
@@ -4423,7 +4384,7 @@ function renderPerfWidget(metrics, modelsConfig, optConfig) {
     const opts = optConfig?.optimizations || {};
     updateFeatureFlag('perf-flag-l1', opts.l1_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-l2', opts.l2_cache?.enabled !== false);
-    updateFeatureFlag('perf-flag-grid', opts.grid_cache?.enabled !== false);
+    updateFeatureFlag('perf-flag-chunk', opts.chunk_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-grib', opts.grib_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-prefetch', opts.prefetch?.enabled !== false);
     updateFeatureFlag('perf-flag-warming', modelsConfig.models?.some(m => m.precaching_enabled));

@@ -271,10 +271,8 @@ async fn warm_single_tile(
         let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
         let style_file = format!("{}/temperature.json", style_config_dir);
         rendering::render_isolines_tile_with_level(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
-            &state.metrics,
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(coord), // tile_coord
@@ -286,14 +284,16 @@ async fn warm_single_tile(
             Some(forecast_hour),
             default_level.as_deref(), // Use default level
             true, // use_mercator
-            Some(&state.grid_processor_factory),
         )
         .await
     } else {
+        // Get style file from layer config registry (single source of truth)
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        
         rendering::render_weather_data_with_level(
-            &state.grib_cache,
             &state.catalog,
             &state.metrics,
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(forecast_hour),
@@ -301,6 +301,7 @@ async fn warm_single_tile(
             256,
             256,
             Some(bbox_array),
+            &style_file,
             Some(style), // style_name
             true, // use_mercator
         )

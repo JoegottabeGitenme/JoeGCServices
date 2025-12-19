@@ -3,6 +3,10 @@ name = "wms-api"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "wms_api"
+path = "src/lib.rs"
+
 [[bin]]
 name = "wms-api"
 path = "src/main.rs"

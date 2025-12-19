@@ -16,7 +16,7 @@ layers:
   # ==========================================================================
   # Temperature Layers
   # ==========================================================================
-  
+
   - id: hrrr_TMP
     parameter: TMP
     title: "Temperature"
@@ -51,7 +51,7 @@ layers:
   # ==========================================================================
   # Wind Layers
   # ==========================================================================
-  
+
   - id: hrrr_UGRD
     parameter: UGRD
     title: "U-Component of Wind"
@@ -104,7 +104,7 @@ layers:
     abstract: "Wind direction and speed barbs (composite of UGRD/VGRD)"
     style_file: wind_barbs.json
     composite: true
-    requires: [UGRD, VGRD]
+    requires: [ UGRD, VGRD ]
     levels:
       - value: "10 m above ground"
         default: true
@@ -112,7 +112,7 @@ layers:
   # ==========================================================================
   # Pressure Layers
   # ==========================================================================
-  
+
   - id: hrrr_PRMSL
     parameter: PRMSL
     title: "Mean Sea Level Pressure"
@@ -129,7 +129,7 @@ layers:
   # ==========================================================================
   # Moisture Layers
   # ==========================================================================
-  
+
   - id: hrrr_RH
     parameter: RH
     title: "Relative Humidity"
@@ -157,7 +157,7 @@ layers:
   # ==========================================================================
   # Precipitation Layers
   # ==========================================================================
-  
+
   - id: hrrr_APCP
     parameter: APCP
     title: "Total Precipitation"
@@ -174,9 +174,9 @@ layers:
   # ==========================================================================
   # Radar/Reflectivity Layers
   # ==========================================================================
-  
-  - id: hrrr_REFC
-    parameter: REFC
+
+  - id: hrrr_REFD
+    parameter: REFD
     title: "Composite Reflectivity"
     abstract: "Simulated radar composite reflectivity"
     style_file: reflectivity.json
@@ -203,7 +203,7 @@ layers:
   # ==========================================================================
   # Convective/Stability Layers
   # ==========================================================================
-  
+
   - id: hrrr_CAPE
     parameter: CAPE
     title: "CAPE"
@@ -243,7 +243,7 @@ layers:
   # ==========================================================================
   # Lightning
   # ==========================================================================
-  
+
   - id: hrrr_LTNG
     parameter: LTNG
     title: "Lightning Threat"
@@ -259,7 +259,7 @@ layers:
   # ==========================================================================
   # Visibility
   # ==========================================================================
-  
+
   - id: hrrr_VIS
     parameter: VIS
     title: "Visibility"
@@ -276,7 +276,7 @@ layers:
   # ==========================================================================
   # Cloud Layers
   # ==========================================================================
-  
+
   - id: hrrr_TCDC
     parameter: TCDC
     title: "Total Cloud Cover"
@@ -328,7 +328,7 @@ layers:
   # ==========================================================================
   # Upper-Air
   # ==========================================================================
-  
+
   - id: hrrr_HGT
     parameter: HGT
     title: "Geopotential Height"

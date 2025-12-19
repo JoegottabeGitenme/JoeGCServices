@@ -836,10 +836,8 @@ async fn wmts_get_tile(
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         crate::rendering::render_isolines_tile_with_level(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
-            &state.metrics,
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -851,7 +849,6 @@ async fn wmts_get_tile(
             forecast_hour,
             elevation,
             true,  // WMTS tiles are always in Web Mercator
-            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
@@ -860,11 +857,9 @@ async fn wmts_get_tile(
         
         // Use buffered rendering to avoid clipped numbers at tile edges
         crate::rendering::render_numbers_tile_with_buffer(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -881,9 +876,10 @@ async fn wmts_get_tile(
         // Render the tile with spatial subsetting and optional time/level
         // Supports both forecast hour (for GFS, HRRR) and observation time (for MRMS, GOES)
         // Use LUT for fast GOES rendering when available
+        // Get style file from layer config registry (single source of truth)
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        
         crate::rendering::render_weather_data_with_lut(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
             model,
@@ -894,11 +890,12 @@ async fn wmts_get_tile(
             256,  // tile width
             256,  // tile height
             Some(bbox_array),
+            &style_file,
             Some(style),  // style_name - pass requested style for proper color mapping
             true,  // use_mercator for WMTS
             Some((z, x, y)),  // tile coords for LUT lookup
             Some(&state.projection_luts),  // projection LUT cache
-            Some(&state.grid_processor_factory),  // Zarr grid processor factory
+            &state.grid_processor_factory,  // Zarr grid processor factory
         )
         .await
     };
@@ -1018,10 +1015,6 @@ pub async fn metrics_handler(
         grib_capacity,
     );
     
-    // Update grid data cache metrics
-    let grid_stats = state.grid_cache.stats().await;
-    state.metrics.record_grid_cache_stats(&grid_stats);
-    
     // Update Zarr chunk cache metrics
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     state.metrics.record_chunk_cache_stats(&chunk_stats);
@@ -1096,20 +1089,6 @@ pub async fn api_metrics_handler(
         }
     };
     
-    // Get grid cache stats
-    let grid_stats = state.grid_cache.stats().await;
-    let grid_cache_stats = serde_json::json!({
-        "hits": grid_stats.hits,
-        "misses": grid_stats.misses,
-        "evictions": grid_stats.evictions,
-        "entries": grid_stats.entries,
-        "capacity": grid_stats.capacity,
-        "memory_bytes": grid_stats.memory_bytes,
-        "memory_mb": grid_stats.memory_mb(),
-        "hit_rate": grid_stats.hit_rate(),
-        "utilization": grid_stats.utilization(),
-    });
-    
     // Get Zarr chunk cache stats
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     let chunk_cache_stats = serde_json::json!({
@@ -1132,7 +1111,6 @@ pub async fn api_metrics_handler(
         "system": system,
         "l1_cache": l1_cache_stats,
         "l2_cache": l2_cache_stats,
-        "grid_cache": grid_cache_stats,
         "chunk_cache": chunk_cache_stats
     });
     
@@ -1581,10 +1559,8 @@ async fn render_weather_data(
         
         // For WMS, we don't have tile coordinates, so pass None
         return crate::rendering::render_isolines_tile_with_level(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
-            &state.metrics,
+            &state.grid_processor_factory,
             model,
             &parameter,
             None,  // No tile coordinate - render full bbox
@@ -1596,7 +1572,6 @@ async fn render_weather_data(
             forecast_hour,
             level.as_deref(),
             use_mercator,
-            Some(&state.grid_processor_factory),
         )
         .await;
     }
@@ -1606,11 +1581,9 @@ async fn render_weather_data(
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         return crate::rendering::render_numbers_tile(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             model,
             &parameter,
             width,
@@ -1625,9 +1598,10 @@ async fn render_weather_data(
     }
 
     // Use shared rendering logic with support for observation time and Zarr
+    // Get style file from layer config registry (single source of truth)
+    let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+    
     crate::rendering::render_weather_data_with_lut(
-        &state.grib_cache,
-        state.grid_cache_if_enabled(),
         &state.catalog,
         &state.metrics,
         model,
@@ -1638,11 +1612,12 @@ async fn render_weather_data(
         width,
         height,
         parsed_bbox,
+        &style_file,
         Some(style),
         use_mercator,
         None,  // tile_coords
         None,  // projection_luts
-        Some(&state.grid_processor_factory),  // Zarr grid processor factory
+        &state.grid_processor_factory,  // Zarr grid processor factory
     )
     .await
 }
@@ -2756,10 +2731,8 @@ async fn prefetch_single_tile(
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         crate::rendering::render_isolines_tile_with_level(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
-            &state.metrics,
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(coord),
@@ -2771,7 +2744,6 @@ async fn prefetch_single_tile(
             None,  // forecast_hour
             default_level.as_deref(),  // Use default level
             true,
-            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
@@ -2780,11 +2752,9 @@ async fn prefetch_single_tile(
         
         // Use buffered rendering to avoid clipped numbers at tile edges
         crate::rendering::render_numbers_tile_with_buffer(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -2799,9 +2769,10 @@ async fn prefetch_single_tile(
         .await
     } else {
         // Use render_weather_data_with_lut to enable Zarr support for prefetched tiles
+        // Get style file from layer config registry (single source of truth)
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        
         crate::rendering::render_weather_data_with_lut(
-            &state.grib_cache,
-            state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
             model,
@@ -2812,11 +2783,12 @@ async fn prefetch_single_tile(
             256,
             256,
             Some(bbox_array),
+            &style_file,
             Some(style),  // style_name - pass requested style for proper color mapping
             true,  // use_mercator for WMTS prefetch
             Some((coord.z, coord.x, coord.y)),  // tile coords for LUT lookup
             Some(&state.projection_luts),  // projection LUT cache
-            Some(&state.grid_processor_factory),  // Zarr grid processor factory
+            &state.grid_processor_factory,  // Zarr grid processor factory
         )
         .await
     };
@@ -2852,17 +2824,17 @@ pub async fn cache_clear_handler(
     // Get stats before clearing
     let l1_before = state.tile_memory_cache.len().await;
     let grib_before = state.grib_cache.len().await;
-    let grid_before = state.grid_cache.len().await;
+    let chunk_before = state.grid_processor_factory.cache_stats().await.entries;
     
     // Clear all caches
     state.tile_memory_cache.clear().await;
     state.grib_cache.clear().await;
-    state.grid_cache.clear().await;
+    state.grid_processor_factory.clear_chunk_cache().await;
     
     info!(
         l1_cleared = l1_before,
         grib_cleared = grib_before,
-        grid_cleared = grid_before,
+        chunk_cleared = chunk_before,
         "In-memory caches cleared"
     );
     
@@ -2871,7 +2843,7 @@ pub async fn cache_clear_handler(
         "cleared": {
             "l1_tile_cache": l1_before,
             "grib_cache": grib_before,
-            "grid_cache": grid_before,
+            "chunk_cache": chunk_before,
         },
         "message": "All in-memory caches cleared. Redis L2 cache was not affected."
     }))
@@ -2952,8 +2924,7 @@ pub async fn config_reload_handler(
     };
     let l1_before = state.tile_memory_cache.len().await;
     let grib_before = state.grib_cache.len().await;
-    let grid_before = state.grid_cache.len().await;
-    let _chunk_stats_before = state.grid_processor_factory.cache_stats().await;
+    let chunk_stats_before = state.grid_processor_factory.cache_stats().await;
     
     // 1. Reload layer configs
     let (models, layers) = {
@@ -2964,7 +2935,6 @@ pub async fn config_reload_handler(
     // 2. Clear all caches
     state.tile_memory_cache.clear().await;
     state.grib_cache.clear().await;
-    state.grid_cache.clear().await;
     let (chunk_entries, chunk_bytes) = state.grid_processor_factory.clear_chunk_cache().await;
     
     info!(
@@ -2972,7 +2942,6 @@ pub async fn config_reload_handler(
         layers = layers,
         l1_cleared = l1_before,
         grib_cleared = grib_before,
-        grid_cleared = grid_before,
         chunk_cleared = chunk_entries,
         "Full configuration reload complete"
     );
@@ -2992,10 +2961,10 @@ pub async fn config_reload_handler(
         "caches_cleared": {
             "l1_tile_cache": l1_before,
             "grib_cache": grib_before,
-            "grid_cache": grid_before,
             "chunk_cache": {
-                "entries": chunk_entries,
-                "bytes": chunk_bytes
+                "entries_before": chunk_stats_before.entries,
+                "entries_cleared": chunk_entries,
+                "bytes_cleared": chunk_bytes
             }
         },
         "message": "All configs reloaded and caches cleared. Style configs are always loaded fresh from disk."
@@ -3066,9 +3035,9 @@ pub async fn config_handler(
                 "enabled": state.optimization_config.grib_cache_enabled,
                 "size": state.optimization_config.grib_cache_size,
             },
-            "grid_cache": {
-                "enabled": state.optimization_config.grid_cache_enabled,
-                "size": state.optimization_config.grid_cache_size,
+            "chunk_cache": {
+                "enabled": state.optimization_config.chunk_cache_enabled,
+                "size_mb": state.optimization_config.chunk_cache_size_mb,
             },
             "prefetch": {
                 "enabled": state.optimization_config.prefetch_enabled,
@@ -3149,9 +3118,9 @@ pub async fn loadtest_results_handler() -> impl IntoResponse {
         grib_cache_enabled: bool,
         grib_cache_size: usize,
         #[serde(default)]
-        grid_cache_enabled: bool,
+        chunk_cache_enabled: bool,
         #[serde(default)]
-        grid_cache_size: usize,
+        chunk_cache_size_mb: usize,
         prefetch_enabled: bool,
         prefetch_rings: u32,
         prefetch_min_zoom: u32,
@@ -3511,9 +3480,9 @@ pub async fn benchmarks_handler() -> impl IntoResponse {
         grib_cache_enabled: bool,
         grib_cache_size: usize,
         #[serde(default)]
-        grid_cache_enabled: bool,
+        chunk_cache_enabled: bool,
         #[serde(default)]
-        grid_cache_size: usize,
+        chunk_cache_size_mb: usize,
         prefetch_enabled: bool,
         prefetch_rings: u32,
         prefetch_min_zoom: u32,

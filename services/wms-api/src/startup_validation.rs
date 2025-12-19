@@ -446,10 +446,13 @@ async fn run_single_validation(
         )
         .await
     } else {
+        // Get style file from layer config registry (single source of truth)
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(&target.model, &target.parameter);
+        
         rendering::render_weather_data_with_level(
-            &state.grib_cache,
             &state.catalog,
             &state.metrics,
+            &state.grid_processor_factory,
             &target.model,
             &target.parameter,
             None, // forecast_hour - use latest
@@ -457,7 +460,8 @@ async fn run_single_validation(
             256,
             256,
             Some(bbox_array),
-            Some(&target.style),
+            &style_file,
+            Some(target.style.as_str()),
             true, // use_mercator
         )
         .await

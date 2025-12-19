@@ -5,7 +5,7 @@ model:
   id: hrrr
   name: "HRRR - High-Resolution Rapid Refresh"
   description: "NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS coverage"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -21,7 +21,7 @@ source:
   prefix_template: "hrrr.{date}/conus"
   file_pattern: "hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2"
   region: us-east-1
-  
+
 grid:
   projection: lambert_conformal
   resolution: "3km"
@@ -42,13 +42,13 @@ grid:
     ny: 1059
 
 schedule:
-  cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]  # Hourly
-  forecast_hours: 
+  cycles: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23 ]  # Hourly
+  forecast_hours:
     start: 0
-    end: 3                          # 48 hours
+    end: 6                          # 48 hours
     step: 1                          # Every hour
   poll_interval_secs: 3600           # Check every hour
-  delay_hours: 2                     # Data typically available 2 hours after cycle
+  delay_hours: 1                     # Data typically available 2 hours after cycle
 
 retention:
   hours: 2                          # Keep data for 2 hours
@@ -59,7 +59,7 @@ precaching:
   keep_recent: 6                    # 6 most recent forecasts
   warm_on_ingest: false
   poll_interval_secs: 300
-  parameters: ["TMP", "REFC"]       # Most requested parameters
+  parameters: [ "TMP", "REFC" ]       # Most requested parameters
 
 parameters:
   # ==========================================================================
@@ -117,7 +117,7 @@ parameters:
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [850, 700, 500, 300, 250]
+        values: [ 850, 700, 500, 300, 250 ]
         display_template: "{value} mb"
     style: wind
     units: m/s
@@ -131,7 +131,7 @@ parameters:
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [850, 700, 500, 300, 250]
+        values: [ 850, 700, 500, 300, 250 ]
         display_template: "{value} mb"
     style: wind
     units: m/s
@@ -241,7 +241,7 @@ parameters:
     downsample: max
     levels:
       - type: height_above_ground_layer
-        value: [2000, 5000]
+        value: [ 2000, 5000 ]
         display: "2000-5000 m above ground"
     style: helicity
     units: m^2/s^2
@@ -330,7 +330,7 @@ parameters:
     downsample: mean
     levels:
       - type: isobaric
-        values: [850, 700, 500, 300, 250]
+        values: [ 850, 700, 500, 300, 250 ]
         display_template: "{value} mb"
     style: temperature
     units: K
@@ -343,7 +343,7 @@ parameters:
     downsample: mean
     levels:
       - type: isobaric
-        values: [850, 700, 500, 300, 250]
+        values: [ 850, 700, 500, 300, 250 ]
         display_template: "{value} mb"
     style: default
     units: gpm
@@ -352,6 +352,6 @@ parameters:
 composites:
   - name: WIND_BARBS
     description: "Wind barbs visualization"
-    requires: [UGRD, VGRD]
+    requires: [ UGRD, VGRD ]
     renderer: wind_barbs
     style: wind_barbs

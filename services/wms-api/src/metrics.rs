@@ -839,16 +839,6 @@ impl MetricsCollector {
         counter!("model_cache_misses_total", "model" => model.label().to_string()).increment(1);
     }
     
-    /// Record weather model grid cache hit (parsed grid data)
-    pub fn record_model_grid_cache_hit(&self, model: WeatherModel) {
-        counter!("model_grid_cache_hits_total", "model" => model.label().to_string()).increment(1);
-    }
-    
-    /// Record weather model grid cache miss (parsed grid data)
-    pub fn record_model_grid_cache_miss(&self, model: WeatherModel) {
-        counter!("model_grid_cache_misses_total", "model" => model.label().to_string()).increment(1);
-    }
-    
     /// Record weather model resampling/projection time
     pub fn record_model_resample(&self, model: WeatherModel, duration_us: u64) {
         histogram!("model_resample_duration_ms", "model" => model.label().to_string())
@@ -921,23 +911,6 @@ impl MetricsCollector {
         gauge!("grib_cache_size").set(size as f64);
         gauge!("grib_cache_capacity").set(capacity as f64);
         gauge!("grib_cache_utilization_percent").set((size as f64 / capacity as f64) * 100.0);
-    }
-    
-    /// Record grid data cache statistics (for parsed GOES/GRIB grids)
-    pub fn record_grid_cache_stats(&self, stats: &storage::GridCacheStats) {
-        let hit_rate = stats.hit_rate();
-        let utilization = stats.utilization();
-        let memory_mb = stats.memory_mb();
-        
-        gauge!("grid_cache_hits_total").set(stats.hits as f64);
-        gauge!("grid_cache_misses_total").set(stats.misses as f64);
-        gauge!("grid_cache_evictions_total").set(stats.evictions as f64);
-        gauge!("grid_cache_entries").set(stats.entries as f64);
-        gauge!("grid_cache_capacity").set(stats.capacity as f64);
-        gauge!("grid_cache_memory_bytes").set(stats.memory_bytes as f64);
-        gauge!("grid_cache_memory_mb").set(memory_mb);
-        gauge!("grid_cache_hit_rate_percent").set(hit_rate);
-        gauge!("grid_cache_utilization_percent").set(utilization);
     }
     
     /// Record Zarr chunk cache statistics (for chunked grid data)

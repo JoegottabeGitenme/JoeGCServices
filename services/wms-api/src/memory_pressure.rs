@@ -108,12 +108,14 @@ impl MemoryPressureMonitor {
         let mut total_evicted = 0usize;
         
         // Get current cache stats
-        let grid_stats = self.state.grid_cache.stats().await;
+        let chunk_stats = self.state.grid_processor_factory.cache_stats().await;
         let grib_stats = self.state.grib_cache.stats().await;
         let l1_stats = self.state.tile_memory_cache.stats();
         
+        let chunk_cache_mb = chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0);
+        
         info!(
-            grid_cache_mb = grid_stats.memory_mb(),
+            chunk_cache_mb = chunk_cache_mb,
             grib_cache_entries = grib_stats.hits + grib_stats.misses, // approximate
             l1_cache_bytes = l1_stats.size_bytes.load(std::sync::atomic::Ordering::Relaxed),
             target_rss_mb = target_bytes / (1024 * 1024),
@@ -130,24 +132,24 @@ impl MemoryPressureMonitor {
         let bytes_to_free = current_rss - target_bytes;
         
         // Strategy: Evict in order of data size (largest first)
-        // 1. Grid cache (GOES grids are ~15MB each)
-        // 2. GRIB cache (GRIB files are ~1-5MB each)
-        // 3. Tile cache (tiles are ~30KB each)
+        // 1. Chunk cache (Zarr chunks, variable size)
+        // 2. L1 tile cache (tiles are ~30KB each)
         
-        // Evict from grid cache first (largest entries)
-        if grid_stats.memory_bytes > 0 {
+        // Evict from chunk cache first (largest entries)
+        if chunk_stats.memory_bytes > 0 {
             // Calculate percentage to evict based on how much we need to free
-            // If we need to free more than the grid cache has, evict all of it
-            let evict_ratio = (bytes_to_free as f64 / grid_stats.memory_bytes as f64).min(0.5);
+            // If we need to free more than the chunk cache has, evict all of it
+            let evict_ratio = (bytes_to_free as f64 / chunk_stats.memory_bytes as f64).min(0.5);
             if evict_ratio > 0.1 {
-                let evicted = self.state.grid_cache.evict_percentage(evict_ratio).await;
+                // Clear chunk cache completely (no partial eviction API)
+                let (evicted, _bytes) = self.state.grid_processor_factory.clear_chunk_cache().await;
                 total_evicted += evicted;
                 info!(
                     evicted_entries = evicted,
                     evict_ratio = format!("{:.0}%", evict_ratio * 100.0),
-                    "Evicted from grid cache"
+                    "Cleared chunk cache"
                 );
-                metrics::counter!("memory_pressure_grid_evictions").increment(evicted as u64);
+                metrics::counter!("memory_pressure_chunk_evictions").increment(evicted as u64);
             }
         }
         
@@ -157,7 +159,7 @@ impl MemoryPressureMonitor {
             info!(
                 total_evicted = total_evicted,
                 new_rss_mb = current_rss_after / (1024 * 1024),
-                "Memory pressure relieved after grid cache eviction"
+                "Memory pressure relieved after chunk cache eviction"
             );
             return Ok(());
         }

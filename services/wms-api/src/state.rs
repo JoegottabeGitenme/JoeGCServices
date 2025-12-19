@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
-use storage::{Catalog, GribCache, GridDataCache, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use storage::{Catalog, GribCache, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
@@ -28,13 +28,6 @@ pub struct OptimizationConfig {
     // GRIB Cache
     pub grib_cache_enabled: bool,
     pub grib_cache_size: usize,
-    
-    // Grid Data Cache (for parsed GOES/NetCDF data)
-    pub grid_cache_enabled: bool,
-    pub grid_cache_size: usize,
-    
-    // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
-    pub grib_grid_cache_enabled: bool,
     
     // Zarr Chunk Cache (for chunked Zarr grid data)
     pub chunk_cache_enabled: bool,
@@ -101,14 +94,6 @@ impl OptimizationConfig {
             // GRIB Cache
             grib_cache_enabled: parse_bool("ENABLE_GRIB_CACHE", true),
             grib_cache_size: parse_usize("GRIB_CACHE_SIZE", 500),
-            
-            // Grid Data Cache (for parsed GOES/NetCDF data)
-            grid_cache_enabled: parse_bool("ENABLE_GRID_CACHE", true),
-            grid_cache_size: parse_usize("GRID_CACHE_SIZE", 100),
-            
-            // GRIB2 Grid Cache (extends grid cache to also cache parsed GRIB2 data)
-            // This can significantly reduce CPU usage for adjacent tile requests
-            grib_grid_cache_enabled: parse_bool("ENABLE_GRIB_GRID_CACHE", true),
             
             // Zarr Chunk Cache (for chunked Zarr grid data)
             // This caches decompressed chunks from Zarr files for efficient partial reads
@@ -316,13 +301,12 @@ pub struct AppState {
     pub tile_memory_cache: TileMemoryCache,  // L1 cache for rendered tiles
     pub storage: Arc<ObjectStorage>,
     pub grib_cache: GribCache,
-    pub grid_cache: GridDataCache,  // Cache for parsed grid data (GOES/NetCDF)
     pub grid_processor_factory: GridProcessorFactory,  // Factory for Zarr-based grid processors
     pub projection_luts: ProjectionLuts,  // Pre-computed projection LUTs for GOES
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
-    pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
+    pub chunk_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::chunk_warming::ChunkWarmer>>>,  // Chunk cache warmer
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
 }
@@ -346,7 +330,6 @@ impl AppState {
 
         // Use optimization config for cache sizes
         let grib_cache_size = optimization_config.grib_cache_size;
-        let grid_cache_size = optimization_config.grid_cache_size;
         let tile_cache_size = optimization_config.l1_cache_size;
         let tile_cache_ttl = optimization_config.l1_cache_ttl_secs;
         let prefetch_rings = optimization_config.prefetch_rings;
@@ -368,9 +351,6 @@ impl AppState {
         
         // Create GRIB cache with shared storage reference
         let grib_cache = GribCache::new(grib_cache_size, storage.clone());
-        
-        // Create grid data cache for parsed GOES/NetCDF data
-        let grid_cache = GridDataCache::new(grid_cache_size);
 
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
@@ -437,25 +417,14 @@ impl AppState {
             tile_memory_cache,
             storage,
             grib_cache,
-            grid_cache,
             grid_processor_factory,
             projection_luts,
             metrics,
             prefetch_rings,
             optimization_config,
-            grid_warmer: tokio::sync::RwLock::new(None),
+            chunk_warmer: tokio::sync::RwLock::new(None),
             model_dimensions,
             layer_configs,
         })
-    }
-    
-    /// Get the grid cache reference if GRIB grid caching is enabled.
-    /// Returns None if caching is disabled via ENABLE_GRIB_GRID_CACHE=false
-    pub fn grid_cache_if_enabled(&self) -> Option<&GridDataCache> {
-        if self.optimization_config.grib_grid_cache_enabled {
-            Some(&self.grid_cache)
-        } else {
-            None
-        }
     }
 }

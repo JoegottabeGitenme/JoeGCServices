@@ -250,33 +250,6 @@
         </div>
         <div class="info-bar">
             <div class="info-bar-content">
-                <!-- Grid Cache Stats -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="Cache for parsed weather data grids. Avoids re-parsing GRIB2/NetCDF files on each tile render.">Grid Cache</span>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="Number of parsed grids currently stored in the cache.">
-                            <span class="info-stat-label">Entries</span>
-                            <span class="info-stat-value" id="info-grid-entries">-</span>
-                        </div>
-                        <div class="info-stat" title="Current memory usage of the grid cache. GOES grids are ~15MB each.">
-                            <span class="info-stat-label">Memory</span>
-                            <span class="info-stat-value" id="info-grid-memory">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of times a pre-parsed grid was found in cache, avoiding expensive file parsing.">
-                            <span class="info-stat-label">Hits</span>
-                            <span class="info-stat-value" id="info-grid-hits">-</span>
-                        </div>
-                        <div class="info-stat" title="Overall grid cache hit rate. Higher rates mean faster tile rendering.">
-                            <span class="info-stat-label">Rate</span>
-                            <span class="info-stat-value" id="info-grid-rate">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of grids evicted from cache due to LRU policy or memory pressure.">
-                            <span class="info-stat-label">Evictions</span>
-                            <span class="info-stat-value" id="info-grid-evictions">-</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="info-bar-separator"></div>
                 <!-- Chunk Cache Stats (Zarr) -->
                 <div class="info-bar-group">
                     <span class="info-bar-title" title="Cache for Zarr data chunks. Enables efficient partial reads from cloud storage for tile rendering.">Chunk Cache</span>
@@ -535,38 +508,11 @@
                     <div class="perf-widget-header" onclick="togglePerfWidget()">
                         <span class="perf-widget-title">Cache & Performance</span>
                         <div class="perf-widget-meta">
-                            <span class="perf-memory-usage" id="perf-memory-usage" title="Grid cache memory usage">-</span>
+                            <span class="perf-memory-usage" id="perf-memory-usage" title="Chunk cache memory usage">-</span>
                             <span class="perf-toggle-icon">▼</span>
                         </div>
                     </div>
                     <div class="perf-widget-content" id="perf-widget-content">
-                        <!-- Grid Cache Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Grid Cache</div>
-                            <div class="perf-grid">
-                                <div class="perf-item">
-                                    <span class="perf-label">Memory</span>
-                                    <span class="perf-value" id="perf-grid-memory">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Entries</span>
-                                    <span class="perf-value" id="perf-grid-entries">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Capacity</span>
-                                    <span class="perf-value" id="perf-grid-capacity">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Hit Rate</span>
-                                    <span class="perf-value" id="perf-grid-hitrate">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Evictions</span>
-                                    <span class="perf-value" id="perf-grid-evictions">-</span>
-                                </div>
-                            </div>
-                        </div>
-                        
                         <!-- Memory Pressure Section -->
                         <div class="perf-section">
                             <div class="perf-section-title">Memory Management</div>
@@ -592,7 +538,7 @@
                             <div class="perf-flags" id="perf-flags">
                                 <span class="perf-flag" id="perf-flag-l1" title="L1 In-Memory Tile Cache">L1</span>
                                 <span class="perf-flag" id="perf-flag-l2" title="L2 Redis Tile Cache">L2</span>
-                                <span class="perf-flag" id="perf-flag-grid" title="Grid Data Cache">Grid</span>
+                                <span class="perf-flag" id="perf-flag-chunk" title="Zarr Chunk Cache">Chunk</span>
                                 <span class="perf-flag" id="perf-flag-grib" title="GRIB File Cache">GRIB</span>
                                 <span class="perf-flag" id="perf-flag-prefetch" title="Tile Prefetching">Prefetch</span>
                                 <span class="perf-flag" id="perf-flag-warming" title="Cache Warming">Warming</span>
