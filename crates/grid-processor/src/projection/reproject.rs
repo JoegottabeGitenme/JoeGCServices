@@ -33,16 +33,23 @@ use crate::types::BoundingBox;
 /// * Bilinear interpolation is used for smooth resampling
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use projection::Geostationary;
-/// use grid_processor::reproject_geostationary_to_geographic;
+/// use grid_processor::projection::reproject::reproject_geostationary_to_geographic;
 ///
-/// let proj = Geostationary::from_goes(
-///     35786023.0, 6378137.0, 6356752.31414, -137.0,
-///     -0.101353, 0.128233, 1.4e-05, -1.4e-05, 2500, 1500
-/// );
-/// let (reprojected, width, height, bbox) =
-///     reproject_geostationary_to_geographic(&data, 2500, 1500, &proj);
+/// // Use GOES-16 CONUS projection with known valid parameters
+/// let proj = Geostationary::goes16_conus();
+/// let width = proj.nx;
+/// let height = proj.ny;
+///
+/// // Create sample data
+/// let data: Vec<f32> = vec![0.0; width * height];
+///
+/// let (reprojected, out_width, out_height, bbox) =
+///     reproject_geostationary_to_geographic(&data, width, height, &proj);
+///
+/// assert_eq!(out_width, width);
+/// assert_eq!(out_height, height);
 /// ```
 pub fn reproject_geostationary_to_geographic(
     data: &[f32],

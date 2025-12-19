@@ -538,11 +538,13 @@ mod tests {
 
     #[test]
     fn test_unit_conversion() {
-        assert_eq!(UnitConversion::KToC.apply(273.15), 0.0);
-        assert_eq!(UnitConversion::KToC.apply(300.0), 26.85);
-        assert_eq!(UnitConversion::PaToHPa.apply(101325.0), 1013.25);
-        assert_eq!(UnitConversion::MToKm.apply(1000.0), 1.0);
-        assert_eq!(UnitConversion::None.apply(42.0), 42.0);
+        // Use epsilon comparison for floating point
+        let eps = 1e-9;
+        assert!((UnitConversion::KToC.apply(273.15) - 0.0).abs() < eps);
+        assert!((UnitConversion::KToC.apply(300.0) - 26.85).abs() < eps);
+        assert!((UnitConversion::PaToHPa.apply(101325.0) - 1013.25).abs() < eps);
+        assert!((UnitConversion::MToKm.apply(1000.0) - 1.0).abs() < eps);
+        assert!((UnitConversion::None.apply(42.0) - 42.0).abs() < eps);
     }
 
     #[test]

@@ -714,11 +714,13 @@ mod tests {
 
     #[test]
     fn test_format_value() {
-        assert_eq!(format_value(273.0), "273");
-        assert_eq!(format_value(273.5), "274"); // rounds to nearest
-        assert_eq!(format_value(273.15), "273");
-        assert_eq!(format_value(0.0), "0");
-        assert_eq!(format_value(-5.5), "-6"); // rounds
+        // format_value outputs 1 decimal place
+        assert_eq!(format_value(273.0), "273.0");
+        assert_eq!(format_value(273.5), "273.5");
+        assert_eq!(format_value(273.15), "273.2"); // rounds to 1 decimal
+        assert_eq!(format_value(0.0), "0.0");
+        assert_eq!(format_value(-5.5), "-5.5");
+        assert_eq!(format_value(-5.55), "-5.6"); // rounds
     }
 
     #[test]

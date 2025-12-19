@@ -20,16 +20,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grib2_parser::Grib2Reader;
 //! use bytes::Bytes;
 //!
 //! let data = std::fs::read("gfs.grib2").unwrap();
-//! let reader = Grib2Reader::new(Bytes::from(data));
+//! let mut reader = Grib2Reader::new(Bytes::from(data));
 //!
-//! for message in reader.iter_messages() {
+//! for result in reader.iter_messages() {
+//!     let message = result.unwrap();
 //!     println!("Parameter: {}", message.product_definition.parameter_short_name);
-//!     println!("Level: {}", message.product_definition.level);
+//!     println!("Level: {}", message.product_definition.level_description);
 //!     println!("Forecast hour: {}", message.product_definition.forecast_hour);
 //! }
 //! ```

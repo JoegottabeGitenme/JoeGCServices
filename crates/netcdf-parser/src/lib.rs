@@ -14,24 +14,6 @@
 //! The main data variable is `CMI` (Cloud and Moisture Imagery) which contains
 //! either reflectance factors (bands 1-6) or brightness temperatures (bands 7-16).
 //!
-//! # Usage
-//!
-//! ```ignore
-//! use netcdf_parser::{load_goes_netcdf_from_bytes, GoesProjection};
-//!
-//! // Load GOES data from bytes
-//! let bytes = std::fs::read("goes_file.nc")?;
-//! let (data, width, height, projection, x_off, y_off, x_scale, y_scale) =
-//!     load_goes_netcdf_from_bytes(&bytes)?;
-//!
-//! // Convert pixel to lat/lon
-//! let x_rad = x_off + (100.0 * x_scale) as f64;
-//! let y_rad = y_off + (100.0 * y_scale) as f64;
-//! if let Some((lon, lat)) = projection.to_geographic(x_rad, y_rad) {
-//!     println!("Pixel (100, 100) is at {:.2}°N, {:.2}°W", lat, -lon);
-//! }
-//! ```
-//!
 //! # Module Structure
 //!
 //! - [`error`] - Error types and result alias

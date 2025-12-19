@@ -13,29 +13,6 @@
 //! - Zarr pyramid generation
 //! - Upload to object storage (MinIO/S3)
 //! - Catalog registration (PostgreSQL)
-//!
-//! # Example
-//!
-//! ```ignore
-//! use ingestion::{Ingester, IngestOptions};
-//! use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
-//! use std::sync::Arc;
-//!
-//! // Create storage and catalog connections
-//! let storage = Arc::new(ObjectStorage::new(&config)?);
-//! let catalog = Catalog::connect(&database_url).await?;
-//!
-//! // Create ingester
-//! let ingester = Ingester::new(storage, catalog);
-//!
-//! // Ingest a file
-//! let result = ingester.ingest_file(
-//!     "/path/to/gfs.grib2",
-//!     IngestOptions::default(),
-//! ).await?;
-//!
-//! println!("Registered {} datasets", result.datasets_registered);
-//! ```
 
 pub mod config;
 pub mod error;

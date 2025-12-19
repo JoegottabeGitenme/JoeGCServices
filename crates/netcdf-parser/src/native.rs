@@ -65,14 +65,6 @@ pub fn silence_hdf5_errors() {
 /// - `projection`: GOES projection parameters
 /// - `x_offset`, `y_offset`: Scan angle offsets (radians)
 /// - `x_scale`, `y_scale`: Scan angle scale factors (radians/pixel)
-///
-/// # Example
-///
-/// ```ignore
-/// let bytes = std::fs::read("goes_file.nc")?;
-/// let (data, width, height, proj, x_off, y_off, x_scale, y_scale) =
-///     load_goes_netcdf_from_bytes(&bytes)?;
-/// ```
 pub fn load_goes_netcdf_from_bytes(
     data: &[u8],
 ) -> NetCdfResult<(Vec<f32>, usize, usize, GoesProjection, f32, f32, f32, f32)> {

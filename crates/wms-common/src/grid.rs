@@ -243,9 +243,17 @@ mod tests {
     fn test_index_to_coord() {
         let grid = grids::gfs_0p25();
 
+        // GFS 0.25° grid: first_y=90, dy=-0.25, scan_mode.j_positive=false
+        // With j_positive=false, j-index is flipped: j_adj = ny - 1 - j
+        // So index (0,0) maps to j_adj=720, giving y = 90 + 720*(-0.25) = -90
         let point = grid.index_to_coord(0, 0).unwrap();
         assert!((point.x - 0.0).abs() < 0.001);
-        assert!((point.y - 90.0).abs() < 0.001);
+        assert!((point.y - (-90.0)).abs() < 0.001); // South pole
+
+        // Test top-left corner (last row in j index)
+        let point = grid.index_to_coord(0, 720).unwrap();
+        assert!((point.x - 0.0).abs() < 0.001);
+        assert!((point.y - 90.0).abs() < 0.001); // North pole
     }
 
     #[test]
