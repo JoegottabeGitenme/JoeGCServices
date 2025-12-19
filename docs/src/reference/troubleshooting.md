@@ -398,6 +398,105 @@ docker-compose exec postgres vacuumdb -U weatherwms --analyze weatherwms
 
 ---
 
+## Rendering Issues
+
+### Tiles Render as Solid Colors
+
+**Symptom**: Each tile appears as a single solid color instead of showing gradients.
+
+**Cause**: Style name not being passed to the renderer, causing fallback to per-tile min/max normalization.
+
+**Solution**: Ensure the WMTS/WMS handlers pass the style parameter:
+```rust
+// In handlers.rs - WMTS GetTile
+crate::rendering::render_weather_data_with_lut(
+    ...
+    Some(style),  // Must pass style name, not None
+    ...
+)
+```
+
+See [Rendering Pipeline](../architecture/rendering-pipeline.md) for details.
+
+---
+
+### Tiles Show Wrong Geographic Data
+
+**Symptom**: Tiles outside the prime meridian region (0° longitude) show data from incorrect locations.
+
+**Cause**: When Zarr performs partial reads, the returned data bounding box differs from the full grid bbox. If the renderer uses the wrong bbox, pixel-to-grid coordinate mapping fails.
+
+**Solution**: Use the actual bounding box returned from Zarr partial reads:
+```rust
+// Use actual bbox from Zarr if available
+let data_bounds = grid_result.bbox.unwrap_or_else(|| [
+    entry.bbox.min_x,
+    entry.bbox.min_y,
+    entry.bbox.max_x,
+    entry.bbox.max_y,
+]);
+```
+
+See [Rendering Pipeline - Zarr Partial Reads](../architecture/rendering-pipeline.md#zarr-partial-reads).
+
+---
+
+### Tiles Near Dateline Look Wrong
+
+**Symptom**: Tiles crossing the antimeridian (180° longitude) or with requests spanning negative to positive longitude appear distorted.
+
+**Cause**: For 0-360 longitude grids (like GFS), requests spanning from negative to positive longitude (e.g., [-100°, 50°]) normalize to inverted bounds (e.g., [260°, 50°]).
+
+**Solution**: The Zarr processor detects this case and loads the full grid instead of attempting an invalid partial read:
+```rust
+// Detect and handle dateline crossing
+if bbox.crosses_dateline_on_360_grid(&grid_bbox) {
+    // Load full grid instead of partial
+}
+```
+
+---
+
+### Vertical Line at Prime Meridian (0° Longitude)
+
+**Symptom**: A visible vertical seam or line artifact appears at 0° longitude on GFS temperature (or other global 0-360° grid) tiles.
+
+**Cause**: GFS uses 0-360° longitude with 0.25° resolution, creating a gap between the last grid column (359.75°) and 360°. When tiles near the prime meridian request negative longitudes (e.g., -0.1°), these normalize to the gap region (e.g., 359.9°). Without special handling, pixels in this gap fail the bounds check and render as transparent/NaN.
+
+**Solution**: The resampling functions now detect the "wrap gap" and handle it specially:
+1. Pixels in the gap (between 359.75° and 360°) skip the normal bounds check
+2. Grid coordinates are calculated to position past the last column
+3. Bilinear interpolation wraps from column 1439 back to column 0
+
+This fix requires the `grid_uses_360` flag to be propagated from grid metadata through the rendering pipeline (cannot be inferred from partial read bounds).
+
+See [Rendering Pipeline - Prime Meridian Wrap Gap](../architecture/rendering-pipeline.md#handling-the-prime-meridian-wrap-gap) for implementation details.
+
+---
+
+### Temperature Colors Don't Match Expected Values
+
+**Symptom**: Temperature appears with wrong colors (e.g., hot areas showing blue).
+
+**Possible Causes**:
+1. Style file missing the requested style key
+2. Unit mismatch (Kelvin vs Celsius)
+3. Style range doesn't cover data values
+
+**Solution**:
+```bash
+# Check style configuration
+cat config/styles/temperature.json | jq '.styles | keys'
+
+# Verify data units
+# GFS temperature is in Kelvin (e.g., 293.15 K = 20°C)
+
+# Check style covers data range
+cat config/styles/temperature.json | jq '.styles.default.stops'
+```
+
+---
+
 ## Common Error Messages
 
 ### "Layer not found"

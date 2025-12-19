@@ -5,7 +5,8 @@
     "description": "Grayscale colormap for GOES visible band reflectance"
   },
   "styles": {
-    "default": {
+    "grayscale": {
+      "default": true,
       "name": "GOES Visible",
       "description": "Grayscale colormap for GOES visible band reflectance",
       "type": "gradient",

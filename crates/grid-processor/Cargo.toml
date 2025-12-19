@@ -1,0 +1,53 @@
+[package]
+name = "grid-processor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Grid processing abstraction layer with Zarr V3 support for efficient chunked data access"
+
+[dependencies]
+# Zarr support - compatible versions (zarrs 0.18.x ecosystem)
+zarrs = "0.18"
+zarrs_storage = "0.3"
+zarrs_filesystem = "0.2"
+zarrs_object_store = "0.3"
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# Storage
+object_store.workspace = true
+bytes.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Caching
+lru = "0.12"
+
+# Logging
+tracing.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Utilities
+bytemuck = { version = "1", features = ["derive"] }
+
+# Internal dependencies
+wms-common = { path = "../wms-common" }
+storage = { path = "../storage" }
+projection = { path = "../projection" }
+
+[dev-dependencies]
+tokio-test.workspace = true
+tempfile = "3"
+zarrs_filesystem = "0.2"

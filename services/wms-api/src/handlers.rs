@@ -137,7 +137,8 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         }
     }
     
-    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes, &state.model_dimensions);
+    let layer_configs = state.layer_configs.read().await;
+    let xml = build_wms_capabilities_xml(version, &models, &model_params, &model_dimensions, &param_levels, &model_bboxes, &state.model_dimensions, &layer_configs);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -193,7 +194,9 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                 let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                 [min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32]
             } else {
-                [coords[0] as f32, coords[1] as f32, coords[2] as f32, coords[3] as f32]
+                // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                // BBOX format: min_lat, min_lon, max_lat, max_lon
+                [coords[1] as f32, coords[0] as f32, coords[3] as f32, coords[2] as f32]
             };
             state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
         }
@@ -297,7 +300,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         .and_then(InfoFormat::from_mime)
         .unwrap_or(InfoFormat::Html);
     
-    // Parse BBOX
+    // Parse BBOX - WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
     let bbox_coords: Result<Vec<f64>, _> = bbox
         .split(',')
         .map(|s| s.trim().parse())
@@ -305,7 +308,14 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     
     let bbox_array = match bbox_coords {
         Ok(coords) if coords.len() == 4 => {
-            [coords[0], coords[1], coords[2], coords[3]]
+            if crs.contains("3857") {
+                // Web Mercator - keep as [minx, miny, maxx, maxy]
+                [coords[0], coords[1], coords[2], coords[3]]
+            } else {
+                // EPSG:4326 - input is [min_lat, min_lon, max_lat, max_lon]
+                // Convert to [min_lon, min_lat, max_lon, max_lat]
+                [coords[1], coords[0], coords[3], coords[2]]
+            }
         }
         _ => {
             return wms_exception(
@@ -341,10 +351,33 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     let mut all_features = Vec::new();
     
     for layer in layers {
+        // For each layer, determine the effective elevation (use default if not specified)
+        // This ensures consistent data selection (prevents random level selection from database)
+        let effective_elevation: Option<String> = match &elevation {
+            Some(elev) => Some(elev.clone()),
+            None => {
+                // Parse layer name to get model and parameter
+                let parts: Vec<&str> = layer.split('_').collect();
+                if parts.len() >= 2 {
+                    let model = parts[0];
+                    // Uppercase parameter to match database storage
+                    let parameter = parts[1..].join("_").to_uppercase();
+                    let configs = state.layer_configs.read().await;
+                    configs
+                        .get_layer_by_param(model, &parameter)
+                        .and_then(|l| l.default_level())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            }
+        };
+        
         match crate::rendering::query_point_value(
             &state.grib_cache,
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             layer,
             bbox_array,
             width,
@@ -353,7 +386,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             j,
             crs,
             forecast_hour,
-            elevation.as_deref(),
+            effective_elevation.as_deref(),
         )
         .await
         {
@@ -598,7 +631,8 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         model_dimensions.insert(model.clone(), dimensions);
     }
     
-    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions);
+    let layer_configs = state.layer_configs.read().await;
+    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions, &layer_configs);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -623,6 +657,29 @@ async fn wmts_get_tile(
     // Record WMTS request
     state.metrics.record_wmts_request();
     let timer = Timer::start();
+    
+    // Parse layer name to get model and parameter for default level lookup
+    // Uppercase parameter to match database storage (parameters stored as uppercase, e.g., "TMP", "UGRD")
+    let parts: Vec<&str> = layer.split('_').collect();
+    let (model, parameter) = if parts.len() >= 2 {
+        (parts[0], parts[1..].join("_").to_uppercase())
+    } else {
+        (layer, "".to_string())
+    };
+    
+    // If no elevation specified, use the default level from layer config
+    // This ensures consistent data selection (prevents random level selection from database)
+    let effective_elevation: Option<String> = match elevation {
+        Some(elev) => Some(elev.to_string()),
+        None => {
+            let configs = state.layer_configs.read().await;
+            configs
+                .get_layer_by_param(model, &parameter)
+                .and_then(|l| l.default_level())
+                .map(|s| s.to_string())
+        }
+    };
+    let elevation = effective_elevation.as_deref();
     
     info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, observation_time = ?observation_time, elevation = ?elevation, "GetTile request");
     
@@ -739,9 +796,8 @@ async fn wmts_get_tile(
         "Tile bbox"
     );
     
-    // Parse layer name (format: "model_parameter")
-    let parts: Vec<&str> = layer.split('_').collect();
-    if parts.len() < 2 {
+    // Validate layer format (already parsed model/parameter above for default level lookup)
+    if parameter.is_empty() {
         return wmts_exception(
             "InvalidParameterValue",
             "Invalid layer format",
@@ -749,14 +805,12 @@ async fn wmts_get_tile(
         );
     }
     
-    let model = parts[0];
-    let parameter = parts[1..].join("_");
-    
     // Check if this is a wind barbs composite layer
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),  // Pass tile coordinate for expanded rendering
             256,  // tile width
@@ -778,17 +832,14 @@ async fn wmts_get_tile(
         }
         
         // Render isolines (contours) for this parameter
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature_isolines.json", style_config_dir)
-        } else {
-            // Default to temperature isolines for now
-            format!("{}/temperature_isolines.json", style_config_dir)
-        };
+        // Use the layer config registry to get the style file
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord),  // Pass tile coordinate for expanded rendering
@@ -796,47 +847,27 @@ async fn wmts_get_tile(
             256,  // tile height
             bbox_array,
             &style_file,
+            "isolines",  // style name within the file
             forecast_hour,
             elevation,
             true,  // WMTS tiles are always in Web Mercator
+            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
-        // Get appropriate style file for color mapping
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("CMI") {
-            // GOES satellite data
-            if parameter.contains("C01") || parameter.contains("C02") || parameter.contains("C03") {
-                // Visible/near-IR bands
-                format!("{}/goes_visible.json", style_config_dir)
-            } else {
-                // IR bands (C08-C16)
-                format!("{}/goes_ir.json", style_config_dir)
-            }
-        } else if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature.json", style_config_dir)
-        } else if parameter.contains("WIND") || parameter.contains("GUST") {
-            format!("{}/wind.json", style_config_dir)
-        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
-            format!("{}/atmospheric.json", style_config_dir)
-        } else if parameter.contains("PRECIP_RATE") {
-            format!("{}/precip_rate.json", style_config_dir)
-        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
-            format!("{}/precipitation.json", style_config_dir)
-        } else if parameter.contains("REFL") {
-            format!("{}/reflectivity.json", style_config_dir)
-        } else {
-            // Default to temperature for generic parameters
-            format!("{}/temperature.json", style_config_dir)
-        };
+        // Get appropriate style file for color mapping from layer config registry
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_numbers_tile(
+        // Use buffered rendering to avoid clipped numbers at tile edges
+        crate::rendering::render_numbers_tile_with_buffer(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             model,
             &parameter,
+            Some(coord),  // Pass tile coordinate for expanded rendering
             256,  // tile width
             256,  // tile height
             bbox_array,
@@ -863,10 +894,11 @@ async fn wmts_get_tile(
             256,  // tile width
             256,  // tile height
             Some(bbox_array),
-            None,  // style_name
+            Some(style),  // style_name - pass requested style for proper color mapping
             true,  // use_mercator for WMTS
             Some((z, x, y)),  // tile coords for LUT lookup
             Some(&state.projection_luts),  // projection LUT cache
+            Some(&state.grid_processor_factory),  // Zarr grid processor factory
         )
         .await
     };
@@ -874,6 +906,20 @@ async fn wmts_get_tile(
     match result
     {
         Ok(png_data) => {
+            let render_time_ms = timer.elapsed_us() as f64 / 1000.0;
+            
+            // Log successful render with timing
+            info!(
+                layer = %layer,
+                style = %style,
+                z = z,
+                x = x,
+                y = y,
+                render_ms = render_time_ms,
+                png_size = png_data.len(),
+                "WMTS tile rendered"
+            );
+            
             // Classify layer type and record metrics
             let layer_type = crate::metrics::LayerType::from_layer_and_style(layer, style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
@@ -976,6 +1022,10 @@ pub async fn metrics_handler(
     let grid_stats = state.grid_cache.stats().await;
     state.metrics.record_grid_cache_stats(&grid_stats);
     
+    // Update Zarr chunk cache metrics
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    state.metrics.record_chunk_cache_stats(&chunk_stats);
+    
     // Update L1 tile memory cache metrics
     let l1_stats = state.tile_memory_cache.stats();
     state.metrics.record_tile_memory_cache_stats(&l1_stats);
@@ -1060,13 +1110,30 @@ pub async fn api_metrics_handler(
         "utilization": grid_stats.utilization(),
     });
     
+    // Get Zarr chunk cache stats
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    let chunk_cache_stats = serde_json::json!({
+        "hits": chunk_stats.hits,
+        "misses": chunk_stats.misses,
+        "evictions": chunk_stats.evictions,
+        "entries": chunk_stats.entries,
+        "memory_bytes": chunk_stats.memory_bytes,
+        "memory_mb": chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0),
+        "hit_rate": if chunk_stats.hits + chunk_stats.misses > 0 {
+            chunk_stats.hits as f64 / (chunk_stats.hits + chunk_stats.misses) as f64
+        } else {
+            0.0
+        },
+    });
+    
     // Combine metrics, system, and cache stats
     let combined = serde_json::json!({
         "metrics": snapshot,
         "system": system,
         "l1_cache": l1_cache_stats,
         "l2_cache": l2_cache_stats,
-        "grid_cache": grid_cache_stats
+        "grid_cache": grid_cache_stats,
+        "chunk_cache": chunk_cache_stats
     });
     
     Json(combined)
@@ -1098,6 +1165,50 @@ pub async fn storage_stats_handler(
 /// Reads from /proc to get memory and CPU info, also checks cgroup limits
 pub async fn container_stats_handler() -> impl IntoResponse {
     let stats = read_container_stats();
+    Json(stats)
+}
+
+/// Grid processor stats endpoint - returns Zarr chunk cache and processing statistics
+/// This provides detailed information about the grid processor subsystem for monitoring
+pub async fn grid_processor_stats_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Get chunk cache stats
+    let chunk_stats = state.grid_processor_factory.cache_stats().await;
+    let total_requests = chunk_stats.hits + chunk_stats.misses;
+    let hit_rate = if total_requests > 0 {
+        (chunk_stats.hits as f64 / total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Get configuration
+    let config = &state.optimization_config;
+    
+    let stats = serde_json::json!({
+        "chunk_cache": {
+            "enabled": config.chunk_cache_enabled,
+            "configured_size_mb": config.chunk_cache_size_mb,
+            "hits": chunk_stats.hits,
+            "misses": chunk_stats.misses,
+            "evictions": chunk_stats.evictions,
+            "entries": chunk_stats.entries,
+            "memory_bytes": chunk_stats.memory_bytes,
+            "memory_mb": chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0),
+            "hit_rate_percent": hit_rate,
+            "total_requests": total_requests,
+        },
+        "zarr": {
+            "supported": true,
+            "format_version": "v3",
+            "storage_backend": "minio",
+        },
+        "status": {
+            "healthy": true,
+            "last_updated": chrono::Utc::now().to_rfc3339(),
+        }
+    });
+    
     Json(stats)
 }
 
@@ -1360,13 +1471,26 @@ async fn render_weather_data(
     }
 
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage (parameters stored as uppercase, e.g., "TMP", "UGRD")
+    let parameter = parts[1..].join("_").to_uppercase();
     
     // Parse dimensions based on layer type (using config-driven dimension registry)
     let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
     
     // ELEVATION parameter is the level string (e.g., "500 mb", "2 m above ground")
-    let level = dimensions.elevation.clone();
+    // If no level specified, use the default level from layer config to ensure consistent
+    // data selection (prevents random level selection from database)
+    let level = match &dimensions.elevation {
+        Some(elev) => Some(elev.clone()),
+        None => {
+            // Get default level from layer config
+            let configs = state.layer_configs.read().await;
+            configs
+                .get_layer_by_param(model, &parameter)
+                .and_then(|l| l.default_level())
+                .map(|s| s.to_string())
+        }
+    };
     
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
@@ -1379,11 +1503,14 @@ async fn render_weather_data(
             if coords.len() == 4 {
                 let crs_str = crs.unwrap_or("EPSG:4326");
                 let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+                    // Web Mercator - BBOX is [minx, miny, maxx, maxy] in meters
                     let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
                     let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                     (min_lon, min_lat, max_lon, max_lat)
                 } else {
-                    (coords[0], coords[1], coords[2], coords[3])
+                    // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                    // BBOX format: min_lat, min_lon, max_lat, max_lon
+                    (coords[1], coords[0], coords[3], coords[2])
                 };
                 
                 Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
@@ -1395,6 +1522,7 @@ async fn render_weather_data(
         return crate::rendering::render_wind_barbs_layer(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             width,
             height,
@@ -1415,13 +1543,14 @@ async fn render_weather_data(
             // Check CRS and convert if needed
             let crs_str = crs.unwrap_or("EPSG:4326");
             let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
-                // Web Mercator - convert to WGS84
+                // Web Mercator - BBOX is [minx, miny, maxx, maxy] in meters
                 let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
                 let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
                 (min_lon, min_lat, max_lon, max_lat)
             } else {
-                // Assume WGS84/EPSG:4326
-                (coords[0], coords[1], coords[2], coords[3])
+                // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
+                // BBOX format: min_lat, min_lon, max_lat, max_lon
+                (coords[1], coords[0], coords[3], coords[2])
             };
             
             Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
@@ -1447,18 +1576,15 @@ async fn render_weather_data(
             ));
         }
         
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature_isolines.json", style_config_dir)
-        } else {
-            // Default to temperature isolines for now
-            format!("{}/temperature_isolines.json", style_config_dir)
-        };
+        // Use layer config registry to get style file
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         // For WMS, we don't have tile coordinates, so pass None
         return crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             None,  // No tile coordinate - render full bbox
@@ -1466,46 +1592,25 @@ async fn render_weather_data(
             height,
             parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
             &style_file,
+            "isolines",  // style name within the file
             forecast_hour,
             level.as_deref(),
             use_mercator,
+            Some(&state.grid_processor_factory),
         )
         .await;
     }
     
     if style == "numbers" {
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("CMI") {
-            // GOES satellite data
-            if parameter.contains("C01") || parameter.contains("C02") || parameter.contains("C03") {
-                // Visible/near-IR bands
-                format!("{}/goes_visible.json", style_config_dir)
-            } else {
-                // IR bands (C08-C16)
-                format!("{}/goes_ir.json", style_config_dir)
-            }
-        } else if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature.json", style_config_dir)
-        } else if parameter.contains("WIND") || parameter.contains("GUST") {
-            format!("{}/wind.json", style_config_dir)
-        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
-            format!("{}/atmospheric.json", style_config_dir)
-        } else if parameter.contains("PRECIP_RATE") {
-            format!("{}/precip_rate.json", style_config_dir)
-        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
-            format!("{}/precipitation.json", style_config_dir)
-        } else if parameter.contains("REFL") {
-            format!("{}/reflectivity.json", style_config_dir)
-        } else {
-            // Default to temperature for generic parameters
-            format!("{}/temperature.json", style_config_dir)
-        };
+        // Use layer config registry to get style file
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
         return crate::rendering::render_numbers_tile(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
+            Some(&state.grid_processor_factory),
             model,
             &parameter,
             width,
@@ -1519,8 +1624,8 @@ async fn render_weather_data(
         .await;
     }
 
-    // Use shared rendering logic with support for observation time
-    crate::rendering::render_weather_data_with_time(
+    // Use shared rendering logic with support for observation time and Zarr
+    crate::rendering::render_weather_data_with_lut(
         &state.grib_cache,
         state.grid_cache_if_enabled(),
         &state.catalog,
@@ -1535,6 +1640,9 @@ async fn render_weather_data(
         parsed_bbox,
         Some(style),
         use_mercator,
+        None,  // tile_coords
+        None,  // projection_luts
+        Some(&state.grid_processor_factory),  // Zarr grid processor factory
     )
     .await
 }
@@ -1694,96 +1802,89 @@ fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
         .unwrap()
 }
 
-/// Get human-readable display name for a model/data source
-fn get_model_display_name(model: &str) -> String {
-    match model {
-        "goes16" => "GOES-16 East".to_string(),
-        "goes18" => "GOES-18 West".to_string(),
-        "gfs" => "GFS".to_string(),
-        "hrrr" => "HRRR".to_string(),
-        "mrms" => "MRMS".to_string(),
-        _ => model.to_uppercase(),
+// ============================================================================
+// Style File XML Helpers
+// ============================================================================
+
+/// Load styles from a JSON file and generate WMS-compatible XML for capabilities
+fn get_styles_xml_from_file(style_file: &str) -> String {
+    // Try to load and parse the style file
+    if let Ok(content) = std::fs::read_to_string(style_file) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+                let mut xml_parts = Vec::new();
+                
+                for (style_key, style_def) in styles {
+                    let name = style_key;
+                    let title = style_def.get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or(style_key);
+                    
+                    xml_parts.push(format!(
+                        "<Style><Name>{}</Name><Title>{}</Title></Style>",
+                        name, title
+                    ));
+                }
+                
+                if !xml_parts.is_empty() {
+                    return xml_parts.join("");
+                }
+            }
+        }
     }
+    
+    // Fallback to just default style if file can't be read
+    "<Style><Name>default</Name><Title>Default</Title></Style>".to_string()
 }
 
-/// Get human-readable name for a GRIB parameter code
-fn get_parameter_name(param: &str) -> String {
-    match param {
-        // Core surface parameters
-        "PRMSL" => "Mean Sea Level Pressure".to_string(),
-        "TMP" => "Temperature".to_string(),
-        "DPT" => "Dew Point Temperature".to_string(),
-        "RH" => "Relative Humidity".to_string(),
-        "UGRD" => "U-Component Wind".to_string(),
-        "VGRD" => "V-Component Wind".to_string(),
-        "WIND_BARBS" => "Wind Barbs".to_string(),
-        "GUST" => "Wind Gust Speed".to_string(),
-        "HGT" => "Geopotential Height".to_string(),
-        
-        // Precipitation parameters
-        "APCP" => "Total Precipitation".to_string(),
-        "PWAT" => "Precipitable Water".to_string(),
-        
-        // Convective/stability parameters
-        "CAPE" => "Convective Available Potential Energy".to_string(),
-        "CIN" => "Convective Inhibition".to_string(),
-        
-        // Cloud parameters
-        "TCDC" => "Total Cloud Cover".to_string(),
-        "LCDC" => "Low Cloud Cover".to_string(),
-        "MCDC" => "Middle Cloud Cover".to_string(),
-        "HCDC" => "High Cloud Cover".to_string(),
-        
-        // Visibility
-        "VIS" => "Visibility".to_string(),
-        
-        // Radar/reflectivity (HRRR)
-        "REFC" => "Composite Reflectivity".to_string(),
-        "RETOP" => "Echo Top Height".to_string(),
-        
-        // Severe weather (HRRR)
-        "MXUPHL" => "Max Updraft Helicity".to_string(),
-        "LTNG" => "Lightning Threat".to_string(),
-        "HLCY" => "Storm-Relative Helicity".to_string(),
-        
-        // GRIB2 Product 1 (Meteorological) parameters
-        "P1_22" => "Cloud Mixing Ratio".to_string(),
-        "P1_23" => "Ice Mixing Ratio".to_string(),
-        "P1_24" => "Rain Mixing Ratio".to_string(),
-        
-        // MRMS parameters
-        "REFL" => "Radar Reflectivity".to_string(),
-        "PRECIP_RATE" => "Precipitation Rate".to_string(),
-        "QPE" => "Quantitative Precipitation Estimate".to_string(),
-        "QPE_01H" => "1-Hour Precipitation".to_string(),
-        "QPE_03H" => "3-Hour Precipitation".to_string(),
-        "QPE_06H" => "6-Hour Precipitation".to_string(),
-        "QPE_24H" => "24-Hour Precipitation".to_string(),
-        
-        // GOES parameters (ABI bands) - User-friendly titles with band info
-        "IR" => "Infrared Imagery".to_string(),
-        "WV" => "Water Vapor".to_string(),
-        "CMI" => "Cloud and Moisture Imagery".to_string(),
-        "CMI_C01" => "Visible Blue - Band 1 (0.47µm)".to_string(),
-        "CMI_C02" => "Visible Red - Band 2 (0.64µm)".to_string(),
-        "CMI_C03" => "Veggie - Band 3 (0.86µm)".to_string(),
-        "CMI_C04" => "Cirrus - Band 4 (1.37µm)".to_string(),
-        "CMI_C05" => "Snow/Ice - Band 5 (1.6µm)".to_string(),
-        "CMI_C06" => "Cloud Particle Size - Band 6 (2.2µm)".to_string(),
-        "CMI_C07" => "Shortwave Window IR - Band 7 (3.9µm)".to_string(),
-        "CMI_C08" => "Upper-Level Water Vapor - Band 8 (6.2µm)".to_string(),
-        "CMI_C09" => "Mid-Level Water Vapor - Band 9 (6.9µm)".to_string(),
-        "CMI_C10" => "Lower-Level Water Vapor - Band 10 (7.3µm)".to_string(),
-        "CMI_C11" => "Cloud-Top Phase - Band 11 (8.4µm)".to_string(),
-        "CMI_C12" => "Ozone - Band 12 (9.6µm)".to_string(),
-        "CMI_C13" => "Clean Longwave IR - Band 13 (10.3µm)".to_string(),
-        "CMI_C14" => "Longwave IR - Band 14 (11.2µm)".to_string(),
-        "CMI_C15" => "Dirty Longwave IR - Band 15 (12.3µm)".to_string(),
-        "CMI_C16" => "CO2 Longwave IR - Band 16 (13.3µm)".to_string(),
-        
-        // Default: return the code itself
-        _ => param.to_string(),
+/// Load styles from a JSON file and generate WMTS-compatible XML for capabilities
+fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
+    // Try to load and parse the style file
+    if let Ok(content) = std::fs::read_to_string(style_file) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+                let mut xml_parts = Vec::new();
+                let mut is_first = true;
+                
+                for (style_key, style_def) in styles {
+                    let identifier = style_key;
+                    let title = style_def.get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or(style_key);
+                    
+                    // First style is the default
+                    if is_first {
+                        xml_parts.push(format!(
+                            r#"      <Style isDefault="true">
+        <ows:Title>{}</ows:Title>
+        <ows:Identifier>{}</ows:Identifier>
+      </Style>"#,
+                            title, identifier
+                        ));
+                        is_first = false;
+                    } else {
+                        xml_parts.push(format!(
+                            r#"      <Style>
+        <ows:Title>{}</ows:Title>
+        <ows:Identifier>{}</ows:Identifier>
+      </Style>"#,
+                            title, identifier
+                        ));
+                    }
+                }
+                
+                if !xml_parts.is_empty() {
+                    return xml_parts.join("\n");
+                }
+            }
+        }
     }
+    
+    // Fallback to just default style if file can't be read
+    r#"      <Style isDefault="true">
+        <ows:Title>Default</ows:Title>
+        <ows:Identifier>default</ows:Identifier>
+      </Style>"#.to_string()
 }
 
 fn build_wms_capabilities_xml(
@@ -1794,6 +1895,7 @@ fn build_wms_capabilities_xml(
     param_levels: &HashMap<String, Vec<String>>,
     model_bboxes: &HashMap<String, wms_common::BoundingBox>,
     dimension_registry: &ModelDimensionRegistry,
+    layer_configs: &crate::layer_config::LayerConfigRegistry,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
@@ -1891,38 +1993,18 @@ fn build_wms_capabilities_xml(
                     
                     let all_dimensions = format!("{}{}", base_dimensions, elevation_dim);
                     
-                    // Add styles to each layer based on parameter type
-                    let styles = if p.contains("TMP") || p.contains("TEMP") || p == "DPT" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>temperature</Name><Title>Temperature Gradient</Title></Style><Style><Name>isolines</Name><Title>Temperature Isolines</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("WIND") || p.contains("GUST") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>wind</Name><Title>Wind Speed</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("PRES") || p.contains("PRMSL") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>atmospheric</Name><Title>Atmospheric Pressure</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "RH" || p.contains("HUMID") || p == "PWAT" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>humidity</Name><Title>Humidity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "CAPE" || p == "CIN" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>cape</Name><Title>Convective Energy</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("TCDC") || p.contains("LCDC") || p.contains("MCDC") || p.contains("HCDC") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>cloud</Name><Title>Cloud Cover</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "VIS" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>visibility</Name><Title>Visibility</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "LTNG" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>lightning</Name><Title>Lightning Threat</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "MXUPHL" || p == "HLCY" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>helicity</Name><Title>Storm Helicity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "REFC" || p.contains("REFL") || p == "RETOP" {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>reflectivity</Name><Title>Radar Reflectivity</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p.contains("PRECIP_RATE") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precip_rate</Name><Title>Precipitation Rate</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else if p == "APCP" || p.contains("QPE") || p.contains("PRECIP") {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>precipitation</Name><Title>Precipitation</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    } else {
-                        "<Style><Name>default</Name><Title>Default</Title></Style><Style><Name>numbers</Name><Title>Numeric Values</Title></Style>"
-                    };
+                    // Load styles dynamically from the style JSON file for this parameter
+                    // Use layer config registry if available, otherwise fall back to hardcoded mapping
+                    let style_file = layer_configs.get_style_file_for_parameter(model, p);
+                    let styles = get_styles_xml_from_file(&style_file);
+                    
+                    // Get display names from layer config or fall back to hardcoded
+                    let model_name = layer_configs.get_model_display_name(model);
+                    let param_name = layer_configs.get_parameter_display_name(model, p);
                     
                     format!(
                         r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/>{}{}</Layer>"#,
-                        model, p, get_model_display_name(model), get_parameter_name(p),
+                        model, p, model_name, param_name,
                         west, east, south, north,
                         west, south, east, north,
                         styles, all_dimensions
@@ -1952,10 +2034,11 @@ fn build_wms_capabilities_xml(
                  String::new()
              };
              
+             let model_display = layer_configs.get_model_display_name(model);
              let wind_barbs_layer = if params.contains(&"UGRD".to_string()) && params.contains(&"VGRD".to_string()) {
                  format!(
                      r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}{}</Layer>"#,
-                     model, get_model_display_name(model),
+                     model, model_display,
                      west, east, south, north,
                      west, south, east, north,
                      base_dimensions, wind_elevation_dim
@@ -1967,7 +2050,7 @@ fn build_wms_capabilities_xml(
              format!(
                  r#"<Layer><Name>{}</Name><Title>{}</Title>{}{}</Layer>"#,
                  model,
-                 get_model_display_name(model),
+                 model_display,
                  param_layers,
                  wind_barbs_layer
              )
@@ -2033,6 +2116,7 @@ fn build_wmts_capabilities_xml(
     model_dimensions: &HashMap<String, (Vec<String>, Vec<i32>)>,
     param_levels: &HashMap<String, Vec<String>>,
     dimension_registry: &ModelDimensionRegistry,
+    layer_configs: &crate::layer_config::LayerConfigRegistry,
 ) -> String {
     let empty_params = Vec::new();
     let empty_dims = (Vec::new(), Vec::new());
@@ -2113,9 +2197,21 @@ fn build_wmts_capabilities_xml(
             let model_clone = model.clone();
             let time_dimensions_xml_clone = time_dimensions_xml.clone();
             let empty_levels_clone = empty_levels.clone();
+            
+            // Pre-compute style files and display names for this model's parameters
+            let param_styles: HashMap<String, String> = params.iter()
+                .map(|p| (p.clone(), layer_configs.get_style_file_for_parameter(model, p)))
+                .collect();
+            let model_display = layer_configs.get_model_display_name(model);
+            let param_displays: HashMap<String, String> = params.iter()
+                .map(|p| (p.clone(), layer_configs.get_parameter_display_name(model, p)))
+                .collect();
+            
             params.iter().map(move |param| {
                 let layer_id = format!("{}_{}", model_clone, param);
-                let layer_title = format!("{} - {}", get_model_display_name(&model_clone), get_parameter_name(param));
+                let model_name = model_display.clone();
+                let param_name = param_displays.get(param).cloned().unwrap_or_else(|| param.clone());
+                let layer_title = format!("{} - {}", model_name, param_name);
                 
                 // Get levels for this parameter and build ELEVATION dimension if available
                 let param_key = format!("{}_{}", model_clone, param);
@@ -2152,73 +2248,9 @@ fn build_wmts_capabilities_xml(
                 // Combine time dimensions with elevation dimension
                 let all_dimensions = format!("{}{}", time_dimensions_xml_clone, elevation_dim);
                 
-                // Determine available styles based on parameter type
-                let styles = if param.contains("TMP") || param.contains("TEMP") {
-                    r#"      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Temperature Gradient</ows:Title>
-        <ows:Identifier>temperature</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Temperature Isolines</ows:Title>
-        <ows:Identifier>isolines</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Numeric Values</ows:Title>
-        <ows:Identifier>numbers</ows:Identifier>
-      </Style>"#
-                } else if param.contains("WIND") || param.contains("GUST") {
-                    r#"      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Wind Speed</ows:Title>
-        <ows:Identifier>wind</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Numeric Values</ows:Title>
-        <ows:Identifier>numbers</ows:Identifier>
-      </Style>"#
-                } else if param.contains("PRES") || param.contains("PRMSL") {
-                    r#"      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Atmospheric Pressure</ows:Title>
-        <ows:Identifier>atmospheric</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Numeric Values</ows:Title>
-        <ows:Identifier>numbers</ows:Identifier>
-      </Style>"#
-                } else if param.contains("RH") || param.contains("HUMID") || param.contains("PRECIP") {
-                    r#"      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Precipitation</ows:Title>
-        <ows:Identifier>precipitation</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Numeric Values</ows:Title>
-        <ows:Identifier>numbers</ows:Identifier>
-      </Style>"#
-                } else {
-                    r#"      <Style isDefault="true">
-        <ows:Title>Default</ows:Title>
-        <ows:Identifier>default</ows:Identifier>
-      </Style>
-      <Style>
-        <ows:Title>Numeric Values</ows:Title>
-        <ows:Identifier>numbers</ows:Identifier>
-      </Style>"#
-                };
+                // Load styles dynamically from the style JSON file for this parameter
+                let style_file = param_styles.get(param).cloned().unwrap_or_default();
+                let styles = get_wmts_styles_xml_from_file(&style_file);
                 
                 format!(
                     r#"    <Layer>
@@ -2253,7 +2285,8 @@ fn build_wmts_capabilities_xml(
         
         if has_ugrd && has_vgrd {
             let layer_id = format!("{}_WIND_BARBS", model);
-            let layer_title = format!("{} - Wind Barbs", get_model_display_name(model));
+            let model_display = layer_configs.get_model_display_name(model);
+            let layer_title = format!("{} - Wind Barbs", model_display);
             
             // Wind barbs are only for forecast models (they need UGRD/VGRD from GFS/HRRR)
             // Build RUN + FORECAST dimensions
@@ -2692,13 +2725,24 @@ async fn prefetch_single_tile(
     }
     
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage
+    let parameter = parts[1..].join("_").to_uppercase();
+    
+    // Get default level from layer config for consistent data selection
+    let default_level: Option<String> = {
+        let configs = state.layer_configs.read().await;
+        configs
+            .get_layer_by_param(model, &parameter)
+            .and_then(|l| l.default_level())
+            .map(|s| s.to_string())
+    };
     
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),
             256,
@@ -2708,16 +2752,14 @@ async fn prefetch_single_tile(
         )
         .await
     } else if style == "isolines" {
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature_isolines.json", style_config_dir)
-        } else {
-            format!("{}/temperature_isolines.json", style_config_dir)
-        };
+        // Use layer config registry to get style file
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_isolines_tile(
+        crate::rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord),
@@ -2725,55 +2767,56 @@ async fn prefetch_single_tile(
             256,
             bbox_array,
             &style_file,
-            None,
+            "isolines",  // style name within the file
+            None,  // forecast_hour
+            default_level.as_deref(),  // Use default level
             true,
+            Some(&state.grid_processor_factory),
         )
         .await
     } else if style == "numbers" {
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
-        let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
-            format!("{}/temperature.json", style_config_dir)
-        } else if parameter.contains("WIND") || parameter.contains("GUST") {
-            format!("{}/wind.json", style_config_dir)
-        } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
-            format!("{}/atmospheric.json", style_config_dir)
-        } else if parameter.contains("PRECIP_RATE") {
-            format!("{}/precip_rate.json", style_config_dir)
-        } else if parameter.contains("QPE") || parameter.contains("PRECIP") {
-            format!("{}/precipitation.json", style_config_dir)
-        } else if parameter.contains("REFL") {
-            format!("{}/reflectivity.json", style_config_dir)
-        } else {
-            format!("{}/temperature.json", style_config_dir)
-        };
+        // Use layer config registry to get style file
+        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
         
-        crate::rendering::render_numbers_tile(
+        // Use buffered rendering to avoid clipped numbers at tile edges
+        crate::rendering::render_numbers_tile_with_buffer(
+            &state.grib_cache,
+            state.grid_cache_if_enabled(),
+            &state.catalog,
+            &state.metrics,
+            Some(&state.grid_processor_factory),
+            model,
+            &parameter,
+            Some(coord),  // Pass tile coordinate for expanded rendering
+            256,
+            256,
+            bbox_array,
+            &style_file,
+            None,  // forecast_hour
+            default_level.as_deref(),  // Use default level
+            true,
+        )
+        .await
+    } else {
+        // Use render_weather_data_with_lut to enable Zarr support for prefetched tiles
+        crate::rendering::render_weather_data_with_lut(
             &state.grib_cache,
             state.grid_cache_if_enabled(),
             &state.catalog,
             &state.metrics,
             model,
             &parameter,
-            256,
-            256,
-            bbox_array,
-            &style_file,
-            None,
-            None,
-            true,
-        )
-        .await
-    } else {
-        crate::rendering::render_weather_data(
-            &state.grib_cache,
-            &state.catalog,
-            &state.metrics,
-            model,
-            &parameter,
-            None,
+            None,  // forecast_hour
+            None,  // observation_time
+            default_level.as_deref(),  // Use default level for consistent data selection
             256,
             256,
             Some(bbox_array),
+            Some(style),  // style_name - pass requested style for proper color mapping
+            true,  // use_mercator for WMTS prefetch
+            Some((coord.z, coord.x, coord.y)),  // tile coords for LUT lookup
+            Some(&state.projection_luts),  // projection LUT cache
+            Some(&state.grid_processor_factory),  // Zarr grid processor factory
         )
         .await
     };
@@ -2831,6 +2874,131 @@ pub async fn cache_clear_handler(
             "grid_cache": grid_before,
         },
         "message": "All in-memory caches cleared. Redis L2 cache was not affected."
+    }))
+}
+
+/// Reload layer configurations from disk (hot reload)
+/// POST /api/config/reload/layers
+/// 
+/// This endpoint reloads all layer config YAML files from config/layers/
+/// without requiring a service restart.
+#[instrument(skip(state))]
+pub async fn config_reload_layers_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    info!("Reloading layer configurations from disk");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+    
+    // Get stats before reload
+    let before = {
+        let configs = state.layer_configs.read().await;
+        (configs.models().len(), configs.total_layers())
+    };
+    
+    // Reload configs
+    let (models, layers) = {
+        let mut configs = state.layer_configs.write().await;
+        configs.reload_from_directory(&config_dir)
+    };
+    
+    info!(
+        models_before = before.0,
+        layers_before = before.1,
+        models_after = models,
+        layers_after = layers,
+        "Layer configurations reloaded"
+    );
+    
+    Json(json!({
+        "success": true,
+        "before": {
+            "models": before.0,
+            "layers": before.1
+        },
+        "after": {
+            "models": models,
+            "layers": layers
+        },
+        "message": "Layer configurations reloaded from disk"
+    }))
+}
+
+/// Reload all configs and clear all caches (full hot reload)
+/// POST /api/config/reload
+/// 
+/// This endpoint:
+/// 1. Reloads layer configs from config/layers/*.yaml
+/// 2. Clears all in-memory caches (L1, GRIB, Grid, Chunk)
+/// 
+/// Note: Style configs (config/styles/*.json) are loaded fresh on each
+/// render request, so they don't need explicit reloading.
+#[instrument(skip(state))]
+pub async fn config_reload_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    use serde_json::json;
+    
+    info!("Performing full configuration reload");
+    
+    let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+    
+    // Get stats before
+    let layers_before = {
+        let configs = state.layer_configs.read().await;
+        (configs.models().len(), configs.total_layers())
+    };
+    let l1_before = state.tile_memory_cache.len().await;
+    let grib_before = state.grib_cache.len().await;
+    let grid_before = state.grid_cache.len().await;
+    let _chunk_stats_before = state.grid_processor_factory.cache_stats().await;
+    
+    // 1. Reload layer configs
+    let (models, layers) = {
+        let mut configs = state.layer_configs.write().await;
+        configs.reload_from_directory(&config_dir)
+    };
+    
+    // 2. Clear all caches
+    state.tile_memory_cache.clear().await;
+    state.grib_cache.clear().await;
+    state.grid_cache.clear().await;
+    let (chunk_entries, chunk_bytes) = state.grid_processor_factory.clear_chunk_cache().await;
+    
+    info!(
+        models = models,
+        layers = layers,
+        l1_cleared = l1_before,
+        grib_cleared = grib_before,
+        grid_cleared = grid_before,
+        chunk_cleared = chunk_entries,
+        "Full configuration reload complete"
+    );
+    
+    Json(json!({
+        "success": true,
+        "layers": {
+            "before": {
+                "models": layers_before.0,
+                "layers": layers_before.1
+            },
+            "after": {
+                "models": models,
+                "layers": layers
+            }
+        },
+        "caches_cleared": {
+            "l1_tile_cache": l1_before,
+            "grib_cache": grib_before,
+            "grid_cache": grid_before,
+            "chunk_cache": {
+                "entries": chunk_entries,
+                "bytes": chunk_bytes
+            }
+        },
+        "message": "All configs reloaded and caches cleared. Style configs are always loaded fresh from disk."
     }))
 }
 

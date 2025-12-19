@@ -15,6 +15,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use storage::CatalogEntry;
 use wms_common::BoundingBox;
+use grid_processor::{DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter, BoundingBox as GpBoundingBox};
+use zarrs_filesystem::FilesystemStore;
+use projection::LambertConformal;
 
 use crate::state::AppState;
 
@@ -936,14 +939,52 @@ async fn ingest_file_tracked(
     ].into_iter().collect();
     
     // Target parameters and their level specs
+    // Level types: 1=surface, 100=isobaric, 101=MSL, 103=height above ground,
+    //              200=entire atmosphere, 212=low cloud, 222=middle cloud, 232=high cloud
     let target_params: Vec<(&str, Vec<(u8, Option<u32>)>)> = vec![
+        // Pressure
         ("PRMSL", vec![(101, None)]),                    // Mean sea level pressure
+        
+        // Temperature
         ("TMP", vec![(103, Some(2)), (100, None)]),      // 2m temp + pressure levels
+        ("DPT", vec![(103, Some(2))]),                   // Dew point at 2m
+        
+        // Wind
         ("UGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
         ("VGRD", vec![(103, Some(10)), (100, None)]),    // 10m wind + pressure levels
-        ("RH", vec![(103, Some(2)), (100, None)]),       // 2m RH + pressure levels
-        ("HGT", vec![(100, None)]),                      // Geopotential height
         ("GUST", vec![(1, None)]),                       // Surface wind gust
+        
+        // Moisture
+        ("RH", vec![(103, Some(2)), (100, None)]),       // 2m RH + pressure levels
+        ("PWAT", vec![(200, None)]),                     // Precipitable water (entire atmosphere)
+        
+        // Geopotential
+        ("HGT", vec![(100, None)]),                      // Geopotential height at pressure levels
+        
+        // Precipitation
+        ("APCP", vec![(1, None)]),                       // Total precipitation (surface)
+        
+        // Convective/Stability - surface-based CAPE/CIN
+        ("CAPE", vec![(1, None), (180, None)]),          // CAPE: surface (1) and surface-based (180)
+        ("CIN", vec![(1, None), (180, None)]),           // CIN: surface (1) and surface-based (180)
+        
+        // Cloud cover
+        ("TCDC", vec![(200, None), (10, None)]),         // Total cloud cover (entire atmosphere)
+        ("LCDC", vec![(212, None), (214, None)]),        // Low cloud cover (layer or top)
+        ("MCDC", vec![(222, None), (224, None)]),        // Middle cloud cover (layer or top)
+        ("HCDC", vec![(232, None), (234, None)]),        // High cloud cover (layer or top)
+        
+        // Visibility
+        ("VIS", vec![(1, None)]),                        // Visibility (surface)
+        
+        // HRRR-specific radar/convective parameters
+        // Level types: 103=height above ground, 200=entire atmosphere, 10=entire atm single layer
+        ("REFC", vec![(200, None), (10, None), (103, Some(1000)), (103, Some(4000))]),  // Composite reflectivity
+        ("RETOP", vec![(3, None), (200, None), (10, None)]),   // Echo top height
+        ("LTNG", vec![(200, None), (1, None)]),                // Lightning threat (entire atmosphere)
+        ("MXUPHL", vec![(103, None), (106, None)]),            // Max updraft helicity (height above ground layer)
+        
+        // MRMS-specific (keep existing)
         ("REFL", vec![(200, None), (1, None)]),          // Reflectivity (MRMS)
         ("PRECIP_RATE", vec![(1, None)]),                // Precip rate (MRMS)
     ];
@@ -1008,7 +1049,7 @@ async fn ingest_file_tracked(
                 .replace([' ', '/'], "_")
                 .to_lowercase();
             
-            // Storage path: shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
+            // Storage path: grids/{model}/{run_date}/{param}_{level}_f{fhr:03}.zarr
             // For observation data like MRMS (updates every ~2 minutes), use minute-level paths
             // For forecast models like GFS/HRRR, use hourly paths (they have hourly forecast cycles)
             let run_date = if model == "mrms" {
@@ -1016,8 +1057,8 @@ async fn ingest_file_tracked(
             } else {
                 reference_time.format("%Y%m%d_%Hz").to_string()
             };
-            let storage_path = format!(
-                "shredded/{}/{}/{}_{}/f{:03}.grib2",
+            let zarr_storage_path = format!(
+                "grids/{}/{}/{}_{}_f{:03}.zarr",
                 model,
                 run_date,
                 param.to_lowercase(),
@@ -1025,27 +1066,153 @@ async fn ingest_file_tracked(
                 forecast_hour
             );
             
-            // Update status: storing
-            state.ingestion_tracker.update(ingestion_id, "storing", params_found, datasets_registered as u32).await;
+            // Update status: unpacking grid data
+            state.ingestion_tracker.update(ingestion_id, "unpacking", params_found, datasets_registered as u32).await;
             
-            // Store shredded GRIB message
-            let shredded_data = message.raw_data.clone();
-            let shredded_size = shredded_data.len() as u64;
+            // Extract grid dimensions
+            let width = message.grid_definition.num_points_longitude as usize;
+            let height = message.grid_definition.num_points_latitude as usize;
             
-            state.storage.put(&storage_path, shredded_data).await?;
+            // Unpack the grid data
+            let grid_data = match message.unpack_data() {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!(error = %e, param = %param, "Failed to unpack GRIB2 data, skipping");
+                    continue;
+                }
+            };
+            
+            // Convert sentinel missing values to NaN
+            // MRMS uses -999 and -99 for missing/no-coverage data
+            // This ensures proper handling in downsampling and rendering
+            let grid_data: Vec<f32> = grid_data
+                .into_iter()
+                .map(|v| if v <= -90.0 { f32::NAN } else { v })
+                .collect();
+            
+            if grid_data.len() != width * height {
+                warn!(
+                    expected = width * height,
+                    actual = grid_data.len(),
+                    param = %param,
+                    "Grid data size mismatch, skipping"
+                );
+                continue;
+            }
+            
+            // Update status: writing Zarr
+            state.ingestion_tracker.update(ingestion_id, "writing_zarr", params_found, datasets_registered as u32).await;
+            
+            // Calculate bounding box from grid definition
+            // For HRRR, use Lambert Conformal projection to calculate geographic bounds
+            let gp_bbox = if model == "hrrr" {
+                // HRRR uses Lambert Conformal projection
+                let proj = LambertConformal::hrrr();
+                // geographic_bounds() returns (min_lon, min_lat, max_lon, max_lat)
+                let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+            } else {
+                // Standard lat/lon grid (GFS, MRMS, etc.)
+                let grib_bbox = get_bbox_from_grid(&message.grid_definition);
+                GpBoundingBox::new(
+                    grib_bbox.min_x, grib_bbox.min_y, grib_bbox.max_x, grib_bbox.max_y
+                )
+            };
+            
+            // Create a temporary directory for Zarr output
+            let temp_dir = match tempfile::tempdir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    warn!(error = %e, "Failed to create temp dir for Zarr, skipping");
+                    continue;
+                }
+            };
+            let zarr_path = temp_dir.path().join("grid.zarr");
+            if let Err(e) = std::fs::create_dir_all(&zarr_path) {
+                warn!(error = %e, "Failed to create Zarr directory, skipping");
+                continue;
+            }
+            
+            // Create Zarr writer with default config
+            let config = GridProcessorConfig::default();
+            let writer = ZarrWriter::new(config);
+            
+            // Create filesystem store for the temp directory
+            let store = match FilesystemStore::new(&zarr_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = ?e, "Failed to create filesystem store, skipping");
+                    continue;
+                }
+            };
+            
+            // Get units (default if not available)
+            let units = "unknown"; // TODO: extract from GRIB2 metadata
+            
+            // Configure pyramid generation
+            let pyramid_config = PyramidConfig::from_env();
+            let downsample_method = DownsampleMethod::for_parameter(param);
+            
+            // Write Zarr data with multi-resolution pyramid levels
+            let write_result = match writer.write_multiscale(
+                store,
+                "/",
+                &grid_data,
+                width,
+                height,
+                &gp_bbox,
+                &model,
+                param,
+                level,
+                units,
+                reference_time,
+                forecast_hour,
+                &pyramid_config,
+                downsample_method,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = ?e, param = %param, "Failed to write Zarr, skipping");
+                    continue;
+                }
+            };
             
             debug!(
                 param = %param,
                 level = %level,
-                path = %storage_path,
-                size = shredded_size,
-                "Stored shredded GRIB message"
+                width = width,
+                height = height,
+                pyramid_levels = write_result.num_levels,
+                "Wrote Zarr grid with pyramid levels to temp directory"
+            );
+            
+            // Update status: uploading to MinIO
+            state.ingestion_tracker.update(ingestion_id, "uploading", params_found, datasets_registered as u32).await;
+            
+            // Upload Zarr files to object storage
+            let zarr_file_size = match upload_zarr_directory(&state.storage, &zarr_path, &zarr_storage_path).await {
+                Ok(size) => size,
+                Err(e) => {
+                    warn!(error = %e, param = %param, "Failed to upload Zarr, skipping");
+                    continue;
+                }
+            };
+            
+            info!(
+                param = %param,
+                level = %level,
+                path = %zarr_storage_path,
+                size = zarr_file_size,
+                width = width,
+                height = height,
+                pyramid_levels = write_result.num_levels,
+                "Stored Zarr grid with pyramid levels"
             );
             
             // Update status: registering
             state.ingestion_tracker.update(ingestion_id, "registering", params_found, datasets_registered as u32).await;
             
-            // Get model-specific bounding box
+            // Get model-specific bounding box for catalog
             let bbox = get_model_bbox(&model);
             
             let entry = CatalogEntry {
@@ -1055,13 +1222,14 @@ async fn ingest_file_tracked(
                 reference_time,
                 forecast_hour,
                 bbox,
-                storage_path,
-                file_size: shredded_size,
+                storage_path: zarr_storage_path,
+                file_size: zarr_file_size,
+                zarr_metadata: Some(write_result.zarr_metadata.to_json()),
             };
             
             match state.catalog.register_dataset(&entry).await {
                 Ok(id) => {
-                    debug!(id = %id, param = %param, level = %level, "Registered dataset");
+                    debug!(id = %id, param = %param, level = %level, "Registered Zarr dataset");
                     registered_params.insert(param_level_key);
                     datasets_registered += 1;
                 }
@@ -1232,6 +1400,7 @@ async fn ingest_netcdf_file(
         bbox,
         storage_path: storage_path.clone(),
         file_size,
+        zarr_metadata: None,
     };
     
     // Register in catalog
@@ -1340,7 +1509,10 @@ fn extract_mrms_param_from_filename(file_path: &str) -> Option<String> {
         .and_then(|s| s.to_str())?;
     
     let lower = filename.to_lowercase();
-    if lower.contains("reflectivity") || lower.contains("refl") {
+    // SeamlessHSR is the fully merged radar composite - map to REFL
+    if lower.contains("seamlesshsr") {
+        Some("REFL".to_string())
+    } else if lower.contains("reflectivity") || lower.contains("refl") {
         Some("REFL".to_string())
     } else if lower.contains("preciprate") || lower.contains("precip_rate") {
         Some("PRECIP_RATE".to_string())
@@ -1367,6 +1539,56 @@ fn get_model_bbox(model: &str) -> BoundingBox {
         "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
+}
+
+/// Extract bounding box from GRIB2 grid definition.
+fn get_bbox_from_grid(grid: &grib2_parser::sections::GridDefinition) -> BoundingBox {
+    // Convert millidegrees to degrees (grib2-parser already divides by 1000 to get millidegrees)
+    let first_lat = grid.first_latitude_millidegrees as f64 / 1_000.0;
+    let first_lon = grid.first_longitude_millidegrees as f64 / 1_000.0;
+    let last_lat = grid.last_latitude_millidegrees as f64 / 1_000.0;
+    let last_lon = grid.last_longitude_millidegrees as f64 / 1_000.0;
+    
+    // Determine min/max (grid might scan in different directions)
+    let min_lat = first_lat.min(last_lat);
+    let max_lat = first_lat.max(last_lat);
+    let min_lon = first_lon.min(last_lon);
+    let max_lon = first_lon.max(last_lon);
+    
+    // Handle longitude wrapping (GRIB2 may use 0-360 instead of -180-180)
+    let (min_lon, max_lon) = if min_lon > 180.0 {
+        (min_lon - 360.0, max_lon - 360.0)
+    } else {
+        (min_lon, max_lon)
+    };
+    
+    BoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+}
+
+/// Upload a Zarr directory to object storage.
+async fn upload_zarr_directory(
+    storage: &storage::ObjectStorage,
+    local_path: &std::path::Path,
+    storage_prefix: &str,
+) -> anyhow::Result<u64> {
+    let mut total_size = 0u64;
+    
+    for entry in walkdir::WalkDir::new(local_path) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let relative_path = entry.path().strip_prefix(local_path)?;
+            let storage_path = format!("{}/{}", storage_prefix, relative_path.display());
+            
+            let file_data = tokio::fs::read(entry.path()).await?;
+            let file_size = file_data.len() as u64;
+            total_size += file_size;
+            
+            storage.put(&storage_path, Bytes::from(file_data)).await?;
+            debug!(path = %storage_path, size = file_size, "Uploaded Zarr file");
+        }
+    }
+    
+    Ok(total_size)
 }
 
 // ============================================================================
@@ -2254,9 +2476,6 @@ pub async fn full_config_handler() -> impl IntoResponse {
 }
 
 async fn load_full_configuration() -> anyhow::Result<FullConfigurationResponse> {
-    use std::fs;
-    use std::path::Path;
-    
     // Load model configurations
     let models = load_all_model_configs().await?;
     

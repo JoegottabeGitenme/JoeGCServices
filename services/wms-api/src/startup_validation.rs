@@ -421,18 +421,28 @@ async fn run_single_validation(
         latlon_bbox.max_y as f32,
     ];
     
+    // Get default level from layer config for consistent data selection
+    let default_level: Option<String> = {
+        let configs = state.layer_configs.read().await;
+        configs
+            .get_layer_by_param(&target.model, &target.parameter)
+            .and_then(|l| l.default_level())
+            .map(|s| s.to_string())
+    };
+    
     // Render the tile
     let result = if target.parameter == "WIND_BARBS" {
         rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             &target.model,
             Some(coord),
             256,
             256,
             bbox_array,
             None, // Use latest forecast hour
-            None, // elevation
+            default_level.as_deref(), // Use default level
         )
         .await
     } else {
@@ -443,7 +453,7 @@ async fn run_single_validation(
             &target.model,
             &target.parameter,
             None, // forecast_hour - use latest
-            None, // elevation/level
+            default_level.as_deref(), // Use default level for consistent data selection
             256,
             256,
             Some(bbox_array),

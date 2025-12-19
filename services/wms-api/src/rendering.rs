@@ -3,15 +3,15 @@
 use renderer::gradient;
 use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
-use renderer::numbers::{self, NumbersConfig};
+use renderer::numbers::{self, NumbersConfig, GridPointNumbersConfig};
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{info, debug};
+use tracing::{info, debug, warn, error, instrument};
 use projection::{LambertConformal, Geostationary};
 use crate::metrics::{MetricsCollector, DataSourceType};
-use crate::state::ProjectionLuts;
+use crate::state::{GridProcessorFactory, ProjectionLuts};
 
 /// Render weather data from GRIB2 grid to PNG.
 ///
@@ -146,11 +146,12 @@ pub async fn render_weather_data_with_time(
     style_name: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    // Call the LUT-aware version without tile coords or LUT
+    // Call the LUT-aware version without tile coords, LUT, or Zarr factory
+    // (This path is for legacy callers that don't have Zarr support)
     render_weather_data_with_lut(
         grib_cache, grid_cache, catalog, metrics, model, parameter,
         forecast_hour, observation_time, level, width, height, bbox,
-        style_name, use_mercator, None, None,
+        style_name, use_mercator, None, None, None,
     ).await
 }
 
@@ -160,9 +161,11 @@ pub async fn render_weather_data_with_time(
 /// - Forecast models (GFS, HRRR): Use `forecast_hour` parameter
 /// - Observation data (MRMS, GOES): Use `observation_time` parameter
 /// - Pre-computed projection LUTs for fast GOES tile rendering
+/// - Zarr-format grid data with efficient chunked reads (when zarr_metadata is present)
 ///
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving files
+/// - `grid_processor_factory`: Optional factory for Zarr-based grid access
 /// - `catalog`: Catalog for finding datasets
 /// - `model`: Weather model name
 /// - `parameter`: Parameter name
@@ -193,6 +196,7 @@ pub async fn render_weather_data_with_lut(
     use_mercator: bool,
     tile_coords: Option<(u32, u32, u32)>,  // (z, x, y) for LUT lookup
     projection_luts: Option<&ProjectionLuts>,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     // Record model-specific request
     let render_start = Instant::now();
@@ -258,17 +262,29 @@ pub async fn render_weather_data_with_lut(
         }
     }};
 
-    // Load grid data from cache/storage (handles both GRIB2 and NetCDF formats)
+    // Load grid data from cache/storage (handles GRIB2, NetCDF, and Zarr formats)
+    // If zarr_metadata is present and grid_processor_factory is available, use efficient
+    // chunked reads from Zarr; otherwise fall back to legacy loaders
     info!(
         parameter = parameter,
         level = %entry.level,
         storage_path = %entry.storage_path,
         model = model,
+        has_zarr = entry.zarr_metadata.is_some(),
         "Loading grid data"
     );
     
     let start = Instant::now();
-    let grid_result = load_grid_data(grib_cache, grid_cache, metrics, &entry, parameter).await?;
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        bbox,
+        Some((width as usize, height as usize)),  // Output tile size for pyramid selection
+    ).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
     
@@ -307,13 +323,14 @@ pub async fn render_weather_data_with_lut(
     let rendered_width = width as usize;
     let rendered_height = height as usize;
     
-    // Convert entry.bbox to array format for resampling
-    let data_bounds = [
+    // Use actual bbox from grid data if available (for Zarr partial reads),
+    // otherwise fall back to entry.bbox (for GRIB2/NetCDF full grid reads)
+    let data_bounds = grid_result.bbox.unwrap_or_else(|| [
         entry.bbox.min_x as f32,
         entry.bbox.min_y as f32,
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
-    ];
+    ]);
     
     let start = Instant::now();
     let resampled_data = {
@@ -343,6 +360,7 @@ pub async fn render_weather_data_with_lut(
                     use_mercator,
                     model,
                     goes_projection.as_ref(),
+                    grid_result.grid_uses_360,
                 )
             }
         } else {
@@ -371,12 +389,13 @@ pub async fn render_weather_data_with_lut(
         // Try to load and apply custom style
         let style_file = if parameter.contains("TMP") || parameter.contains("TEMP") {
             Path::new(&style_config_dir).join("temperature.json")
-        } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
+        } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") 
+                || parameter == "UGRD" || parameter == "VGRD" {
             Path::new(&style_config_dir).join("wind.json")
-        } else if parameter.contains("PRES") || parameter.contains("PRESS") {
-            Path::new(&style_config_dir).join("atmospheric.json")
+        } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+            Path::new(&style_config_dir).join("mslp.json")
         } else if parameter.contains("RH") || parameter.contains("HUMID") {
-            Path::new(&style_config_dir).join("precipitation.json")
+            Path::new(&style_config_dir).join("humidity.json")
         } else if parameter.contains("REFL") {
             Path::new(&style_config_dir).join("reflectivity.json")
         } else if parameter.contains("PRECIP_RATE") {
@@ -389,6 +408,9 @@ pub async fn render_weather_data_with_lut(
         } else if parameter.starts_with("CMI_C") {
             // GOES IR bands (7-16) and others
             Path::new(&style_config_dir).join("goes_ir.json")
+        } else if parameter.contains("HGT") {
+            // Geopotential height
+            Path::new(&style_config_dir).join("geopotential.json")
         } else {
             Path::new(&style_config_dir).join("temperature.json")
         };
@@ -449,11 +471,12 @@ fn render_by_parameter(
         let max_c = max_val - 273.15;
 
         renderer::gradient::render_temperature(&celsius_data, width, height, min_c, max_c)
-    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED") {
-        // Wind speed in m/s
+    } else if parameter.contains("WIND") || parameter.contains("GUST") || parameter.contains("SPEED")
+            || parameter == "UGRD" || parameter == "VGRD" {
+        // Wind speed/component in m/s
         renderer::gradient::render_wind_speed(data, width, height, min_val, max_val)
-    } else if parameter.contains("PRES") || parameter.contains("PRESS") {
-        // Pressure in Pa, convert to hPa
+    } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+        // Pressure in Pa, convert to hPa (PRMSL = Pressure Reduced to Mean Sea Level)
         let hpa_data: Vec<f32> = data.iter().map(|pa| pa / 100.0).collect();
         let min_hpa = min_val / 100.0;
         let max_hpa = max_val / 100.0;
@@ -715,12 +738,15 @@ fn resample_from_geographic(
     output_height: usize,
     output_bbox: [f32; 4],
     data_bounds: [f32; 4],
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
     let [data_min_lon, data_min_lat, data_max_lon, data_max_lat] = data_bounds;
     
-    // Check if data uses 0-360 longitude convention (like GFS)
-    let data_uses_360 = data_min_lon >= 0.0 && data_max_lon > 180.0;
+    // Use the explicit grid_uses_360 flag rather than inferring from data_bounds.
+    // This is important because partial reads may return data with bbox that doesn't
+    // span > 180, but the underlying grid still uses 0-360 convention.
+    let data_uses_360 = grid_uses_360;
     
     // Data grid resolution
     let data_lon_range = data_max_lon - data_min_lon;
@@ -738,27 +764,64 @@ fn resample_from_geographic(
             let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
             let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
             
+            // Check if this is a global grid (covers nearly 360 degrees)
+            let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+            
             // Normalize longitude for data grids that use 0-360 convention
+            // For tiles that span negative longitudes, we need to add 360 to map them
+            // to the 0-360 grid.
             let norm_lon = if data_uses_360 && lon < 0.0 {
+                lon + 360.0
+            } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
+                // Special case: data is from the "wrapped" region (e.g., 343-360)
+                // and we're at lon near 0, which should map to near 360
                 lon + 360.0
             } else {
                 lon
             };
             
-            // Check if this pixel is within data bounds
-            if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
-                // Outside data coverage - leave as NaN for transparent rendering
-                continue;
+            // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
+            // by treating longitudes in this gap as valid and wrapping interpolation
+            let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+            
+            // Check if this pixel is within data bounds (with special handling for wrap gap)
+            if !in_wrap_gap {
+                if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
+                    // Outside data coverage - leave as NaN for transparent rendering
+                    continue;
+                }
+            } else {
+                // In wrap gap - only check latitude bounds
+                if lat < data_min_lat || lat > data_max_lat {
+                    continue;
+                }
             }
             
             // Convert to data grid coordinates (continuous, not indices)
-            let grid_x = (norm_lon - data_min_lon) / data_lon_range * data_width as f32;
+            // For the wrap gap, calculate position relative to the last grid cell
+            let grid_x = if in_wrap_gap {
+                // In the gap between last grid point and 360°
+                // Map to position past the last column, interpolation will wrap to column 0
+                let gap_start = data_max_lon;
+                let gap_size = 360.0 - data_max_lon + data_min_lon; // Gap wraps around
+                let pos_in_gap = norm_lon - gap_start;
+                (data_width as f32 - 1.0) + (pos_in_gap / gap_size) as f32
+            } else {
+                (norm_lon - data_min_lon) / data_lon_range * data_width as f32
+            };
             let grid_y = (data_max_lat - lat) / data_lat_range * data_height as f32;
             
             // Bilinear interpolation from data grid
             let x1 = grid_x.floor() as usize;
             let y1 = grid_y.floor() as usize;
-            let x2 = (x1 + 1).min(data_width - 1);
+            
+            // For global grids (0-360), wrap x2 around instead of clamping
+            // This ensures smooth interpolation across the prime meridian
+            let x2 = if is_global_grid && x1 + 1 >= data_width {
+                0 // Wrap to column 0
+            } else {
+                (x1 + 1).min(data_width - 1)
+            };
             let y2 = (y1 + 1).min(data_height - 1);
             
             // Bounds check
@@ -807,12 +870,15 @@ fn resample_for_mercator(
     output_height: usize,
     output_bbox: [f32; 4],  // [min_lon, min_lat, max_lon, max_lat] in WGS84
     data_bounds: [f32; 4],
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
     let [data_min_lon, data_min_lat, data_max_lon, data_max_lat] = data_bounds;
     
-    // Check if data uses 0-360 longitude convention (like GFS)
-    let data_uses_360 = data_min_lon >= 0.0 && data_max_lon > 180.0;
+    // Use the explicit grid_uses_360 flag rather than inferring from data_bounds.
+    // This is important because partial reads may return data with bbox that doesn't
+    // span > 180, but the underlying grid still uses 0-360 convention.
+    let data_uses_360 = grid_uses_360;
     
     // Convert lat bounds to Mercator Y coordinates
     let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
@@ -838,27 +904,64 @@ fn resample_for_mercator(
             let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
             let lat = mercator_y_to_lat(merc_y) as f32;
             
+            // Check if this is a global grid (covers nearly 360 degrees)
+            let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
+            
             // Normalize longitude for data grids that use 0-360 convention
+            // For tiles that span negative longitudes, we need to add 360 to map them
+            // to the 0-360 grid.
             let norm_lon = if data_uses_360 && lon < 0.0 {
+                lon + 360.0
+            } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
+                // Special case: data is from the "wrapped" region (e.g., 343-360)
+                // and we're at lon near 0, which should map to near 360
                 lon + 360.0
             } else {
                 lon
             };
             
-            // Check if this pixel is within data bounds
-            if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
-                // Outside data coverage - leave as NaN for transparent rendering
-                continue;
+            // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
+            // by treating longitudes in this gap as valid and wrapping interpolation
+            let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
+            
+            // Check if this pixel is within data bounds (with special handling for wrap gap)
+            if !in_wrap_gap {
+                if norm_lon < data_min_lon || norm_lon > data_max_lon || lat < data_min_lat || lat > data_max_lat {
+                    // Outside data coverage - leave as NaN for transparent rendering
+                    continue;
+                }
+            } else {
+                // In wrap gap - only check latitude bounds
+                if lat < data_min_lat || lat > data_max_lat {
+                    continue;
+                }
             }
             
             // Convert to data grid coordinates
-            let grid_x = (norm_lon - data_min_lon) / data_lon_range * data_width as f32;
+            // For the wrap gap, calculate position relative to the last grid cell
+            let grid_x = if in_wrap_gap {
+                // In the gap between last grid point and 360°
+                // Map to position past the last column, interpolation will wrap to column 0
+                let gap_start = data_max_lon;
+                let gap_size = 360.0 - data_max_lon + data_min_lon; // Gap wraps around
+                let pos_in_gap = norm_lon - gap_start;
+                (data_width as f32 - 1.0) + (pos_in_gap / gap_size) as f32
+            } else {
+                (norm_lon - data_min_lon) / data_lon_range * data_width as f32
+            };
             let grid_y = (data_max_lat - lat) / data_lat_range * data_height as f32;
             
             // Bilinear interpolation
             let x1 = grid_x.floor() as usize;
             let y1 = grid_y.floor() as usize;
-            let x2 = (x1 + 1).min(data_width - 1);
+            
+            // For global grids (0-360), wrap x2 around instead of clamping
+            // This ensures smooth interpolation across the prime meridian
+            let x2 = if is_global_grid && x1 + 1 >= data_width {
+                0 // Wrap to column 0
+            } else {
+                (x1 + 1).min(data_width - 1)
+            };
             let y2 = (y1 + 1).min(data_height - 1);
             
             // Bounds check
@@ -914,10 +1017,11 @@ fn resample_grid_for_bbox(
     data_bounds: [f32; 4],
     use_mercator: bool,
     model: &str,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     resample_grid_for_bbox_with_proj(
         data, data_width, data_height, output_width, output_height,
-        output_bbox, data_bounds, use_mercator, model, None
+        output_bbox, data_bounds, use_mercator, model, None, grid_uses_360
     )
 }
 
@@ -933,18 +1037,31 @@ fn resample_grid_for_bbox_with_proj(
     use_mercator: bool,
     model: &str,
     goes_projection: Option<&GoesProjectionParams>,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     // Use Lambert Conformal resampling for HRRR (native projection)
     if model == "hrrr" {
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_width = output_width,
+            output_height = output_height,
+            output_bbox = ?output_bbox,
+            "Using Lambert Conformal resampling for HRRR"
+        );
         if use_mercator {
             resample_lambert_to_mercator(data, data_width, data_height, output_width, output_height, output_bbox)
         } else {
             resample_lambert_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox)
         }
     } else if model == "goes16" || model == "goes18" || model == "goes" {
-        // Use Geostationary projection for GOES satellite data
-        // Prefer dynamic projection parameters if available
+        // GOES satellite data handling
+        // If goes_projection is present, data is in native geostationary projection (raw NetCDF)
+        // If goes_projection is None, data has been pre-projected to geographic (Zarr)
         if let Some(params) = goes_projection {
+            // Native geostationary data - use projection transform
             let proj = Geostationary::from_goes(
                 params.perspective_point_height,
                 params.semi_major_axis,
@@ -963,20 +1080,26 @@ fn resample_grid_for_bbox_with_proj(
                 resample_geostationary_to_geographic_with_proj(data, data_width, data_height, output_width, output_height, output_bbox, &proj)
             }
         } else {
-            // Fallback to preset projections
-            let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
+            // Pre-projected geographic data (from Zarr) - treat as regular lat/lon grid
+            // This is the path for GOES data that was reprojected during ingestion
+            debug!(
+                model = model,
+                data_width = data_width,
+                data_height = data_height,
+                "GOES data from Zarr (pre-projected to geographic), using geographic resampling"
+            );
             if use_mercator {
-                resample_geostationary_to_mercator(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
+                resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
             } else {
-                resample_geostationary_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
+                resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
             }
         }
     } else {
         // GFS and other models use geographic (lat/lon) grids
         if use_mercator {
-            resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+            resample_for_mercator(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
         } else {
-            resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+            resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
         }
     }
 }
@@ -1405,6 +1528,7 @@ fn resample_for_model_geographic(
     output_bbox: [f32; 4],
     data_bounds: [f32; 4],
     model: &str,
+    grid_uses_360: bool,
 ) -> Vec<f32> {
     if model == "hrrr" {
         resample_lambert_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox)
@@ -1412,7 +1536,7 @@ fn resample_for_model_geographic(
         let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
         resample_geostationary_to_geographic(data, data_width, data_height, output_width, output_height, output_bbox, satellite_lon)
     } else {
-        resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds)
+        resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
     }
 }
 
@@ -1520,18 +1644,23 @@ fn find_parameter_in_grib(grib_data: bytes::Bytes, parameter: &str, level: Optio
     Err(format!("Parameter {} not found in GRIB2 file", parameter))
 }
 
-/// Grid data extracted from either GRIB2 or NetCDF files
-struct GridData {
-    data: Vec<f32>,
-    width: usize,
-    height: usize,
+/// Grid data extracted from either GRIB2, NetCDF, or Zarr files
+pub(crate) struct GridData {
+    pub data: Vec<f32>,
+    pub width: usize,
+    pub height: usize,
+    /// Actual bounding box of the returned data (may be subset of full grid)
+    pub bbox: Option<[f32; 4]>,
     /// For GOES data: dynamic geostationary projection parameters
-    goes_projection: Option<GoesProjectionParams>,
+    pub goes_projection: Option<GoesProjectionParams>,
+    /// Whether the underlying grid uses 0-360 longitude convention (like GFS).
+    /// This is needed for proper coordinate handling even when bbox is a partial region.
+    pub grid_uses_360: bool,
 }
 
 /// Dynamic GOES projection parameters extracted from NetCDF file
 #[derive(Clone, Debug)]
-struct GoesProjectionParams {
+pub(crate) struct GoesProjectionParams {
     x_origin: f64,
     y_origin: f64,
     dx: f64,
@@ -1542,10 +1671,12 @@ struct GoesProjectionParams {
     longitude_origin: f64,
 }
 
-/// Load grid data from a storage path, handling both GRIB2 and NetCDF files
+/// Load grid data from a storage path, handling GRIB2, NetCDF, and Zarr files.
 /// 
-/// For GRIB2 files, searches for the matching parameter and level.
-/// For NetCDF (GOES) files, reads the CMI variable directly with caching.
+/// This function automatically routes to the appropriate loader:
+/// - If `zarr_metadata` is present in the entry -> use Zarr loader (efficient chunked reads)
+/// - If file is NetCDF (.nc or GOES) -> use NetCDF loader
+/// - Otherwise -> use GRIB2 loader
 /// 
 /// When `cache_grib2` is true and `grid_cache` is provided, parsed GRIB2 grids
 /// will also be cached to avoid redundant decompression for adjacent tiles.
@@ -1556,6 +1687,78 @@ async fn load_grid_data(
     entry: &CatalogEntry,
     parameter: &str,
 ) -> Result<GridData, String> {
+    load_grid_data_with_options(grib_cache, grid_cache, metrics, entry, parameter, true).await
+}
+
+/// Load grid data with support for Zarr format when zarr_metadata is available.
+///
+/// This is the preferred method for loading grid data as it automatically
+/// uses efficient chunked reads for Zarr-format data.
+///
+/// # Arguments
+/// * `factory` - Optional GridProcessorFactory for Zarr data access
+/// * `grib_cache` - GRIB cache for legacy format fallback
+/// * `grid_cache` - Grid data cache for parsed data
+/// * `metrics` - Metrics collector
+/// * `entry` - Catalog entry
+/// * `parameter` - Parameter name
+/// * `bbox` - Optional bounding box (for Zarr partial reads)
+/// * `output_size` - Optional output tile dimensions (for pyramid level selection)
+pub async fn load_grid_data_with_zarr_support(
+    factory: Option<&GridProcessorFactory>,
+    grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
+    metrics: &MetricsCollector,
+    entry: &CatalogEntry,
+    parameter: &str,
+    bbox: Option<[f32; 4]>,
+    output_size: Option<(usize, usize)>,
+) -> Result<GridData, String> {
+    // Determine loader type for logging
+    let loader_type = if entry.zarr_metadata.is_some() && factory.is_some() {
+        "zarr"
+    } else if entry.storage_path.ends_with(".nc") || entry.parameter.starts_with("CMI_") {
+        "netcdf"
+    } else {
+        "grib2"
+    };
+    
+    debug!(
+        model = %entry.model,
+        parameter = %entry.parameter,
+        level = %entry.level,
+        storage_path = %entry.storage_path,
+        loader = loader_type,
+        has_zarr_meta = entry.zarr_metadata.is_some(),
+        "Loading grid data"
+    );
+    
+    // Check if this entry has Zarr metadata and we have a factory
+    if entry.zarr_metadata.is_some() {
+        if let Some(factory) = factory {
+            info!(
+                model = %entry.model,
+                parameter = %entry.parameter,
+                storage_path = %entry.storage_path,
+                loader = "zarr",
+                "Using Zarr loader for grid data"
+            );
+            return load_grid_data_from_zarr(factory, entry, bbox, output_size).await;
+        } else {
+            warn!(
+                storage_path = %entry.storage_path,
+                "Entry has zarr_metadata but no GridProcessorFactory available, falling back to legacy loader"
+            );
+        }
+    }
+    
+    // Fall back to legacy loaders
+    debug!(
+        model = %entry.model,
+        parameter = %entry.parameter,
+        loader = loader_type,
+        "Using legacy loader for grid data"
+    );
     load_grid_data_with_options(grib_cache, grid_cache, metrics, entry, parameter, true).await
 }
 
@@ -1603,11 +1806,15 @@ async fn load_grid_data_with_options(
                         metrics.record_model_grid_cache_hit(wm);
                     }
                     
+                    // Check if grid uses 0-360 longitude (like GFS)
+                    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
                     return Ok(GridData {
                         data: (*cached.data).clone(),
                         width: cached.width,
                         height: cached.height,
+                        bbox: None, // GRIB2 cached data uses full grid bbox from entry
                         goes_projection: None, // GRIB2 doesn't use GOES projection
+                        grid_uses_360,
                     });
                 }
             }
@@ -1693,13 +1900,422 @@ async fn load_grid_data_with_options(
             }
         }
         
+        // Check if grid uses 0-360 longitude (like GFS)
+        let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
         Ok(GridData {
             data: grid_data,
             width: grid_width as usize,
             height: grid_height as usize,
+            bbox: None, // GRIB2 returns full grid, use entry.bbox
             goes_projection: None,
+            grid_uses_360,
         })
     }
+}
+
+/// Load grid data from a Zarr file stored in MinIO.
+///
+/// This function uses the new GridProcessor abstraction for efficient partial reads
+/// from Zarr V3 formatted data. It only loads the chunks needed for the requested
+/// bounding box, significantly reducing data transfer for tile requests.
+///
+/// # Arguments
+/// * `factory` - GridProcessorFactory containing MinIO client and shared cache
+/// * `entry` - Catalog entry with zarr_metadata
+/// * `bbox` - Optional bounding box to load (if None, loads full grid)
+///
+/// # Returns
+/// GridData containing the grid values and dimensions
+#[instrument(skip(factory, entry), fields(
+    model = %entry.model,
+    parameter = %entry.parameter,
+    level = %entry.level,
+    storage_path = %entry.storage_path,
+))]
+async fn load_grid_data_from_zarr(
+    factory: &GridProcessorFactory,
+    entry: &CatalogEntry,
+    bbox: Option<[f32; 4]>,
+    output_size: Option<(usize, usize)>,
+) -> Result<GridData, String> {
+    use grid_processor::{
+        BoundingBox as GpBoundingBox,
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+        MultiscaleGridProcessorFactory, parse_multiscale_metadata,
+    };
+
+    // Parse zarr_metadata from catalog entry
+    let zarr_json = entry.zarr_metadata.as_ref()
+        .ok_or_else(|| {
+            error!(model = %entry.model, parameter = %entry.parameter, "No zarr_metadata in catalog entry");
+            "No zarr_metadata in catalog entry".to_string()
+        })?;
+    
+    let zarr_meta = ZarrMetadata::from_json(zarr_json)
+        .map_err(|e| {
+            error!(model = %entry.model, parameter = %entry.parameter, error = %e, "Failed to parse zarr_metadata");
+            format!("Failed to parse zarr_metadata: {}", e)
+        })?;
+    
+    info!(
+        storage_path = %entry.storage_path,
+        shape = ?zarr_meta.shape,
+        chunk_shape = ?zarr_meta.chunk_shape,
+        "Loading grid data from Zarr"
+    );
+    
+    // Build storage path - the storage_path in catalog points to the Zarr directory
+    // e.g., "grids/gfs/20241212_00z/TMP_2m_f006.zarr"
+    // zarrs expects paths to start with / for object_store backends
+    let zarr_path = if entry.storage_path.starts_with('/') {
+        entry.storage_path.clone()
+    } else {
+        format!("/{}", entry.storage_path)
+    };
+    
+    // Create MinIO storage using the helper (uses correct object_store version)
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| {
+            error!(
+                error = %e,
+                endpoint = %minio_config.endpoint,
+                bucket = %minio_config.bucket,
+                "Failed to create MinIO storage"
+            );
+            format!("Failed to create MinIO storage: {}", e)
+        })?;
+    
+    // Determine bbox to read
+    // For HRRR (Lambert Conformal) and other non-geographic projections,
+    // we must read the full grid because the relationship between grid indices
+    // and geographic coordinates is non-linear. Partial bbox reads only work
+    // for regular lat/lon grids like GFS.
+    let is_geographic_grid = entry.model != "hrrr"; // HRRR uses Lambert Conformal
+    
+    let read_bbox = if let Some(bbox_arr) = bbox {
+        if is_geographic_grid {
+            GpBoundingBox::new(
+                bbox_arr[0] as f64,
+                bbox_arr[1] as f64, 
+                bbox_arr[2] as f64,
+                bbox_arr[3] as f64,
+            )
+        } else {
+            // For non-geographic grids (HRRR Lambert), always read full grid
+            // The resampling step will handle the projection transformation
+            debug!(
+                model = %entry.model,
+                "Using full grid read for non-geographic projection"
+            );
+            zarr_meta.bbox
+        }
+    } else {
+        // Read full grid
+        zarr_meta.bbox
+    };
+
+    // Check if this dataset has multiscale (pyramid) data
+    // If so, use resolution-aware loading to fetch from the optimal pyramid level
+    let multiscale_metadata = parse_multiscale_metadata(zarr_json);
+    
+    let (region, pyramid_level_used) = if let (Some(ms_meta), Some(out_size)) = (multiscale_metadata, output_size) {
+        // Use multiscale loading - select optimal pyramid level based on output size
+        if ms_meta.num_levels() > 1 {
+            let ms_factory = MultiscaleGridProcessorFactory::new(
+                store.clone(),
+                &zarr_path,
+                ms_meta,
+                factory.chunk_cache(),
+                factory.config().clone(),
+            );
+            
+            let start = Instant::now();
+            let (region, level) = ms_factory.read_region_for_output(&read_bbox, out_size).await
+                .map_err(|e| {
+                    error!(
+                        error = %e,
+                        zarr_path = %zarr_path,
+                        bbox = ?read_bbox,
+                        output_size = ?out_size,
+                        "Failed to read multiscale Zarr region"
+                    );
+                    format!("Failed to read multiscale Zarr region: {}", e)
+                })?;
+            let read_duration = start.elapsed();
+            
+            info!(
+                width = region.width,
+                height = region.height,
+                pyramid_level = level,
+                read_ms = read_duration.as_millis(),
+                output_size = ?out_size,
+                "Loaded from pyramid level {} (optimal for output size {:?})",
+                level, out_size
+            );
+            
+            (region, Some(level))
+        } else {
+            // Only native level available, use standard loading
+            let region = load_region_from_native(store.clone(), &zarr_path, &zarr_meta, &read_bbox, factory).await?;
+            (region, Some(0u32))
+        }
+    } else {
+        // No multiscale metadata or no output_size specified - use standard single-level loading
+        let region = load_region_from_native(store.clone(), &zarr_path, &zarr_meta, &read_bbox, factory).await?;
+        (region, None)
+    };
+    
+    if let Some(level) = pyramid_level_used {
+        debug!(
+            zarr_path = %zarr_path,
+            pyramid_level = level,
+            region_width = region.width,
+            region_height = region.height,
+            "Used pyramid level for data loading"
+        );
+    }
+    
+    // Return actual bbox from the region (important for partial reads)
+    let actual_bbox = [
+        region.bbox.min_lon as f32,
+        region.bbox.min_lat as f32,
+        region.bbox.max_lon as f32,
+        region.bbox.max_lat as f32,
+    ];
+    
+    info!(
+        width = region.width,
+        height = region.height,
+        data_points = region.data.len(),
+        actual_bbox_min_lon = actual_bbox[0],
+        actual_bbox_max_lon = actual_bbox[2],
+        pyramid_level = ?pyramid_level_used,
+        "Loaded Zarr region"
+    );
+    
+    // Check if source grid uses 0-360 longitude (like GFS)
+    // This must be based on the full grid bbox, not the partial region bbox
+    let grid_uses_360 = zarr_meta.bbox.min_lon >= 0.0 && zarr_meta.bbox.max_lon > 180.0;
+    
+    Ok(GridData {
+        data: region.data,
+        width: region.width,
+        height: region.height,
+        bbox: Some(actual_bbox),
+        goes_projection: None, // Zarr data is always pre-projected to geographic
+        grid_uses_360,
+    })
+}
+
+/// Helper to load a region from the native (level 0) Zarr array.
+/// Used when multiscale is not available or not needed.
+async fn load_region_from_native<S>(
+    store: S,
+    zarr_path: &str,
+    zarr_meta: &grid_processor::ZarrMetadata,
+    read_bbox: &grid_processor::BoundingBox,
+    factory: &GridProcessorFactory,
+) -> Result<grid_processor::GridRegion, String> 
+where
+    S: grid_processor::ReadableStorageTraits + Clone + Send + Sync + 'static
+{
+    use grid_processor::{GridProcessor, ZarrGridProcessor};
+    
+    // Convert zarr_meta to GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: zarr_meta.model.clone(),
+        parameter: zarr_meta.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // For native loading, we need to append /0 to get level 0
+    // Check if zarr_path already ends with a level number
+    let level_path = if zarr_path.ends_with(".zarr") || zarr_path.ends_with(".zarr/") {
+        format!("{}/0", zarr_path.trim_end_matches('/'))
+    } else {
+        zarr_path.to_string()
+    };
+    
+    // Create processor with metadata from catalog (avoids metadata fetch from MinIO)
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &level_path,
+        grid_metadata.clone(),
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| {
+        error!(
+            error = %e,
+            level_path = %level_path,
+            shape = ?grid_metadata.shape,
+            chunk_shape = ?grid_metadata.chunk_shape,
+            "Failed to open Zarr array"
+        );
+        format!("Failed to open Zarr: {}", e)
+    })?;
+    
+    // Read the region
+    let start = std::time::Instant::now();
+    let region = processor.read_region(read_bbox).await
+        .map_err(|e| {
+            error!(
+                error = %e,
+                level_path = %level_path,
+                bbox = ?read_bbox,
+                "Failed to read Zarr region"
+            );
+            format!("Failed to read Zarr region: {}", e)
+        })?;
+    let read_duration = start.elapsed();
+    
+    debug!(
+        level_path = %level_path,
+        width = region.width,
+        height = region.height,
+        read_ms = read_duration.as_millis(),
+        "Loaded native Zarr region"
+    );
+    
+    Ok(region)
+}
+
+/// Query a single point value from Zarr storage.
+/// 
+/// This is optimized for GetFeatureInfo requests - it reads only the single chunk
+/// containing the requested point, making it much more efficient than loading
+/// the entire grid.
+/// 
+/// # Arguments
+/// * `factory` - Grid processor factory with chunk cache
+/// * `entry` - Catalog entry with zarr_metadata
+/// * `lon` - Longitude in degrees (-180 to 180 or 0 to 360)
+/// * `lat` - Latitude in degrees (-90 to 90)
+/// 
+/// # Returns
+/// * `Ok(Some(value))` - The data value at the point
+/// * `Ok(None)` - Point is outside grid bounds or contains fill/NaN value
+/// * `Err(...)` - Failed to read data
+#[tracing::instrument(skip(factory, entry), fields(
+    model = %entry.model,
+    parameter = %entry.parameter,
+    level = %entry.level,
+    storage_path = %entry.storage_path,
+))]
+pub async fn query_point_from_zarr(
+    factory: &GridProcessorFactory,
+    entry: &CatalogEntry,
+    lon: f64,
+    lat: f64,
+) -> Result<Option<f32>, String> {
+    use grid_processor::{
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+    };
+
+    // Parse zarr_metadata from catalog entry
+    let zarr_json = entry.zarr_metadata.as_ref()
+        .ok_or_else(|| {
+            error!(model = %entry.model, parameter = %entry.parameter, "No zarr_metadata in catalog entry");
+            "No zarr_metadata in catalog entry".to_string()
+        })?;
+    
+    let zarr_meta = ZarrMetadata::from_json(zarr_json)
+        .map_err(|e| {
+            error!(model = %entry.model, parameter = %entry.parameter, error = %e, "Failed to parse zarr_metadata");
+            format!("Failed to parse zarr_metadata: {}", e)
+        })?;
+    
+    // Check if source grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = zarr_meta.bbox.min_lon >= 0.0 && zarr_meta.bbox.max_lon > 180.0;
+    
+    // Normalize longitude to match grid coordinate system
+    let query_lon = if grid_uses_360 && lon < 0.0 {
+        lon + 360.0
+    } else if !grid_uses_360 && lon > 180.0 {
+        lon - 360.0
+    } else {
+        lon
+    };
+    
+    debug!(
+        lon = lon,
+        lat = lat,
+        query_lon = query_lon,
+        grid_uses_360 = grid_uses_360,
+        grid_bbox = ?zarr_meta.bbox,
+        "Querying point from Zarr"
+    );
+    
+    // Build storage path
+    let zarr_path = if entry.storage_path.starts_with('/') {
+        entry.storage_path.clone()
+    } else {
+        format!("/{}", entry.storage_path)
+    };
+    
+    // Create MinIO storage
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| {
+            error!(error = %e, "Failed to create MinIO storage");
+            format!("Failed to create MinIO storage: {}", e)
+        })?;
+    
+    // Convert zarr_meta to GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: zarr_meta.model.clone(),
+        parameter: zarr_meta.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // Create processor with metadata from catalog
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &zarr_path,
+        grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| {
+        error!(error = %e, zarr_path = %zarr_path, "Failed to open Zarr array");
+        format!("Failed to open Zarr: {}", e)
+    })?;
+    
+    // Query the point value (reads only the chunk containing this point)
+    let start = Instant::now();
+    let value = processor.read_point(query_lon, lat).await
+        .map_err(|e| {
+            error!(error = %e, lon = query_lon, lat = lat, "Failed to read point from Zarr");
+            format!("Failed to read point: {}", e)
+        })?;
+    let read_duration = start.elapsed();
+    
+    info!(
+        lon = lon,
+        lat = lat,
+        value = ?value,
+        read_ms = read_duration.as_millis(),
+        "Zarr point query complete"
+    );
+    
+    Ok(value)
 }
 
 /// Load GOES NetCDF data from storage with parsed grid caching
@@ -1742,6 +2358,7 @@ async fn load_netcdf_grid_data(
                 data: (*cached.data).clone(),
                 width: cached.width,
                 height: cached.height,
+                bbox: None, // GOES/NetCDF returns full grid, use entry.bbox
                 goes_projection: cached.goes_projection.map(|p| GoesProjectionParams {
                     x_origin: p.x_origin,
                     y_origin: p.y_origin,
@@ -1752,6 +2369,7 @@ async fn load_netcdf_grid_data(
                     semi_minor_axis: p.semi_minor_axis,
                     longitude_origin: p.longitude_origin,
                 }),
+                grid_uses_360: false, // GOES uses geostationary projection, not 0-360
             });
         }
     }
@@ -1860,7 +2478,9 @@ async fn load_netcdf_grid_data(
         data,
         width,
         height,
+        bbox: None, // GOES/NetCDF returns full grid, use entry.bbox
         goes_projection: Some(goes_projection),
+        grid_uses_360: false, // GOES uses geostationary projection, not 0-360
     })
 }
 
@@ -1872,6 +2492,7 @@ async fn load_netcdf_grid_data(
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
+/// - `grid_processor_factory`: Optional factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
 /// - `width`: Output image width (single tile)
@@ -1883,6 +2504,7 @@ async fn load_netcdf_grid_data(
 pub async fn render_wind_barbs_tile(
     grib_cache: &GribCache,
     catalog: &Catalog,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
     width: u32,
@@ -1892,8 +2514,32 @@ pub async fn render_wind_barbs_tile(
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
-    // Load U and V component data
-    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components(grib_cache, catalog, model, forecast_hour).await?;
+    // First get the catalog entries to check for Zarr metadata
+    let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
+    let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
+    
+    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
+    let use_zarr = u_entry.zarr_metadata.is_some() 
+        && v_entry.zarr_metadata.is_some()
+        && grid_processor_factory.is_some();
+    
+    // Load U and V component data - use Zarr if available, otherwise GRIB
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
+        let factory = grid_processor_factory.unwrap();
+        info!(
+            model = model,
+            u_path = %u_entry.storage_path,
+            v_path = %v_entry.storage_path,
+            "Loading wind components from Zarr"
+        );
+        load_wind_components_from_zarr(factory, &u_entry, &v_entry, None).await?
+    } else {
+        info!(
+            model = model,
+            "Loading wind components from GRIB (Zarr not available)"
+        );
+        load_wind_components(grib_cache, catalog, model, forecast_hour).await?
+    };
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -1930,11 +2576,11 @@ pub async fn render_wind_barbs_tile(
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
         &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     let v_resampled = resample_for_model_geographic(
         &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     
     // Render wind barbs with geographic alignment
@@ -1966,6 +2612,7 @@ pub async fn render_wind_barbs_tile(
 /// # Arguments
 /// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
+/// - `grid_processor_factory`: Optional factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
 /// - `width`: Output image width (single tile)
@@ -1979,6 +2626,7 @@ pub async fn render_wind_barbs_tile(
 pub async fn render_wind_barbs_tile_with_level(
     grib_cache: &GribCache,
     catalog: &Catalog,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
     width: u32,
@@ -1989,10 +2637,32 @@ pub async fn render_wind_barbs_tile_with_level(
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
-    // Load U and V component data with level support
-    let (u_data, v_data, grid_width, grid_height, data_bounds) = load_wind_components_with_level(
-        grib_cache, catalog, model, forecast_hour, level
-    ).await?;
+    // First get the catalog entries to check for Zarr metadata
+    let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, level).await?;
+    let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, level).await?;
+    
+    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
+    let use_zarr = u_entry.zarr_metadata.is_some() 
+        && v_entry.zarr_metadata.is_some()
+        && grid_processor_factory.is_some();
+    
+    // Load U and V component data - use Zarr if available, otherwise GRIB
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
+        let factory = grid_processor_factory.unwrap();
+        info!(
+            model = model,
+            u_path = %u_entry.storage_path,
+            v_path = %v_entry.storage_path,
+            "Loading wind components from Zarr"
+        );
+        load_wind_components_from_zarr(factory, &u_entry, &v_entry, None).await?
+    } else {
+        info!(
+            model = model,
+            "Loading wind components from GRIB (Zarr not available)"
+        );
+        load_wind_components_with_level(grib_cache, catalog, model, forecast_hour, level).await?
+    };
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -2030,11 +2700,11 @@ pub async fn render_wind_barbs_tile_with_level(
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
         &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     let v_resampled = resample_for_model_geographic(
         &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model
+        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
     );
     
     // Render wind barbs with geographic alignment
@@ -2060,6 +2730,47 @@ pub async fn render_wind_barbs_tile_with_level(
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
 
+/// Get a wind component catalog entry (UGRD or VGRD) for the given parameters.
+/// This is a helper function to look up catalog entries for wind components.
+async fn get_wind_entry(
+    catalog: &Catalog,
+    model: &str,
+    parameter: &str,  // "UGRD" or "VGRD"
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+) -> Result<CatalogEntry, String> {
+    match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+                .ok_or_else(|| format!("No {} data available for hour {} level {}", parameter, hour, lev))
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, parameter, hour)
+                .await
+                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+                .ok_or_else(|| format!("No {} data available for hour {}", parameter, hour))
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
+                .await
+                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+                .ok_or_else(|| format!("No {} data available at level {}", parameter, lev))
+        }
+        (None, None) => {
+            catalog
+                .get_latest_run_earliest_forecast(model, parameter)
+                .await
+                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+                .ok_or_else(|| format!("No {} data available", parameter))
+        }
+    }
+}
+
 /// Load U and V wind component data from cache/storage with optional level
 async fn load_wind_components_with_level(
     grib_cache: &GribCache,
@@ -2067,7 +2778,7 @@ async fn load_wind_components_with_level(
     model: &str,
     forecast_hour: Option<u32>,
     level: Option<&str>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4]), String> {
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     // Load U component (UGRD) with level support
     let u_entry = match (forecast_hour, level) {
         (Some(hour), Some(lev)) => {
@@ -2174,7 +2885,186 @@ async fn load_wind_components_with_level(
         u_entry.bbox.max_y as f32,
     ];
     
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds))
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
+    
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
+}
+
+/// Load U and V wind component data from Zarr storage.
+/// 
+/// This function loads both UGRD and VGRD components from Zarr, enabling efficient
+/// chunked reads for wind barb rendering.
+/// 
+/// # Arguments
+/// * `factory` - Grid processor factory with shared chunk cache
+/// * `u_entry` - Catalog entry for U component (UGRD)
+/// * `v_entry` - Catalog entry for V component (VGRD)
+/// * `bbox` - Optional bounding box for partial reads (used for tile rendering)
+/// 
+/// # Returns
+/// Tuple of (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360)
+async fn load_wind_components_from_zarr(
+    factory: &GridProcessorFactory,
+    u_entry: &CatalogEntry,
+    v_entry: &CatalogEntry,
+    bbox: Option<[f32; 4]>,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
+    use grid_processor::{
+        BoundingBox as GpBoundingBox,
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+    };
+    
+    // Parse zarr_metadata for U component
+    let u_zarr_json = u_entry.zarr_metadata.as_ref()
+        .ok_or_else(|| "No zarr_metadata in U (UGRD) catalog entry".to_string())?;
+    let u_zarr_meta = ZarrMetadata::from_json(u_zarr_json)
+        .map_err(|e| format!("Failed to parse U zarr_metadata: {}", e))?;
+    
+    // Parse zarr_metadata for V component
+    let v_zarr_json = v_entry.zarr_metadata.as_ref()
+        .ok_or_else(|| "No zarr_metadata in V (VGRD) catalog entry".to_string())?;
+    let v_zarr_meta = ZarrMetadata::from_json(v_zarr_json)
+        .map_err(|e| format!("Failed to parse V zarr_metadata: {}", e))?;
+    
+    // Verify both grids have the same shape
+    if u_zarr_meta.shape != v_zarr_meta.shape {
+        return Err(format!(
+            "U and V grid shapes don't match: {:?} vs {:?}",
+            u_zarr_meta.shape, v_zarr_meta.shape
+        ));
+    }
+    
+    info!(
+        u_path = %u_entry.storage_path,
+        v_path = %v_entry.storage_path,
+        shape = ?u_zarr_meta.shape,
+        chunk_shape = ?u_zarr_meta.chunk_shape,
+        bbox = ?bbox,
+        "Loading wind components from Zarr"
+    );
+    
+    // Create MinIO storage
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+    
+    // Build storage paths
+    let u_zarr_path = if u_entry.storage_path.starts_with('/') {
+        u_entry.storage_path.clone()
+    } else {
+        format!("/{}", u_entry.storage_path)
+    };
+    let v_zarr_path = if v_entry.storage_path.starts_with('/') {
+        v_entry.storage_path.clone()
+    } else {
+        format!("/{}", v_entry.storage_path)
+    };
+    
+    // Create GridMetadata for U processor
+    let u_grid_metadata = grid_processor::GridMetadata {
+        model: u_zarr_meta.model.clone(),
+        parameter: u_zarr_meta.parameter.clone(),
+        level: u_zarr_meta.level.clone(),
+        units: u_zarr_meta.units.clone(),
+        reference_time: u_zarr_meta.reference_time,
+        forecast_hour: u_zarr_meta.forecast_hour,
+        bbox: u_zarr_meta.bbox,
+        shape: u_zarr_meta.shape,
+        chunk_shape: u_zarr_meta.chunk_shape,
+        num_chunks: u_zarr_meta.num_chunks,
+        fill_value: u_zarr_meta.fill_value,
+    };
+    
+    // Create U processor
+    let u_processor = ZarrGridProcessor::with_metadata(
+        store.clone(),
+        &u_zarr_path,
+        u_grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| format!("Failed to open U Zarr: {}", e))?;
+    
+    // Create GridMetadata for V processor
+    let v_grid_metadata = grid_processor::GridMetadata {
+        model: v_zarr_meta.model.clone(),
+        parameter: v_zarr_meta.parameter.clone(),
+        level: v_zarr_meta.level.clone(),
+        units: v_zarr_meta.units.clone(),
+        reference_time: v_zarr_meta.reference_time,
+        forecast_hour: v_zarr_meta.forecast_hour,
+        bbox: v_zarr_meta.bbox,
+        shape: v_zarr_meta.shape,
+        chunk_shape: v_zarr_meta.chunk_shape,
+        num_chunks: v_zarr_meta.num_chunks,
+        fill_value: v_zarr_meta.fill_value,
+    };
+    
+    // Create V processor
+    let v_processor = ZarrGridProcessor::with_metadata(
+        store,
+        &v_zarr_path,
+        v_grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| format!("Failed to open V Zarr: {}", e))?;
+    
+    // Determine bbox to read
+    let read_bbox = if let Some(bbox_arr) = bbox {
+        GpBoundingBox::new(
+            bbox_arr[0] as f64,
+            bbox_arr[1] as f64,
+            bbox_arr[2] as f64,
+            bbox_arr[3] as f64,
+        )
+    } else {
+        // Read full grid
+        u_zarr_meta.bbox
+    };
+    
+    // Read both regions
+    let start = Instant::now();
+    let u_region = u_processor.read_region(&read_bbox).await
+        .map_err(|e| format!("Failed to read U Zarr region: {}", e))?;
+    let v_region = v_processor.read_region(&read_bbox).await
+        .map_err(|e| format!("Failed to read V Zarr region: {}", e))?;
+    let read_duration = start.elapsed();
+    
+    // Verify regions have same dimensions
+    if u_region.width != v_region.width || u_region.height != v_region.height {
+        return Err(format!(
+            "U and V region dimensions don't match: {}x{} vs {}x{}",
+            u_region.width, u_region.height, v_region.width, v_region.height
+        ));
+    }
+    
+    let grid_width = u_region.width;
+    let grid_height = u_region.height;
+    
+    // Use the bbox from the region (important for partial reads)
+    let data_bounds = [
+        u_region.bbox.min_lon as f32,
+        u_region.bbox.min_lat as f32,
+        u_region.bbox.max_lon as f32,
+        u_region.bbox.max_lat as f32,
+    ];
+    
+    // Check if source grid uses 0-360 longitude (like GFS)
+    // This must be based on the full grid bbox, not the partial region bbox
+    let grid_uses_360 = u_zarr_meta.bbox.min_lon >= 0.0 && u_zarr_meta.bbox.max_lon > 180.0;
+    
+    info!(
+        grid_width = grid_width,
+        grid_height = grid_height,
+        u_level = %u_entry.level,
+        v_level = %v_entry.level,
+        read_ms = read_duration.as_millis(),
+        grid_uses_360 = grid_uses_360,
+        "Loaded wind components from Zarr"
+    );
+    
+    Ok((u_region.data, v_region.data, grid_width, grid_height, data_bounds, grid_uses_360))
 }
 
 /// Load U and V wind component data from cache/storage
@@ -2183,7 +3073,7 @@ async fn load_wind_components(
     catalog: &Catalog,
     model: &str,
     forecast_hour: Option<u32>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4]), String> {
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     // Load U component (UGRD)
     let u_entry = if let Some(hour) = forecast_hour {
         catalog
@@ -2256,7 +3146,10 @@ async fn load_wind_components(
         u_entry.bbox.max_y as f32,
     ];
 
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds))
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
+
+    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
 }
 
 /// Render wind barbs combining U and V component data
@@ -2264,6 +3157,7 @@ async fn load_wind_components(
 /// # Arguments
 /// - `storage`: Object storage for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
+/// - `grid_processor_factory`: Optional factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `width`: Output image width
 /// - `height`: Output image height
@@ -2275,6 +3169,7 @@ async fn load_wind_components(
 pub async fn render_wind_barbs_layer(
     grib_cache: &GribCache,
     catalog: &Catalog,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     model: &str,
     width: u32,
     height: u32,
@@ -2282,63 +3177,65 @@ pub async fn render_wind_barbs_layer(
     barb_spacing: Option<usize>,
     forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    // Load U component (UGRD)
-    let u_entry = if let Some(hour) = forecast_hour {
-        catalog
-            .find_by_forecast_hour(model, "UGRD", hour)
-            .await
-            .map_err(|e| format!("Failed to get UGRD: {}", e))?
-            .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
+    // Get catalog entries for U and V components
+    let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
+    let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
+    
+    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
+    let use_zarr = u_entry.zarr_metadata.is_some() 
+        && v_entry.zarr_metadata.is_some()
+        && grid_processor_factory.is_some();
+    
+    // Load U and V component data - use Zarr if available, otherwise GRIB
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
+        let factory = grid_processor_factory.unwrap();
+        info!(
+            model = model,
+            u_path = %u_entry.storage_path,
+            v_path = %v_entry.storage_path,
+            "Loading wind components from Zarr for layer render"
+        );
+        load_wind_components_from_zarr(factory, &u_entry, &v_entry, bbox).await?
     } else {
-        catalog
-            .get_latest_run_earliest_forecast(model, "UGRD")
+        info!(
+            model = model,
+            "Loading wind components from GRIB for layer render"
+        );
+        // Fall back to GRIB loading
+        let u_grib = grib_cache
+            .get(&u_entry.storage_path)
             .await
-            .map_err(|e| format!("Failed to get UGRD: {}", e))?
-            .ok_or_else(|| "No UGRD data available".to_string())?
+            .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
+
+        let v_grib = grib_cache
+            .get(&v_entry.storage_path)
+            .await
+            .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+
+        // Parse GRIB2 messages - use level from catalog entry to find correct message
+        let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
+        let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
+
+        // Unpack grid data
+        let u_data = u_msg
+            .unpack_data()
+            .map_err(|e| format!("Unpacking U failed: {}", e))?;
+
+        let v_data = v_msg
+            .unpack_data()
+            .map_err(|e| format!("Unpacking V failed: {}", e))?;
+
+        let (gh, gw) = u_msg.grid_dims();
+        let data_bounds = [
+            u_entry.bbox.min_x as f32,
+            u_entry.bbox.min_y as f32,
+            u_entry.bbox.max_x as f32,
+            u_entry.bbox.max_y as f32,
+        ];
+        let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
+        
+        (u_data, v_data, gw as usize, gh as usize, data_bounds, grid_uses_360)
     };
-
-    // Load V component (VGRD)
-    let v_entry = if let Some(hour) = forecast_hour {
-        catalog
-            .find_by_forecast_hour(model, "VGRD", hour)
-            .await
-            .map_err(|e| format!("Failed to get VGRD: {}", e))?
-            .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
-    } else {
-        catalog
-            .get_latest_run_earliest_forecast(model, "VGRD")
-            .await
-            .map_err(|e| format!("Failed to get VGRD: {}", e))?
-            .ok_or_else(|| "No VGRD data available".to_string())?
-    };
-
-    // Load GRIB2 files from cache
-    let u_grib = grib_cache
-        .get(&u_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-
-    let v_grib = grib_cache
-        .get(&v_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
-
-    // Parse GRIB2 messages - use level from catalog entry to find correct message
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
-
-    // Unpack grid data
-    let u_data = u_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking U failed: {}", e))?;
-
-    let v_data = v_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking V failed: {}", e))?;
-
-    let (grid_height, grid_width) = u_msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
     
     // Debug: Log data statistics
     let u_stats: (f32, f32, f32) = u_data.iter()
@@ -2385,14 +3282,6 @@ pub async fn render_wind_barbs_layer(
     let output_width = width as usize;
     let output_height = height as usize;
     let spacing = barb_spacing.unwrap_or(50);
-    
-    // Get data bounds from catalog entry (both U and V should have same bounds)
-    let data_bounds = [
-        u_entry.bbox.min_x as f32,
-        u_entry.bbox.min_y as f32,
-        u_entry.bbox.max_x as f32,
-        u_entry.bbox.max_y as f32,
-    ];
 
     // If bbox is specified, we need to resample to that region
     let (u_to_render, v_to_render, render_width, render_height) = if let Some(bbox) = bbox {
@@ -2407,8 +3296,8 @@ pub async fn render_wind_barbs_layer(
         );
         
         // Resample from geographic coordinates (model-aware for proper projection handling)
-        let u_resampled = resample_for_model_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model);
-        let v_resampled = resample_for_model_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model);
+        let u_resampled = resample_for_model_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
+        let v_resampled = resample_for_model_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
         
         // Debug: check resampled data statistics
         let u_min = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
@@ -2527,6 +3416,7 @@ pub async fn render_wind_barbs_layer(
 /// - `grid_cache`: Optional grid data cache for parsed grids
 /// - `catalog`: Catalog for finding datasets
 /// - `metrics`: Metrics collector for performance tracking
+/// - `grid_processor_factory`: Optional factory for Zarr-based grid access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `parameter`: Parameter name (e.g., "TMP")
 /// - `width`: Output image width
@@ -2544,6 +3434,7 @@ pub async fn render_numbers_tile(
     grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
     metrics: &MetricsCollector,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     model: &str,
     parameter: &str,
     width: u32,
@@ -2596,39 +3487,25 @@ pub async fn render_numbers_tile(
         }
     };
 
-    // Determine if this is NetCDF or GRIB2 data
-    let is_netcdf = entry.storage_path.ends_with(".nc");
+    // Load grid data using Zarr-aware loader (handles Zarr, NetCDF, and GRIB2)
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        Some(bbox),
+        Some((width as usize, height as usize)),  // Output tile size for pyramid selection
+    ).await?;
     
-    // Determine the data source type for metrics tracking
-    let source_type = DataSourceType::from_model(&entry.model);
-    
-    let (grid_data, grid_width, grid_height) = if is_netcdf {
-        // Load NetCDF data
-        let grid_result = load_netcdf_grid_data(grib_cache, grid_cache, metrics, &entry, &source_type).await?;
-        (grid_result.data, grid_result.width, grid_result.height)
-    } else {
-        // Load GRIB2 file from cache
-        let grib_data = grib_cache
-            .get(&entry.storage_path)
-            .await
-            .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
-
-        // Parse GRIB2 and find parameter with matching level
-        let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
-
-        // Unpack grid data
-        let data = msg
-            .unpack_data()
-            .map_err(|e| format!("Unpacking failed: {}", e))?;
-
-        let (grid_height, grid_width) = msg.grid_dims();
-        (data, grid_width as usize, grid_height as usize)
-    };
+    let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);
 
     info!(
         parameter = parameter,
         grid_width = grid_width,
         grid_height = grid_height,
+        has_zarr = entry.zarr_metadata.is_some(),
         "Loaded grid data for numbers rendering"
     );
 
@@ -2639,6 +3516,9 @@ pub async fn render_numbers_tile(
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
     ];
+    
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
 
     // Resample data to the render bbox
     let resampled_data = resample_grid_for_bbox(
@@ -2651,6 +3531,7 @@ pub async fn render_numbers_tile(
         data_bounds,
         use_mercator,
         model,
+        grid_uses_360,
     );
 
     // Convert flat array to 2D grid for numbers renderer
@@ -2688,11 +3569,550 @@ pub async fn render_numbers_tile(
         .map_err(|e| format!("PNG encoding failed: {}", e))
 }
 
+/// Render numbers by directly querying Zarr data at exact grid point locations.
+/// This ensures the displayed values exactly match what GetFeatureInfo would return.
+async fn render_numbers_direct_zarr(
+    factory: &GridProcessorFactory,
+    entry: &CatalogEntry,
+    width: u32,
+    height: u32,
+    render_bbox: [f64; 4],
+    visible_bbox: Option<[f64; 4]>,
+    color_stops: &[renderer::numbers::ColorStop],
+    unit_transform: numbers::UnitTransform,
+    min_pixel_spacing: u32,
+) -> Result<image::RgbaImage, String> {
+    use grid_processor::{
+        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        MinioConfig, create_minio_storage,
+    };
+    
+    // Parse zarr_metadata
+    let zarr_json = entry.zarr_metadata.as_ref()
+        .ok_or_else(|| "No zarr_metadata in catalog entry".to_string())?;
+    
+    let zarr_meta = ZarrMetadata::from_json(zarr_json)
+        .map_err(|e| format!("Failed to parse zarr_metadata: {}", e))?;
+    
+    // Extract grid info
+    let source_bbox = [
+        zarr_meta.bbox.min_lon,
+        zarr_meta.bbox.min_lat,
+        zarr_meta.bbox.max_lon,
+        zarr_meta.bbox.max_lat,
+    ];
+    let source_dims = zarr_meta.shape;
+    let source_uses_360 = zarr_meta.bbox.min_lon >= 0.0 && zarr_meta.bbox.max_lon > 180.0;
+    
+    // Build storage path
+    let zarr_path = if entry.storage_path.starts_with('/') {
+        entry.storage_path.clone()
+    } else {
+        format!("/{}", entry.storage_path)
+    };
+    
+    // Create MinIO storage
+    let minio_config = MinioConfig::from_env();
+    let store = create_minio_storage(&minio_config)
+        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+    
+    // Create GridMetadata for the processor
+    let grid_metadata = grid_processor::GridMetadata {
+        model: entry.model.clone(),
+        parameter: entry.parameter.clone(),
+        level: zarr_meta.level.clone(),
+        units: zarr_meta.units.clone(),
+        reference_time: zarr_meta.reference_time,
+        forecast_hour: zarr_meta.forecast_hour,
+        bbox: zarr_meta.bbox,
+        shape: zarr_meta.shape,
+        chunk_shape: zarr_meta.chunk_shape,
+        num_chunks: zarr_meta.num_chunks,
+        fill_value: zarr_meta.fill_value,
+    };
+    
+    // Create processor
+    let processor = ZarrGridProcessor::with_metadata(
+        store,
+        &zarr_path,
+        grid_metadata,
+        factory.chunk_cache(),
+        factory.config().clone(),
+    ).map_err(|e| format!("Failed to open Zarr: {}", e))?;
+    
+    // Image types
+    use image::{ImageBuffer, Rgba, RgbaImage};
+    use imageproc::drawing::draw_text_mut;
+    use rusttype::{Font, Scale};
+    
+    // Font setup - use the same font as the renderer crate
+    let font_data: &[u8] = include_bytes!("../../../crates/renderer/assets/DejaVuSansMono.ttf");
+    let font = Font::try_from_bytes(font_data).expect("Failed to load font");
+    let font_size = 12.0f32;
+    let scale = Scale::uniform(font_size);
+    
+    let mut img: RgbaImage = ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0]));
+    
+    let [render_min_lon, render_min_lat, render_max_lon, render_max_lat] = render_bbox;
+    let render_lon_range = render_max_lon - render_min_lon;
+    let render_lat_range = render_max_lat - render_min_lat;
+    
+    let [source_min_lon, source_min_lat, source_max_lon, source_max_lat] = source_bbox;
+    let (source_width, source_height) = source_dims;
+    
+    // Calculate source grid resolution
+    let source_lon_step = (source_max_lon - source_min_lon) / (source_width - 1) as f64;
+    let source_lat_step = (source_max_lat - source_min_lat) / (source_height - 1) as f64;
+    
+    // Get visible area
+    let [vis_min_lon, vis_min_lat, vis_max_lon, vis_max_lat] = visible_bbox.unwrap_or(render_bbox);
+    
+    // Helper to convert longitude from -180/180 to 0-360 format if needed
+    let to_source_lon = |lon: f64| -> f64 {
+        if source_uses_360 && lon < 0.0 { lon + 360.0 } else { lon }
+    };
+    
+    // Helper to convert longitude from 0-360 to -180/180 format
+    let from_source_lon = |lon: f64| -> f64 {
+        if source_uses_360 && lon > 180.0 { lon - 360.0 } else { lon }
+    };
+    
+    // Convert render bbox to source coordinates
+    let render_min_lon_src = to_source_lon(render_min_lon);
+    let render_max_lon_src = to_source_lon(render_max_lon);
+    
+    // Calculate step to skip grid points if they would be too close together
+    let pixels_per_source_lon = (width as f64 / render_lon_range) * source_lon_step;
+    let pixels_per_source_lat = (height as f64 / render_lat_range) * source_lat_step;
+    
+    let step_x = ((min_pixel_spacing as f64 / pixels_per_source_lon).ceil() as usize).max(1);
+    let step_y = ((min_pixel_spacing as f64 / pixels_per_source_lat).ceil() as usize).max(1);
+    
+    // Find source grid indices that fall within the render bbox
+    let start_i = ((render_min_lon_src - source_min_lon) / source_lon_step).floor() as i64;
+    let end_i = ((render_max_lon_src - source_min_lon) / source_lon_step).ceil() as i64;
+    let start_j = ((render_min_lat - source_min_lat) / source_lat_step).floor() as i64;
+    let end_j = ((render_max_lat - source_min_lat) / source_lat_step).ceil() as i64;
+    
+    // Align to step boundaries for consistent placement across tiles
+    let start_i = (start_i / step_x as i64) * step_x as i64;
+    let start_j = (start_j / step_y as i64) * step_y as i64;
+    
+    tracing::info!(
+        source_dims = ?source_dims,
+        source_lon_step = source_lon_step,
+        source_lat_step = source_lat_step,
+        step_x = step_x,
+        step_y = step_y,
+        start_i = start_i,
+        end_i = end_i,
+        start_j = start_j,
+        end_j = end_j,
+        "Rendering numbers with direct Zarr queries"
+    );
+    
+    // Iterate over source grid points
+    let mut j = start_j;
+    while j <= end_j {
+        if j < 0 || j >= source_height as i64 {
+            j += step_y as i64;
+            continue;
+        }
+        
+        let mut i = start_i;
+        while i <= end_i {
+            if i < 0 || i >= source_width as i64 {
+                i += step_x as i64;
+                continue;
+            }
+            
+            // Calculate geographic position of this grid point (in source coordinates)
+            let geo_lon_src = source_min_lon + (i as f64 * source_lon_step);
+            let geo_lat = source_min_lat + (j as f64 * source_lat_step);
+            
+            // Convert to display coordinates (-180 to 180)
+            let geo_lon = from_source_lon(geo_lon_src);
+            
+            // Check if this position is in the visible area
+            let text_buffer_lon = source_lon_step * 0.5;
+            let text_buffer_lat = source_lat_step * 0.5;
+            if geo_lon < vis_min_lon - text_buffer_lon || geo_lon > vis_max_lon + text_buffer_lon ||
+               geo_lat < vis_min_lat - text_buffer_lat || geo_lat > vis_max_lat + text_buffer_lat {
+                i += step_x as i64;
+                continue;
+            }
+            
+            // Convert geographic to pixel coordinates
+            let px = ((geo_lon - render_min_lon) / render_lon_range * width as f64) as i32;
+            let py = ((render_max_lat - geo_lat) / render_lat_range * height as f64) as i32;
+            
+            // Skip if outside render area
+            if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
+                i += step_x as i64;
+                continue;
+            }
+            
+            // Query the exact value from Zarr at this grid cell
+            // Note: Zarr row is from north to south, so we need to flip the j index
+            let row = (source_height - 1) as i64 - j;
+            let value = match processor.read_grid_cell(i as usize, row as usize).await {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    i += step_x as i64;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, col = i, row = row, "Failed to read grid cell");
+                    i += step_x as i64;
+                    continue;
+                }
+            };
+            
+            // Apply unit transformation
+            let display_value = unit_transform.apply(value);
+            
+            // Format the value
+            let text = renderer::numbers::format_value(display_value);
+            
+            // Get color for this value (use transformed value for color mapping)
+            let color = renderer::numbers::get_color_for_value(display_value, color_stops);
+            
+            // Calculate text dimensions for centering
+            let char_width = (font_size * 0.6) as i32;
+            let text_width = (text.len() as i32) * char_width;
+            let text_height = font_size as i32;
+            
+            // Center the text on the grid point
+            let centered_px = px - text_width / 2;
+            let centered_py = py - text_height / 2;
+            
+            // Draw background
+            let bg_color = Rgba([255, 255, 255, 220]);
+            let padding = 2i32;
+            for dy in -padding..(text_height + padding) {
+                for dx in -padding..(text_width + padding) {
+                    let bx = centered_px + dx;
+                    let by = centered_py + dy;
+                    if bx >= 0 && bx < width as i32 && by >= 0 && by < height as i32 {
+                        img.put_pixel(bx as u32, by as u32, bg_color);
+                    }
+                }
+            }
+            
+            // Draw the text
+            draw_text_mut(&mut img, color, centered_px, centered_py, scale, &font, &text);
+            
+            i += step_x as i64;
+        }
+        j += step_y as i64;
+    }
+    
+    Ok(img)
+}
+
+/// Render numeric values at grid points with tile buffer for seamless edges.
+/// This renders a 3x3 grid of tiles and crops the center to ensure numbers
+/// at tile boundaries are not clipped.
+///
+/// # Arguments
+/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
+/// - `grid_cache`: Optional grid data cache for parsed grids
+/// - `catalog`: Catalog for finding datasets
+/// - `metrics`: Metrics collector for performance tracking
+/// - `grid_processor_factory`: Optional factory for Zarr-based grid access
+/// - `model`: Weather model name (e.g., "gfs")
+/// - `parameter`: Parameter name (e.g., "TMP")
+/// - `tile_coord`: Tile coordinate for expanded rendering
+/// - `width`: Output image width (single tile)
+/// - `height`: Output image height (single tile)
+/// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
+/// - `style_path`: Path to style configuration file (for color mapping)
+/// - `forecast_hour`: Optional forecast hour
+/// - `level`: Optional vertical level
+/// - `use_mercator`: Use Web Mercator projection
+///
+/// # Returns
+/// PNG image data as bytes
+pub async fn render_numbers_tile_with_buffer(
+    grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
+    catalog: &Catalog,
+    metrics: &MetricsCollector,
+    grid_processor_factory: Option<&GridProcessorFactory>,
+    model: &str,
+    parameter: &str,
+    tile_coord: Option<wms_common::TileCoord>,
+    width: u32,
+    height: u32,
+    bbox: [f32; 4],
+    style_path: &str,
+    forecast_hour: Option<u32>,
+    level: Option<&str>,
+    use_mercator: bool,
+) -> Result<Vec<u8>, String> {
+    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile, actual_expanded_dimensions, tile_bbox};
+    
+    // Load style configuration for color mapping
+    let style_json = std::fs::read_to_string(style_path)
+        .map_err(|e| format!("Failed to read style file: {}", e))?;
+    let style_config: StyleConfig = serde_json::from_str(&style_json)
+        .map_err(|e| format!("Failed to parse style JSON: {}", e))?;
+
+    // Get the first style definition (there should only be one in the file)
+    let style_def = style_config.styles.values().next()
+        .ok_or_else(|| "No style definition found in style file".to_string())?;
+
+    // Get dataset for this parameter, optionally at a specific level
+    let entry = match (forecast_hour, level) {
+        (Some(hour), Some(lev)) => {
+            catalog
+                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+        }
+        (Some(hour), None) => {
+            catalog
+                .find_by_forecast_hour(model, parameter, hour)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+        }
+        (None, Some(lev)) => {
+            catalog
+                .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+        }
+        (None, None) => {
+            catalog
+                .get_latest_run_earliest_forecast(model, parameter)
+                .await
+                .map_err(|e| format!("Catalog query failed: {}", e))?
+                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+        }
+    };
+
+    // Determine if we should use expanded rendering
+    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
+        let config = ExpandedTileConfig::tiles_3x3();
+        let expanded_bbox = expanded_tile_bbox(&coord, &config);
+        
+        // Calculate actual expanded dimensions
+        let (exp_w, exp_h) = actual_expanded_dimensions(&coord, &config);
+        
+        (
+            [
+                expanded_bbox.min_x as f32,
+                expanded_bbox.min_y as f32,
+                expanded_bbox.max_x as f32,
+                expanded_bbox.max_y as f32,
+            ],
+            exp_w as usize,
+            exp_h as usize,
+            Some((coord, config)),
+        )
+    } else {
+        (bbox, width as usize, height as usize, None)
+    };
+
+    info!(
+        render_width = render_width,
+        render_height = render_height,
+        bbox_min_lon = render_bbox[0],
+        bbox_max_lon = render_bbox[2],
+        expanded = needs_crop.is_some(),
+        "Rendering numbers tile"
+    );
+
+    // Load grid data using Zarr-aware loader
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        Some(render_bbox),
+        Some((render_width as usize, render_height as usize)),  // Output tile size for pyramid selection
+    ).await?;
+    
+    let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);
+
+    // Get data bounds from catalog entry
+    let data_bounds = [
+        entry.bbox.min_x as f32,
+        entry.bbox.min_y as f32,
+        entry.bbox.max_x as f32,
+        entry.bbox.max_y as f32,
+    ];
+    
+    // Check if grid uses 0-360 longitude (like GFS)
+    let grid_uses_360 = entry.bbox.min_x >= 0.0 && entry.bbox.max_x > 180.0;
+    
+    // Get full source grid dimensions from zarr_metadata if available
+    // This is needed for placing numbers at exact grid point locations
+    let source_grid_dims: Option<(usize, usize)> = if let Some(ref zarr_json) = entry.zarr_metadata {
+        use grid_processor::ZarrMetadata;
+        ZarrMetadata::from_json(zarr_json).ok().map(|meta| meta.shape)
+    } else {
+        None
+    };
+
+    // Resample data to the render bbox
+    let resampled_data = resample_grid_for_bbox(
+        &grid_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+        data_bounds,
+        use_mercator,
+        model,
+        grid_uses_360,
+    );
+
+    // Convert flat array to 2D grid for numbers renderer
+    let grid_2d: Vec<Vec<f32>> = (0..render_height)
+        .map(|y| {
+            (0..render_width)
+                .map(|x| resampled_data[y * render_width + x])
+                .collect()
+        })
+        .collect();
+
+    // Determine unit transform from style config
+    // The transform field specifies how to convert native units (e.g., Pa) to display units (e.g., hPa)
+    let unit_transform = style_def.transform.as_ref().map(|t| {
+        match t.transform_type.to_lowercase().as_str() {
+            "k_to_c" | "kelvin_to_celsius" => numbers::UnitTransform::Subtract(273.15),
+            "pa_to_hpa" => numbers::UnitTransform::Divide(100.0),
+            "m_to_km" => numbers::UnitTransform::Divide(1000.0),
+            "mps_to_knots" => numbers::UnitTransform::Divide(0.514444), // multiply by ~1.94
+            "linear" => {
+                let scale = t.scale.unwrap_or(1.0);
+                let offset = t.offset.unwrap_or(0.0);
+                numbers::UnitTransform::Linear { scale, offset }
+            },
+            _ => numbers::UnitTransform::None,
+        }
+    }).unwrap_or_else(|| {
+        // Fallback: detect from parameter name for backwards compatibility
+        if parameter.contains("TMP") || parameter.contains("TEMP") {
+            numbers::UnitTransform::Subtract(273.15)
+        } else if parameter.contains("PRES") || parameter.contains("PRESS") || parameter.contains("PRMSL") {
+            numbers::UnitTransform::Divide(100.0)
+        } else {
+            numbers::UnitTransform::None
+        }
+    });
+    
+    // Legacy format for backwards compatibility (None means use unit_transform)
+    let unit_conversion: Option<f32> = None;
+
+    // Render numbers at exact source grid point locations
+    // For accurate display, we query the Zarr data directly at each grid point
+    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
+        // Calculate center tile bbox for visibility filtering
+        let center_bbox = wms_common::tile::tile_bbox(&coord);
+        let visible_bbox = [
+            center_bbox.min_x,
+            center_bbox.min_y,
+            center_bbox.max_x,
+            center_bbox.max_y,
+        ];
+        
+        // Keep source bbox in its original format (0-360 for GFS)
+        let source_bbox = [
+            data_bounds[0] as f64,
+            data_bounds[1] as f64,
+            data_bounds[2] as f64,
+            data_bounds[3] as f64,
+        ];
+        
+        // Use full source grid dimensions if available (from zarr_metadata)
+        let full_source_dims = source_grid_dims.unwrap_or((grid_width, grid_height));
+        
+        // Try to use direct Zarr queries for exact values
+        let img = if let (Some(factory), Some(_zarr_meta)) = (grid_processor_factory, &entry.zarr_metadata) {
+            // Render using direct Zarr queries
+            match render_numbers_direct_zarr(
+                factory,
+                &entry,
+                render_width as u32,
+                render_height as u32,
+                [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
+                Some(visible_bbox),
+                &style_def.stops,
+                unit_transform,
+                40, // min_pixel_spacing
+            ).await {
+                Ok(img) => img,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to render with direct Zarr queries, falling back to resampled data");
+                    // Fall back to resampled data
+                    let grid_point_config = numbers::GridPointNumbersConfig {
+                        font_size: 12.0,
+                        color_stops: style_def.stops.clone(),
+                        unit_conversion,
+                        unit_transform,
+                        render_bbox: [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
+                        source_bbox,
+                        source_dims: full_source_dims,
+                        visible_bbox: Some(visible_bbox),
+                        min_pixel_spacing: 40,
+                        source_uses_360: grid_uses_360,
+                    };
+                    numbers::render_numbers_at_grid_points(&grid_2d, render_width as u32, render_height as u32, &grid_point_config)
+                }
+            }
+        } else {
+            // No Zarr access, use resampled data
+            let grid_point_config = numbers::GridPointNumbersConfig {
+                font_size: 12.0,
+                color_stops: style_def.stops.clone(),
+                unit_conversion,
+                unit_transform,
+                render_bbox: [render_bbox[0] as f64, render_bbox[1] as f64, render_bbox[2] as f64, render_bbox[3] as f64],
+                source_bbox,
+                source_dims: full_source_dims,
+                visible_bbox: Some(visible_bbox),
+                min_pixel_spacing: 40,
+                source_uses_360: grid_uses_360,
+            };
+            numbers::render_numbers_at_grid_points(&grid_2d, render_width as u32, render_height as u32, &grid_point_config)
+        };
+        
+        let expanded_pixels = img.into_raw();
+        
+        // Crop to center tile
+        crop_center_tile(&expanded_pixels, render_width as u32, &coord, &tile_config)
+    } else {
+        // No tile coordinate - fall back to regular rendering
+        let numbers_config = NumbersConfig {
+            spacing: 50,
+            font_size: 12.0,
+            color_stops: style_def.stops.clone(),
+            unit_conversion,
+        };
+        let img = numbers::render_numbers(&grid_2d, render_width as u32, render_height as u32, &numbers_config);
+        img.into_raw()
+    };
+
+    // Encode as PNG
+    renderer::png::create_png(&final_pixels, width as usize, height as usize)
+        .map_err(|e| format!("PNG encoding failed: {}", e))
+}
+
 /// Query data value at a specific point for GetFeatureInfo
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
+/// - `grib_cache`: Cache for GRIB2/NetCDF file data
 /// - `catalog`: Catalog for finding datasets
+/// - `metrics`: Metrics collector
+/// - `grid_processor_factory`: Optional factory for Zarr-based point queries (more efficient)
 /// - `layer`: Layer name (e.g., "gfs_TMP")
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// - `width`: Map width in pixels
@@ -2709,6 +4129,7 @@ pub async fn query_point_value(
     grib_cache: &GribCache,
     catalog: &Catalog,
     metrics: &MetricsCollector,
+    grid_processor_factory: Option<&GridProcessorFactory>,
     layer: &str,
     bbox: [f64; 4],
     width: u32,
@@ -2728,21 +4149,21 @@ pub async fn query_point_value(
     }
     
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage
+    let parameter = parts[1..].join("_").to_uppercase();
     
     // Convert pixel coordinates to geographic coordinates
+    // Note: bbox is already in [min_lon, min_lat, max_lon, max_lat] format
+    // (the handler has already converted from WMS 1.3.0 axis order if needed)
     let (lon, lat) = if crs.contains("3857") {
-        // Web Mercator - convert bbox and then pixel position
+        // Web Mercator - convert bbox from meters to degrees
         let [min_x, min_y, max_x, max_y] = bbox;
         let (min_lon, min_lat) = mercator_to_wgs84(min_x, min_y);
         let (max_lon, max_lat) = mercator_to_wgs84(max_x, max_y);
         pixel_to_geographic(i, j, width, height, [min_lon, min_lat, max_lon, max_lat])
     } else {
-        // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
-        // So bbox is [min_lat, min_lon, max_lat, max_lon]
-        // But pixel_to_geographic expects [min_lon, min_lat, max_lon, max_lat]
-        let [min_lat, min_lon, max_lat, max_lon] = bbox;
-        pixel_to_geographic(i, j, width, height, [min_lon, min_lat, max_lon, max_lat])
+        // EPSG:4326 - bbox is already [min_lon, min_lat, max_lon, max_lat]
+        pixel_to_geographic(i, j, width, height, bbox)
     };
     
     info!(
@@ -2792,13 +4213,39 @@ pub async fn query_point_value(
         }
     };
     
-    // Check if this is a NetCDF file (GOES, MRMS observation data)
+    // Determine data source type and load value
+    // Priority: Zarr (most efficient for point queries) > NetCDF > GRIB2
+    let has_zarr = entry.zarr_metadata.is_some() && grid_processor_factory.is_some();
     let is_netcdf = entry.storage_path.ends_with(".nc") || 
                     entry.parameter.starts_with("CMI_") ||
                     model.starts_with("goes");
     
     // Load and sample grid data
-    let value = if is_netcdf {
+    let value = if has_zarr {
+        // Use Zarr for efficient point query (reads only one chunk)
+        let factory = grid_processor_factory.unwrap();
+        match query_point_from_zarr(factory, &entry, lon, lat).await? {
+            Some(v) => v,
+            None => {
+                // Point outside grid or fill value - return no-data response
+                return Ok(vec![wms_protocol::FeatureInfo {
+                    layer_name: layer.to_string(),
+                    parameter: parameter.clone(),
+                    value: f64::NAN,
+                    unit: "N/A".to_string(),
+                    raw_value: f64::NAN,
+                    raw_unit: "no data".to_string(),
+                    location: wms_protocol::Location {
+                        longitude: lon,
+                        latitude: lat,
+                    },
+                    forecast_hour: Some(entry.forecast_hour),
+                    reference_time: Some(entry.reference_time.to_rfc3339()),
+                    level: Some(entry.level.clone()),
+                }]);
+            }
+        }
+    } else if is_netcdf {
         // Handle NetCDF (GOES satellite) data
         let grid_result = load_grid_data(grib_cache, None, metrics, &entry, &parameter).await?;
         let grid_data = grid_result.data;
@@ -2809,7 +4256,7 @@ pub async fn query_point_value(
         // Sample value at the point using projection-aware sampling
         sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
     } else {
-        // Handle GRIB2 data
+        // Handle GRIB2 data (legacy fallback)
         let grib_data = grib_cache
             .get(&entry.storage_path)
             .await
@@ -3244,6 +4691,11 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
         (value as f64, "m/s".to_string(), "m/s".to_string(), "U Wind Component".to_string())
     } else if parameter.contains("VGRD") {
         (value as f64, "m/s".to_string(), "m/s".to_string(), "V Wind Component".to_string())
+    } else if parameter.contains("HGT") {
+        // Geopotential height: raw units to decameters (dkm)
+        // Data appears to be ~60x larger than expected, so divide by 60 (~0.0167)
+        let dkm = value * 0.0167;
+        (dkm as f64, "dkm".to_string(), "gpm".to_string(), "Geopotential Height".to_string())
     } else {
         // Generic parameter
         (value as f64, "".to_string(), "".to_string(), parameter.to_string())
@@ -3268,7 +4720,9 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
 /// PNG image data as bytes
 pub async fn render_isolines_tile(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     tile_coord: Option<wms_common::TileCoord>,
@@ -3276,19 +4730,23 @@ pub async fn render_isolines_tile(
     height: u32,
     bbox: [f32; 4],
     style_path: &str,
+    style_name: &str,
     forecast_hour: Option<u32>,
     use_mercator: bool,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     render_isolines_tile_with_level(
-        grib_cache, catalog, model, parameter, tile_coord, width, height, bbox,
-        style_path, forecast_hour, None, use_mercator
+        grib_cache, grid_cache, catalog, metrics, model, parameter, tile_coord, width, height, bbox,
+        style_path, style_name, forecast_hour, None, use_mercator, grid_processor_factory
     ).await
 }
 
 /// Render isolines (contour lines) for a single tile with optional level.
 pub async fn render_isolines_tile_with_level(
     grib_cache: &GribCache,
+    grid_cache: Option<&GridDataCache>,
     catalog: &Catalog,
+    metrics: &MetricsCollector,
     model: &str,
     parameter: &str,
     _tile_coord: Option<wms_common::TileCoord>,
@@ -3296,15 +4754,17 @@ pub async fn render_isolines_tile_with_level(
     height: u32,
     bbox: [f32; 4],
     style_path: &str,
+    style_name: &str,
     forecast_hour: Option<u32>,
     level: Option<&str>,
     use_mercator: bool,
+    grid_processor_factory: Option<&GridProcessorFactory>,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::crop_center_tile;
     
-    // Load style configuration
-    let style_config = ContourStyle::from_file(style_path)
-        .map_err(|e| format!("Failed to load contour style: {}", e))?;
+    // Load style configuration - look up the specific style by name
+    let style_config = ContourStyle::from_file_with_style(style_path, style_name)
+        .map_err(|e| format!("Failed to load contour style '{}' from {}: {}", style_name, style_path, e))?;
     
     // Get dataset for this parameter, optionally at a specific level
     let entry = match (forecast_hour, level) {
@@ -3338,23 +4798,23 @@ pub async fn render_isolines_tile_with_level(
         }
     };
     
-    // Load GRIB2 file from cache
-    let grib_data = grib_cache
-        .get(&entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
+    // Load grid data using the unified loader (handles GRIB2, NetCDF, and Zarr)
+    // Pass None for bbox to get full grid (isolines need global min/max for level generation)
+    // Also pass None for output_size since we need full resolution for contour extraction
+    let grid_result = load_grid_data_with_zarr_support(
+        grid_processor_factory,
+        grib_cache,
+        grid_cache,
+        metrics,
+        &entry,
+        parameter,
+        None,  // No bbox subset - we need full grid for contour level calculation
+        None,  // No output_size - use native resolution for accurate contours
+    ).await?;
     
-    // Parse GRIB2 and find parameter with matching level
-    let msg = find_parameter_in_grib(grib_data, parameter, Some(&entry.level))?;
-    
-    // Unpack grid data
-    let grid_data = msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking failed: {}", e))?;
-    
-    let (grid_height, grid_width) = msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
+    let grid_data = grid_result.data;
+    let grid_width = grid_result.width;
+    let grid_height = grid_result.height;
     
     // Find global min/max for level generation
     let (min_val, max_val) = grid_data
@@ -3367,6 +4827,8 @@ pub async fn render_isolines_tile_with_level(
         parameter = parameter,
         min_val = min_val,
         max_val = max_val,
+        grid_width = grid_width,
+        grid_height = grid_height,
         "Loaded grid data for isolines"
     );
     
@@ -3377,13 +4839,16 @@ pub async fn render_isolines_tile_with_level(
     // Instead, we render each tile independently
     let (render_bbox, render_width, render_height, needs_crop) = (bbox, width as usize, height as usize, None);
     
-    // Get data bounds from catalog entry
-    let data_bounds = [
+    // Use actual bbox from grid data if available, otherwise fall back to entry.bbox
+    let data_bounds = grid_result.bbox.unwrap_or_else(|| [
         entry.bbox.min_x as f32,
         entry.bbox.min_y as f32,
         entry.bbox.max_x as f32,
         entry.bbox.max_y as f32,
-    ];
+    ]);
+    
+    // Use grid_uses_360 from result (for proper coordinate handling)
+    let grid_uses_360 = grid_result.grid_uses_360;
     
     info!(
         render_width = render_width,
@@ -3396,7 +4861,7 @@ pub async fn render_isolines_tile_with_level(
     
     // Resample data to the render bbox
     // Use Mercator projection when rendering for Web Mercator display
-    let resampled_data = resample_grid_for_bbox(
+    let resampled_data_raw = resample_grid_for_bbox(
         &grid_data,
         grid_width,
         grid_height,
@@ -3406,9 +4871,20 @@ pub async fn render_isolines_tile_with_level(
         data_bounds,
         use_mercator,
         model,
+        grid_uses_360,
     );
     
-    // Log resampled data stats for debugging
+    // Apply transform to convert data to display units (e.g., Pa -> hPa, K -> C)
+    // This ensures contour levels (defined in display units) match the data
+    let resampled_data: Vec<f32> = resampled_data_raw.iter()
+        .map(|&v| renderer::style::apply_transform(v, style_config.transform.as_ref()))
+        .collect();
+    
+    // Also transform min/max for level generation
+    let transformed_min = renderer::style::apply_transform(min_val, style_config.transform.as_ref());
+    let transformed_max = renderer::style::apply_transform(max_val, style_config.transform.as_ref());
+    
+    // Log resampled data stats for debugging (now in display units)
     let resampled_valid: Vec<f32> = resampled_data.iter().filter(|v| !v.is_nan()).copied().collect();
     let resampled_min = resampled_valid.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     let resampled_max = resampled_valid.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
@@ -3420,11 +4896,12 @@ pub async fn render_isolines_tile_with_level(
         valid_count = resampled_valid.len(),
         nan_count = nan_count,
         total = resampled_data.len(),
-        "Resampled data stats for isolines"
+        transform = ?style_config.transform,
+        "Resampled data stats for isolines (in display units)"
     );
     
-    // Generate contour levels from style config
-    let levels = style_config.generate_levels(min_val, max_val);
+    // Generate contour levels from style config (using transformed min/max)
+    let levels = style_config.generate_levels(transformed_min, transformed_max);
     
     info!(
         num_levels = levels.len(),
@@ -3434,18 +4911,13 @@ pub async fn render_isolines_tile_with_level(
     );
     
     // Build special level configs from style
+    // Since data is now in display units, special levels are used directly (no conversion needed)
     let special_levels: Vec<contour::SpecialLevelConfig> = style_config.contour.special_levels
         .as_ref()
         .map(|levels| {
             levels.iter().map(|sl| {
-                // Convert from display units to data units
-                let level_in_data_units = if let Some(conv) = style_config.contour.unit_conversion {
-                    sl.value + conv
-                } else {
-                    sl.value
-                };
                 contour::SpecialLevelConfig {
-                    level: level_in_data_units,
+                    level: sl.value,  // Already in display units
                     line_color: sl.line_color,
                     line_width: sl.line_width,
                     label: sl.label.clone(),
@@ -3454,9 +4926,8 @@ pub async fn render_isolines_tile_with_level(
         })
         .unwrap_or_default();
     
-    // Calculate label unit offset (to display in user-friendly units)
-    // If unit_conversion is 273.15 (K to C), offset should be -273.15
-    let label_unit_offset = style_config.contour.unit_conversion.map(|c| -c).unwrap_or(0.0);
+    // No label offset needed since data is already in display units
+    let label_unit_offset = 0.0;
     
     // Build ContourConfig
     let contour_config = contour::ContourConfig {

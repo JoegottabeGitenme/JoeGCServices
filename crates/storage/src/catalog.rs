@@ -55,19 +55,20 @@ impl Catalog {
                 id, model, parameter, level, 
                 reference_time, forecast_hour, valid_time,
                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y,
-                storage_path, file_size, ingested_at, status
+                storage_path, file_size, ingested_at, status, zarr_metadata
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10, $11,
-                $12, $13, $14, $15
+                $12, $13, $14, $15, $16
             )
             ON CONFLICT (model, parameter, level, reference_time, forecast_hour)
             DO UPDATE SET
                 storage_path = EXCLUDED.storage_path,
                 file_size = EXCLUDED.file_size,
                 ingested_at = EXCLUDED.ingested_at,
-                status = EXCLUDED.status
+                status = EXCLUDED.status,
+                zarr_metadata = EXCLUDED.zarr_metadata
             "#,
         )
         .bind(id)
@@ -85,6 +86,7 @@ impl Catalog {
         .bind(entry.file_size as i64)
         .bind(Utc::now())
         .bind("available")
+        .bind(&entry.zarr_metadata)
         .execute(&self.pool)
         .await
         .map_err(|e| WmsError::DatabaseError(format!("Insert failed: {}", e)))?;
@@ -98,7 +100,7 @@ impl Catalog {
         let mut _sql = String::from(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets WHERE status = 'available'",
+             storage_path, file_size, zarr_metadata FROM datasets WHERE status = 'available'",
         );
 
         let mut _params: Vec<String> = Vec::new();
@@ -120,7 +122,7 @@ impl Catalog {
         let rows = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets WHERE status = 'available' \
+             storage_path, file_size, zarr_metadata FROM datasets WHERE status = 'available' \
              ORDER BY valid_time DESC LIMIT 100",
         )
         .fetch_all(&self.pool)
@@ -197,7 +199,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
              ORDER BY valid_time DESC LIMIT 1",
         )
@@ -220,7 +222,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
              ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
         )
@@ -244,7 +246,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND status = 'available' \
              ORDER BY reference_time DESC LIMIT 1",
         )
@@ -309,7 +311,7 @@ impl Catalog {
         let rows = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE ingested_at > $1 AND status = 'available' \
              ORDER BY ingested_at DESC LIMIT 50",
         )
@@ -491,7 +493,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND level = $4 AND status = 'available' \
              ORDER BY reference_time DESC LIMIT 1",
         )
@@ -516,7 +518,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
              ORDER BY valid_time DESC LIMIT 1",
         )
@@ -540,7 +542,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
              ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
         )
@@ -563,7 +565,7 @@ impl Catalog {
         let row = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
              ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
         )
@@ -645,7 +647,7 @@ impl Catalog {
         let rows = sqlx::query_as::<_, DatasetRow>(
             "SELECT model, parameter, level, reference_time, forecast_hour, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-             storage_path, file_size FROM datasets \
+             storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND status = 'available' \
              ORDER BY reference_time DESC, parameter ASC \
              LIMIT $2",
@@ -669,7 +671,7 @@ impl Catalog {
             sqlx::query_as::<_, DatasetRow>(
                 "SELECT model, parameter, level, reference_time, forecast_hour, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-                 storage_path, file_size FROM datasets \
+                 storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND status = 'available' \
                  ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
             )
@@ -682,7 +684,7 @@ impl Catalog {
             sqlx::query_as::<_, DatasetRow>(
                 "SELECT model, parameter, level, reference_time, forecast_hour, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
-                 storage_path, file_size FROM datasets \
+                 storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND status = 'available' \
                  ORDER BY reference_time DESC, forecast_hour ASC LIMIT 1",
             )
@@ -887,6 +889,11 @@ pub struct CatalogEntry {
     pub bbox: BoundingBox,
     pub storage_path: String,
     pub file_size: u64,
+    /// Zarr metadata (for new Zarr-format grids).
+    /// Contains shape, chunk_shape, bbox, compression info etc.
+    /// None for legacy GRIB2/NetCDF format files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zarr_metadata: Option<serde_json::Value>,
 }
 
 impl CatalogEntry {
@@ -947,6 +954,7 @@ struct DatasetRow {
     bbox_max_y: f64,
     storage_path: String,
     file_size: i64,
+    zarr_metadata: Option<serde_json::Value>,
 }
 
 impl From<DatasetRow> for CatalogEntry {
@@ -965,6 +973,7 @@ impl From<DatasetRow> for CatalogEntry {
             ),
             storage_path: row.storage_path,
             file_size: row.file_size as u64,
+            zarr_metadata: row.zarr_metadata,
         }
     }
 }
@@ -987,6 +996,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     file_size BIGINT NOT NULL,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'available',
+    zarr_metadata JSONB,
     
     UNIQUE(model, parameter, level, reference_time, forecast_hour)
 );
@@ -1003,5 +1013,5 @@ CREATE TABLE IF NOT EXISTS layer_styles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     UNIQUE(layer_id, style_name)
-);
+)
 "#;

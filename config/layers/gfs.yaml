@@ -1,0 +1,368 @@
+# GFS Layer Configuration
+# Defines WMS/WMTS layers exposed for the GFS model
+# Each layer maps to a parameter and defines available styles
+#
+# All pressure levels available for ELEVATION dimension (in mb):
+# Surface/Near-surface: surface, 2m above ground, 10m above ground
+# Lower troposphere: 1000, 975, 950, 925, 900, 850
+# Mid troposphere: 800, 750, 700, 650, 600, 550, 500, 450, 400, 350
+# Upper troposphere: 300, 250, 200, 150
+# Stratosphere: 100, 70, 50, 30, 20, 10
+
+model: gfs
+display_name: "GFS - Global Forecast System"
+
+# Default bounding box for all layers (can be overridden per layer)
+default_bbox:
+  west: -180.0
+  south: -90.0
+  east: 180.0
+  north: 90.0
+
+layers:
+  # ==========================================================================
+  # Temperature Layers
+  # ==========================================================================
+  
+  - id: gfs_TMP
+    parameter: TMP
+    title: "Temperature"
+    abstract: "Air temperature at various levels"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
+      - value: "925 mb"
+      - value: "900 mb"
+      - value: "850 mb"
+      # Mid troposphere
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      # Upper atmosphere / Stratosphere
+      - value: "100 mb"
+      - value: "70 mb"
+      - value: "50 mb"
+      - value: "30 mb"
+      - value: "20 mb"
+      - value: "10 mb"
+
+  - id: gfs_DPT
+    parameter: DPT
+    title: "Dew Point Temperature"
+    abstract: "Dew point temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Wind Layers
+  # ==========================================================================
+  
+  - id: gfs_UGRD
+    parameter: UGRD
+    title: "U-Component of Wind"
+    abstract: "Eastward wind component"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
+      - value: "925 mb"
+      - value: "900 mb"
+      - value: "850 mb"
+      # Mid troposphere
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      # Upper atmosphere (jet stream levels)
+      - value: "100 mb"
+
+  - id: gfs_VGRD
+    parameter: VGRD
+    title: "V-Component of Wind"
+    abstract: "Northward wind component"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
+      - value: "925 mb"
+      - value: "900 mb"
+      - value: "850 mb"
+      # Mid troposphere
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      # Upper atmosphere (jet stream levels)
+      - value: "100 mb"
+
+  - id: gfs_GUST
+    parameter: GUST
+    title: "Wind Gust"
+    abstract: "Surface wind gust speed"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Wind Barbs"
+    abstract: "Wind direction and speed barbs (composite of UGRD/VGRD)"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [UGRD, VGRD]
+    levels:
+      - value: "10 m above ground"
+        default: true
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+
+  # ==========================================================================
+  # Pressure Layers
+  # ==========================================================================
+  
+  - id: gfs_PRMSL
+    parameter: PRMSL
+    title: "Mean Sea Level Pressure"
+    abstract: "Atmospheric pressure reduced to mean sea level"
+    style_file: mslp.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "mean sea level"
+        default: true
+
+  - id: gfs_HGT
+    parameter: HGT
+    title: "Geopotential Height"
+    abstract: "Height of pressure surfaces"
+    style_file: geopotential.json
+    units:
+      native: gpm
+      display: m
+    levels:
+      - value: "500 mb"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      # Upper troposphere
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      # Stratosphere
+      - value: "100 mb"
+      - value: "70 mb"
+      - value: "50 mb"
+      - value: "30 mb"
+      - value: "20 mb"
+      - value: "10 mb"
+
+  # ==========================================================================
+  # Moisture Layers
+  # ==========================================================================
+  
+  - id: gfs_RH
+    parameter: RH
+    title: "Relative Humidity"
+    abstract: "Relative humidity percentage"
+    style_file: humidity.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "2 m above ground"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
+      - value: "975 mb"
+      - value: "950 mb"
+      - value: "925 mb"
+      - value: "900 mb"
+      - value: "850 mb"
+      # Mid troposphere
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+
+  - id: gfs_PWAT
+    parameter: PWAT
+    title: "Precipitable Water"
+    abstract: "Total column precipitable water"
+    style_file: humidity.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  # ==========================================================================
+  # Precipitation Layers
+  # ==========================================================================
+  
+  - id: gfs_APCP
+    parameter: APCP
+    title: "Total Precipitation"
+    abstract: "Accumulated precipitation"
+    style_file: precipitation.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    accumulation: true
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Convective/Stability Layers
+  # ==========================================================================
+  
+  - id: gfs_CAPE
+    parameter: CAPE
+    title: "CAPE"
+    abstract: "Convective Available Potential Energy - indicates thunderstorm potential"
+    style_file: cape.json
+    units:
+      native: "J/kg"
+      display: "J/kg"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_CIN
+    parameter: CIN
+    title: "CIN"
+    abstract: "Convective Inhibition - energy barrier to convection initiation"
+    style_file: cape.json
+    units:
+      native: "J/kg"
+      display: "J/kg"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_REFC
+    parameter: REFC
+    title: "Composite Reflectivity"
+    abstract: "Maximum simulated radar reflectivity in the atmospheric column"
+    style_file: reflectivity.json
+    units:
+      native: dBZ
+      display: dBZ
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  # ==========================================================================
+  # Cloud Layers
+  # ==========================================================================
+  
+  - id: gfs_TCDC
+    parameter: TCDC
+    title: "Total Cloud Cover"
+    abstract: "Total cloud cover percentage for entire atmospheric column"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  - id: gfs_LCDC
+    parameter: LCDC
+    title: "Low Cloud Cover"
+    abstract: "Low cloud cover (surface to ~2km / 800mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "low cloud top"
+        default: true
+
+  - id: gfs_MCDC
+    parameter: MCDC
+    title: "Middle Cloud Cover"
+    abstract: "Middle cloud cover (~2-6km / 800-400mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "middle cloud top"
+        default: true
+
+  - id: gfs_HCDC
+    parameter: HCDC
+    title: "High Cloud Cover"
+    abstract: "High cloud cover (above ~6km / 400mb)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "high cloud top"
+        default: true
+
+  # ==========================================================================
+  # Visibility
+  # ==========================================================================
+  
+  - id: gfs_VIS
+    parameter: VIS
+    title: "Visibility"
+    abstract: "Surface visibility - important for aviation and transportation"
+    style_file: visibility.json
+    units:
+      native: m
+      display: km
+      conversion: m_to_km
+    levels:
+      - value: "surface"
+        default: true

@@ -240,35 +240,53 @@ async fn warm_single_tile(
     }
     
     let model = parts[0];
-    let parameter = parts[1..].join("_");
+    // Uppercase parameter to match database storage
+    let parameter = parts[1..].join("_").to_uppercase();
+    
+    // Get default level from layer config for consistent data selection
+    let default_level: Option<String> = {
+        let configs = state.layer_configs.read().await;
+        configs
+            .get_layer_by_param(model, &parameter)
+            .and_then(|l| l.default_level())
+            .map(|s| s.to_string())
+    };
     
     // Render the tile based on layer type
     let result = if parameter == "WIND_BARBS" {
         rendering::render_wind_barbs_tile_with_level(
             &state.grib_cache,
             &state.catalog,
+            Some(&state.grid_processor_factory),
             model,
             Some(coord),
             256,
             256,
             bbox_array,
             Some(forecast_hour),
-            None, // elevation
+            default_level.as_deref(), // Use default level
         )
         .await
     } else if style == "isolines" {
-        rendering::render_isolines_tile(
+        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_file = format!("{}/temperature.json", style_config_dir);
+        rendering::render_isolines_tile_with_level(
             &state.grib_cache,
+            state.grid_cache_if_enabled(),
             &state.catalog,
+            &state.metrics,
             model,
             &parameter,
             Some(coord), // tile_coord
             256,
             256,
             bbox_array,
-            "temperature_isolines", // style_path (default)
+            &style_file,
+            "isolines",  // style name within the file
             Some(forecast_hour),
+            default_level.as_deref(), // Use default level
             true, // use_mercator
+            Some(&state.grid_processor_factory),
         )
         .await
     } else {
@@ -279,7 +297,7 @@ async fn warm_single_tile(
             model,
             &parameter,
             Some(forecast_hour),
-            None, // elevation/level
+            default_level.as_deref(), // Use default level for consistent data selection
             256,
             256,
             Some(bbox_array),

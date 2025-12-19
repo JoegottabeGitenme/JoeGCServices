@@ -16,13 +16,16 @@ Real-time composite radar mosaic covering CONUS from 146 individual radar sites.
 
 ### Reflectivity
 
-**`REFL` - MergedReflectivityQCComposite**
+**`REFL` - SeamlessHSR (Seamless Hybrid Scan Reflectivity)**
 
-- Composite radar reflectivity (dBZ)
-- Quality-controlled mosaic from all radars
-- Vertical integration of strongest return
+- Fully composited radar mosaic covering CONUS
+- Eliminates individual radar coverage circles
+- Optimized 3D compositing for best representation at each point
+- Same continuous display as Windy, NWS, and other weather services
 
 **Layer**: `mrms_REFL`
+
+> **Note**: Earlier versions used `MergedReflectivityQC_00.50` which showed individual radar circles. SeamlessHSR (`SeamlessHSR_00.00`) provides a true nationwide mosaic.
 
 ### Precipitation Rate
 
@@ -47,16 +50,35 @@ Real-time composite radar mosaic covering CONUS from 146 individual radar sites.
 
 ## Data Source
 
-**MRMS Server**:
+**AWS S3 Bucket** (primary):
 ```
-https://mrms.ncep.noaa.gov/data/2D/{PRODUCT}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.grib2.gz
+s3://noaa-mrms-pds/CONUS/{PRODUCT}/{YYYYMMDD}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.grib2.gz
 ```
 
 **Examples**:
 ```
-https://mrms.ncep.noaa.gov/data/2D/MergedReflectivityQCComposite/MRMS_MergedReflectivityQCComposite.20241203-180000.grib2.gz
-https://mrms.ncep.noaa.gov/data/2D/PrecipRate/MRMS_PrecipRate.20241203-180000.grib2.gz
+s3://noaa-mrms-pds/CONUS/SeamlessHSR_00.00/20241203/MRMS_SeamlessHSR_00.00.20241203-180000.grib2.gz
+s3://noaa-mrms-pds/CONUS/PrecipRate_00.00/20241203/MRMS_PrecipRate_00.00.20241203-180000.grib2.gz
 ```
+
+**MRMS HTTP Server** (alternative):
+```
+https://mrms.ncep.noaa.gov/data/2D/{PRODUCT}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.grib2.gz
+```
+
+## MRMS Product Reference
+
+| Product | Description | Best For |
+|---------|-------------|----------|
+| `SeamlessHSR_00.00` | Fully merged reflectivity mosaic | General radar display |
+| `MergedReflectivityQC_XX.XX` | Single elevation scan at XX.XX° | Raw radar analysis |
+| `PrecipRate_00.00` | Instantaneous rain rate (mm/hr) | Real-time intensity |
+| `MultiSensor_QPE_01H_Pass2` | 1-hour precipitation total | Short-term accumulation |
+| `MultiSensor_QPE_24H_Pass2` | 24-hour precipitation total | Daily rainfall totals |
+
+## Sentinel Values
+
+MRMS uses `-999` as a sentinel value for missing/invalid data. During ingestion, these values are converted to NaN to ensure proper rendering. The valid data range for reflectivity is typically -30 to 80 dBZ.
 
 ## File Sizes
 

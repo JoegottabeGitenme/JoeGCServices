@@ -6,6 +6,7 @@
   },
   "styles": {
     "pressure_msl": {
+      "default": true,
       "name": "Mean Sea Level Pressure",
       "description": "MSLP with contours",
       "type": "contour",

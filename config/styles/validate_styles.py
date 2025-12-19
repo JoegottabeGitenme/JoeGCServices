@@ -27,6 +27,7 @@ VALID_STYLE_TYPES = {
     "filled_contour",
     "wind_barbs",
     "wind_arrows",
+    "numbers",
 }
 
 # Valid transform types
@@ -137,7 +138,7 @@ def validate_transform(transform: Any, path: str, errors: list, file: str):
 
     if "type" not in transform:
         errors.append(ValidationError(file, path, "Missing required field 'type'"))
-    elif transform["type"] not in VALID_TRANSFORM_TYPES:
+    elif transform["type"].lower() not in VALID_TRANSFORM_TYPES:
         errors.append(
             ValidationError(
                 file,
@@ -314,6 +315,33 @@ def validate_color_by_speed(cbs: Any, path: str, errors: list, file: str):
         )
 
 
+def validate_numbers(numbers: Any, path: str, errors: list, file: str):
+    """Validate numbers-specific options."""
+    if not isinstance(numbers, dict):
+        errors.append(
+            ValidationError(
+                file, path, f"Numbers must be object, got {type(numbers).__name__}"
+            )
+        )
+        return
+
+    number_fields = [
+        "spacing",
+        "font_size",
+        "decimal_places",
+    ]
+    for field in number_fields:
+        if field in numbers and not isinstance(numbers[field], (int, float)):
+            errors.append(
+                ValidationError(file, f"{path}.{field}", f"Field must be number")
+            )
+
+    color_fields = ["font_color", "background_color"]
+    for field in color_fields:
+        if field in numbers:
+            validate_color(numbers[field], f"{path}.{field}", errors, file)
+
+
 def validate_style(style_id: str, style: Any, path: str, errors: list, file: str):
     """Validate a single style definition."""
     if not isinstance(style, dict):
@@ -347,6 +375,11 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
     if "description" in style and not isinstance(style["description"], str):
         errors.append(
             ValidationError(file, f"{path}.description", "Description must be string")
+        )
+
+    if "default" in style and not isinstance(style["default"], bool):
+        errors.append(
+            ValidationError(file, f"{path}.default", "Default must be boolean")
         )
 
     if "units" in style and not isinstance(style["units"], str):
@@ -419,6 +452,10 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
                 style["color_by_speed"], f"{path}.color_by_speed", errors, file
             )
 
+    elif style_type == "numbers":
+        if "numbers" in style:
+            validate_numbers(style["numbers"], f"{path}.numbers", errors, file)
+
 
 def validate_file(filepath: Path, verbose: bool = False) -> list:
     """Validate a single style JSON file."""
@@ -479,12 +516,37 @@ def validate_file(filepath: Path, verbose: bool = False) -> list:
             )
         )
     else:
+        # Track styles marked as default
+        default_styles = []
+
         # Validate each style
         for style_id, style_def in data["styles"].items():
             # Skip comment keys
             if style_id.startswith("_"):
                 continue
             validate_style(style_id, style_def, f"styles.{style_id}", errors, filename)
+
+            # Track default styles
+            if isinstance(style_def, dict) and style_def.get("default") is True:
+                default_styles.append(style_id)
+
+        # Check for exactly one default
+        if len(default_styles) == 0:
+            errors.append(
+                ValidationError(
+                    filename,
+                    "styles",
+                    "No default style specified. Add 'default: true' to one style.",
+                )
+            )
+        elif len(default_styles) > 1:
+            errors.append(
+                ValidationError(
+                    filename,
+                    "styles",
+                    f"Multiple default styles found: {default_styles}. Only one style should have 'default: true'.",
+                )
+            )
 
     return errors
 

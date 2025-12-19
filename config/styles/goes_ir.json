@@ -5,7 +5,8 @@
     "description": "Enhanced infrared colormap for GOES IR bands (brightness temperature)"
   },
   "styles": {
-    "default": {
+    "enhanced": {
+      "default": true,
       "name": "GOES Infrared",
       "description": "Enhanced infrared colormap for GOES IR bands (brightness temperature)",
       "type": "gradient",

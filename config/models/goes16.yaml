@@ -5,7 +5,7 @@ model:
   id: goes16
   name: "GOES-16 - GOES East"
   description: "GOES-16 (GOES East) satellite imagery, ABI CONUS product"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -57,6 +57,7 @@ parameters:
   # Blue Visible (0.47µm)
   - name: CMI_C01
     description: "Blue Visible (0.47µm)"
+    downsample: mean
     band: 1
     levels:
       - type: top_of_atmosphere
@@ -67,6 +68,7 @@ parameters:
   # Red Visible (0.64µm)  
   - name: CMI_C02
     description: "Red Visible (0.64µm)"
+    downsample: mean
     band: 2
     levels:
       - type: top_of_atmosphere
@@ -77,6 +79,7 @@ parameters:
   # Upper-Level Water Vapor (6.2µm)
   - name: CMI_C08
     description: "Upper-Level Water Vapor (6.2µm)"
+    downsample: mean
     band: 8
     levels:
       - type: top_of_atmosphere
@@ -88,6 +91,7 @@ parameters:
   # Clean IR (10.3µm)
   - name: CMI_C13
     description: "Clean Longwave IR (10.3µm)"
+    downsample: mean
     band: 13
     levels:
       - type: top_of_atmosphere

@@ -20,15 +20,15 @@ source:
   product: "ABI-L2-CMIPC"                # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [1, 2, 8, 13]                   # Blue, Red, WV, IR
+  bands: [13]                            # Start with Clean IR only for testing
 
 grid:
   projection: geostationary
   resolution: "1km"                      # Approximate
   bbox:
-    min_lon: -143.0
+    min_lon: -175.0
     min_lat: 14.5
-    max_lon: -53.0
+    max_lon: -100.0
     max_lat: 55.5
   projection_params:
     satellite_longitude: -137.0          # GOES-West orbital position
@@ -42,7 +42,7 @@ schedule:
   lookback_minutes: 60                   # Check last hour of data
 
 retention:
-  hours: 1                              # Keep 1 hour of imagery
+  hours: 3                              # Keep 3 hours of imagery
 
 # Precaching configuration - proactively warm GridDataCache
 # NOTE: GOES grids are large (~60-240MB each in memory), so keep_recent should be low
@@ -57,6 +57,7 @@ parameters:
   # Blue Visible (0.47µm)
   - name: CMI_C01
     description: "Blue Visible (0.47µm)"
+    downsample: mean
     band: 1
     levels:
       - type: top_of_atmosphere
@@ -67,6 +68,7 @@ parameters:
   # Red Visible (0.64µm)  
   - name: CMI_C02
     description: "Red Visible (0.64µm)"
+    downsample: mean
     band: 2
     levels:
       - type: top_of_atmosphere
@@ -77,6 +79,7 @@ parameters:
   # Upper-Level Water Vapor (6.2µm)
   - name: CMI_C08
     description: "Upper-Level Water Vapor (6.2µm)"
+    downsample: mean
     band: 8
     levels:
       - type: top_of_atmosphere
@@ -88,6 +91,7 @@ parameters:
   # Clean IR (10.3µm)
   - name: CMI_C13
     description: "Clean Longwave IR (10.3µm)"
+    downsample: mean
     band: 13
     levels:
       - type: top_of_atmosphere

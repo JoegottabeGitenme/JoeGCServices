@@ -5,7 +5,8 @@
     "description": "Traditional meteorological wind barb rendering configurations"
   },
   "styles": {
-    "default": {
+    "standard": {
+      "default": true,
       "name": "Standard Wind Barbs",
       "description": "Traditional meteorological wind barbs with automatic pennant and barb generation",
       "type": "wind_barbs",

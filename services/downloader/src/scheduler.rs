@@ -185,16 +185,51 @@ impl Scheduler {
         }
 
         // Process download queue with concurrency limit
+        // Each download triggers ingestion immediately upon completion
         let pending = self.state.get_in_progress().await?;
+        let ingester_url = self.ingester_url.clone();
+        let client = self.client.clone();
 
         let results = stream::iter(pending)
             .map(|record| {
                 let manager = self.download_manager.clone();
                 let state = self.state.clone();
+                let ingester_url = ingester_url.clone();
+                let client = client.clone();
                 async move {
                     match manager.download(&record.url, &record.filename, &state).await {
                         Ok(path) => {
                             info!(url = %record.url, path = %path.display(), "Download complete");
+                            
+                            // Trigger ingestion immediately for this file
+                            if let Some(ref url) = ingester_url {
+                                let file_path = format!("/data/downloads/{}", record.filename);
+                                match client
+                                    .post(url)
+                                    .json(&serde_json::json!({
+                                        "file_path": file_path,
+                                        "source_url": record.url
+                                    }))
+                                    .send()
+                                    .await
+                                {
+                                    Ok(response) if response.status().is_success() => {
+                                        info!(file = %record.filename, "Ingestion triggered successfully");
+                                        let _ = state.mark_ingested(&record.url).await;
+                                    }
+                                    Ok(response) => {
+                                        warn!(
+                                            file = %record.filename,
+                                            status = %response.status(),
+                                            "Ingestion request failed"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(file = %record.filename, error = %e, "Failed to trigger ingestion");
+                                    }
+                                }
+                            }
+                            
                             Ok(path)
                         }
                         Err(e) => {
@@ -288,8 +323,7 @@ impl Scheduler {
             let filename = model.source.file_pattern
                 .replace("{cycle:02}", &format!("{:02}", cycle))
                 .replace("{forecast:03}", &format!("{:03}", forecast_hour))
-                .replace("{forecast:02}", &format!("{:02}", forecast_hour))
-                .replace("{resolution}", "1p00"); // Default to 1 degree for GFS
+                .replace("{forecast:02}", &format!("{:02}", forecast_hour));
 
             let prefix = model.source.prefix_template
                 .replace("{date}", &date)

@@ -80,6 +80,9 @@ impl IngesterConfig {
                             level: "2 m above ground".to_string(),
                             parameter: "TMP".to_string(),
                         },
+                        units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "wind_u_10m".to_string(),
@@ -87,6 +90,9 @@ impl IngesterConfig {
                             level: "10 m above ground".to_string(),
                             parameter: "UGRD".to_string(),
                         },
+                        units: Some("m/s".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "wind_v_10m".to_string(),
@@ -94,6 +100,9 @@ impl IngesterConfig {
                             level: "10 m above ground".to_string(),
                             parameter: "VGRD".to_string(),
                         },
+                        units: Some("m/s".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "pressure_msl".to_string(),
@@ -101,12 +110,17 @@ impl IngesterConfig {
                             level: "mean sea level".to_string(),
                             parameter: "PRMSL".to_string(),
                         },
+                        units: Some("Pa".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: vec![0, 6, 12, 18],
                 forecast_hours: (0..=120).step_by(3).collect(),
-                resolution: "0p25".to_string(),
+                resolution: "0.25deg".to_string(),
+                file_pattern: Some("gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}".to_string()),
                 poll_interval_secs: 3600, // 1 hour
+                is_observation: false,
             },
         );
 
@@ -125,6 +139,9 @@ impl IngesterConfig {
                             level: "2 m above ground".to_string(),
                             parameter: "TMP".to_string(),
                         },
+                        units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "reflectivity".to_string(),
@@ -132,12 +149,17 @@ impl IngesterConfig {
                             level: "1000 m above ground".to_string(),
                             parameter: "REFC".to_string(),
                         },
+                        units: Some("dBZ".to_string()),
+                        downsample: Some("max".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(),
                 forecast_hours: (0..=18).collect(),
                 resolution: "3km".to_string(),
+                file_pattern: Some("hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2".to_string()),
                 poll_interval_secs: 3600,
+                is_observation: false,
             },
         );
 
@@ -158,6 +180,9 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C02".to_string(), // 0.64µm red visible
                         },
+                        units: None, // Reflectance factor (dimensionless)
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -165,12 +190,17 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C13".to_string(), // 10.3µm clean IR
                         },
+                        units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(), // Hourly
                 forecast_hours: vec![1, 2, 13], // Reused as band numbers
                 resolution: "1km".to_string(),
+                file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300, // 5 minutes - GOES updates every 5-15 min
+                is_observation: true,
             },
         );
 
@@ -191,6 +221,9 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C02".to_string(),
                         },
+                        units: None,
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                     ParameterConfig {
                         name: "ir".to_string(),
@@ -198,12 +231,17 @@ impl IngesterConfig {
                             level: "toa".to_string(),
                             parameter: "CMI_C13".to_string(),
                         },
+                        units: Some("K".to_string()),
+                        downsample: Some("mean".to_string()),
+                        product: None,
                     },
                 ],
                 cycles: (0..24).collect(),
                 forecast_hours: vec![1, 2, 13],
                 resolution: "1km".to_string(),
+                file_pattern: None, // GOES uses S3 listing, not file patterns
                 poll_interval_secs: 300,
+                is_observation: true,
             },
         );
 
@@ -237,11 +275,22 @@ pub struct ModelConfig {
     /// Forecast hours to download
     pub forecast_hours: Vec<u32>,
 
-    /// Grid resolution identifier
+    /// Grid resolution identifier (for metadata, e.g., "0.25deg")
     pub resolution: String,
+
+    /// File pattern template for constructing filenames
+    /// Supports placeholders: {cycle:02}, {forecast:02}, {forecast:03}
+    /// Example: "gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}"
+    #[serde(default)]
+    pub file_pattern: Option<String>,
 
     /// Model-specific polling interval
     pub poll_interval_secs: u64,
+    
+    /// Whether this is observation data (vs forecast data)
+    /// Observation data uses minute-level timestamps in storage paths
+    #[serde(default)]
+    pub is_observation: bool,
 }
 
 /// Data source configuration.
@@ -282,6 +331,18 @@ pub struct ParameterConfig {
 
     /// GRIB filter criteria
     pub grib_filter: GribFilter,
+    
+    /// Physical units (e.g., "K", "m/s", "Pa")
+    #[serde(default)]
+    pub units: Option<String>,
+    
+    /// Downsampling method for pyramid generation: "mean", "max", or "nearest"
+    #[serde(default)]
+    pub downsample: Option<String>,
+    
+    /// Product path filter (for MRMS where each file is one product)
+    #[serde(default)]
+    pub product: Option<String>,
 }
 
 /// GRIB2 message filter criteria.
@@ -331,10 +392,20 @@ impl DataSource {
     }
 
     /// Get the file pattern for listing files.
-    pub fn file_pattern(&self, model: &str, resolution: &str, cycle: u32, fhr: u32) -> String {
+    /// If a custom file_pattern is provided, it will be used with placeholder substitution.
+    /// Otherwise falls back to legacy hardcoded patterns.
+    pub fn file_pattern(&self, model: &str, _resolution: &str, cycle: u32, fhr: u32, custom_pattern: Option<&str>) -> String {
+        // If a custom pattern is provided from config, use it
+        if let Some(pattern) = custom_pattern {
+            return pattern
+                .replace("{cycle:02}", &format!("{:02}", cycle))
+                .replace("{forecast:03}", &format!("{:03}", fhr))
+                .replace("{forecast:02}", &format!("{:02}", fhr));
+        }
+        
+        // Legacy fallback for hardcoded patterns (deprecated - configs should specify file_pattern)
         match self {
             DataSource::NoaaAws { .. } | DataSource::Nomads { .. } => match model {
-                "gfs" => format!("gfs.t{:02}z.pgrb2.{}.f{:03}", cycle, resolution, fhr),
                 "hrrr" => format!("hrrr.t{:02}z.wrfsfcf{:02}.grib2", cycle, fhr),
                 _ => format!("{}.t{:02}z.f{:03}.grib2", model, cycle, fhr),
             },

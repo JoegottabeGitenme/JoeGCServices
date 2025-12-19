@@ -300,6 +300,31 @@ impl ExpandedTileConfig {
     }
 }
 
+/// Calculate the bounding box for a single tile in WGS84 coordinates.
+///
+/// # Arguments
+/// * `coord` - The tile coordinate
+///
+/// # Returns
+/// The bounding box in WGS84 coordinates (lat/lon)
+pub fn tile_bbox(coord: &TileCoord) -> BoundingBox {
+    let n = 2u32.pow(coord.z) as f64;
+    
+    let lon_min = coord.x as f64 / n * 360.0 - 180.0;
+    let lon_max = (coord.x + 1) as f64 / n * 360.0 - 180.0;
+    
+    let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * coord.y as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+    let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (coord.y + 1) as f64 / n))
+        .sinh()
+        .atan()
+        .to_degrees();
+    
+    BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
+}
+
 /// Calculate the expanded bounding box for rendering a tile with its neighbors.
 /// This allows rendering features that cross tile boundaries correctly.
 ///

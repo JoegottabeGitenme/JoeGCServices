@@ -1,0 +1,94 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Mean Sea Level Pressure Styles",
+    "description": "Visualization styles for Mean Sea Level Pressure (MSLP/PRMSL)"
+  },
+  "styles": {
+    "isolines": {
+      "default": true,
+      "name": "MSLP Contours",
+      "description": "Mean sea level pressure contour lines at 4 hPa intervals",
+      "type": "contour",
+      "units": "hPa",
+      "transform": {
+        "type": "Pa_to_hPa"
+      },
+      "contour": {
+        "interval": 4,
+        "base": 1000,
+        "min_value": 920,
+        "max_value": 1060,
+        "line_width": 1.0,
+        "line_color": "#000000",
+        "major_interval": 20,
+        "major_line_width": 2.0,
+        "labels": true,
+        "label_font_size": 10.0,
+        "label_spacing": 200.0,
+        "smoothing_passes": 1,
+        "special_levels": [
+          {
+            "value": 1013,
+            "line_color": "#0066FF",
+            "line_width": 2.0,
+            "label": "1013 hPa"
+          }
+        ]
+      },
+      "legend": {
+        "title": "Pressure (hPa)"
+      }
+    },
+    "gradient": {
+      "name": "MSLP Gradient",
+      "description": "Mean sea level pressure as filled color gradient",
+      "type": "gradient",
+      "units": "hPa",
+      "transform": {
+        "type": "Pa_to_hPa"
+      },
+      "range": {
+        "min": 960,
+        "max": 1050
+      },
+      "stops": [
+        { "value": 960, "color": "#4B0082", "label": "960" },
+        { "value": 970, "color": "#9400D3", "label": "970" },
+        { "value": 980, "color": "#0000FF", "label": "980" },
+        { "value": 990, "color": "#00BFFF", "label": "990" },
+        { "value": 1000, "color": "#00FFFF", "label": "1000" },
+        { "value": 1013, "color": "#00FF00", "label": "1013" },
+        { "value": 1020, "color": "#FFFF00", "label": "1020" },
+        { "value": 1030, "color": "#FFA500", "label": "1030" },
+        { "value": 1040, "color": "#FF4500", "label": "1040" },
+        { "value": 1050, "color": "#FF0000", "label": "1050" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Pressure (hPa)",
+        "labels": ["960", "980", "1000", "1013", "1020", "1040"]
+      }
+    },
+    "numbers": {
+      "name": "MSLP Values",
+      "description": "Display MSLP values as numbers on the map",
+      "type": "numbers",
+      "units": "hPa",
+      "transform": {
+        "type": "Pa_to_hPa"
+      },
+      "numbers": {
+        "spacing": 50,
+        "font_size": 11.0,
+        "font_color": "#000000",
+        "background_color": "#FFFFFFCC",
+        "decimal_places": 1
+      },
+      "legend": {
+        "title": "Pressure (hPa)"
+      }
+    }
+  }
+}

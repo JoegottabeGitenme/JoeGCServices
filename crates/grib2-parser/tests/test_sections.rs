@@ -6,7 +6,7 @@ use grib2_parser::sections;
 use std::fs;
 
 #[test]
-fn test_parse_section0() {
+fn testparse_section0() {
     let path = require_test_file!("gfs_sample.grib2");
 
     let data = fs::read(&path).expect("Failed to read test file");

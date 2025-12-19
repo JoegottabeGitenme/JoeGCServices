@@ -5,7 +5,8 @@
     "description": "Precipitation rate color scale for real-time precipitation data (MRMS)"
   },
   "styles": {
-    "default": {
+    "gradient": {
+      "default": true,
       "name": "Precipitation Rate",
       "description": "Precipitation rate color scale (mm/hr)",
       "type": "gradient",

@@ -5,7 +5,8 @@
     "description": "Styles for lightning threat and flash density visualization"
   },
   "styles": {
-    "default": {
+    "threat": {
+      "default": true,
       "name": "Lightning Threat",
       "description": "Lightning flash density - flashes per km² per minute",
       "type": "gradient",

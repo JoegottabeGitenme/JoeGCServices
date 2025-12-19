@@ -1,0 +1,125 @@
+# GOES-18 (GOES West) Layer Configuration
+# Defines WMS/WMTS layers exposed for GOES-18 satellite imagery
+# Western CONUS and Pacific coverage
+
+model: goes18
+display_name: "GOES-18 - GOES West"
+
+# GOES-18 (West) CONUS sector coverage
+default_bbox:
+  west: -175.0
+  south: 14.5
+  east: -100.0
+  north: 55.5
+
+# GOES is observation data, not forecast
+dimension_type: observation
+
+layers:
+  # ==========================================================================
+  # Visible Bands
+  # ==========================================================================
+  
+  - id: goes18_CMI_C01
+    parameter: CMI_C01
+    title: "Blue Visible (0.47µm)"
+    abstract: "GOES-18 ABI Band 1 - Blue visible for aerosol detection"
+    style_file: goes_visible.json
+    units:
+      native: reflectance
+      display: "%"
+    levels:
+      - value: "visible_blue"
+        default: true
+
+  - id: goes18_CMI_C02
+    parameter: CMI_C02
+    title: "Red Visible (0.64µm)"
+    abstract: "GOES-18 ABI Band 2 - Red visible for cloud/vegetation"
+    style_file: goes_visible.json
+    units:
+      native: reflectance
+      display: "%"
+    levels:
+      - value: "visible_red"
+        default: true
+
+  - id: goes18_CMI_C03
+    parameter: CMI_C03
+    title: "Veggie (0.86µm)"
+    abstract: "GOES-18 ABI Band 3 - Near-IR for vegetation"
+    style_file: goes_visible.json
+    units:
+      native: reflectance
+      display: "%"
+    levels:
+      - value: "veggie"
+        default: true
+
+  # ==========================================================================
+  # Water Vapor Bands
+  # ==========================================================================
+  
+  - id: goes18_CMI_C08
+    parameter: CMI_C08
+    title: "Upper-Level Water Vapor (6.2µm)"
+    abstract: "GOES-18 ABI Band 8 - Upper tropospheric water vapor"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "upper_vapor"
+        default: true
+
+  - id: goes18_CMI_C09
+    parameter: CMI_C09
+    title: "Mid-Level Water Vapor (6.9µm)"
+    abstract: "GOES-18 ABI Band 9 - Mid tropospheric water vapor"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "mid_vapor"
+        default: true
+
+  - id: goes18_CMI_C10
+    parameter: CMI_C10
+    title: "Low-Level Water Vapor (7.3µm)"
+    abstract: "GOES-18 ABI Band 10 - Lower tropospheric water vapor"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "low_vapor"
+        default: true
+
+  # ==========================================================================
+  # Infrared Bands
+  # ==========================================================================
+  
+  - id: goes18_CMI_C13
+    parameter: CMI_C13
+    title: "Clean Longwave IR (10.3µm)"
+    abstract: "GOES-18 ABI Band 13 - Clean window IR for cloud top temperature"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "clean_ir"
+        default: true
+
+  - id: goes18_CMI_C14
+    parameter: CMI_C14
+    title: "Longwave IR (11.2µm)"
+    abstract: "GOES-18 ABI Band 14 - Standard IR window"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "ir_window"
+        default: true

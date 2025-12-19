@@ -90,6 +90,12 @@ const infoGridHitsEl = document.getElementById('info-grid-hits');
 const infoGridRateEl = document.getElementById('info-grid-rate');
 const infoGridEvictionsEl = document.getElementById('info-grid-evictions');
 
+// Info Bar Chunk Cache Elements (Zarr)
+const infoChunkEntriesEl = document.getElementById('info-chunk-entries');
+const infoChunkMemoryEl = document.getElementById('info-chunk-memory');
+const infoChunkHitsEl = document.getElementById('info-chunk-hits');
+const infoChunkRateEl = document.getElementById('info-chunk-rate');
+
 // Info Bar System Stats Elements
 const infoSysCpusEl = document.getElementById('info-sys-cpus');
 const infoSysLoad1El = document.getElementById('info-sys-load1');
@@ -1937,6 +1943,24 @@ async function fetchBackendMetrics() {
         }
         if (infoGridEvictionsEl) {
             infoGridEvictionsEl.textContent = (gridCache.evictions ?? 0).toLocaleString();
+        }
+        
+        // Update Info Bar chunk cache stats (Zarr)
+        const chunkCache = data.chunk_cache || {};
+        if (infoChunkEntriesEl) {
+            infoChunkEntriesEl.textContent = (chunkCache.entries ?? 0).toLocaleString();
+        }
+        if (infoChunkMemoryEl) {
+            const memoryMb = chunkCache.memory_mb ?? 0;
+            infoChunkMemoryEl.textContent = memoryMb < 1 ? '<1 MB' : memoryMb.toFixed(1) + ' MB';
+        }
+        if (infoChunkHitsEl) {
+            infoChunkHitsEl.textContent = (chunkCache.hits ?? 0).toLocaleString();
+        }
+        if (infoChunkRateEl) {
+            const total = (chunkCache.hits ?? 0) + (chunkCache.misses ?? 0);
+            const rate = total > 0 ? ((chunkCache.hits ?? 0) / total) * 100 : 0;
+            infoChunkRateEl.textContent = rate.toFixed(1) + '%';
         }
         
         // Update per-source stats from data_source_stats
@@ -4471,6 +4495,7 @@ function formatMemory(bytes) {
 document.addEventListener('DOMContentLoaded', () => {
     initConfigWidget();
     initPerfWidget();
+    initGridProcessorWidget();
 });
 
 // Cleanup on page unload
@@ -4481,4 +4506,110 @@ window.addEventListener('beforeunload', () => {
     if (perfWidgetInterval) {
         clearInterval(perfWidgetInterval);
     }
+    if (gridProcessorWidgetInterval) {
+        clearInterval(gridProcessorWidgetInterval);
+    }
 });
+
+// ============================================================================
+// Grid Processor Widget (Zarr/Chunk Cache)
+// ============================================================================
+
+let gridProcessorWidgetInterval = null;
+
+// Initialize grid processor widget
+function initGridProcessorWidget() {
+    fetchGridProcessorData();
+    // Refresh every 5 seconds
+    gridProcessorWidgetInterval = setInterval(fetchGridProcessorData, 5000);
+}
+
+// Toggle grid processor widget expanded/collapsed
+function toggleGridProcessorWidget() {
+    const widget = document.getElementById('grid-processor-widget');
+    if (widget) {
+        widget.classList.toggle('collapsed');
+        if (widget.classList.contains('collapsed')) {
+            widget.classList.remove('expanded');
+        } else {
+            widget.classList.add('expanded');
+        }
+    }
+}
+
+// Fetch grid processor data from API
+async function fetchGridProcessorData() {
+    try {
+        const response = await fetch(`${API_BASE}/api/grid-processor/stats`);
+        if (!response.ok) {
+            console.error('Failed to fetch grid processor stats:', response.status);
+            return;
+        }
+        const data = await response.json();
+        renderGridProcessorWidget(data);
+    } catch (error) {
+        console.error('Error fetching grid processor data:', error);
+    }
+}
+
+// Render the grid processor widget
+function renderGridProcessorWidget(data) {
+    const chunk = data.chunk_cache || {};
+    const zarr = data.zarr || {};
+    
+    // Update summary in header
+    const summaryEl = document.getElementById('grid-proc-summary');
+    if (summaryEl) {
+        const memMB = chunk.memory_mb || 0;
+        const hitRate = chunk.hit_rate_percent || 0;
+        summaryEl.textContent = `${memMB.toFixed(1)} MB / ${hitRate.toFixed(0)}%`;
+        
+        // Color based on hit rate
+        if (hitRate >= 80) {
+            summaryEl.style.background = '#10b981'; // Green - great hit rate
+        } else if (hitRate >= 50) {
+            summaryEl.style.background = '#f59e0b'; // Yellow - moderate hit rate
+        } else if (chunk.total_requests > 0) {
+            summaryEl.style.background = '#ef4444'; // Red - poor hit rate
+        } else {
+            summaryEl.style.background = '#6b7280'; // Gray - no data yet
+        }
+    }
+    
+    // Chunk Cache Stats
+    updateElement('grid-proc-memory', formatMemory(chunk.memory_bytes || 0));
+    updateElement('grid-proc-entries', `${chunk.entries || 0}`);
+    updateElement('grid-proc-max-size', `${chunk.configured_size_mb || 0} MB`);
+    updateElement('grid-proc-hitrate', `${(chunk.hit_rate_percent || 0).toFixed(1)}%`);
+    
+    // Request Stats
+    updateElement('grid-proc-hits', formatNumber(chunk.hits || 0));
+    updateElement('grid-proc-misses', formatNumber(chunk.misses || 0));
+    updateElement('grid-proc-evictions', formatNumber(chunk.evictions || 0));
+    updateElement('grid-proc-total', formatNumber(chunk.total_requests || 0));
+    
+    // Color hits based on value
+    const hitsEl = document.getElementById('grid-proc-hits');
+    if (hitsEl) {
+        if ((chunk.hits || 0) > 0) {
+            hitsEl.classList.add('perf-value-good');
+        } else {
+            hitsEl.classList.remove('perf-value-good');
+        }
+    }
+    
+    // Feature Flags
+    updateFeatureFlag('grid-proc-flag-enabled', chunk.enabled !== false);
+    updateFeatureFlag('grid-proc-flag-zarr', zarr.supported !== false);
+    updateFeatureFlag('grid-proc-flag-storage', zarr.storage_backend === 'minio');
+}
+
+// Format large numbers with commas
+function formatNumber(num) {
+    if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+    } else if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
