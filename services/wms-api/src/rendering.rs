@@ -3,7 +3,7 @@
 use renderer::gradient;
 use renderer::barbs::{self, BarbConfig};
 use renderer::contour;
-use renderer::numbers::{self, NumbersConfig, GridPointNumbersConfig};
+use renderer::numbers::{self, NumbersConfig};
 use renderer::style::{StyleConfig, apply_style_gradient, ContourStyle};
 use storage::{Catalog, CatalogEntry, GribCache, GridDataCache, CachedGridData};
 use std::path::Path;
@@ -27,6 +27,7 @@ use crate::state::{GridProcessorFactory, ProjectionLuts};
 ///
 /// # Returns
 /// PNG image data as bytes
+#[allow(dead_code)]
 pub async fn render_weather_data(
     grib_cache: &GribCache,
     catalog: &Catalog,
@@ -57,6 +58,7 @@ pub async fn render_weather_data(
 ///
 /// # Returns
 /// PNG image data as bytes
+#[allow(dead_code)]
 pub async fn render_weather_data_with_style(
     grib_cache: &GribCache,
     catalog: &Catalog,
@@ -1413,6 +1415,7 @@ fn resample_geostationary_to_geographic_with_proj(
 /// 
 /// This handles the projection transformation from GOES native geostationary
 /// grid to Web Mercator (EPSG:3857) for WMTS tiles.
+#[allow(dead_code)]
 fn resample_geostationary_to_mercator(
     data: &[f32],
     data_width: usize,
@@ -1940,7 +1943,7 @@ async fn load_grid_data_from_zarr(
 ) -> Result<GridData, String> {
     use grid_processor::{
         BoundingBox as GpBoundingBox,
-        GridProcessor, ZarrGridProcessor, ZarrMetadata,
+        ZarrMetadata,
         MinioConfig, create_minio_storage,
         MultiscaleGridProcessorFactory, parse_multiscale_metadata,
     };
@@ -3850,7 +3853,7 @@ pub async fn render_numbers_tile_with_buffer(
     level: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile, actual_expanded_dimensions, tile_bbox};
+    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile, actual_expanded_dimensions};
     
     // Load style configuration for color mapping
     let style_json = std::fs::read_to_string(style_path)
@@ -4718,6 +4721,7 @@ fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String,
 ///
 /// # Returns
 /// PNG image data as bytes
+#[allow(dead_code)]
 pub async fn render_isolines_tile(
     grib_cache: &GribCache,
     grid_cache: Option<&GridDataCache>,

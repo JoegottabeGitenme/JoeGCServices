@@ -50,12 +50,13 @@ pub struct CompletedIngestion {
 }
 
 /// Tracks ingestion activity for the dashboard
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct IngestionTracker {
     /// Currently active ingestions (keyed by ID)
-    pub active: Mutex<std::collections::HashMap<String, ActiveIngestion>>,
+    active: Mutex<std::collections::HashMap<String, ActiveIngestion>>,
     /// Recently completed ingestions (ring buffer, max 50)
-    pub completed: Mutex<VecDeque<CompletedIngestion>>,
+    completed: Mutex<VecDeque<CompletedIngestion>>,
     /// Maximum completed entries to keep
     max_completed: usize,
 }
@@ -70,6 +71,7 @@ impl IngestionTracker {
     }
     
     /// Start tracking an ingestion job
+    #[allow(dead_code)]
     pub async fn start(&self, id: String, file_path: String, model: String) {
         let ingestion = ActiveIngestion {
             id: id.clone(),
@@ -84,6 +86,7 @@ impl IngestionTracker {
     }
     
     /// Update ingestion status
+    #[allow(dead_code)]
     pub async fn update(&self, id: &str, status: &str, found: u32, stored: u32) {
         if let Some(ingestion) = self.active.lock().await.get_mut(id) {
             ingestion.status = status.to_string();
@@ -93,6 +96,7 @@ impl IngestionTracker {
     }
     
     /// Complete an ingestion job (success or failure)
+    #[allow(dead_code)]
     pub async fn complete(&self, id: &str, success: bool, error_message: Option<String>, parameters_registered: u32) {
         let mut active = self.active.lock().await;
         if let Some(ingestion) = active.remove(id) {
@@ -122,6 +126,7 @@ impl IngestionTracker {
     }
     
     /// Get current ingestion status for the dashboard
+    #[allow(dead_code)]
     pub async fn get_status(&self) -> IngestionTrackerStatus {
         let active = self.active.lock().await;
         let completed = self.completed.lock().await;
@@ -135,6 +140,7 @@ impl IngestionTracker {
 }
 
 /// Response for ingestion status endpoint
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct IngestionTrackerStatus {
     pub active: Vec<ActiveIngestion>,
@@ -388,7 +394,8 @@ impl ProjectionLuts {
 /// For datasets without `zarr_metadata`, the legacy GRIB2/NetCDF path is used.
 pub struct GridProcessorFactory {
     /// Object storage client for MinIO access.
-    pub storage: Arc<ObjectStorage>,
+    #[allow(dead_code)]
+    storage: Arc<ObjectStorage>,
     /// Grid processor configuration.
     pub config: GridProcessorConfig,
     /// Shared chunk cache for decompressed Zarr chunks.
@@ -417,6 +424,7 @@ impl GridProcessorFactory {
     }
     
     /// Get memory usage of the chunk cache.
+    #[allow(dead_code)]
     pub async fn cache_memory_bytes(&self) -> u64 {
         self.chunk_cache.read().await.stats().memory_bytes
     }
@@ -457,7 +465,8 @@ pub struct AppState {
     pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
     pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
     pub grid_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::grid_warming::GridWarmer>>>,  // Grid cache warmer
-    pub ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
+    #[allow(dead_code)]
+    ingestion_tracker: IngestionTracker,  // Track active/recent ingestions for dashboard
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
 }

@@ -135,11 +135,13 @@ impl GridWarmer {
     }
     
     /// Check if a model has precaching enabled.
+    #[allow(dead_code)]
     pub fn is_enabled(&self, model: &str) -> bool {
         self.configs.get(model).map(|c| c.enabled).unwrap_or(false)
     }
     
     /// Check if warm_on_ingest is enabled for a model.
+    #[allow(dead_code)]
     pub fn should_warm_on_ingest(&self, model: &str) -> bool {
         self.configs.get(model)
             .map(|c| c.enabled && c.warm_on_ingest)
@@ -403,6 +405,7 @@ impl GridWarmer {
     }
     
     /// Get stats about the warmer.
+    #[allow(dead_code)]
     pub async fn stats(&self) -> GridWarmerStats {
         let warmed_count = self.warmed_keys.read().await.len();
         let cache_stats = self.state.grid_cache.stats().await;
@@ -417,6 +420,7 @@ impl GridWarmer {
 }
 
 /// Statistics about the grid warmer.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct GridWarmerStats {
     pub enabled_models: usize,

@@ -55,6 +55,7 @@ pub async fn ingest_grib2(
     // Track registered parameters
     let mut registered_params: HashSet<String> = HashSet::new();
     let mut datasets_registered = 0usize;
+    let mut bytes_written = 0u64;
     let mut grib_reference_time: Option<DateTime<Utc>> = None;
     let mut registered_param_names: HashSet<String> = HashSet::new();
 
@@ -187,6 +188,7 @@ pub async fn ingest_grib2(
                         registered_params.insert(param_level_key);
                         registered_param_names.insert(param.to_string());
                         datasets_registered += 1;
+                        bytes_written += zarr_file_size;
                     }
                     Err(e) => {
                         debug!(
@@ -218,7 +220,7 @@ pub async fn ingest_grib2(
         model,
         reference_time: grib_reference_time.unwrap_or_else(Utc::now),
         parameters,
-        bytes_written: 0, // TODO: track total bytes
+        bytes_written,
     })
 }
 
@@ -435,5 +437,38 @@ mod tests {
         // Triple digit
         let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 120);
         assert!(path.ends_with("_f120.zarr"));
+    }
+
+    #[test]
+    fn test_ingestion_result_bytes_written() {
+        // Verify IngestionResult properly tracks bytes_written
+        let result = IngestionResult {
+            datasets_registered: 5,
+            model: "gfs".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 12, 17, 12, 0, 0).unwrap(),
+            parameters: vec!["TMP".to_string(), "UGRD".to_string()],
+            bytes_written: 1024 * 1024 * 50, // 50 MB
+        };
+
+        assert_eq!(result.datasets_registered, 5);
+        assert_eq!(result.bytes_written, 52_428_800);
+        assert_eq!(result.model, "gfs");
+        assert_eq!(result.parameters.len(), 2);
+    }
+
+    #[test]
+    fn test_ingestion_result_zero_bytes() {
+        // When no datasets are registered, bytes_written should be 0
+        let result = IngestionResult {
+            datasets_registered: 0,
+            model: "gfs".to_string(),
+            reference_time: Utc::now(),
+            parameters: vec![],
+            bytes_written: 0,
+        };
+
+        assert_eq!(result.datasets_registered, 0);
+        assert_eq!(result.bytes_written, 0);
+        assert!(result.parameters.is_empty());
     }
 }
