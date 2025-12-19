@@ -216,6 +216,59 @@ parameters:
 - `ms_to_kt` - m/s to knots
 - `ms_to_mph` - m/s to mph
 
+**Downsample Methods:**
+
+The `downsample` field specifies how values are aggregated when building Zarr pyramids (lower resolution levels). Choose based on the physical meaning of the data:
+
+```yaml
+parameters:
+  - name: REFL
+    downsample: max      # For reflectivity - preserve storm peaks
+```
+
+- `max` - Maximum value in cell (default). Best for:
+  - Radar reflectivity (preserve storm intensity)
+  - Precipitation rate (preserve peak values)
+  - Any field where peaks are significant
+
+- `mean` - Average of values. Best for:
+  - Temperature (smooth gradients)
+  - Wind components (avoid artificial peaks)
+  - Accumulated precipitation (total matters, not peaks)
+  - Humidity/cloud cover (percentage fields)
+
+- `nearest` - Nearest neighbor (no interpolation). Best for:
+  - Categorical data (precipitation type, cloud type)
+  - Discrete values that shouldn't be averaged
+
+**Sentinel Value Handling:**
+
+Data sources like MRMS use sentinel values (e.g., -999) for missing data. During ingestion, values <= -90 are automatically converted to NaN to ensure proper rendering and pyramid generation. The `valid_range` field documents expected data bounds:
+
+```yaml
+parameters:
+  - name: REFL
+    valid_range: [-30, 80]    # dBZ range; values outside may be missing data
+```
+
+### Storage Paths
+
+Ingested data is stored as Zarr V3 pyramids with sharding. The path format differs based on dimension type:
+
+**Forecast Models** (GFS, HRRR, etc.):
+```
+grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+```
+Example: `grids/gfs/2024-01-15/00/TMP_f006.zarr`
+
+**Observation Models** (MRMS, GOES, etc.):
+```
+grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+```
+Example: `grids/mrms/2024-01-15/12/REFL_05.zarr` (12:05 UTC observation)
+
+The minute component (`{MM}`) allows observation data to be stored at the actual observation time rather than being bucketed by hour.
+
 ### `composites` (optional)
 
 Derived layers from multiple parameters.

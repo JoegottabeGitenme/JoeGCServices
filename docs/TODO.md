@@ -20,5 +20,9 @@
 - integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
-- MRMS data is still in circles idfk
-- satellite data still using the old grid cache
+- satellite data still using the old grid cache i presume due to the precaching config in the models directory
+- style viewing and editing web app, view current styles and how they would look on the map
+- need to disable all caching and 'optmizations' to get a baseline performance metric, then apply them one by one to see how they impact performance
+- load testing needs to simulate real user scenarios
+- need to consider actually deploying this to ec2 or something
+  - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit

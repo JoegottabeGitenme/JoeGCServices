@@ -167,21 +167,41 @@ let result = writer.write_with_pyramids(
 
 #### 5. Upload to MinIO
 
-```rust
-// Copy entire Zarr directory tree to MinIO
-let minio_path = format!(
-    "grids/{}/{}/{}_{}_f{:03}.zarr",
-    model,                           // "gfs"
-    run_date,                        // "20241217_12z"
-    param.to_lowercase(),           // "tmp"
-    level_sanitized,                // "2_m_above_ground"
-    forecast_hour                   // 3
-);
+Storage path format differs by data type:
 
+**Forecast Models** (GFS, HRRR):
+```rust
+// grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+let minio_path = format!(
+    "grids/{}/{}/{}/{}_f{:03}.zarr",
+    model,          // "gfs"
+    date,           // "2024-12-17"
+    hour,           // "12"
+    param,          // "TMP"
+    forecast_hour   // 3
+);
+// Result: grids/gfs/2024-12-17/12/TMP_f003.zarr
+```
+
+**Observation Models** (MRMS, GOES):
+```rust
+// grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+let minio_path = format!(
+    "grids/{}/{}/{}/{}_{:02}.zarr",
+    model,          // "mrms"
+    date,           // "2024-12-17"
+    hour,           // "12"
+    param,          // "REFL"
+    minute          // 5
+);
+// Result: grids/mrms/2024-12-17/12/REFL_05.zarr (observation at 12:05 UTC)
+```
+
+The minute component allows observation data (like 2-minute MRMS updates) to be stored at actual observation time.
+
+```rust
 // Recursive copy preserving directory structure
 copy_dir_to_minio(&local_zarr_path, &minio_path, &storage).await?;
-
-// Result: s3://weather-data/grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr/
 ```
 
 ---

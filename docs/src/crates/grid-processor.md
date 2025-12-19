@@ -159,24 +159,44 @@ println!("Hit rate: {:.1}%", stats.hit_rate() * 100.0);
 
 ## Storage Format
 
-### Zarr V3 Directory Structure
+### Zarr V3 with Sharding
+
+The grid-processor uses Zarr V3 with **sharding** for efficient storage. Sharding combines multiple chunks into a single file, reducing the number of I/O operations:
 
 ```
-grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr/
+grids/gfs/2024-01-15/00/TMP_f006.zarr/
 ├── zarr.json                    # Root group metadata
 ├── 0/                           # Full resolution (level 0)
-│   ├── zarr.json               # Array metadata
-│   └── c/                      # Chunks directory
-│       ├── 0/0                 # Chunk at (0,0)
-│       ├── 0/1                 # Chunk at (0,1)
-│       └── ...
+│   ├── zarr.json               # Array metadata with shard codec
+│   └── c/                      
+│       └── 0                   # Single sharded file containing all chunks
 ├── 1/                           # 2x downsampled (level 1)
 │   ├── zarr.json
-│   └── c/
-│       └── ...
+│   └── c/0
 └── 2/                           # 4x downsampled (level 2)
     └── ...
 ```
+
+**Shard configuration**: Each pyramid level is stored as a single sharded file with 512x512 internal chunks. This means:
+- Fewer file operations (1 file per level vs hundreds of chunk files)
+- Byte-range reads still work for individual chunks within the shard
+- Better performance for cloud storage (S3/MinIO)
+
+### Path Formats
+
+**Forecast models** (GFS, HRRR):
+```
+grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+```
+Example: `grids/gfs/2024-01-15/00/TMP_f006.zarr`
+
+**Observation models** (MRMS, GOES):
+```
+grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+```
+Example: `grids/mrms/2024-01-15/12/REFL_05.zarr` (12:05 UTC)
+
+The minute component allows minute-level temporal resolution for radar and satellite data.
 
 ### Array Metadata (zarr.json)
 
@@ -253,6 +273,8 @@ fn select_pyramid_level(
 
 ## Downsampling Methods
 
+The downsample method determines how values are aggregated when building lower-resolution pyramid levels. Choose based on the physical meaning of the data:
+
 ```rust
 pub enum DownsampleMethod {
     /// Simple averaging (good for continuous data like temperature)
@@ -271,6 +293,38 @@ pub enum DownsampleMethod {
     Bilinear,
 }
 ```
+
+### Recommended Methods by Parameter Type
+
+| Parameter Type | Method | Reason |
+|----------------|--------|--------|
+| Radar reflectivity | `Max` | Preserve storm intensity at lower zooms |
+| Precipitation rate | `Max` | Show peak rainfall intensity |
+| Temperature | `Average` | Smooth gradients are physically meaningful |
+| Wind U/V components | `Average` | Avoid artificial peaks from averaging |
+| Accumulated precip | `Average` | Total amounts matter, not peaks |
+| Humidity/cloud cover | `Average` | Percentage fields should average |
+| Precipitation type | `Nearest` | Categorical - no interpolation |
+| Cloud type | `Nearest` | Discrete values shouldn't blend |
+
+The method is specified per-parameter in model config:
+```yaml
+parameters:
+  - name: REFL
+    downsample: max
+  - name: TMP
+    downsample: mean
+```
+
+## NaN Handling
+
+Grid data uses `NaN` (Not a Number) for missing values. This is critical for:
+
+1. **Sentinel value conversion**: Data sources like MRMS use -999 for missing data. During ingestion, values <= -90 are converted to NaN.
+
+2. **Pyramid generation**: NaN values propagate correctly through downsampling - a cell with any NaN input remains NaN (unless all inputs are NaN).
+
+3. **Rendering**: The renderer skips NaN pixels, leaving them transparent.
 
 ## Configuration
 

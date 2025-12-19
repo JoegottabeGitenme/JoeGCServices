@@ -181,6 +181,35 @@ let target_params = vec![
 
 ---
 
+### 3b. Sentinel Value Conversion
+
+Data sources like MRMS use sentinel values (e.g., -999) for missing/invalid data. Before writing to Zarr, these are converted to NaN:
+
+```rust
+// In grid processing
+let grid_data: Vec<f32> = raw_data.iter().map(|&v| {
+    if v <= -90.0 {
+        f32::NAN  // Convert sentinel to NaN
+    } else {
+        v
+    }
+}).collect();
+```
+
+This ensures:
+- Proper rendering (NaN pixels are transparent)
+- Correct pyramid generation (NaN propagates correctly through downsampling)
+- Standard missing data representation
+
+**Common sentinel values by source**:
+| Source | Sentinel | Meaning |
+|--------|----------|---------|
+| MRMS | -999 | Missing/no coverage |
+| MRMS | -99 | Below minimum threshold |
+| GFS | 9.999e20 | GRIB2 bitmap miss |
+
+---
+
 ### 4. Write to Zarr
 
 Grid data is written to Zarr V3 format with multi-resolution pyramids:
@@ -353,17 +382,35 @@ parameters:
 
 ## Storage Path Format
 
-**Zarr arrays are stored in MinIO at**:
-```
-s3://weather-data/grids/{model}/{run_date}/{param}_{level}_f{fhr:03}.zarr/
+Path format differs by data type:
 
-Examples:
-s3://weather-data/grids/gfs/20241217_12z/tmp_2_m_above_ground_f003.zarr/
-s3://weather-data/grids/gfs/20241217_12z/ugrd_10_m_above_ground_f003.zarr/
-s3://weather-data/grids/gfs/20241217_12z/hgt_500_mb_f006.zarr/
-s3://weather-data/grids/hrrr/20241217_18z/refl_1000_m_above_ground_f001.zarr/
-s3://weather-data/grids/goes18/20241217_1830z/cmi_c13_f000.zarr/
+### Forecast Models (GFS, HRRR)
 ```
+grids/{model}/{date}/{HH}/{param}_f{fhr:03}.zarr
+```
+
+**Examples**:
+```
+grids/gfs/2024-12-17/12/tmp_f003.zarr
+grids/gfs/2024-12-17/12/ugrd_f003.zarr
+grids/hrrr/2024-12-17/18/refl_f001.zarr
+```
+
+### Observation Models (MRMS, GOES)
+```
+grids/{model}/{date}/{HH}/{param}_{MM}.zarr
+```
+
+The `{MM}` component stores the minute of observation, allowing minute-level temporal resolution:
+
+**Examples**:
+```
+grids/mrms/2024-12-17/12/REFL_05.zarr    # 12:05 UTC observation
+grids/mrms/2024-12-17/12/REFL_07.zarr    # 12:07 UTC observation
+grids/goes18/2024-12-17/18/CMI_C13_30.zarr  # 18:30 UTC scan
+```
+
+This enables MRMS to store 2-minute update frequency data without overwriting previous observations within the same hour.
 
 ## Performance
 
