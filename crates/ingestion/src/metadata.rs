@@ -266,39 +266,278 @@ pub fn goes_band_to_parameter(band: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
+
+    // ==================== File Type Detection ====================
 
     #[test]
-    fn test_detect_file_type() {
+    fn test_detect_file_type_grib2() {
         assert_eq!(detect_file_type("test.grib2"), FileType::Grib2);
+        assert_eq!(detect_file_type("test.grb2"), FileType::Grib2);
+        assert_eq!(detect_file_type("test.grib"), FileType::Grib2);
+        assert_eq!(detect_file_type("/path/to/data.GRIB2"), FileType::Grib2);
+    }
+
+    #[test]
+    fn test_detect_file_type_grib2_gz() {
         assert_eq!(detect_file_type("test.grib2.gz"), FileType::Grib2Gz);
+        assert_eq!(detect_file_type("test.grb2.gz"), FileType::Grib2Gz);
+        assert_eq!(detect_file_type("/path/to/data.GRIB2.GZ"), FileType::Grib2Gz);
+    }
+
+    #[test]
+    fn test_detect_file_type_netcdf() {
         assert_eq!(detect_file_type("test.nc"), FileType::NetCdf);
+        assert_eq!(detect_file_type("test.nc4"), FileType::NetCdf);
+        assert_eq!(detect_file_type("test.netcdf"), FileType::NetCdf);
+        assert_eq!(detect_file_type("/path/to/satellite.NC"), FileType::NetCdf);
+    }
+
+    #[test]
+    fn test_detect_file_type_unknown() {
         assert_eq!(detect_file_type("test.txt"), FileType::Unknown);
+        assert_eq!(detect_file_type("test.json"), FileType::Unknown);
+        assert_eq!(detect_file_type("test"), FileType::Unknown);
+        assert_eq!(detect_file_type(""), FileType::Unknown);
     }
 
+    // ==================== Model Extraction ====================
+
     #[test]
-    fn test_extract_model() {
+    fn test_extract_model_gfs() {
         assert_eq!(extract_model_from_filename("gfs_20241201.grib2"), Some("gfs".to_string()));
+        assert_eq!(extract_model_from_filename("GFS_CONUS_2024.grib2"), Some("gfs".to_string()));
+        assert_eq!(extract_model_from_filename("/data/gfs/gfs.t00z.pgrb2.grib2"), Some("gfs".to_string()));
+    }
+
+    #[test]
+    fn test_extract_model_hrrr() {
         assert_eq!(extract_model_from_filename("hrrr.t00z.wrfsfcf01.grib2"), Some("hrrr".to_string()));
+        assert_eq!(extract_model_from_filename("HRRR_CONUS.grib2"), Some("hrrr".to_string()));
+        assert_eq!(extract_model_from_filename("/data/hrrr/hrrr.grib2"), Some("hrrr".to_string()));
+    }
+
+    #[test]
+    fn test_extract_model_mrms() {
         assert_eq!(extract_model_from_filename("MRMS_SeamlessHSR.grib2"), Some("mrms".to_string()));
+        assert_eq!(extract_model_from_filename("mrms_reflectivity.grib2"), Some("mrms".to_string()));
+        assert_eq!(extract_model_from_filename("MRMS_PrecipRate_00.00.grib2"), Some("mrms".to_string()));
+    }
+
+    #[test]
+    fn test_extract_model_goes16() {
         assert_eq!(extract_model_from_filename("OR_ABI_G16_test.nc"), Some("goes16".to_string()));
+        assert_eq!(extract_model_from_filename("OR_ABI-L2-MCMIPC-M6C02_G16_s20241217180021.nc"), Some("goes16".to_string()));
+        assert_eq!(extract_model_from_filename("goes16_conus.nc"), Some("goes16".to_string()));
     }
 
     #[test]
-    fn test_extract_forecast_hour() {
+    fn test_extract_model_goes18() {
+        assert_eq!(extract_model_from_filename("OR_ABI_G18_test.nc"), Some("goes18".to_string()));
+        assert_eq!(extract_model_from_filename("OR_ABI-L2-MCMIPC-M6C13_G18_s20241217180021.nc"), Some("goes18".to_string()));
+        assert_eq!(extract_model_from_filename("goes18_west.nc"), Some("goes18".to_string()));
+    }
+
+    #[test]
+    fn test_extract_model_unknown() {
+        assert_eq!(extract_model_from_filename("unknown_data.grib2"), None);
+        assert_eq!(extract_model_from_filename("random_file.nc"), None);
+        assert_eq!(extract_model_from_filename(""), None);
+    }
+
+    // ==================== Forecast Hour Extraction ====================
+
+    #[test]
+    fn test_extract_forecast_hour_f_pattern() {
         assert_eq!(extract_forecast_hour("gfs_20241201_00z_f003.grib2"), Some(3));
+        assert_eq!(extract_forecast_hour("gfs_20241201_00z_f012.grib2"), Some(12));
+        assert_eq!(extract_forecast_hour("gfs_20241201_00z_f120.grib2"), Some(120));
+        assert_eq!(extract_forecast_hour("model_f000.grib2"), Some(0));
+    }
+
+    #[test]
+    fn test_extract_forecast_hour_hrrr_pattern() {
+        assert_eq!(extract_forecast_hour("hrrr.t00z.wrfsfcf00.grib2"), Some(0));
         assert_eq!(extract_forecast_hour("hrrr.t00z.wrfsfcf12.grib2"), Some(12));
+        assert_eq!(extract_forecast_hour("hrrr.t12z.wrfsfcf48.grib2"), Some(48));
+    }
+
+    #[test]
+    fn test_extract_forecast_hour_z_f_pattern() {
         assert_eq!(extract_forecast_hour("test_z_f024"), Some(24));
+        assert_eq!(extract_forecast_hour("gfs_00z_f006"), Some(6));
     }
 
     #[test]
-    fn test_extract_mrms_param() {
+    fn test_extract_forecast_hour_none() {
+        assert_eq!(extract_forecast_hour("mrms_reflectivity.grib2"), None);
+        assert_eq!(extract_forecast_hour("goes16_data.nc"), None);
+        assert_eq!(extract_forecast_hour("no_forecast_hour"), None);
+    }
+
+    // ==================== MRMS Parameter Extraction ====================
+
+    #[test]
+    fn test_extract_mrms_param_seamless_hsr() {
         assert_eq!(extract_mrms_param("MRMS_SeamlessHSR_00.00.grib2"), Some("REFL".to_string()));
-        assert_eq!(extract_mrms_param("MRMS_PrecipRate_00.00.grib2"), Some("PRECIP_RATE".to_string()));
+        assert_eq!(extract_mrms_param("SeamlessHSR_00.00_20241201.grib2"), Some("REFL".to_string()));
     }
 
     #[test]
-    fn test_goes_band_to_param() {
+    fn test_extract_mrms_param_reflectivity() {
+        assert_eq!(extract_mrms_param("MRMS_Reflectivity_00.00.grib2"), Some("REFL".to_string()));
+        assert_eq!(extract_mrms_param("MRMS_REFL_00.50.grib2"), Some("REFL".to_string()));
+    }
+
+    #[test]
+    fn test_extract_mrms_param_precip_rate() {
+        assert_eq!(extract_mrms_param("MRMS_PrecipRate_00.00.grib2"), Some("PRECIP_RATE".to_string()));
+        assert_eq!(extract_mrms_param("MRMS_Precip_Rate_00.00.grib2"), Some("PRECIP_RATE".to_string()));
+    }
+
+    #[test]
+    fn test_extract_mrms_param_qpe() {
+        assert_eq!(extract_mrms_param("MRMS_QPE_01H_00.00.grib2"), Some("QPE_01H".to_string()));
+        assert_eq!(extract_mrms_param("MRMS_QPE_00.00.grib2"), Some("QPE".to_string()));
+    }
+
+    #[test]
+    fn test_extract_mrms_param_generic() {
+        // Generic MRMS_ prefix extraction
+        assert_eq!(extract_mrms_param("MRMS_SomeParam_00.00.grib2"), Some("SOMEPARAM".to_string()));
+    }
+
+    // ==================== GOES Filename Parsing ====================
+
+    #[test]
+    fn test_parse_goes_filename_goes16() {
+        // GOES timestamp format: YYYYDDDHHMMSS where DDD is day of year
+        // Day 352 of 2024 = December 17, 2024
+        let filename = "OR_ABI-L2-MCMIPC-M6C02_G16_s20243521800210_e20243521800210_c20243521800210.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+        
+        assert_eq!(info.satellite, "goes16");
+        assert_eq!(info.band, 2);
+        assert_eq!(info.scan_mode, "M6");
+        assert_eq!(info.product, "MCMIPC");
+        assert_eq!(info.observation_time.year(), 2024);
+    }
+
+    #[test]
+    fn test_parse_goes_filename_goes18() {
+        // Day 352 of 2024 = December 17, 2024
+        let filename = "OR_ABI-L2-MCMIPC-M6C13_G18_s20243521800210_e20243521800210_c20243521800210.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+        
+        assert_eq!(info.satellite, "goes18");
+        assert_eq!(info.band, 13);
+        assert_eq!(info.scan_mode, "M6");
+    }
+
+    #[test]
+    fn test_parse_goes_filename_m3_scan_mode() {
+        let filename = "OR_ABI-L2-MCMIPC-M3C02_G16_s20243521800210_e20243521800210_c20243521800210.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+        
+        assert_eq!(info.scan_mode, "M3");
+    }
+
+    #[test]
+    fn test_parse_goes_filename_invalid() {
+        assert!(parse_goes_filename("invalid_filename.nc").is_none());
+        assert!(parse_goes_filename("").is_none());
+        assert!(parse_goes_filename("OR_ABI_G99_test.nc").is_none()); // Invalid satellite
+    }
+
+    // ==================== GOES Band to Parameter ====================
+
+    #[test]
+    fn test_goes_band_to_param_visible() {
+        assert_eq!(goes_band_to_parameter(1), "CMI_C01");
         assert_eq!(goes_band_to_parameter(2), "CMI_C02");
+    }
+
+    #[test]
+    fn test_goes_band_to_param_ir() {
         assert_eq!(goes_band_to_parameter(13), "CMI_C13");
+        assert_eq!(goes_band_to_parameter(14), "CMI_C14");
+        assert_eq!(goes_band_to_parameter(16), "CMI_C16");
+    }
+
+    #[test]
+    fn test_goes_band_to_param_formatting() {
+        // Verify zero-padding
+        assert_eq!(goes_band_to_parameter(1), "CMI_C01");
+        assert_eq!(goes_band_to_parameter(9), "CMI_C09");
+        assert_eq!(goes_band_to_parameter(10), "CMI_C10");
+    }
+
+    // ==================== Model Bounding Boxes ====================
+
+    #[test]
+    fn test_get_model_bbox_hrrr() {
+        let bbox = get_model_bbox("hrrr");
+        // HRRR covers CONUS
+        assert!(bbox.min_x < -100.0, "HRRR should extend west of -100°");
+        assert!(bbox.max_x > -70.0, "HRRR should extend east of -70°");
+        assert!(bbox.min_y > 20.0, "HRRR should be north of 20°N");
+        assert!(bbox.max_y < 50.0, "HRRR should be south of 50°N");
+    }
+
+    #[test]
+    fn test_get_model_bbox_gfs() {
+        let bbox = get_model_bbox("gfs");
+        // GFS is global (0-360 longitude)
+        assert_eq!(bbox.min_x, 0.0);
+        assert_eq!(bbox.max_x, 360.0);
+        assert_eq!(bbox.min_y, -90.0);
+        assert_eq!(bbox.max_y, 90.0);
+    }
+
+    #[test]
+    fn test_get_model_bbox_mrms() {
+        let bbox = get_model_bbox("mrms");
+        // MRMS covers CONUS and surrounding area
+        assert!(bbox.min_x < -120.0);
+        assert!(bbox.max_x > -70.0);
+        assert!(bbox.min_y > 15.0);
+        assert!(bbox.max_y < 60.0);
+    }
+
+    #[test]
+    fn test_get_model_bbox_goes() {
+        let bbox16 = get_model_bbox("goes16");
+        let bbox18 = get_model_bbox("goes18");
+        
+        // GOES-16 (East) should be more easterly
+        assert!(bbox16.max_x > bbox18.max_x, "GOES-16 should extend further east");
+        
+        // GOES-18 (West) should be more westerly
+        assert!(bbox18.min_x < bbox16.min_x, "GOES-18 should extend further west");
+    }
+
+    #[test]
+    fn test_get_model_bbox_unknown() {
+        let bbox = get_model_bbox("unknown_model");
+        // Unknown models get global coverage
+        assert_eq!(bbox.min_x, 0.0);
+        assert_eq!(bbox.max_x, 360.0);
+    }
+
+    // ==================== FileType Enum ====================
+
+    #[test]
+    fn test_file_type_equality() {
+        assert_eq!(FileType::Grib2, FileType::Grib2);
+        assert_ne!(FileType::Grib2, FileType::NetCdf);
+        assert_ne!(FileType::Grib2Gz, FileType::Grib2);
+    }
+
+    #[test]
+    fn test_file_type_debug() {
+        // Ensure FileType implements Debug
+        let ft = FileType::Grib2;
+        let debug_str = format!("{:?}", ft);
+        assert!(debug_str.contains("Grib2"));
     }
 }

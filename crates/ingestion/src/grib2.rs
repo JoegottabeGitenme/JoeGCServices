@@ -332,3 +332,108 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Bytes> {
         .map_err(|e| IngestionError::Decompression(e.to_string()))?;
     Ok(Bytes::from(decompressed))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    #[test]
+    fn test_decompress_gzip_valid() {
+        // Create gzip-compressed test data
+        let original = b"Hello, GRIB2 world!";
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Decompress and verify
+        let result = decompress_gzip(&compressed).expect("Should decompress");
+        assert_eq!(result.as_ref(), original);
+    }
+
+    #[test]
+    fn test_decompress_gzip_empty() {
+        // Compress empty data
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"").unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = decompress_gzip(&compressed).expect("Should decompress empty");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_decompress_gzip_invalid() {
+        // Invalid gzip data should fail
+        let invalid = b"not gzip data";
+        let result = decompress_gzip(invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_gzip_large() {
+        // Test with larger data
+        let original: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = decompress_gzip(&compressed).expect("Should decompress");
+        assert_eq!(result.as_ref(), original.as_slice());
+    }
+
+    #[test]
+    fn test_build_storage_path_gfs() {
+        let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 12, 0, 0).unwrap();
+        let path = build_storage_path("gfs", &reference_time, "TMP", "2m_above_ground", 6);
+        
+        assert_eq!(path, "grids/gfs/20241217_12z/tmp_2m_above_ground_f006.zarr");
+    }
+
+    #[test]
+    fn test_build_storage_path_hrrr() {
+        let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
+        let path = build_storage_path("hrrr", &reference_time, "UGRD", "10m_above_ground", 12);
+        
+        // Note: %Hz format produces "0z" for hour 0 (no leading zero)
+        assert_eq!(path, "grids/hrrr/20241217_00z/ugrd_10m_above_ground_f012.zarr");
+    }
+
+    #[test]
+    fn test_build_storage_path_mrms() {
+        // MRMS uses minute-level timestamps
+        let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 14, 32, 0).unwrap();
+        let path = build_storage_path("mrms", &reference_time, "REFL", "surface", 0);
+        
+        assert_eq!(path, "grids/mrms/20241217_1432z/refl_surface_f000.zarr");
+    }
+
+    #[test]
+    fn test_build_storage_path_parameter_lowercase() {
+        let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
+        let path = build_storage_path("gfs", &reference_time, "CAPE", "surface", 0);
+        
+        // Parameter should be lowercase in path
+        assert!(path.contains("/cape_"));
+    }
+
+    #[test]
+    fn test_build_storage_path_forecast_hour_padding() {
+        let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
+        
+        // Single digit should be zero-padded to 3 digits
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 3);
+        assert!(path.ends_with("_f003.zarr"));
+        
+        // Double digit
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 48);
+        assert!(path.ends_with("_f048.zarr"));
+        
+        // Triple digit
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 120);
+        assert!(path.ends_with("_f120.zarr"));
+    }
+}
