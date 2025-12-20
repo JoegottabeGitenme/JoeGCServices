@@ -1108,7 +1108,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_hit_rate_percent",
+          "expr": "chunk_cache_hit_rate_percent",
           "refId": "A"
         }
       ],
@@ -1166,7 +1166,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_size",
+          "expr": "chunk_cache_size",
           "refId": "A"
         }
       ],
@@ -1257,17 +1257,17 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_hits_total",
+          "expr": "chunk_cache_hits_total",
           "legendFormat": "Cache Hits",
           "refId": "A"
         },
         {
-          "expr": "grib_cache_misses_total",
+          "expr": "chunk_cache_misses_total",
           "legendFormat": "Cache Misses",
           "refId": "B"
         },
         {
-          "expr": "grib_cache_evictions_total",
+          "expr": "chunk_cache_evictions_total",
           "legendFormat": "Evictions",
           "refId": "C"
         }
@@ -1328,7 +1328,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_utilization_percent",
+          "expr": "chunk_cache_utilization_percent",
           "refId": "A"
         }
       ],

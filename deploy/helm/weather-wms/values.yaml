@@ -203,11 +203,8 @@ config:
   performance:
     workerThreads: "8"
   
-  # GRIB data cache
+  # Tile caches
   cache:
-    grib:
-      enabled: true
-      size: "500"
     l1:
       enabled: true
       size: "10000"

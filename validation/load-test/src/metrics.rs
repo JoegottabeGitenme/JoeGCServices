@@ -189,12 +189,10 @@ pub struct SystemConfig {
     pub l1_cache_ttl_secs: u64,
     #[serde(default)]
     pub l2_cache_enabled: bool,
-    pub grib_cache_enabled: bool,
-    pub grib_cache_size: usize,
     #[serde(default)]
-    pub grid_cache_enabled: bool,
+    pub chunk_cache_enabled: bool,
     #[serde(default)]
-    pub grid_cache_size: usize,
+    pub chunk_cache_size_mb: usize,
     pub prefetch_enabled: bool,
     pub prefetch_rings: u32,
     pub prefetch_min_zoom: u32,

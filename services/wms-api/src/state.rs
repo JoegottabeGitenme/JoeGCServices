@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
-use storage::{Catalog, GribCache, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
@@ -24,10 +24,6 @@ pub struct OptimizationConfig {
     pub l1_cache_enabled: bool,
     pub l1_cache_size: usize,
     pub l1_cache_ttl_secs: u64,
-    
-    // GRIB Cache
-    pub grib_cache_enabled: bool,
-    pub grib_cache_size: usize,
     
     // Zarr Chunk Cache (for chunked Zarr grid data)
     pub chunk_cache_enabled: bool,
@@ -90,10 +86,6 @@ impl OptimizationConfig {
             l1_cache_enabled: parse_bool("ENABLE_L1_CACHE", true),
             l1_cache_size: parse_usize("TILE_CACHE_SIZE", 10000),
             l1_cache_ttl_secs: parse_u64("TILE_CACHE_TTL_SECS", 300),
-            
-            // GRIB Cache
-            grib_cache_enabled: parse_bool("ENABLE_GRIB_CACHE", true),
-            grib_cache_size: parse_usize("GRIB_CACHE_SIZE", 500),
             
             // Zarr Chunk Cache (for chunked Zarr grid data)
             // This caches decompressed chunks from Zarr files for efficient partial reads
@@ -300,7 +292,6 @@ pub struct AppState {
     pub cache: Mutex<TileCache>,
     pub tile_memory_cache: TileMemoryCache,  // L1 cache for rendered tiles
     pub storage: Arc<ObjectStorage>,
-    pub grib_cache: GribCache,
     pub grid_processor_factory: GridProcessorFactory,  // Factory for Zarr-based grid processors
     pub projection_luts: ProjectionLuts,  // Pre-computed projection LUTs for GOES
     pub metrics: Arc<MetricsCollector>,
@@ -329,7 +320,6 @@ impl AppState {
             .unwrap_or(20); // Increased from 10 to 20 default
 
         // Use optimization config for cache sizes
-        let grib_cache_size = optimization_config.grib_cache_size;
         let tile_cache_size = optimization_config.l1_cache_size;
         let tile_cache_ttl = optimization_config.l1_cache_ttl_secs;
         let prefetch_rings = optimization_config.prefetch_rings;
@@ -348,9 +338,6 @@ impl AppState {
         let cache = TileCache::connect(&redis_url).await?;
         let storage = Arc::new(ObjectStorage::new(&storage_config)?);
         let metrics = Arc::new(MetricsCollector::new());
-        
-        // Create GRIB cache with shared storage reference
-        let grib_cache = GribCache::new(grib_cache_size, storage.clone());
 
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
@@ -416,7 +403,6 @@ impl AppState {
             cache: Mutex::new(cache),
             tile_memory_cache,
             storage,
-            grib_cache,
             grid_processor_factory,
             projection_luts,
             metrics,

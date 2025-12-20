@@ -433,9 +433,8 @@ async fn run_single_validation(
     // Render the tile
     let result = if target.parameter == "WIND_BARBS" {
         rendering::render_wind_barbs_tile_with_level(
-            &state.grib_cache,
             &state.catalog,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             &target.model,
             Some(coord),
             256,

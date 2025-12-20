@@ -894,25 +894,6 @@ impl MetricsCollector {
         histogram!("cache_lookup_duration_ms").record(duration_us as f64 / 1000.0);
     }
     
-    /// Record GRIB cache statistics
-    pub fn record_grib_cache_stats(&self, hits: u64, misses: u64, evictions: u64, size: usize, capacity: usize) {
-        // Record GRIB cache hit rate
-        let total = hits + misses;
-        let hit_rate = if total > 0 {
-            (hits as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-        
-        gauge!("grib_cache_hit_rate_percent").set(hit_rate);
-        gauge!("grib_cache_hits_total").set(hits as f64);
-        gauge!("grib_cache_misses_total").set(misses as f64);
-        gauge!("grib_cache_evictions_total").set(evictions as f64);
-        gauge!("grib_cache_size").set(size as f64);
-        gauge!("grib_cache_capacity").set(capacity as f64);
-        gauge!("grib_cache_utilization_percent").set((size as f64 / capacity as f64) * 100.0);
-    }
-    
     /// Record Zarr chunk cache statistics (for chunked grid data)
     pub fn record_chunk_cache_stats(&self, stats: &grid_processor::CacheStats) {
         let total = stats.hits + stats.misses;

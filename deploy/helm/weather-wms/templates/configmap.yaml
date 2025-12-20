@@ -20,9 +20,6 @@ data:
   RUST_BACKTRACE: {{ .Values.config.logging.backtrace | default "1" | quote }}
   # Performance tuning
   TOKIO_WORKER_THREADS: {{ .Values.config.performance.workerThreads | default "8" | quote }}
-  # GRIB cache
-  ENABLE_GRIB_CACHE: {{ .Values.config.cache.grib.enabled | default true | quote }}
-  GRIB_CACHE_SIZE: {{ .Values.config.cache.grib.size | default "500" | quote }}
   # L1 tile memory cache
   ENABLE_L1_CACHE: {{ .Values.config.cache.l1.enabled | default true | quote }}
   TILE_CACHE_SIZE: {{ .Values.config.cache.l1.size | default "10000" | quote }}

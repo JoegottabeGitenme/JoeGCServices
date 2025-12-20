@@ -39,7 +39,6 @@ pub async fn metrics_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Response {
     // Get cache statistics (async calls)
-    let grib_stats = state.grib_cache.stats().await;
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     let l1_stats = state.tile_memory_cache.stats();
     let container_stats = read_container_stats();
@@ -54,16 +53,6 @@ pub async fn metrics_handler(
     output.push_str(&format!(
         "# HELP wmts_requests_total Total WMTS requests\n# TYPE wmts_requests_total counter\nwmts_requests_total {}\n",
         state.metrics.wmts_requests.load(Ordering::Relaxed)
-    ));
-    
-    // GRIB cache metrics
-    output.push_str(&format!(
-        "# HELP grib_cache_bytes Current GRIB cache size in bytes\n# TYPE grib_cache_bytes gauge\ngrib_cache_bytes {}\n",
-        grib_stats.total_bytes_cached
-    ));
-    output.push_str(&format!(
-        "# HELP grib_cache_hits Total GRIB cache hits\n# TYPE grib_cache_hits counter\ngrib_cache_hits {}\n",
-        grib_stats.hits
     ));
     
     // Chunk cache metrics
@@ -122,7 +111,6 @@ pub async fn metrics_handler(
 pub async fn api_metrics_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
-    let grib_stats = state.grib_cache.stats().await;
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     let l1_stats = state.tile_memory_cache.stats();
     let l2_hits = state.metrics.cache_hits.load(Ordering::Relaxed);
@@ -145,12 +133,6 @@ pub async fn api_metrics_handler(
             "l1_misses": l1_stats.misses.load(Ordering::Relaxed),
             "l2_hits": l2_hits,
             "l2_misses": l2_misses
-        },
-        "grib_cache": {
-            "bytes": grib_stats.total_bytes_cached,
-            "hits": grib_stats.hits,
-            "misses": grib_stats.misses,
-            "evictions": grib_stats.evictions
         },
         "chunk_cache": {
             "entries": chunk_stats.entries,

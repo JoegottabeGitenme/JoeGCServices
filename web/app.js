@@ -4385,7 +4385,6 @@ function renderPerfWidget(metrics, modelsConfig, optConfig) {
     updateFeatureFlag('perf-flag-l1', opts.l1_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-l2', opts.l2_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-chunk', opts.chunk_cache?.enabled !== false);
-    updateFeatureFlag('perf-flag-grib', opts.grib_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-prefetch', opts.prefetch?.enabled !== false);
     updateFeatureFlag('perf-flag-warming', modelsConfig.models?.some(m => m.precaching_enabled));
     updateFeatureFlag('perf-flag-lut', opts.projection_lut?.enabled !== false);

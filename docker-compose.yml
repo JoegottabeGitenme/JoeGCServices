@@ -96,9 +96,6 @@ services:
       RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
       # Performance tuning
       TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-8}
-      # GRIB cache
-      ENABLE_GRIB_CACHE: ${ENABLE_GRIB_CACHE:-true}
-      GRIB_CACHE_SIZE: ${GRIB_CACHE_SIZE:-500}
       # L1 tile memory cache (Phase 7.A)
       ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
       TILE_CACHE_SIZE: ${TILE_CACHE_SIZE:-10000}

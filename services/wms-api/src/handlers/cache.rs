@@ -22,8 +22,8 @@ pub async fn cache_clear_handler(
     // Clear L1 tile cache
     state.tile_memory_cache.clear().await;
     
-    // Clear GRIB cache
-    state.grib_cache.clear();
+    // Clear chunk cache
+    state.grid_processor_factory.clear_chunk_cache().await;
     
     (StatusCode::OK, "All caches cleared")
 }
@@ -34,7 +34,6 @@ pub async fn cache_list_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
     let l1_stats = state.tile_memory_cache.stats();
-    let grib_stats = state.grib_cache.stats().await;
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     
     Json(serde_json::json!({
@@ -43,14 +42,11 @@ pub async fn cache_list_handler(
             "hits": l1_stats.hits.load(Ordering::Relaxed),
             "misses": l1_stats.misses.load(Ordering::Relaxed)
         },
-        "grib_cache": {
-            "bytes": grib_stats.total_bytes_cached,
-            "hits": grib_stats.hits,
-            "misses": grib_stats.misses
-        },
         "chunk_cache": {
             "entries": chunk_stats.entries,
-            "bytes": chunk_stats.memory_bytes
+            "bytes": chunk_stats.memory_bytes,
+            "hits": chunk_stats.hits,
+            "misses": chunk_stats.misses
         }
     }))
 }
@@ -89,7 +85,7 @@ pub async fn config_reload_handler(
     
     // Clear caches
     state.tile_memory_cache.clear().await;
-    state.grib_cache.clear();
+    state.grid_processor_factory.clear_chunk_cache().await;
     
     (StatusCode::OK, "Configuration reloaded and caches cleared")
 }

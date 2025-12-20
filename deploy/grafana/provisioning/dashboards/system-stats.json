@@ -715,7 +715,7 @@
           "refId": "A"
         },
         {
-          "expr": "grib_cache_size * 1024 * 1024",
+          "expr": "chunk_cache_size * 1024 * 1024",
           "legendFormat": "GRIB Cache (est)",
           "refId": "B"
         }
@@ -802,12 +802,12 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_size",
+          "expr": "chunk_cache_size",
           "legendFormat": "GRIB Cache Entries",
           "refId": "A"
         },
         {
-          "expr": "grib_cache_capacity",
+          "expr": "chunk_cache_capacity",
           "legendFormat": "GRIB Cache Capacity",
           "refId": "B"
         },
@@ -817,7 +817,7 @@
           "refId": "C"
         },
         {
-          "expr": "rate(grib_cache_evictions_total[5m]) * 60",
+          "expr": "rate(chunk_cache_evictions_total[5m]) * 60",
           "legendFormat": "GRIB Evictions/min",
           "refId": "D"
         }
@@ -1221,7 +1221,7 @@
           "refId": "B"
         },
         {
-          "expr": "rate(grib_cache_misses_total[1m]) * 60",
+          "expr": "rate(chunk_cache_misses_total[1m]) * 60",
           "legendFormat": "GRIB Cache Misses/min",
           "refId": "C"
         }
@@ -1572,7 +1572,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "grib_cache_utilization_percent",
+          "expr": "chunk_cache_utilization_percent",
           "legendFormat": "GRIB Cache %",
           "refId": "A"
         }

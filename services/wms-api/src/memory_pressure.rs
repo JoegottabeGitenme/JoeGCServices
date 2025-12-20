@@ -109,14 +109,12 @@ impl MemoryPressureMonitor {
         
         // Get current cache stats
         let chunk_stats = self.state.grid_processor_factory.cache_stats().await;
-        let grib_stats = self.state.grib_cache.stats().await;
         let l1_stats = self.state.tile_memory_cache.stats();
         
         let chunk_cache_mb = chunk_stats.memory_bytes as f64 / (1024.0 * 1024.0);
         
         info!(
             chunk_cache_mb = chunk_cache_mb,
-            grib_cache_entries = grib_stats.hits + grib_stats.misses, // approximate
             l1_cache_bytes = l1_stats.size_bytes.load(std::sync::atomic::Ordering::Relaxed),
             target_rss_mb = target_bytes / (1024 * 1024),
             "Starting cache eviction"

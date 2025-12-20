@@ -1,21 +1,20 @@
 //! Wind barb rendering and wind component loading.
 //!
 //! This module provides functions for rendering wind barbs from U (UGRD) and V (VGRD)
-//! wind component data. It supports both GRIB2 and Zarr data sources.
+//! wind component data using Zarr storage.
 //!
 //! Key features:
 //! - Tile-based wind barb rendering with expanded tile support for seamless boundaries
 //! - Level-aware wind component loading (e.g., 10m, 850mb)
-//! - Zarr and GRIB2 data source support
+//! - Zarr-based data access with efficient chunked reads
 //! - Geographic alignment for consistent barb positioning across tiles
 
-use renderer::gradient;
-use renderer::barbs::{self, BarbConfig};
-use storage::{Catalog, CatalogEntry, GribCache};
+use renderer::{barbs, gradient};
+use renderer::barbs::BarbConfig;
+use storage::{Catalog, CatalogEntry};
 use std::time::Instant;
-use tracing::info;
+use tracing::{debug, info};
 
-use super::loaders::find_parameter_in_grib;
 use super::resampling::resample_for_model_geographic;
 use crate::state::GridProcessorFactory;
 
@@ -27,9 +26,8 @@ use crate::state::GridProcessorFactory;
 /// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
 ///
 /// # Arguments
-/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
-/// - `grid_processor_factory`: Optional factory for Zarr data access
+/// - `grid_processor_factory`: Factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
 /// - `width`: Output image width (single tile)
@@ -39,9 +37,8 @@ use crate::state::GridProcessorFactory;
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_tile(
-    grib_cache: &GribCache,
     catalog: &Catalog,
-    grid_processor_factory: Option<&GridProcessorFactory>,
+    grid_processor_factory: &GridProcessorFactory,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
     width: u32,
@@ -51,32 +48,27 @@ pub async fn render_wind_barbs_tile(
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
-    // First get the catalog entries to check for Zarr metadata
+    // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
     
-    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
-    let use_zarr = u_entry.zarr_metadata.is_some() 
-        && v_entry.zarr_metadata.is_some()
-        && grid_processor_factory.is_some();
+    // Ensure both entries have Zarr metadata
+    if u_entry.zarr_metadata.is_none() {
+        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
+    if v_entry.zarr_metadata.is_none() {
+        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
     
-    // Load U and V component data - use Zarr if available, otherwise GRIB
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
-        let factory = grid_processor_factory.unwrap();
-        info!(
-            model = model,
-            u_path = %u_entry.storage_path,
-            v_path = %v_entry.storage_path,
-            "Loading wind components from Zarr"
-        );
-        load_wind_components_from_zarr(factory, &u_entry, &v_entry, None).await?
-    } else {
-        info!(
-            model = model,
-            "Loading wind components from GRIB (Zarr not available)"
-        );
-        load_wind_components(grib_cache, catalog, model, forecast_hour).await?
-    };
+    // Load U and V component data from Zarr
+    info!(
+        model = model,
+        u_path = %u_entry.storage_path,
+        v_path = %v_entry.storage_path,
+        "Loading wind components from Zarr"
+    );
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+        load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -147,9 +139,8 @@ pub async fn render_wind_barbs_tile(
 /// This renders a 3x3 grid of tiles and crops the center to ensure seamless boundaries.
 ///
 /// # Arguments
-/// - `grib_cache`: GRIB cache for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
-/// - `grid_processor_factory`: Optional factory for Zarr data access
+/// - `grid_processor_factory`: Factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `tile_coord`: Optional tile coordinate for expanded rendering
 /// - `width`: Output image width (single tile)
@@ -161,9 +152,8 @@ pub async fn render_wind_barbs_tile(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_tile_with_level(
-    grib_cache: &GribCache,
     catalog: &Catalog,
-    grid_processor_factory: Option<&GridProcessorFactory>,
+    grid_processor_factory: &GridProcessorFactory,
     model: &str,
     tile_coord: Option<wms_common::TileCoord>,
     width: u32,
@@ -174,32 +164,27 @@ pub async fn render_wind_barbs_tile_with_level(
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
     
-    // First get the catalog entries to check for Zarr metadata
+    // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, level).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, level).await?;
     
-    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
-    let use_zarr = u_entry.zarr_metadata.is_some() 
-        && v_entry.zarr_metadata.is_some()
-        && grid_processor_factory.is_some();
+    // Ensure both entries have Zarr metadata
+    if u_entry.zarr_metadata.is_none() {
+        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
+    if v_entry.zarr_metadata.is_none() {
+        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
     
-    // Load U and V component data - use Zarr if available, otherwise GRIB
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
-        let factory = grid_processor_factory.unwrap();
-        info!(
-            model = model,
-            u_path = %u_entry.storage_path,
-            v_path = %v_entry.storage_path,
-            "Loading wind components from Zarr"
-        );
-        load_wind_components_from_zarr(factory, &u_entry, &v_entry, None).await?
-    } else {
-        info!(
-            model = model,
-            "Loading wind components from GRIB (Zarr not available)"
-        );
-        load_wind_components_with_level(grib_cache, catalog, model, forecast_hour, level).await?
-    };
+    // Load U and V component data from Zarr
+    info!(
+        model = model,
+        u_path = %u_entry.storage_path,
+        v_path = %v_entry.storage_path,
+        "Loading wind components from Zarr"
+    );
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+        load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
     
     // Determine if we should use expanded rendering
     let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
@@ -270,9 +255,8 @@ pub async fn render_wind_barbs_tile_with_level(
 /// Render wind barbs combining U and V component data
 ///
 /// # Arguments
-/// - `storage`: Object storage for retrieving GRIB2 files
 /// - `catalog`: Catalog for finding datasets
-/// - `grid_processor_factory`: Optional factory for Zarr data access
+/// - `grid_processor_factory`: Factory for Zarr data access
 /// - `model`: Weather model name (e.g., "gfs")
 /// - `width`: Output image width
 /// - `height`: Output image height
@@ -282,9 +266,8 @@ pub async fn render_wind_barbs_tile_with_level(
 /// # Returns
 /// PNG image data as bytes
 pub async fn render_wind_barbs_layer(
-    grib_cache: &GribCache,
     catalog: &Catalog,
-    grid_processor_factory: Option<&GridProcessorFactory>,
+    grid_processor_factory: &GridProcessorFactory,
     model: &str,
     width: u32,
     height: u32,
@@ -292,67 +275,27 @@ pub async fn render_wind_barbs_layer(
     barb_spacing: Option<usize>,
     forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    use tracing::debug;
-    
     // Get catalog entries for U and V components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
     
-    // Determine if we can use Zarr (both entries have zarr_metadata and we have a factory)
-    let use_zarr = u_entry.zarr_metadata.is_some() 
-        && v_entry.zarr_metadata.is_some()
-        && grid_processor_factory.is_some();
+    // Ensure both entries have Zarr metadata
+    if u_entry.zarr_metadata.is_none() {
+        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
+    if v_entry.zarr_metadata.is_none() {
+        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
     
-    // Load U and V component data - use Zarr if available, otherwise GRIB
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = if use_zarr {
-        let factory = grid_processor_factory.unwrap();
-        info!(
-            model = model,
-            u_path = %u_entry.storage_path,
-            v_path = %v_entry.storage_path,
-            "Loading wind components from Zarr for layer render"
-        );
-        load_wind_components_from_zarr(factory, &u_entry, &v_entry, bbox).await?
-    } else {
-        info!(
-            model = model,
-            "Loading wind components from GRIB for layer render"
-        );
-        // Fall back to GRIB loading
-        let u_grib = grib_cache
-            .get(&u_entry.storage_path)
-            .await
-            .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-
-        let v_grib = grib_cache
-            .get(&v_entry.storage_path)
-            .await
-            .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
-
-        // Parse GRIB2 messages - use level from catalog entry to find correct message
-        let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
-        let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
-
-        // Unpack grid data
-        let u_data = u_msg
-            .unpack_data()
-            .map_err(|e| format!("Unpacking U failed: {}", e))?;
-
-        let v_data = v_msg
-            .unpack_data()
-            .map_err(|e| format!("Unpacking V failed: {}", e))?;
-
-        let (gh, gw) = u_msg.grid_dims();
-        let data_bounds = [
-            u_entry.bbox.min_x as f32,
-            u_entry.bbox.min_y as f32,
-            u_entry.bbox.max_x as f32,
-            u_entry.bbox.max_y as f32,
-        ];
-        let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
-        
-        (u_data, v_data, gw as usize, gh as usize, data_bounds, grid_uses_360)
-    };
+    // Load U and V component data from Zarr
+    info!(
+        model = model,
+        u_path = %u_entry.storage_path,
+        v_path = %v_entry.storage_path,
+        "Loading wind components from Zarr for layer render"
+    );
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+        load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, bbox).await?;
     
     // Debug: Log data statistics
     let u_stats: (f32, f32, f32) = u_data.iter()
@@ -572,128 +515,8 @@ pub(crate) async fn get_wind_entry(
 }
 
 // ============================================================================
-// Wind component loading functions
+// Wind component loading functions (Zarr-based)
 // ============================================================================
-
-/// Load U and V wind component data from cache/storage with optional level
-pub(crate) async fn load_wind_components_with_level(
-    grib_cache: &GribCache,
-    catalog: &Catalog,
-    model: &str,
-    forecast_hour: Option<u32>,
-    level: Option<&str>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
-    // Load U component (UGRD) with level support
-    let u_entry = match (forecast_hour, level) {
-        (Some(hour), Some(lev)) => {
-            catalog
-                .find_by_forecast_hour_and_level(model, "UGRD", hour, lev)
-                .await
-                .map_err(|e| format!("Failed to get UGRD: {}", e))?
-                .ok_or_else(|| format!("No UGRD data available for hour {} level {}", hour, lev))?
-        }
-        (Some(hour), None) => {
-            catalog
-                .find_by_forecast_hour(model, "UGRD", hour)
-                .await
-                .map_err(|e| format!("Failed to get UGRD: {}", e))?
-                .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
-        }
-        (None, Some(lev)) => {
-            catalog
-                .get_latest_run_earliest_forecast_at_level(model, "UGRD", lev)
-                .await
-                .map_err(|e| format!("Failed to get UGRD: {}", e))?
-                .ok_or_else(|| format!("No UGRD data available at level {}", lev))?
-        }
-        (None, None) => {
-            catalog
-                .get_latest_run_earliest_forecast(model, "UGRD")
-                .await
-                .map_err(|e| format!("Failed to get UGRD: {}", e))?
-                .ok_or_else(|| "No UGRD data available".to_string())?
-        }
-    };
-
-    // Load V component (VGRD) with level support
-    let v_entry = match (forecast_hour, level) {
-        (Some(hour), Some(lev)) => {
-            catalog
-                .find_by_forecast_hour_and_level(model, "VGRD", hour, lev)
-                .await
-                .map_err(|e| format!("Failed to get VGRD: {}", e))?
-                .ok_or_else(|| format!("No VGRD data available for hour {} level {}", hour, lev))?
-        }
-        (Some(hour), None) => {
-            catalog
-                .find_by_forecast_hour(model, "VGRD", hour)
-                .await
-                .map_err(|e| format!("Failed to get VGRD: {}", e))?
-                .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
-        }
-        (None, Some(lev)) => {
-            catalog
-                .get_latest_run_earliest_forecast_at_level(model, "VGRD", lev)
-                .await
-                .map_err(|e| format!("Failed to get VGRD: {}", e))?
-                .ok_or_else(|| format!("No VGRD data available at level {}", lev))?
-        }
-        (None, None) => {
-            catalog
-                .get_latest_run_earliest_forecast(model, "VGRD")
-                .await
-                .map_err(|e| format!("Failed to get VGRD: {}", e))?
-                .ok_or_else(|| "No VGRD data available".to_string())?
-        }
-    };
-
-    // Load GRIB2 files from cache
-    let u_grib = grib_cache
-        .get(&u_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-
-    let v_grib = grib_cache
-        .get(&v_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
-
-    // Parse GRIB2 messages - use level from catalog entry to find correct message
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
-
-    // Unpack grid data
-    let u_data = u_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking U failed: {}", e))?;
-
-    let v_data = v_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking V failed: {}", e))?;
-
-    let (grid_height, grid_width) = u_msg.grid_dims();
-    
-    info!(
-        grid_width = grid_width,
-        grid_height = grid_height,
-        u_level = %u_entry.level,
-        v_level = %v_entry.level,
-        "Loaded wind component data with level"
-    );
-
-    // Both U and V should have same bbox - use U's bbox
-    let data_bounds = [
-        u_entry.bbox.min_x as f32,
-        u_entry.bbox.min_y as f32,
-        u_entry.bbox.max_x as f32,
-        u_entry.bbox.max_y as f32,
-    ];
-    
-    // Check if grid uses 0-360 longitude (like GFS)
-    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
-    
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
-}
 
 /// Load U and V wind component data from Zarr storage.
 /// 
@@ -869,89 +692,4 @@ pub(crate) async fn load_wind_components_from_zarr(
     );
     
     Ok((u_region.data, v_region.data, grid_width, grid_height, data_bounds, grid_uses_360))
-}
-
-/// Load U and V wind component data from cache/storage
-pub(crate) async fn load_wind_components(
-    grib_cache: &GribCache,
-    catalog: &Catalog,
-    model: &str,
-    forecast_hour: Option<u32>,
-) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
-    // Load U component (UGRD)
-    let u_entry = if let Some(hour) = forecast_hour {
-        catalog
-            .find_by_forecast_hour(model, "UGRD", hour)
-            .await
-            .map_err(|e| format!("Failed to get UGRD: {}", e))?
-            .ok_or_else(|| format!("No UGRD data available for hour {}", hour))?
-    } else {
-        catalog
-            .get_latest_run_earliest_forecast(model, "UGRD")
-            .await
-            .map_err(|e| format!("Failed to get UGRD: {}", e))?
-            .ok_or_else(|| "No UGRD data available".to_string())?
-    };
-
-    // Load V component (VGRD)
-    let v_entry = if let Some(hour) = forecast_hour {
-        catalog
-            .find_by_forecast_hour(model, "VGRD", hour)
-            .await
-            .map_err(|e| format!("Failed to get VGRD: {}", e))?
-            .ok_or_else(|| format!("No VGRD data available for hour {}", hour))?
-    } else {
-        catalog
-            .get_latest_run_earliest_forecast(model, "VGRD")
-            .await
-            .map_err(|e| format!("Failed to get VGRD: {}", e))?
-            .ok_or_else(|| "No VGRD data available".to_string())?
-    };
-
-    // Load GRIB2 files from cache
-    let u_grib = grib_cache
-        .get(&u_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-
-    let v_grib = grib_cache
-        .get(&v_entry.storage_path)
-        .await
-        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
-
-    // Parse GRIB2 messages - use level from catalog entry to find correct message
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
-
-    // Unpack grid data
-    let u_data = u_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking U failed: {}", e))?;
-
-    let v_data = v_msg
-        .unpack_data()
-        .map_err(|e| format!("Unpacking V failed: {}", e))?;
-
-    let (grid_height, grid_width) = u_msg.grid_dims();
-    
-    info!(
-        grid_width = grid_width,
-        grid_height = grid_height,
-        u_level = %u_entry.level,
-        v_level = %v_entry.level,
-        "Loaded wind component data"
-    );
-
-    // Both U and V should have same bbox - use U's bbox
-    let data_bounds = [
-        u_entry.bbox.min_x as f32,
-        u_entry.bbox.min_y as f32,
-        u_entry.bbox.max_x as f32,
-        u_entry.bbox.max_y as f32,
-    ];
-
-    // Check if grid uses 0-360 longitude (like GFS)
-    let grid_uses_360 = u_entry.bbox.min_x >= 0.0 && u_entry.bbox.max_x > 180.0;
-
-    Ok((u_data, v_data, grid_width as usize, grid_height as usize, data_bounds, grid_uses_360))
 }

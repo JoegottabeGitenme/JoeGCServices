@@ -84,9 +84,9 @@ impl LoadRunner {
                 if config.l1_cache_enabled { "enabled" } else { "disabled" },
                 config.l1_cache_size,
                 config.l1_cache_ttl_secs);
-            println!("  GRIB Cache: {} (size: {})", 
-                if config.grib_cache_enabled { "enabled" } else { "disabled" },
-                config.grib_cache_size);
+            println!("  Chunk Cache: {} (size: {} MB)", 
+                if config.chunk_cache_enabled { "enabled" } else { "disabled" },
+                config.chunk_cache_size_mb);
             println!("  Prefetch: {} (rings: {}, zoom: {}-{})", 
                 if config.prefetch_enabled { "enabled" } else { "disabled" },
                 config.prefetch_rings,
@@ -281,10 +281,8 @@ impl LoadRunner {
             l1_cache_size: opts["l1_cache"]["size"].as_u64().unwrap_or(0) as usize,
             l1_cache_ttl_secs: opts["l1_cache"]["ttl_secs"].as_u64().unwrap_or(0),
             l2_cache_enabled: opts["l2_cache"]["enabled"].as_bool().unwrap_or(true),
-            grib_cache_enabled: opts["grib_cache"]["enabled"].as_bool().unwrap_or(false),
-            grib_cache_size: opts["grib_cache"]["size"].as_u64().unwrap_or(0) as usize,
-            grid_cache_enabled: opts["grid_cache"]["enabled"].as_bool().unwrap_or(false),
-            grid_cache_size: opts["grid_cache"]["size"].as_u64().unwrap_or(0) as usize,
+            chunk_cache_enabled: opts["chunk_cache"]["enabled"].as_bool().unwrap_or(false),
+            chunk_cache_size_mb: opts["chunk_cache"]["size_mb"].as_u64().unwrap_or(0) as usize,
             prefetch_enabled: opts["prefetch"]["enabled"].as_bool().unwrap_or(false),
             prefetch_rings: opts["prefetch"]["rings"].as_u64().unwrap_or(0) as u32,
             prefetch_min_zoom: opts["prefetch"]["min_zoom"].as_u64().unwrap_or(0) as u32,

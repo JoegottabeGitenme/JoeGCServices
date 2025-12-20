@@ -347,7 +347,7 @@ async fn wmts_get_tile(
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
-            &state.grib_cache, &state.catalog, Some(&state.grid_processor_factory),
+            &state.catalog, &state.grid_processor_factory,
             model, Some(coord), 256, 256, bbox_array, forecast_hour, elevation,
         ).await
     } else if style == "isolines" {
@@ -533,7 +533,7 @@ async fn prefetch_single_tile(
     
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
-            &state.grib_cache, &state.catalog, Some(&state.grid_processor_factory),
+            &state.catalog, &state.grid_processor_factory,
             model, Some(coord), 256, 256, bbox_array, None, None,
         ).await
     } else if style == "isolines" {

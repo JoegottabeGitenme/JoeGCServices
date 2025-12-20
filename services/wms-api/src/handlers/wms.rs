@@ -393,10 +393,9 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         };
         
         match crate::rendering::query_point_value(
-            &state.grib_cache,
             &state.catalog,
             &state.metrics,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             layer,
             bbox_array,
             width,
@@ -496,9 +495,8 @@ async fn render_weather_data(
         let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
         
         return crate::rendering::render_wind_barbs_layer(
-            &state.grib_cache,
             &state.catalog,
-            Some(&state.grid_processor_factory),
+            &state.grid_processor_factory,
             model,
             width,
             height,

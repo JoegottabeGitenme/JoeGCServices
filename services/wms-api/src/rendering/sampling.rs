@@ -9,11 +9,11 @@
 //! - Unit conversion for display values
 
 use projection::{LambertConformal, Geostationary};
-use storage::{GribCache, Catalog};
+use storage::Catalog;
 use tracing::info;
 
 use super::types::GoesProjectionParams;
-use super::loaders::{load_grid_data, query_point_from_zarr, find_parameter_in_grib};
+use super::loaders::{load_grid_data, query_point_from_zarr};
 use super::resampling::bilinear_interpolate;
 use crate::metrics::MetricsCollector;
 use crate::state::GridProcessorFactory;
@@ -25,10 +25,9 @@ use crate::state::GridProcessorFactory;
 /// Query data value at a specific point for GetFeatureInfo
 ///
 /// # Arguments
-/// - `grib_cache`: Cache for GRIB2/NetCDF file data
 /// - `catalog`: Catalog for finding datasets
 /// - `metrics`: Metrics collector
-/// - `grid_processor_factory`: Optional factory for Zarr-based point queries (more efficient)
+/// - `grid_processor_factory`: Factory for Zarr-based point queries
 /// - `layer`: Layer name (e.g., "gfs_TMP")
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// - `width`: Map width in pixels
@@ -42,10 +41,9 @@ use crate::state::GridProcessorFactory;
 /// # Returns
 /// Vector of FeatureInfo with data values at the queried point
 pub async fn query_point_value(
-    grib_cache: &GribCache,
     catalog: &Catalog,
     _metrics: &MetricsCollector,
-    grid_processor_factory: Option<&GridProcessorFactory>,
+    grid_processor_factory: &GridProcessorFactory,
     layer: &str,
     bbox: [f64; 4],
     width: u32,
@@ -94,7 +92,7 @@ pub async fn query_point_value(
     
     // Handle special composite layers
     if parameter == "WIND_BARBS" {
-        return query_wind_barbs_value(grib_cache, catalog, model, lon, lat, forecast_hour, level).await;
+        return query_wind_barbs_value(catalog, grid_processor_factory, model, lon, lat, forecast_hour, level).await;
     }
     
     // Get dataset for this parameter, optionally at a specific level
@@ -129,18 +127,32 @@ pub async fn query_point_value(
         }
     };
     
-    // Determine data source type and load value
-    // Priority: Zarr (most efficient for point queries) > NetCDF > GRIB2
-    let has_zarr = entry.zarr_metadata.is_some() && grid_processor_factory.is_some();
+    // Ensure data has Zarr metadata (required for all data access)
+    if entry.zarr_metadata.is_none() {
+        return Err(format!(
+            "Data for {}/{} is not available - missing Zarr metadata (ingestion may be incomplete)",
+            model, parameter
+        ));
+    }
+    
     let is_netcdf = entry.storage_path.ends_with(".nc") || 
                     entry.parameter.starts_with("CMI_") ||
                     model.starts_with("goes");
     
-    // Load and sample grid data
-    let value = if has_zarr {
+    // Load and sample grid data from Zarr
+    let value = if is_netcdf {
+        // Handle NetCDF (GOES satellite) data via Zarr path
+        let grid_result = load_grid_data(grid_processor_factory, &entry, None, None).await?;
+        let grid_data = grid_result.data;
+        let grid_width = grid_result.width;
+        let grid_height = grid_result.height;
+        let goes_projection = grid_result.goes_projection;
+        
+        // Sample value at the point using projection-aware sampling
+        sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
+    } else {
         // Use Zarr for efficient point query (reads only one chunk)
-        let factory = grid_processor_factory.unwrap();
-        match query_point_from_zarr(factory, &entry, lon, lat).await? {
+        match query_point_from_zarr(grid_processor_factory, &entry, lon, lat).await? {
             Some(v) => v,
             None => {
                 // Point outside grid or fill value - return no-data response
@@ -161,38 +173,6 @@ pub async fn query_point_value(
                 }]);
             }
         }
-    } else if is_netcdf && grid_processor_factory.is_some() {
-        // Handle NetCDF (GOES satellite) data via Zarr path
-        let factory = grid_processor_factory.unwrap();
-        let grid_result = load_grid_data(factory, &entry, None, None).await?;
-        let grid_data = grid_result.data;
-        let grid_width = grid_result.width;
-        let grid_height = grid_result.height;
-        let goes_projection = grid_result.goes_projection;
-        
-        // Sample value at the point using projection-aware sampling
-        sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
-    } else {
-        // Handle GRIB2 data (legacy fallback)
-        let grib_data = grib_cache
-            .get(&entry.storage_path)
-            .await
-            .map_err(|e| format!("Failed to load GRIB2 file: {}", e))?;
-        
-        // Parse GRIB2 and find parameter with matching level
-        let msg = find_parameter_in_grib(grib_data, &parameter, Some(&entry.level))?;
-        
-        // Unpack grid data
-        let grid_data = msg
-            .unpack_data()
-            .map_err(|e| format!("Unpacking failed: {}", e))?;
-        
-        let (grid_height, grid_width) = msg.grid_dims();
-        let grid_width = grid_width as usize;
-        let grid_height = grid_height as usize;
-        
-        // Sample value at the point using bilinear interpolation
-        sample_grid_value(&grid_data, grid_width, grid_height, lon, lat, model)?
     };
     
     // Check for missing/no-data values (MRMS uses -99 and -999)
@@ -237,10 +217,10 @@ pub async fn query_point_value(
     }])
 }
 
-/// Query wind barbs value (combines UGRD and VGRD)
+/// Query wind barbs value (combines UGRD and VGRD) using Zarr data
 pub async fn query_wind_barbs_value(
-    grib_cache: &GribCache,
     catalog: &Catalog,
+    grid_processor_factory: &GridProcessorFactory,
     model: &str,
     lon: f64,
     lat: f64,
@@ -313,26 +293,22 @@ pub async fn query_wind_barbs_value(
         }
     };
     
-    // Load GRIB2 files from cache
-    let u_grib = grib_cache.get(&u_entry.storage_path).await
-        .map_err(|e| format!("Failed to load UGRD file: {}", e))?;
-    let v_grib = grib_cache.get(&v_entry.storage_path).await
-        .map_err(|e| format!("Failed to load VGRD file: {}", e))?;
+    // Ensure both components have Zarr metadata
+    if u_entry.zarr_metadata.is_none() {
+        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
+    if v_entry.zarr_metadata.is_none() {
+        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+    }
     
-    // Parse and unpack - use level from catalog entry
-    let u_msg = find_parameter_in_grib(u_grib, "UGRD", Some(&u_entry.level))?;
-    let v_msg = find_parameter_in_grib(v_grib, "VGRD", Some(&v_entry.level))?;
+    // Query U and V values from Zarr (efficient single-chunk reads)
+    let u = query_point_from_zarr(grid_processor_factory, &u_entry, lon, lat)
+        .await?
+        .ok_or_else(|| format!("No UGRD data at point ({}, {})", lon, lat))?;
     
-    let u_data = u_msg.unpack_data().map_err(|e| format!("Unpacking U failed: {}", e))?;
-    let v_data = v_msg.unpack_data().map_err(|e| format!("Unpacking V failed: {}", e))?;
-    
-    let (grid_height, grid_width) = u_msg.grid_dims();
-    let grid_width = grid_width as usize;
-    let grid_height = grid_height as usize;
-    
-    // Sample both components
-    let u = sample_grid_value(&u_data, grid_width, grid_height, lon, lat, model)?;
-    let v = sample_grid_value(&v_data, grid_width, grid_height, lon, lat, model)?;
+    let v = query_point_from_zarr(grid_processor_factory, &v_entry, lon, lat)
+        .await?
+        .ok_or_else(|| format!("No VGRD data at point ({}, {})", lon, lat))?;
     
     // Calculate speed and direction
     let speed = (u * u + v * v).sqrt();
