@@ -1,3 +1,5 @@
+// TODO if this code is used in the ingestion pipeline thats fine, otherwise we need to delete this whole crate
+
 //! Native NetCDF parsing using the netcdf library.
 //!
 //! This module provides high-performance GOES file parsing using the native

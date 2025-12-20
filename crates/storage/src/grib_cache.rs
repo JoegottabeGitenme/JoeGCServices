@@ -1,4 +1,12 @@
 //! In-memory LRU cache for GRIB data to reduce MinIO reads.
+//!
+//! Still actively used for:
+//! - Wind barb rendering (UGRD/VGRD components when Zarr unavailable)
+//! - GetFeatureInfo point value queries
+//! - Fallback when Zarr metadata is not present in catalog entries
+//!
+//! Zarr is the primary data source for raster rendering, but GRIB remains
+//! the fallback path and is required for some operations.
 
 use bytes::Bytes;
 use lru::LruCache;
@@ -10,7 +18,7 @@ use wms_common::WmsResult;
 use crate::ObjectStorage;
 
 /// In-memory LRU cache for GRIB file data.
-/// 
+///
 /// This cache stores raw GRIB file bytes to avoid repeated MinIO fetches
 /// for frequently accessed datasets. Particularly beneficial for:
 /// - Real-time/recent data (e.g., latest GFS run)
@@ -55,18 +63,18 @@ impl CacheStats {
 
 impl GribCache {
     /// Create a new GRIB cache with specified capacity.
-    /// 
+    ///
     /// # Arguments
     /// * `capacity` - Maximum number of GRIB files to cache
     /// * `storage` - ObjectStorage instance for cache misses
-    /// 
+    ///
     /// # Capacity Guidelines
     /// - Small (100 entries): ~500MB RAM (assuming ~5MB per GRIB)
     /// - Medium (500 entries): ~2.5GB RAM
     /// - Large (1000 entries): ~5GB RAM
     pub fn new(capacity: usize, storage: Arc<ObjectStorage>) -> Self {
         let cache_size = NonZeroUsize::new(capacity).expect("Capacity must be > 0");
-        
+
         Self {
             cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
             storage,
@@ -76,7 +84,7 @@ impl GribCache {
     }
 
     /// Get GRIB data from cache or fetch from storage.
-    /// 
+    ///
     /// This method:
     /// 1. Checks the in-memory cache first (fast path)
     /// 2. On cache miss, fetches from MinIO
@@ -85,9 +93,9 @@ impl GribCache {
     pub async fn get(&self, path: &str) -> WmsResult<Bytes> {
         Ok(self.get_with_status(path).await?.data)
     }
-    
+
     /// Get GRIB data from cache or fetch from storage, with cache hit/miss status.
-    /// 
+    ///
     /// Same as `get()` but also returns whether the data came from cache.
     /// Useful for model-specific cache metrics.
     pub async fn get_with_status(&self, path: &str) -> WmsResult<CacheGetResult> {
@@ -107,7 +115,7 @@ impl GribCache {
 
         // Cache miss - fetch from storage
         let data = self.storage.get(path).await?;
-        
+
         // Update stats
         {
             let mut stats = self.stats.lock().await;
@@ -118,15 +126,15 @@ impl GribCache {
         {
             let mut cache = self.cache.lock().await;
             let data_size = data.len() as u64;
-            
+
             // If eviction occurs, track it
             if cache.len() >= cache.cap().get() {
                 let mut stats = self.stats.lock().await;
                 stats.evictions += 1;
             }
-            
+
             cache.put(path.to_string(), data.clone());
-            
+
             // Update total cached bytes
             let mut stats = self.stats.lock().await;
             stats.total_bytes_cached += data_size;
@@ -157,7 +165,7 @@ impl GribCache {
     pub async fn clear(&self) {
         let mut cache = self.cache.lock().await;
         cache.clear();
-        
+
         let mut stats = self.stats.lock().await;
         *stats = CacheStats::default();
     }
@@ -170,7 +178,6 @@ impl GribCache {
 
 #[cfg(test)]
 mod tests {
-    
 
     // Note: Tests would require mocking ObjectStorage
     // For now, we'll skip unit tests and rely on integration tests

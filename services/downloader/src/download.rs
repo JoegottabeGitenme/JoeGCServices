@@ -5,6 +5,8 @@
 //! - Exponential backoff retry on failures
 //! - Progress tracking and persistence
 //! - File integrity verification via Content-Length
+//!
+//! TODO need to test retry logic?
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -181,9 +183,7 @@ impl DownloadManager {
                     }
 
                     // Update state
-                    state
-                        .update_status(url, DownloadStatus::Completed)
-                        .await?;
+                    state.update_status(url, DownloadStatus::Completed).await?;
 
                     info!(
                         path = %final_path.display(),
@@ -215,9 +215,7 @@ impl DownloadManager {
                     );
 
                     // Update state
-                    state
-                        .update_status(url, DownloadStatus::Retrying)
-                        .await?;
+                    state.update_status(url, DownloadStatus::Retrying).await?;
                     state.update_progress(url, &progress).await?;
 
                     // Wait before retry

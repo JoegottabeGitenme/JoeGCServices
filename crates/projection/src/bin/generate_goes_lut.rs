@@ -1,3 +1,4 @@
+// TODO related to luts stuff may or may not be needed
 //! CLI tool to pre-compute GOES projection LUTs.
 //!
 //! Generates lookup tables for GOES-16 and GOES-18 CONUS sectors,

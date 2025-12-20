@@ -1,7 +1,7 @@
 //! OGC WMTS protocol implementation.
 //!
 //! Supports WMTS 1.0.0 specification with both KVP and RESTful bindings.
-
+// TODO ask claude if this file is used
 use serde::Deserialize;
 
 use wms_common::{BoundingBox, CrsCode, TileCoord, TileMatrixSet, WmsError, WmsResult};

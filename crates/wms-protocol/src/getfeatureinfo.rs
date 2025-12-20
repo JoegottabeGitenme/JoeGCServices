@@ -2,6 +2,8 @@
 //!
 //! Implements OGC WMS 1.3.0 GetFeatureInfo operation for querying
 //! data values at specific map points.
+//!
+// TODO ask claude about if this is duplicate, consider this to be the place to handle custom getFeatureInfo rendering
 
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +33,7 @@ pub struct GetFeatureInfoRequest {
 }
 
 /// Supported GetFeatureInfo response formats
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum InfoFormat {
     /// application/json - Machine-readable JSON
     #[serde(rename = "application/json")]
@@ -71,7 +72,6 @@ impl InfoFormat {
         }
     }
 }
-
 
 /// Feature information for a single layer at a point
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ impl FeatureInfoResponse {
     /// Format as HTML for popup display
     pub fn to_html(&self) -> String {
         let mut html = String::from("<div class=\"feature-info\">\n");
-        
+
         for feature in &self.features {
             html.push_str(&format!("  <h4>{}</h4>\n", feature.layer_name));
             html.push_str("  <table>\n");
@@ -165,7 +165,7 @@ impl FeatureInfoResponse {
             }
             html.push_str("  </table>\n");
         }
-        
+
         html.push_str("</div>");
         html
     }
@@ -173,7 +173,7 @@ impl FeatureInfoResponse {
     /// Format as plain text
     pub fn to_text(&self) -> String {
         let mut text = String::new();
-        
+
         for (i, feature) in self.features.iter().enumerate() {
             if i > 0 {
                 text.push_str("\n---\n");
@@ -192,7 +192,7 @@ impl FeatureInfoResponse {
                 text.push_str(&format!("Forecast: +{} hours\n", hour));
             }
         }
-        
+
         text
     }
 
@@ -200,11 +200,17 @@ impl FeatureInfoResponse {
     pub fn to_xml(&self) -> String {
         let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         xml.push_str("<FeatureInfoResponse>\n");
-        
+
         for feature in &self.features {
             xml.push_str("  <FeatureInfo>\n");
-            xml.push_str(&format!("    <LayerName>{}</LayerName>\n", feature.layer_name));
-            xml.push_str(&format!("    <Parameter>{}</Parameter>\n", feature.parameter));
+            xml.push_str(&format!(
+                "    <LayerName>{}</LayerName>\n",
+                feature.layer_name
+            ));
+            xml.push_str(&format!(
+                "    <Parameter>{}</Parameter>\n",
+                feature.parameter
+            ));
             xml.push_str(&format!("    <Value>{:.2}</Value>\n", feature.value));
             xml.push_str(&format!("    <Unit>{}</Unit>\n", feature.unit));
             if let Some(ref level) = feature.level {
@@ -219,7 +225,7 @@ impl FeatureInfoResponse {
             }
             xml.push_str("  </FeatureInfo>\n");
         }
-        
+
         xml.push_str("</FeatureInfoResponse>");
         xml
     }
@@ -236,23 +242,17 @@ impl FeatureInfoResponse {
 ///
 /// # Returns
 /// (longitude, latitude)
-pub fn pixel_to_geographic(
-    i: u32,
-    j: u32,
-    width: u32,
-    height: u32,
-    bbox: [f64; 4],
-) -> (f64, f64) {
+pub fn pixel_to_geographic(i: u32, j: u32, width: u32, height: u32, bbox: [f64; 4]) -> (f64, f64) {
     let [min_lon, min_lat, max_lon, max_lat] = bbox;
-    
+
     // Calculate pixel center position (0.5 offset for pixel center)
     let x_ratio = (i as f64 + 0.5) / width as f64;
     let y_ratio = (j as f64 + 0.5) / height as f64;
-    
+
     // Convert to geographic coordinates
     let lon = min_lon + x_ratio * (max_lon - min_lon);
     let lat = max_lat - y_ratio * (max_lat - min_lat); // Y is inverted (top=max, bottom=min)
-    
+
     (lon, lat)
 }
 
@@ -260,8 +260,8 @@ pub fn pixel_to_geographic(
 pub fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
     let lon = (x / 20037508.34) * 180.0;
     let lat = (y / 20037508.34) * 180.0;
-    let lat = 180.0 / std::f64::consts::PI * 
-        (2.0 * (lat * std::f64::consts::PI / 180.0).exp().atan() - std::f64::consts::PI / 2.0);
+    let lat = 180.0 / std::f64::consts::PI
+        * (2.0 * (lat * std::f64::consts::PI / 180.0).exp().atan() - std::f64::consts::PI / 2.0);
     (lon, lat)
 }
 
@@ -279,28 +279,32 @@ mod tests {
 
     #[test]
     fn test_info_format_parsing() {
-        assert_eq!(InfoFormat::from_mime("application/json"), Some(InfoFormat::Json));
+        assert_eq!(
+            InfoFormat::from_mime("application/json"),
+            Some(InfoFormat::Json)
+        );
         assert_eq!(InfoFormat::from_mime("text/html"), Some(InfoFormat::Html));
         assert_eq!(InfoFormat::from_mime("TEXT/HTML"), Some(InfoFormat::Html));
     }
 
     #[test]
     fn test_feature_info_response_json() {
-        let response = FeatureInfoResponse::new(vec![
-            FeatureInfo {
-                layer_name: "test_layer".to_string(),
-                parameter: "Temperature".to_string(),
-                value: 15.5,
-                unit: "°C".to_string(),
-                raw_value: 288.65,
-                raw_unit: "K".to_string(),
-                location: Location { longitude: -95.0, latitude: 40.0 },
-                forecast_hour: Some(3),
-                reference_time: Some("2025-11-26T12:00:00Z".to_string()),
-                level: Some("500 mb".to_string()),
-            }
-        ]);
-        
+        let response = FeatureInfoResponse::new(vec![FeatureInfo {
+            layer_name: "test_layer".to_string(),
+            parameter: "Temperature".to_string(),
+            value: 15.5,
+            unit: "°C".to_string(),
+            raw_value: 288.65,
+            raw_unit: "K".to_string(),
+            location: Location {
+                longitude: -95.0,
+                latitude: 40.0,
+            },
+            forecast_hour: Some(3),
+            reference_time: Some("2025-11-26T12:00:00Z".to_string()),
+            level: Some("500 mb".to_string()),
+        }]);
+
         let json = response.to_json().unwrap();
         assert!(json.contains("FeatureInfoResponse"));
         assert!(json.contains("Temperature"));

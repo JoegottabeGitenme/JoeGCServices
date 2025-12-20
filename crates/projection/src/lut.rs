@@ -1,3 +1,4 @@
+// TODO this may be dead code unless we can come up with a way to make LUT actually increase performance in a meaningful way
 //! Projection Lookup Table (LUT) for fast geostationary satellite tile rendering.
 //!
 //! Pre-computes grid indices for all pixels in a tile, eliminating expensive
@@ -77,7 +78,10 @@ impl TileGridLut {
 
     /// Count valid pixels in this LUT.
     pub fn valid_count(&self) -> usize {
-        self.valid_bitmap.iter().map(|w| w.count_ones() as usize).sum()
+        self.valid_bitmap
+            .iter()
+            .map(|w| w.count_ones() as usize)
+            .sum()
     }
 
     /// Serialize to bytes for storage.
@@ -292,8 +296,7 @@ impl ProjectionLutCache {
         let sat_len = u32::from_le_bytes(buf4) as usize;
         let mut sat_bytes = vec![0u8; sat_len];
         reader.read_exact(&mut sat_bytes)?;
-        let satellite =
-            String::from_utf8(sat_bytes).map_err(|_| LutError::InvalidSatelliteName)?;
+        let satellite = String::from_utf8(sat_bytes).map_err(|_| LutError::InvalidSatelliteName)?;
 
         reader.read_exact(&mut buf4)?;
         let max_zoom = u32::from_le_bytes(buf4);
@@ -346,7 +349,11 @@ impl std::fmt::Display for LutError {
             LutError::UnsupportedVersion(v) => write!(f, "Unsupported LUT version: {}", v),
             LutError::InvalidSatelliteName => write!(f, "Invalid satellite name encoding"),
             LutError::InvalidSize { expected, actual } => {
-                write!(f, "Invalid LUT size: expected {} bytes, got {}", expected, actual)
+                write!(
+                    f,
+                    "Invalid LUT size: expected {} bytes, got {}",
+                    expected, actual
+                )
             }
         }
     }
@@ -630,7 +637,11 @@ mod tests {
         let lut = compute_tile_lut(&proj, 5, 16, 10, 5000, 3000);
 
         // Should have zero valid pixels
-        assert_eq!(lut.valid_count(), 0, "Expected no valid pixels outside coverage");
+        assert_eq!(
+            lut.valid_count(),
+            0,
+            "Expected no valid pixels outside coverage"
+        );
     }
 
     #[test]
@@ -693,8 +704,11 @@ mod tests {
         assert!(valid_count > 0, "Expected some valid output values");
 
         // Check approximate values (should be around 50-150 given our mapping)
-        let avg: f32 =
-            output.iter().filter(|v| !v.is_nan()).sum::<f32>() / valid_count as f32;
-        assert!(avg > 40.0 && avg < 160.0, "Average value {} out of expected range", avg);
+        let avg: f32 = output.iter().filter(|v| !v.is_nan()).sum::<f32>() / valid_count as f32;
+        assert!(
+            avg > 40.0 && avg < 160.0,
+            "Average value {} out of expected range",
+            avg
+        );
     }
 }
