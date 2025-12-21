@@ -25,7 +25,7 @@ Toggle individual performance features on/off:
 
 ```env
 ENABLE_L1_CACHE=true          # In-memory tile cache (0.1ms latency)
-ENABLE_GRIB_CACHE=true        # GRIB data cache (reduces I/O)
+ENABLE_CHUNK_CACHE=true       # Zarr chunk cache (reduces I/O)
 ENABLE_PREFETCH=true          # Predictive tile prefetching
 ENABLE_CACHE_WARMING=true     # Pre-render tiles at startup
 ```
@@ -37,7 +37,7 @@ Fine-tune cache sizes and behavior:
 ```env
 TILE_CACHE_SIZE=10000         # L1 cache: max tiles (~300MB)
 TILE_CACHE_TTL_SECS=300       # L1 cache: TTL in seconds
-GRIB_CACHE_SIZE=500           # GRIB cache: max files (~2.5GB)
+CHUNK_CACHE_SIZE_MB=1024      # Chunk cache: ~1GB for Zarr chunks
 PREFETCH_RINGS=2              # Prefetch: 1=8 tiles, 2=24 tiles
 ```
 
@@ -61,7 +61,7 @@ GOES_MAX_FILES=2              # Limit GOES files
 
 ```env
 ENABLE_L1_CACHE=true
-ENABLE_GRIB_CACHE=true
+ENABLE_CHUNK_CACHE=true
 ENABLE_PREFETCH=true
 ENABLE_CACHE_WARMING=true
 TILE_CACHE_SIZE=15000
@@ -90,7 +90,7 @@ ENABLE_L1_CACHE=false
 ENABLE_PREFETCH=false
 ENABLE_CACHE_WARMING=false
 TILE_CACHE_SIZE=1000
-GRIB_CACHE_SIZE=100
+CHUNK_CACHE_SIZE_MB=256
 ```
 
 ### Development Mode (Fast Startup)

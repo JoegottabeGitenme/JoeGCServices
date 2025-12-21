@@ -57,8 +57,8 @@ weather-data/
 |----------|---------|-------------|
 | `TOKIO_WORKER_THREADS` | `<CPU cores>` | Async runtime worker threads |
 | `RUST_LOG` | `info` | Logging level (debug, info, warn, error) |
-| `ENABLE_GRIB_CACHE` | `true` | Enable GRIB data caching |
-| `GRIB_CACHE_SIZE` | `500` | Max GRIB files in cache (~2.5GB) |
+| `ENABLE_CHUNK_CACHE` | `true` | Enable Zarr chunk caching |
+| `CHUNK_CACHE_SIZE_MB` | `1024` | Chunk cache size in MB (~1GB) |
 
 ### Tile Prefetching
 
@@ -178,7 +178,7 @@ Maximize throughput for production:
 DATABASE_POOL_SIZE=100
 TOKIO_WORKER_THREADS=16
 TILE_CACHE_SIZE=50000
-GRIB_CACHE_SIZE=1000
+CHUNK_CACHE_SIZE_MB=2048
 ENABLE_PREFETCH=true
 PREFETCH_RINGS=2
 ENABLE_CACHE_WARMING=true
@@ -193,7 +193,7 @@ Reduce memory usage for smaller deployments:
 # .env
 DATABASE_POOL_SIZE=20
 TILE_CACHE_SIZE=1000
-GRIB_CACHE_SIZE=50
+CHUNK_CACHE_SIZE_MB=256
 ENABLE_PREFETCH=false
 ENABLE_CACHE_WARMING=false
 ```

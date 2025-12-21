@@ -1,12 +1,14 @@
 # Tile Data Caching Analysis
 
+> **Note (December 2024):** This document describes the historical architecture. The `GribCache` has been removed and all data access now goes through Zarr storage with chunk-level caching. GRIB2 parsing only occurs during ingestion.
+
 ## Overview
 
-This document analyzes how the WMS tile rendering pipeline handles data caching and whether data is reused across multiple tile requests. The goal is to understand if requesting tiles at higher zoom levels efficiently shares underlying data or if each tile request independently fetches data from MinIO.
+This document analyzes how the WMS tile rendering pipeline handles data caching and whether data is reused across multiple tile requests. The goal is to understand if requesting tiles at higher zoom levels efficiently shares underlying data or if each tile request independently fetches data from storage.
 
 ## Summary
 
-**The system IS designed to cache and reuse data across tile requests**, but there is a gap for GRIB2 files where parsed grid data is not cached.
+**The system IS designed to cache and reuse data across tile requests** via Zarr chunk caching and the GridDataCache.
 
 ## Caching Architecture
 
@@ -16,8 +18,8 @@ The system implements a **4-layer caching architecture**:
 |-------|--------------|----------|----------|-----|---------------------|
 | **L1** (TileMemoryCache) | Rendered PNG tiles | `storage/src/tile_memory_cache.rs` | ~10K tiles | 5 min | No - same tile only |
 | **L2** (Redis) | Rendered PNG tiles | `storage/src/cache.rs` | Unlimited | 1 hour | No - same tile only |
-| **GribCache** | Raw GRIB2/NetCDF bytes | `storage/src/grib_cache.rs` | ~500 files | None | **YES** |
-| **GridDataCache** | Parsed `Vec<f32>` grids | `storage/src/grid_cache.rs` | ~100 grids | None | **YES** (NetCDF only) |
+| **ChunkCache** | Decompressed Zarr chunks | `grid-processor` | ~1GB | None | **YES** |
+| **GridDataCache** | Parsed `Vec<f32>` grids | `storage/src/grid_cache.rs` | ~100 grids | None | **YES** |
 
 ## Data Flow
 
@@ -174,7 +176,7 @@ Available at `http://localhost:8080/metrics`:
 grib_cache_hits
 grib_cache_misses  
 grib_cache_hit_rate_percent
-grib_cache_size
+chunk_cache_size_mb
 grib_cache_capacity
 
 # L1 tile cache
@@ -242,8 +244,8 @@ REDIS_URL=redis://redis:6379
 TILE_CACHE_TTL=3600          # 1 hour
 
 # GRIB Raw File Cache
-ENABLE_GRIB_CACHE=true
-GRIB_CACHE_SIZE=500          # Max files (~2.5GB)
+ENABLE_CHUNK_CACHE=true
+CHUNK_CACHE_SIZE_MB=500          # Max files (~2.5GB)
 
 # Grid Data Cache (for NetCDF/GOES and GRIB2)
 ENABLE_GRID_CACHE=true

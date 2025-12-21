@@ -65,7 +65,7 @@ HTTP GET /wmts/rest/mrms_REFL/default/WebMercatorQuad/5/8/12.png
 │  load_grid_data() (lines 1400-1524)                           │
 │  ├── Shredded file detection (line 1467)                      │
 │  │     is_shredded = path.contains("shredded/") || model=="mrms"│
-│  ├── GribCache.get() ──► MinIO/S3 retrieval (~415ms)          │
+│  ├── ChunkCache.get() ──► MinIO/S3 retrieval (~415ms)          │
 │  └── grib2_parser::Grib2Reader.next_message() + unpack_data() │
 │        └── grib crate decoder (~221ms)                        │
 └───────────────────────────────────────────────────────────────┘
@@ -385,7 +385,7 @@ async fn prefetch_mrms_temporal(current_time: DateTime, range: Duration) {
     
     for time in times_to_prefetch {
         tokio::spawn(async move {
-            grib_cache.prefetch(&storage_path_for_time(time)).await;
+            chunk_cache.prefetch(&storage_path_for_time(time)).await;
         });
     }
 }
@@ -499,7 +499,7 @@ MRMS_ONLY=1 ./scripts/profile_flamegraph.sh 30 mrms_temporal_random
 # After running tests
 curl http://localhost:8080/api/metrics | jq '{
   grid_cache: .grid_cache,
-  grib_cache: .grib_cache,
+  chunk_cache: .chunk_cache,
   pipeline: .pipeline_timing
 }'
 ```

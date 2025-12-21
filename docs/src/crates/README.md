@@ -203,7 +203,7 @@ Unified storage abstractions for all persistence needs.
 - `Catalog`: PostgreSQL metadata queries
 - `TileCache`: Redis tile caching
 - `TileMemoryCache`: In-memory LRU cache
-- `GribCache`: In-memory GRIB file cache
+- `ChunkCache`: In-memory Zarr chunk cache
 
 **Used by**: All services
 

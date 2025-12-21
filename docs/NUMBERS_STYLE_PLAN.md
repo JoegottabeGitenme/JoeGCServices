@@ -120,7 +120,7 @@ Add new function:
 ```rust
 /// Render grid data as numeric values at grid points
 pub async fn render_numbers_tile(
-    grib_cache: &GribCache,
+    chunk_cache: &ChunkCache,
     catalog: &Catalog,
     model: &str,
     parameter: &str,
@@ -164,7 +164,7 @@ In `render_wms_layer()` and WMTS tile handler, add:
 } else if style == "numbers" {
     // Render numeric values at grid points
     crate::rendering::render_numbers_tile(
-        &state.grib_cache,
+        &state.chunk_cache,
         &state.catalog,
         model,
         &parameter,

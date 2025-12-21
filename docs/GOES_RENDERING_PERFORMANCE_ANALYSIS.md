@@ -1,5 +1,7 @@
 # GOES Rendering Performance Analysis
 
+> **Note (December 2024):** This document describes the architecture before GribCache removal. Data access now uses Zarr storage with chunk-level caching. Some implementation details (e.g., GribCache, grib_cache.rs) are historical.
+
 **Date:** December 4, 2025  
 **Purpose:** Deep dive into GOES satellite image rendering performance bottlenecks
 

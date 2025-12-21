@@ -219,7 +219,7 @@ cargo run --package load-test -- run \
 ### Check NetCDF Cache Metrics
 ```bash
 # View cache statistics
-curl http://localhost:8080/metrics | grep -E "netcdf_cache|grib_cache"
+curl http://localhost:8080/metrics | grep -E "netcdf_cache|chunk_cache"
 
 # Watch in real-time
 watch -n 2 'curl -s http://localhost:8080/metrics | grep -E "cache_(hit|miss|size)"'

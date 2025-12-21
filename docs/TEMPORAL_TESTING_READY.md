@@ -290,7 +290,7 @@ Elevation: 500 m above mean sea level
 
 **Issue: Poor cache hit rate**
 - GRIB cache not wired into rendering (see Phase 4 TODO)
-- Cache size too small: Increase `GRIB_CACHE_SIZE` env var
+- Cache size too small: Increase `CHUNK_CACHE_SIZE_MB` env var
 - Verify cache metrics: `curl http://localhost:8080/metrics`
 
 **Issue: High memory usage**

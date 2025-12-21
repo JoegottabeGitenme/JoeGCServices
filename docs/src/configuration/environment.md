@@ -46,10 +46,6 @@ TILE_CACHE_TTL_SECS=300            # TTL: 5 minutes
 ENABLE_CHUNK_CACHE=true
 CHUNK_CACHE_SIZE_MB=1024           # ~1 GB for decompressed chunks
 
-# GRIB Data Cache (raw file cache, used for ingestion fallback)
-ENABLE_GRIB_CACHE=true
-GRIB_CACHE_SIZE=500                # Max GRIB files (~2.5 GB)
-
 # Prefetching
 ENABLE_PREFETCH=true
 PREFETCH_RINGS=2                   # Surrounding tile rings (1=8, 2=24)

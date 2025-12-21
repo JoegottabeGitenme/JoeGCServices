@@ -191,8 +191,8 @@ cargo run --package load-test -- run \
 
 ### Monitor Cache Performance
 ```bash
-# Check GRIB cache metrics
-curl http://localhost:8080/metrics | grep -E "grib_cache"
+# Check chunk cache metrics
+curl http://localhost:8080/metrics | grep -E "chunk_cache"
 
 # Monitor memory usage
 docker stats wms-api --no-stream

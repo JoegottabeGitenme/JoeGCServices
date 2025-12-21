@@ -1,5 +1,7 @@
 # Weather WMS - Session Summary
 
+> **Note (December 2024):** This is a historical session summary. The GribCache mentioned has since been removed. All data access now uses Zarr storage with chunk-level caching.
+
 ## Overview
 
 This session focused on **temporal testing infrastructure** for the Weather WMS system, implementing comprehensive support for time-series data from both MRMS radar and GOES satellite sources.
