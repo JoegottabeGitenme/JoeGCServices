@@ -429,14 +429,18 @@ mod tests {
     #[test]
     fn test_message_can_be_parsed() {
         use bytes::Bytes;
-        use grib2_parser::Grib2Reader;
+        use grib2_parser::{Grib2Reader, Grib2Tables};
+        use std::sync::Arc;
 
         let data = Grib2Builder::new_gfs()
             .with_grid(5, 5)
             .with_constant_value(288.15)
             .build();
 
-        let mut reader = Grib2Reader::new(Bytes::from(data));
+        let mut tables = Grib2Tables::new();
+        tables.add_parameter(0, 0, 0, "TMP".to_string());
+        let tables = Arc::new(tables);
+        let mut reader = Grib2Reader::new(Bytes::from(data), tables);
         let msg = reader.next_message().expect("Should parse").expect("Should have message");
 
         assert_eq!(msg.parameter(), "TMP");
@@ -450,7 +454,8 @@ mod tests {
     #[test]
     fn test_gradient_data_unpacks_correctly() {
         use bytes::Bytes;
-        use grib2_parser::Grib2Reader;
+        use grib2_parser::{Grib2Reader, Grib2Tables};
+        use std::sync::Arc;
 
         // Create a simple gradient from 0 to 100
         let data = Grib2Builder::new_gfs()
@@ -458,7 +463,8 @@ mod tests {
             .with_gradient(0.0, 100.0)
             .build();
         
-        let mut reader = Grib2Reader::new(Bytes::from(data));
+        let tables = Arc::new(Grib2Tables::new());
+        let mut reader = Grib2Reader::new(Bytes::from(data), tables);
         let msg = reader.next_message().expect("Should parse").expect("Should have message");
 
         // Use our own unpack_simple (the grib crate doesn't handle our synthetic files correctly)
@@ -492,14 +498,16 @@ mod tests {
     #[test]
     fn test_mrms_gradient_data() {
         use bytes::Bytes;
-        use grib2_parser::Grib2Reader;
+        use grib2_parser::{Grib2Reader, Grib2Tables};
+        use std::sync::Arc;
 
         // Create MRMS-like data with a gradient
         let data = Grib2Builder::new_mrms()
             .with_gradient(-10.0, 60.0)
             .build();
 
-        let mut reader = Grib2Reader::new(Bytes::from(data));
+        let tables = Arc::new(Grib2Tables::new());
+        let mut reader = Grib2Reader::new(Bytes::from(data), tables);
         let msg = reader.next_message().expect("Should parse").expect("Should have message");
 
         // Use our own unpack_simple (the grib crate doesn't handle our synthetic files correctly)

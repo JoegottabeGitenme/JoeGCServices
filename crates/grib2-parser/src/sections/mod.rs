@@ -4,6 +4,7 @@
 //! Each GRIB2 message consists of multiple sections containing
 //! metadata, grid information, and compressed data.
 
+use crate::tables::Grib2Tables;
 use crate::Grib2Error;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -330,6 +331,7 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
 pub fn parse_product_definition(
     data: &[u8],
     discipline: u8,
+    tables: &Grib2Tables,
 ) -> Result<ProductDefinition, Grib2Error> {
     let section_offset = find_section(data, 4)?;
     let section_data = &data[section_offset..];
@@ -393,8 +395,8 @@ pub fn parse_product_definition(
     };
 
     let parameter_short_name =
-        get_parameter_short_name(discipline, parameter_category, parameter_number);
-    let level_description = get_level_description(level_type, level_value);
+        tables.get_parameter_name(discipline, parameter_category, parameter_number);
+    let level_description = tables.get_level_description(level_type, level_value);
 
     Ok(ProductDefinition {
         parameter_category,
@@ -600,141 +602,4 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
     }
 }
 
-/// Get parameter short name
-fn get_parameter_short_name(discipline: u8, category: u8, number: u8) -> String {
-    match (discipline, category, number) {
-        // ==========================================================================
-        // Discipline 0: Meteorological products
-        // ==========================================================================
-        // TODO this could be a config table somewhere
 
-        // Category 0: Temperature
-        (0, 0, 0) => "TMP".to_string(),
-        (0, 0, 1) => "VTMP".to_string(),
-        (0, 0, 2) => "POT".to_string(),
-        (0, 0, 6) => "DPT".to_string(), // Dew point temperature
-
-        // Category 1: Moisture
-        (0, 1, 0) => "SPFH".to_string(),   // Specific humidity
-        (0, 1, 1) => "RH".to_string(),     // Relative humidity
-        (0, 1, 3) => "PWAT".to_string(),   // Precipitable water
-        (0, 1, 7) => "PRATE".to_string(),  // Precipitation rate
-        (0, 1, 8) => "APCP".to_string(),   // Total precipitation (accumulated)
-        (0, 1, 9) => "NCPCP".to_string(),  // Large scale precipitation
-        (0, 1, 10) => "ACPCP".to_string(), // Convective precipitation
-
-        // Category 2: Momentum (wind)
-        (0, 2, 0) => "WDIR".to_string(),  // Wind direction
-        (0, 2, 1) => "WIND".to_string(),  // Wind speed
-        (0, 2, 2) => "UGRD".to_string(),  // U-component of wind
-        (0, 2, 3) => "VGRD".to_string(),  // V-component of wind
-        (0, 2, 8) => "VVEL".to_string(),  // Vertical velocity (pressure)
-        (0, 2, 10) => "ABSV".to_string(), // Absolute vorticity
-        (0, 2, 22) => "GUST".to_string(), // Wind gust
-
-        // Category 3: Mass (pressure/height)
-        (0, 3, 0) => "PRES".to_string(),  // Pressure
-        (0, 3, 1) => "PRMSL".to_string(), // Pressure reduced to MSL
-        (0, 3, 5) => "HGT".to_string(),   // Geopotential height
-
-        // Category 6: Cloud
-        (0, 6, 1) => "TCDC".to_string(), // Total cloud cover
-        (0, 6, 3) => "LCDC".to_string(), // Low cloud cover
-        (0, 6, 4) => "MCDC".to_string(), // Medium cloud cover
-        (0, 6, 5) => "HCDC".to_string(), // High cloud cover
-        (0, 6, 6) => "CWAT".to_string(), // Cloud water
-
-        // Category 7: Thermodynamic Stability
-        (0, 7, 6) => "CAPE".to_string(), // Convective Available Potential Energy
-        (0, 7, 7) => "CIN".to_string(),  // Convective Inhibition
-        (0, 7, 8) => "HLCY".to_string(), // Storm-relative helicity
-
-        // Category 16: Forecast Radar Imagery
-        (0, 16, 195) => "REFD".to_string(),   // Reflectivity
-        (0, 16, 196) => "REFC".to_string(),   // Composite reflectivity
-        (0, 16, 197) => "RETOP".to_string(),  // Echo top
-        (0, 16, 198) => "MAXREF".to_string(), // Max reflectivity
-
-        // Category 19: Physical Atmospheric Properties
-        (0, 19, 0) => "VIS".to_string(),  // Visibility
-        (0, 19, 2) => "TSTM".to_string(), // Thunderstorm probability
-        (0, 19, 11) => "TKE".to_string(), // Turbulent kinetic energy
-
-        // ==========================================================================
-        // NCEP Local Use Parameters (discipline 0, local tables)
-        // ==========================================================================
-
-        // Category 2: Momentum (NCEP extensions)
-        (0, 2, 194) => "USTM".to_string(), // U-component storm motion
-        (0, 2, 195) => "VSTM".to_string(), // V-component storm motion
-
-        // Category 7: Stability (NCEP extensions for severe weather)
-        (0, 7, 192) => "LFTX".to_string(),  // Surface lifted index
-        (0, 7, 193) => "4LFTX".to_string(), // Best (4-layer) lifted index
-
-        // Category 16: Radar (NCEP extensions)
-        // Note: REFC (196) already covered above
-
-        // Category 17: Electrodynamics (Lightning)
-        (0, 17, 192) => "LTNG".to_string(), // Lightning (NCEP local)
-
-        // ==========================================================================
-        // HRRR-specific parameters (discipline 0, local use)
-        // ==========================================================================
-
-        // Updraft Helicity is often encoded as NCEP local
-        // The exact encoding may vary - common ones:
-        (0, 7, 199) => "MXUPHL".to_string(), // Max updraft helicity (alternative)
-
-        // ==========================================================================
-        // Discipline 209: MRMS (local use)
-        // ==========================================================================
-
-        // Category 0: Reflectivity
-        (209, 0, 16) => "REFL".to_string(), // MergedReflectivityQC
-        // Category 1: Precipitation
-        (209, 1, 0) => "PRECIP_RATE".to_string(), // PrecipRate
-        (209, 1, 1) => "QPE".to_string(),         // Quantitative Precipitation Estimate
-
-        _ => format!("P{}_{}_{}", discipline, category, number),
-    }
-}
-
-/// Get level description
-fn get_level_description(level_type: u8, level_value: u32) -> String {
-    match level_type {
-        1 => "surface".to_string(),
-        2 => "cloud base".to_string(),
-        3 => "cloud top".to_string(),
-        4 => "0C isotherm".to_string(),
-        5 => "adiabatic condensation level".to_string(),
-        6 => "max wind".to_string(),
-        7 => "tropopause".to_string(),
-        8 => "top of atmosphere".to_string(),
-        10 => "entire atmosphere".to_string(), // Alternative code for entire atmos
-        100 => format!("{} mb", level_value),  // Isobaric surface (pressure in mb)
-        101 => "mean sea level".to_string(),
-        102 => format!("{} m above MSL", level_value),
-        103 => format!("{} m above ground", level_value), // Height above ground in meters
-        104 => format!("sigma level {}", level_value),
-        105 => "hybrid level".to_string(),
-        106 => format!("{} m below surface", level_value), // Depth below land surface
-        108 => format!("{} mb above ground", level_value), // Pressure level above ground
-        200 => "entire atmosphere".to_string(),
-        204 => "highest tropospheric freezing level".to_string(),
-        206 => "grid-scale cloud bottom".to_string(),
-        207 => "grid-scale cloud top".to_string(),
-        211 => "boundary layer cloud layer".to_string(),
-        212 => "low cloud layer".to_string(),
-        213 => "low cloud bottom".to_string(),
-        214 => "low cloud top".to_string(),
-        222 => "middle cloud layer".to_string(),
-        223 => "middle cloud bottom".to_string(),
-        224 => "middle cloud top".to_string(),
-        232 => "high cloud layer".to_string(),
-        233 => "high cloud bottom".to_string(),
-        234 => "high cloud top".to_string(),
-        220 => "planetary boundary layer".to_string(),
-        _ => format!("Level type {} value {}", level_type, level_value),
-    }
-}

@@ -26,6 +26,12 @@ S3_REGION=us-east-1
 S3_ALLOW_HTTP=true                 # Disable for production
 ```
 
+### Configuration
+```bash
+CONFIG_DIR=/app/config             # Path to config directory (contains models/)
+                                   # Used by ingester for GRIB2 parameter tables
+```
+
 ## Performance Tuning
 
 ### Runtime

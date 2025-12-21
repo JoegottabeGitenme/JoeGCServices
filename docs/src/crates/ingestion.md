@@ -18,6 +18,7 @@ graph TB
         NetCDF["netcdf.rs"]
         Metadata["metadata.rs"]
         Config["config.rs"]
+        Tables["tables.rs"]
         Upload["upload.rs"]
     end
     
@@ -28,11 +29,17 @@ graph TB
         Storage[storage]
     end
     
+    subgraph "Config Files"
+        YAML["config/models/*.yaml"]
+    end
+    
     Ingester --> GRIB
     Ingester --> NetCDF
     GRIB --> Metadata
     GRIB --> Config
+    GRIB --> Tables
     NetCDF --> Metadata
+    Tables --> YAML
     
     GRIB --> GP
     NetCDF --> NP
@@ -125,10 +132,44 @@ pub async fn ingest_grib2(
 
 **Features**:
 - Parses GRIB2 messages using `grib2-parser`
+- **Config-driven parameter names**: Loads `Grib2Tables` from model YAML configs
 - Filters parameters based on configuration
 - Converts sentinel values (e.g., -999) to NaN
 - Writes Zarr arrays with pyramids
 - Handles Lambert Conformal (HRRR) and Lat/Lon (GFS) projections
+
+### tables.rs - GRIB2 Table Builder
+
+Builds `Grib2Tables` from model configuration YAML files:
+
+```rust
+/// Build tables from all model configs in config/models/
+pub fn build_tables_from_configs() -> Arc<Grib2Tables>;
+
+/// Build tables for a specific model only
+pub fn build_tables_for_model(model: &str) -> Arc<Grib2Tables>;
+```
+
+**How it works**:
+1. Reads YAML files from `config/models/` directory (or `CONFIG_DIR` env var)
+2. Extracts `grib2:` sections to map (discipline, category, number) → parameter name
+3. Extracts `level_code` and `display`/`display_template` for level descriptions
+4. Returns `Arc<Grib2Tables>` for sharing across readers
+
+**Example YAML parsed**:
+```yaml
+parameters:
+  - name: TMP
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    levels:
+      - level_code: 103
+        display: "2 m above ground"
+      - level_code: 100
+        display_template: "{value} mb"
+```
 
 ### netcdf.rs - NetCDF Ingestion
 
@@ -324,9 +365,22 @@ Environment variables affecting ingestion:
 ZARR_PYRAMID_LEVELS=2           # Number of downsampled levels
 ZARR_CHUNK_SIZE=512             # Chunk size in pixels
 
-# Parameter filtering
-# (currently hardcoded in config.rs, configurable in future)
+# Config directory (for GRIB2 parameter tables)
+CONFIG_DIR=/app/config          # Path to config directory containing models/
 ```
+
+### GRIB2 Parameter Configuration
+
+Parameter names and level descriptions are loaded from model YAML files at `config/models/*.yaml`. See [Model Configuration](../configuration/models.md) for details.
+
+Key fields used by the tables builder:
+- `parameters[].name` - Parameter short name (e.g., "TMP", "UGRD")
+- `parameters[].grib2.discipline` - GRIB2 discipline code
+- `parameters[].grib2.category` - GRIB2 category code
+- `parameters[].grib2.number` - GRIB2 parameter number
+- `parameters[].levels[].level_code` - GRIB2 level type code
+- `parameters[].levels[].display` - Static level description
+- `parameters[].levels[].display_template` - Level description with `{value}` placeholder
 
 ## Testing
 

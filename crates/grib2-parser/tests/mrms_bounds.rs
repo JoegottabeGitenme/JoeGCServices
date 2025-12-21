@@ -2,6 +2,7 @@
 mod common;
 
 use bytes::Bytes;
+use common::create_test_tables;
 use grib2_parser::Grib2Reader;
 use std::fs;
 
@@ -10,7 +11,8 @@ fn test_mrms_bounds() {
     let path = require_test_file!("mrms_refl.grib2");
 
     let data = fs::read(&path).expect("Failed to read test file");
-    let mut reader = Grib2Reader::new(Bytes::from(data));
+    let tables = create_test_tables();
+    let mut reader = Grib2Reader::new(Bytes::from(data), tables);
 
     match reader.next_message() {
         Ok(Some(msg)) => {

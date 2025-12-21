@@ -11,6 +11,7 @@ mod testdata_generator;
 
 use bytes::Bytes;
 use chrono::{Datelike, Timelike};
+use common::create_test_tables;
 use grib2_parser::{Grib2Reader, unpack_simple};
 use testdata_generator::Grib2Builder;
 
@@ -31,7 +32,8 @@ fn test_roundtrip_gfs_synthetic() {
     let grib_bytes = builder.build();
     
     // Parse it back
-    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes));
+    let tables = create_test_tables();
+    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes), tables);
     let msg = reader.next_message()
         .expect("Should parse without error")
         .expect("Should have a message");
@@ -108,7 +110,8 @@ fn test_roundtrip_mrms_synthetic() {
     let grib_bytes = builder.build();
     
     // Parse it back
-    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes));
+    let tables = create_test_tables();
+    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes), tables);
     let msg = reader.next_message()
         .expect("Should parse without error")
         .expect("Should have a message");
@@ -209,7 +212,8 @@ fn test_compare_synthetic_with_local_gfs() {
     let local_bytes = std::fs::read(&path).expect("Failed to read test file");
     
     // Parse the local test file
-    let mut reader = Grib2Reader::new(Bytes::from(local_bytes));
+    let tables = create_test_tables();
+    let mut reader = Grib2Reader::new(Bytes::from(local_bytes), tables);
     let local_msg = reader.next_message()
         .expect("Should parse local file")
         .expect("Should have message");
@@ -241,7 +245,8 @@ fn test_compare_synthetic_with_local_gfs() {
     let synthetic_bytes = synthetic_builder.build();
     
     // Parse synthetic
-    let mut syn_reader = Grib2Reader::new(Bytes::from(synthetic_bytes));
+    let syn_tables = create_test_tables();
+    let mut syn_reader = Grib2Reader::new(Bytes::from(synthetic_bytes), syn_tables);
     let syn_msg = syn_reader.next_message()
         .expect("Should parse synthetic")
         .expect("Should have message");
@@ -309,7 +314,8 @@ fn test_constant_value_encoding() {
     
     let grib_bytes = builder.build();
     
-    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes));
+    let tables = create_test_tables();
+    let mut reader = Grib2Reader::new(Bytes::from(grib_bytes), tables);
     let msg = reader.next_message()
         .expect("Should parse")
         .expect("Should have message");

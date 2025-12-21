@@ -207,12 +207,21 @@ POST http://ingester:8082/ingest
 
 **GRIB2 Parsing**:
 ```rust
+use ingestion::build_tables_for_model;
+
 let bytes = Bytes::from(fs::read(&path)?);
-let mut reader = grib2_parser::Grib2Reader::new(bytes);
+
+// Load parameter/level lookup tables from model config (e.g., config/models/gfs.yaml)
+let tables = build_tables_for_model("gfs");
+
+let mut reader = grib2_parser::Grib2Reader::new(bytes, tables);
 
 while let Some(message) = reader.next_message().ok().flatten() {
-    // Extract parameter info
+    // Parameter names come from config (e.g., "TMP", "UGRD")
+    // Falls back to "P{d}_{c}_{n}" if not in config
     let param = &message.product_definition.parameter_short_name;
+    
+    // Level descriptions come from config (e.g., "500 mb", "2 m above ground")
     let level = &message.product_definition.level_description;
     let level_type = message.product_definition.level_type;
     
@@ -382,6 +391,9 @@ S3_SECRET_KEY=minioadmin
 S3_BUCKET=weather-data
 S3_REGION=us-east-1
 S3_ALLOW_HTTP=true
+
+# Configuration
+CONFIG_DIR=/app/config                 # Path to config directory (for GRIB2 tables)
 
 # Logging
 RUST_LOG=info,ingestion=debug

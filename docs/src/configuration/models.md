@@ -122,23 +122,52 @@ parameters:
   - name: TMP
     description: "Temperature"
     downsample: mean              # Pyramid downsampling method
-    grib2:                        # GRIB2 identification (for matching)
-      discipline: 0
-      category: 0
-      parameter: 0
+    grib2:                        # GRIB2 identification codes
+      discipline: 0               # 0=meteorological, 209=MRMS local
+      category: 0                 # Parameter category within discipline
+      number: 0                   # Parameter number within category
     levels:
       - type: height_above_ground
+        level_code: 103           # GRIB2 level type code
         value: 2
         display: "2 m above ground"
       - type: isobaric
+        level_code: 100           # GRIB2 level type code for pressure levels
         values: [1000, 850, 500, 250]
-        display_template: "{value} mb"
+        display_template: "{value} mb"  # Template with {value} placeholder
     style: temperature
     units: K
     display_units: "C"
     conversion: K_to_C
     valid_range: [180, 340]       # Expected data range (optional)
 ```
+
+#### GRIB2 Code Mapping
+
+The `grib2:` section maps GRIB2 numeric codes to parameter names. The ingestion system uses these to identify parameters in GRIB2 files:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `discipline` | WMO discipline code | 0 (meteorological), 209 (MRMS) |
+| `category` | Parameter category | 0 (temperature), 2 (momentum) |
+| `number` | Parameter number | 0 (TMP), 2 (UGRD), 3 (VGRD) |
+
+#### Level Configuration
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `level_code` | GRIB2 level type code | 1, 100, 103 |
+| `display` | Static description | "surface", "mean sea level" |
+| `display_template` | Template with `{value}` | "{value} mb", "{value} m above ground" |
+
+**Common Level Codes**:
+| Code | Type | Example Display |
+|------|------|-----------------|
+| 1 | Surface | "surface" |
+| 100 | Isobaric (pressure) | "500 mb", "850 mb" |
+| 101 | Mean sea level | "mean sea level" |
+| 103 | Height above ground | "2 m above ground", "10 m above ground" |
+| 200 | Entire atmosphere | "entire atmosphere" |
 
 **Downsample Methods**:
 
@@ -214,11 +243,20 @@ retention:
 parameters:
   - name: TMP
     description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 2
         display: "2 m above ground"
+      - type: isobaric
+        level_code: 100
+        values: [1000, 850, 500, 300, 200]
+        display_template: "{value} mb"
     style: temperature
     units: K
 ```
@@ -262,12 +300,17 @@ retention:
 parameters:
   - name: REFL
     description: "Seamless Hybrid Scan Reflectivity"
+    grib2:
+      discipline: 209    # MRMS local discipline
+      category: 0
+      number: 16
     downsample: max
     product: "SeamlessHSR_00.00"
     levels:
       - type: height_above_msl
+        level_code: 102
         value: 0
-        display: "0 m above MSL"
+        display: "surface"
     style: reflectivity
     units: "dBZ"
     valid_range: [-30, 80]

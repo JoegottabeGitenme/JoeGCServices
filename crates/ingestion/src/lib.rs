@@ -19,6 +19,7 @@ pub mod error;
 mod grib2;
 pub mod metadata;
 mod netcdf;
+pub mod tables;
 mod upload;
 mod ingester;
 
@@ -33,3 +34,4 @@ pub use metadata::{
 pub use config::{
     should_ingest_parameter, standard_pressure_levels, target_grib2_parameters, ParameterSpec,
 };
+pub use tables::{build_tables_from_configs, build_tables_for_model};

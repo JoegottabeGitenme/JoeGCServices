@@ -17,6 +17,7 @@ use storage::{Catalog, CatalogEntry, ObjectStorage};
 use crate::config::{should_ingest_parameter, standard_pressure_levels, target_grib2_parameters};
 use crate::error::{IngestionError, Result};
 use crate::metadata::{extract_mrms_param, get_bbox_from_grid, get_model_bbox};
+use crate::tables::build_tables_for_model;
 use crate::upload::upload_zarr_directory;
 use crate::{IngestOptions, IngestionResult};
 
@@ -49,8 +50,11 @@ pub async fn ingest_grib2(
         "Ingesting GRIB2 file"
     );
 
+    // Build GRIB2 lookup tables from model config
+    let tables = build_tables_for_model(&model);
+
     // Parse GRIB2 data
-    let mut reader = grib2_parser::Grib2Reader::new(data);
+    let mut reader = grib2_parser::Grib2Reader::new(data, tables);
 
     // Track registered parameters
     let mut registered_params: HashSet<String> = HashSet::new();

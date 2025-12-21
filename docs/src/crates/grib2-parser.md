@@ -10,6 +10,8 @@ Pure Rust implementation of GRIB2 (GRIB Edition 2) parser for meteorological dat
 
 GRIB2 is the WMO standard format (FM 92) for distributing gridded meteorological data. Each file contains one or more messages, each representing a single weather parameter at a specific time and level.
 
+**Key Feature**: Parameter names and level descriptions are **config-driven** via `Grib2Tables`, loaded from model YAML configuration files. This allows adding new parameters without code changes.
+
 ## GRIB2 File Structure
 
 ```
@@ -37,17 +39,27 @@ GRIB2 is the WMO standard format (FM 92) for distributing gridded meteorological
 ## Usage Example
 
 ```rust
-use grib2_parser::Grib2Reader;
+use grib2_parser::{Grib2Reader, Grib2Tables, LevelDescription};
 use bytes::Bytes;
+use std::sync::Arc;
 
-// Read file
+// Build lookup tables from configuration (or use ingestion::build_tables_from_configs())
+let mut tables = Grib2Tables::new();
+tables.add_parameter(0, 0, 0, "TMP".to_string());  // discipline, category, number -> name
+tables.add_parameter(0, 2, 2, "UGRD".to_string());
+tables.add_level(1, LevelDescription::Static("surface".to_string()));
+tables.add_level(100, LevelDescription::Template("{value} mb".to_string()));
+tables.add_level(103, LevelDescription::Template("{value} m above ground".to_string()));
+let tables = Arc::new(tables);
+
+// Read file with tables
 let data = std::fs::read("gfs.t00z.pgrb2.0p25.f000")?;
-let mut reader = Grib2Reader::new(Bytes::from(data));
+let mut reader = Grib2Reader::new(Bytes::from(data), tables);
 
 // Iterate over messages
 while let Some(message) = reader.next_message()? {
-    println!("Parameter: {}", message.parameter());
-    println!("Level: {}", message.level());
+    println!("Parameter: {}", message.parameter());  // e.g., "TMP" or "P0_1_8" if not in tables
+    println!("Level: {}", message.level());          // e.g., "2 m above ground" or "500 mb"
     println!("Reference time: {}", message.identification.reference_time);
     println!("Valid time: {}", message.valid_time());
     
@@ -71,11 +83,12 @@ Main entry point for parsing:
 pub struct Grib2Reader {
     data: Bytes,
     current_offset: usize,
+    tables: Arc<Grib2Tables>,  // Parameter/level lookup tables
 }
 
 impl Grib2Reader {
-    /// Create reader from byte buffer
-    pub fn new(data: Bytes) -> Self;
+    /// Create reader from byte buffer with lookup tables
+    pub fn new(data: Bytes, tables: Arc<Grib2Tables>) -> Self;
     
     /// Read next message (returns None at end of file)
     pub fn next_message(&mut self) -> Grib2Result<Option<Grib2Message>>;
@@ -87,6 +100,41 @@ impl Grib2Reader {
     pub fn has_more(&self) -> bool;
 }
 ```
+
+### Grib2Tables
+
+Config-driven lookup tables for parameter names and level descriptions:
+
+```rust
+pub struct Grib2Tables {
+    parameters: HashMap<(u8, u8, u8), String>,  // (discipline, category, number) -> name
+    levels: HashMap<u8, LevelDescription>,       // level_type -> description
+}
+
+impl Grib2Tables {
+    pub fn new() -> Self;
+    
+    /// Add a parameter mapping: (discipline, category, number) -> name
+    pub fn add_parameter(&mut self, discipline: u8, category: u8, number: u8, name: String);
+    
+    /// Add a level description mapping
+    pub fn add_level(&mut self, level_type: u8, description: LevelDescription);
+    
+    /// Look up parameter name (returns "P{d}_{c}_{n}" if not found)
+    pub fn get_parameter_name(&self, discipline: u8, category: u8, number: u8) -> String;
+    
+    /// Look up level description (returns "Level type X value Y" if not found)
+    pub fn get_level_description(&self, level_type: u8, level_value: u32) -> String;
+}
+
+/// Level description - static text or template with {value} placeholder
+pub enum LevelDescription {
+    Static(String),    // e.g., "surface", "mean sea level"
+    Template(String),  // e.g., "{value} mb", "{value} m above ground"
+}
+```
+
+**Note**: Tables are typically built from model YAML configs using `ingestion::build_tables_from_configs()` or `ingestion::build_tables_for_model(model)`.
 
 ### Grib2Message
 
@@ -211,18 +259,60 @@ For PNG and JPEG2000 compressed data, the parser delegates to the external `grib
 
 ## Parameter Lookup
 
-GRIB2 uses discipline/category/number triplets to identify parameters. Common mappings:
+GRIB2 uses discipline/category/number triplets to identify parameters. These mappings are now **config-driven** via model YAML files (e.g., `config/models/gfs.yaml`).
+
+### How It Works
+
+1. Model configs define `grib2:` sections with discipline/category/number codes
+2. The `ingestion` crate builds `Grib2Tables` from these configs at runtime
+3. The parser uses the tables to translate codes to human-readable names
+4. Unknown parameters fall back to `P{discipline}_{category}_{number}` format
+
+### Example Config (from `config/models/gfs.yaml`)
+
+```yaml
+parameters:
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+      - type: isobaric
+        level_code: 100
+        display_template: "{value} mb"
+```
+
+### Common Parameter Codes
 
 | Discipline | Category | Number | Name | Short Name |
 |------------|----------|--------|------|------------|
 | 0 | 0 | 0 | Temperature | TMP |
+| 0 | 0 | 6 | Dew Point | DPT |
 | 0 | 1 | 1 | Relative Humidity | RH |
 | 0 | 2 | 2 | U-component wind | UGRD |
 | 0 | 2 | 3 | V-component wind | VGRD |
-| 0 | 3 | 0 | Pressure | PRES |
+| 0 | 3 | 1 | MSLP | PRMSL |
 | 0 | 3 | 5 | Geopotential Height | HGT |
-| 0 | 6 | 1 | Total Cloud Cover | TCDC |
 | 0 | 7 | 6 | CAPE | CAPE |
+| 0 | 7 | 7 | CIN | CIN |
+| 0 | 16 | 196 | Composite Reflectivity | REFC |
+| 209 | 0 | 16 | MRMS Reflectivity | REFL |
+
+### Level Type Codes
+
+| Code | Description | Example Display |
+|------|-------------|-----------------|
+| 1 | Surface | "surface" |
+| 100 | Isobaric (pressure) | "500 mb" |
+| 101 | Mean sea level | "mean sea level" |
+| 103 | Height above ground | "2 m above ground" |
+| 200 | Entire atmosphere | "entire atmosphere" |
 
 ## Error Handling
 

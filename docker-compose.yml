@@ -277,8 +277,11 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ALLOW_HTTP: ${S3_ALLOW_HTTP:-true}
+      # Config directory for GRIB2 parameter tables
+      CONFIG_DIR: /app/config
     volumes:
       - downloader_data:/data/downloads:ro
+      - ./config:/app/config:ro
     depends_on:
       postgres:
         condition: service_healthy

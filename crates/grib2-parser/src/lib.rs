@@ -21,11 +21,18 @@
 //! # Example
 //!
 //! ```no_run
-//! use grib2_parser::Grib2Reader;
+//! use grib2_parser::{Grib2Reader, Grib2Tables};
 //! use bytes::Bytes;
+//! use std::sync::Arc;
+//!
+//! // Build tables from your configuration
+//! let mut tables = Grib2Tables::new();
+//! tables.add_parameter(0, 0, 0, "TMP".to_string());
+//! tables.add_parameter(0, 2, 2, "UGRD".to_string());
+//! let tables = Arc::new(tables);
 //!
 //! let data = std::fs::read("gfs.grib2").unwrap();
-//! let mut reader = Grib2Reader::new(Bytes::from(data));
+//! let mut reader = Grib2Reader::new(Bytes::from(data), tables);
 //!
 //! for result in reader.iter_messages() {
 //!     let message = result.unwrap();
@@ -36,11 +43,14 @@
 //! ```
 
 pub mod sections;
+pub mod tables;
 pub mod unpacking;
 
+pub use tables::{Grib2Tables, LevelDescription};
 pub use unpacking::unpack_simple;
 
 use bytes::Bytes;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Result type for GRIB2 parser operations.
@@ -175,14 +185,20 @@ impl Grib2Message {
 pub struct Grib2Reader {
     data: Bytes,
     current_offset: usize,
+    tables: Arc<Grib2Tables>,
 }
 
 impl Grib2Reader {
-    /// Create a new GRIB2 reader from raw bytes.
-    pub fn new(data: Bytes) -> Self {
+    /// Create a new GRIB2 reader from raw bytes with parameter/level tables.
+    ///
+    /// # Arguments
+    /// * `data` - Raw GRIB2 file bytes
+    /// * `tables` - Lookup tables for parameter names and level descriptions
+    pub fn new(data: Bytes, tables: Arc<Grib2Tables>) -> Self {
         Self {
             data,
             current_offset: 0,
+            tables,
         }
     }
 
@@ -252,7 +268,7 @@ impl Grib2Reader {
                 }
             })?;
 
-        let product_definition = sections::parse_product_definition(message_data, indicator.discipline)
+        let product_definition = sections::parse_product_definition(message_data, indicator.discipline, &self.tables)
             .map_err(|e| Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse product definition: {}", e),
@@ -327,17 +343,26 @@ impl<'a> Iterator for MessageIterator<'a> {
 mod tests {
     use super::*;
 
+    fn create_test_tables() -> Arc<Grib2Tables> {
+        let mut tables = Grib2Tables::new();
+        tables.add_parameter(0, 0, 0, "TMP".to_string());
+        tables.add_parameter(0, 2, 2, "UGRD".to_string());
+        Arc::new(tables)
+    }
+
     #[test]
     fn test_grib2_magic() {
+        let tables = create_test_tables();
         let data = Bytes::from(&b"GRIB\x00\x00\x00\x02hello7777"[..]);
-        let reader = Grib2Reader::new(data);
+        let reader = Grib2Reader::new(data, tables);
         assert_eq!(reader.size(), 17);
     }
 
     #[test]
     fn test_reader_position() {
+        let tables = create_test_tables();
         let data = Bytes::from(vec![0u8; 100]);
-        let reader = Grib2Reader::new(data);
+        let reader = Grib2Reader::new(data, tables);
         assert_eq!(reader.position(), 0);
         assert!(reader.has_more());
     }

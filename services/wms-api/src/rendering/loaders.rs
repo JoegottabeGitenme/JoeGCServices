@@ -32,7 +32,9 @@ pub fn find_parameter_in_grib(
     parameter: &str, 
     level: Option<&str>
 ) -> Result<grib2_parser::Grib2Message, String> {
-    let mut reader = grib2_parser::Grib2Reader::new(grib_data);
+    // Build GRIB2 lookup tables from all model configs
+    let tables = ingestion::build_tables_from_configs();
+    let mut reader = grib2_parser::Grib2Reader::new(grib_data, tables);
     let mut first_param_match: Option<grib2_parser::Grib2Message> = None;
     
     while let Some(msg) = reader

@@ -1,4 +1,8 @@
 - Need to come up with some more validation for OGC compliance, and look into whatever hot new MAP api specs there are
+    - validation should be whatever is in the TEAM ENGINE stuff plus validating that every layer we have exposed is
+      retrievable
+    - we can also make another little validation page showing a png of all the layers currently in wms, as well as
+      copy-able urls
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
 - Need a better landing page with some sample queries
@@ -21,7 +25,6 @@
 - integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
-- satellite data still using the old grid cache i presume due to the precaching config in the models directory
 - style viewing and editing web app, view current styles and how they would look on the map
 - need to disable all caching and 'optmizations' to get a baseline performance metric, then apply them one by one to see
   how they impact performance
