@@ -137,6 +137,7 @@ pub async fn api_metrics_handler(
         "chunk_cache": {
             "entries": chunk_stats.entries,
             "bytes": chunk_stats.memory_bytes,
+            "memory_mb": chunk_stats.memory_bytes as f64 / 1024.0 / 1024.0,
             "hits": chunk_stats.hits,
             "misses": chunk_stats.misses,
             "hit_rate": chunk_hit_rate,
