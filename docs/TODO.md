@@ -1,8 +1,6 @@
 - Need to come up with some more validation for OGC compliance, and look into whatever hot new MAP api specs there are
     - validation should be whatever is in the TEAM ENGINE stuff plus validating that every layer we have exposed is
       retrievable
-    - we can also make another little validation page showing a png of all the layers currently in wms, as well as
-      copy-able urls
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
 - Need a better landing page with some sample queries
@@ -37,3 +35,7 @@
     - seems neat we can implement it if we feel like it later
 - implement the crazy radar diffing stuff to try and reduce bandwidth for radar loops
 - some kind of mismatch where MRMS is using REFD which then causes HRRR reflectivity to not render
+- need to implement custom CRS for getMap requests and optionally for WMTS to support different geographic views
+    - need to update the viewer to support different CRSs
+- add some sort of json schema for the various yaml files so that making new ones is less of a pain
+- getFeatureInfo for GOES layers coming back empty
