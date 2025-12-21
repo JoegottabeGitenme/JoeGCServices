@@ -196,15 +196,21 @@ pub async fn grid_processor_stats_handler(
         0.0
     };
     
+    let memory_mb = stats.memory_bytes as f64 / 1024.0 / 1024.0;
+    
     Json(serde_json::json!({
         "chunk_cache": {
             "entries": stats.entries,
             "bytes": stats.memory_bytes,
-            "mb": stats.memory_bytes as f64 / 1024.0 / 1024.0,
+            "memory_bytes": stats.memory_bytes,
+            "mb": memory_mb,
+            "memory_mb": memory_mb,
             "hits": stats.hits,
             "misses": stats.misses,
             "hit_rate": hit_rate,
-            "evictions": stats.evictions
+            "hit_rate_percent": hit_rate,
+            "evictions": stats.evictions,
+            "total_requests": stats.hits + stats.misses
         }
     }))
 }

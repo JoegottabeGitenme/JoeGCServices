@@ -130,7 +130,31 @@ pub fn get_styles_xml_from_file(style_file: &str) -> String {
             if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
                 let mut xml_parts = Vec::new();
                 
+                // Find the default style name (style with default: true, or first style)
+                let default_style_name = styles.iter()
+                    .find(|(_, def)| def.get("default").and_then(|d| d.as_bool()).unwrap_or(false))
+                    .map(|(name, _)| name.clone());
+                
+                // Output default style first (WMS convention)
+                if let Some(ref default_name) = default_style_name {
+                    if let Some(style_def) = styles.get(default_name) {
+                        let title = style_def.get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or(default_name);
+                        xml_parts.push(format!(
+                            "<Style><Name>{}</Name><Title>{}</Title></Style>",
+                            default_name, title
+                        ));
+                    }
+                }
+                
+                // Then output remaining styles
                 for (style_key, style_def) in styles {
+                    // Skip if this was the default (already output)
+                    if Some(style_key) == default_style_name.as_ref() {
+                        continue;
+                    }
+                    
                     let name = style_key;
                     let title = style_def.get("name")
                         .and_then(|n| n.as_str())
@@ -160,7 +184,12 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
                 let mut xml_parts = Vec::new();
-                let mut is_first = true;
+                
+                // First, find the style marked as default (or use first if none marked)
+                let default_style_name = styles.iter()
+                    .find(|(_, def)| def.get("default").and_then(|d| d.as_bool()).unwrap_or(false))
+                    .map(|(name, _)| name.as_str())
+                    .or_else(|| styles.keys().next().map(|s| s.as_str()));
                 
                 for (style_key, style_def) in styles {
                     let identifier = style_key;
@@ -168,13 +197,9 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
                         .and_then(|n| n.as_str())
                         .unwrap_or(style_key);
                     
-                    // First style is the default
-                    let default_attr = if is_first {
-                        is_first = false;
-                        " isDefault=\"true\""
-                    } else {
-                        ""
-                    };
+                    // Check if this style is the default
+                    let is_default = Some(style_key.as_str()) == default_style_name;
+                    let default_attr = if is_default { " isDefault=\"true\"" } else { "" };
                     
                     xml_parts.push(format!(
                         r#"<Style{}><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Style>"#,

@@ -7,10 +7,10 @@ display_name: "HRRR - High-Resolution Rapid Refresh"
 
 # HRRR covers CONUS only
 default_bbox:
-  west: -122.72
+  west: -134.72
   south: 21.14
   east: -60.92
-  north: 47.84
+  north: 53.84
 
 layers:
   # ==========================================================================
@@ -61,13 +61,8 @@ layers:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
-      - value: "850 mb"
-      - value: "700 mb"
-      - value: "500 mb"
-      - value: "300 mb"
-      - value: "250 mb"
 
   - id: hrrr_VGRD
     parameter: VGRD
@@ -78,13 +73,8 @@ layers:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
-      - value: "850 mb"
-      - value: "700 mb"
-      - value: "500 mb"
-      - value: "300 mb"
-      - value: "250 mb"
 
   - id: hrrr_GUST
     parameter: GUST
@@ -106,7 +96,7 @@ layers:
     composite: true
     requires: [ UGRD, VGRD ]
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
   # ==========================================================================
@@ -220,7 +210,7 @@ layers:
     parameter: CIN
     title: "CIN"
     abstract: "Convective Inhibition"
-    style_file: cape.json
+    style_file: cin.json
     units:
       native: "J/kg"
       display: "J/kg"

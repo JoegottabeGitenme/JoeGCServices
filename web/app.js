@@ -2465,11 +2465,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const wmsComplianceBtn = document.getElementById('wms-compliance-btn');
     const wmtsComplianceBtn = document.getElementById('wmts-compliance-btn');
     
+    // Navigate to compliance viewer pages on click
     if (wmsComplianceBtn) {
-        wmsComplianceBtn.addEventListener('click', runValidation);
+        wmsComplianceBtn.addEventListener('click', () => {
+            window.location.href = 'wms-compliance.html';
+        });
     }
     if (wmtsComplianceBtn) {
-        wmtsComplianceBtn.addEventListener('click', runValidation);
+        wmtsComplianceBtn.addEventListener('click', () => {
+            window.location.href = 'wmts-compliance.html';
+        });
     }
     
     // Start auto-refresh

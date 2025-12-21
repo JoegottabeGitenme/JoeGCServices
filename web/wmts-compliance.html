@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMTS 1.0.0 Compliance Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e5e7eb;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .back-link {
+            color: #60a5fa;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .back-link:hover {
+            color: #93c5fd;
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #f3f4f6;
+        }
+        
+        .header-badge {
+            background: rgba(139, 92, 246, 0.2);
+            border: 1px solid rgba(139, 92, 246, 0.4);
+            color: #a78bfa;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        /* Summary Bar */
+        .summary-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .summary-stats {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #f3f4f6;
+        }
+        
+        .stat-value.good { color: #4ade80; }
+        .stat-value.warning { color: #fbbf24; }
+        .stat-value.bad { color: #f87171; }
+        
+        .stat-label {
+            color: #9ca3af;
+            font-size: 0.85rem;
+        }
+        
+        .summary-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .filter-select, .action-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e5e7eb;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        
+        .filter-select:hover, .action-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .action-btn.primary {
+            background: rgba(139, 92, 246, 0.3);
+            border-color: rgba(139, 92, 246, 0.5);
+        }
+        
+        .action-btn.primary:hover {
+            background: rgba(139, 92, 246, 0.4);
+        }
+        
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Controls Bar */
+        .controls-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .layer-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e5e7eb;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+        
+        .nav-btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        
+        .layer-info {
+            text-align: center;
+        }
+        
+        .layer-name {
+            font-weight: 600;
+            color: #f3f4f6;
+            font-size: 1.1rem;
+        }
+        
+        .layer-title {
+            color: #9ca3af;
+            font-size: 0.85rem;
+        }
+        
+        .layer-index {
+            color: #6b7280;
+            font-size: 0.8rem;
+        }
+        
+        .dimension-controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        
+        .dimension-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .dimension-label {
+            color: #9ca3af;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+        }
+        
+        .dimension-select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e5e7eb;
+            padding: 0.4rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            max-width: 200px;
+        }
+        
+        /* Main Content */
+        .main-content {
+            margin-bottom: 1rem;
+        }
+        
+        .map-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .panel-title {
+            font-weight: 500;
+            color: #f3f4f6;
+        }
+        
+        .panel-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+        }
+        
+        .status-icon {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        
+        .status-icon.ok { background: #4ade80; box-shadow: 0 0 6px rgba(74, 222, 128, 0.5); }
+        .status-icon.error { background: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.5); }
+        .status-icon.loading { background: #fbbf24; animation: pulse 1s infinite; }
+        .status-icon.untested { background: #6b7280; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .status-text { color: #9ca3af; }
+        .status-text.ok { color: #4ade80; }
+        .status-text.error { color: #f87171; }
+        
+        #map {
+            height: 500px;
+            background: #1f2937;
+        }
+        
+        .map-stats {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+            color: #9ca3af;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .map-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .map-stat-value {
+            color: #f3f4f6;
+            font-weight: 500;
+        }
+        
+        /* URL Display */
+        .url-display {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        @media (max-width: 900px) {
+            .url-display {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .url-item {
+            margin-bottom: 0;
+        }
+        
+        .url-label {
+            color: #9ca3af;
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .copy-btn {
+            background: none;
+            border: none;
+            color: #60a5fa;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        
+        .copy-btn:hover {
+            color: #93c5fd;
+        }
+        
+        .url-value {
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.75rem;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.5rem;
+            border-radius: 4px;
+            word-break: break-all;
+            color: #c4b5fd;
+            max-height: 60px;
+            overflow-y: auto;
+        }
+        
+        /* Layer List (for broken filter) */
+        .layer-list {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .layer-list.visible {
+            display: block;
+        }
+        
+        .layer-list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+        }
+        
+        .layer-list-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .layer-list-item:last-child {
+            border-bottom: none;
+        }
+        
+        .layer-list-name {
+            font-size: 0.85rem;
+        }
+        
+        .layer-list-status {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+        
+        .layer-list-status.ok {
+            background: rgba(74, 222, 128, 0.2);
+            color: #4ade80;
+        }
+        
+        .layer-list-status.error {
+            background: rgba(248, 113, 113, 0.2);
+            color: #f87171;
+        }
+        
+        .layer-list-status.untested {
+            background: rgba(107, 114, 128, 0.2);
+            color: #9ca3af;
+        }
+        
+        /* Progress indicator for Test All */
+        .progress-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+            display: none;
+        }
+        
+        .progress-bar.visible {
+            display: block;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        /* Error display */
+        .error-panel {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        
+        .error-panel.visible {
+            display: block;
+        }
+        
+        .error-summary {
+            color: #f87171;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .error-details {
+            margin-top: 0.75rem;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #fca5a5;
+            white-space: pre-wrap;
+            word-break: break-all;
+            display: none;
+        }
+        
+        .error-panel.expanded .error-details {
+            display: block;
+        }
+        
+        /* Keyboard hint */
+        .keyboard-hint {
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.75rem;
+            margin-top: 0.5rem;
+        }
+        
+        kbd {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            padding: 0.1rem 0.4rem;
+            font-family: inherit;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <a href="index.html" class="back-link">← Back to Map</a>
+                <h1>WMTS 1.0.0 Compliance Viewer</h1>
+            </div>
+            <span class="header-badge">OGC WMTS 1.0.0</span>
+        </div>
+        
+        <!-- Summary Bar -->
+        <div class="summary-bar">
+            <div class="summary-stats">
+                <div class="stat-item">
+                    <span class="stat-value" id="working-count">0</span>
+                    <span class="stat-label">Working</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value bad" id="broken-count">0</span>
+                    <span class="stat-label">Broken</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="untested-count">0</span>
+                    <span class="stat-label">Untested</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value good" id="percent-working">--%</span>
+                    <span class="stat-label">of Tested</span>
+                </div>
+            </div>
+            <div class="summary-actions">
+                <select class="filter-select" id="filter-select">
+                    <option value="all">Show All</option>
+                    <option value="working">Working Only</option>
+                    <option value="broken">Broken Only</option>
+                    <option value="untested">Untested Only</option>
+                </select>
+                <button class="action-btn primary" id="test-all-btn">Test All Layers</button>
+            </div>
+            <div class="progress-bar" id="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+        </div>
+        
+        <!-- Layer List (shown when filter active) -->
+        <div class="layer-list" id="layer-list"></div>
+        
+        <!-- Controls Bar -->
+        <div class="controls-bar">
+            <div class="layer-nav">
+                <button class="nav-btn" id="prev-btn" title="Previous layer (←)">◀</button>
+                <div class="layer-info">
+                    <div class="layer-name" id="layer-name">Loading...</div>
+                    <div class="layer-title" id="layer-title"></div>
+                    <div class="layer-index" id="layer-index"></div>
+                </div>
+                <button class="nav-btn" id="next-btn" title="Next layer (→)">▶</button>
+            </div>
+            <div class="dimension-controls" id="dimension-controls">
+                <div class="dimension-group">
+                    <span class="dimension-label">Style:</span>
+                    <select class="dimension-select" id="style-select"></select>
+                </div>
+                <!-- Dynamic dimension selects will be added here -->
+            </div>
+        </div>
+        
+        <!-- Error Panel -->
+        <div class="error-panel" id="error-panel" onclick="this.classList.toggle('expanded')">
+            <div class="error-summary">
+                <span>▶</span>
+                <span id="error-summary-text">Error loading tiles</span>
+            </div>
+            <pre class="error-details" id="error-details"></pre>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="map-panel">
+                <div class="panel-header">
+                    <span class="panel-title">WMTS Tiles (Interactive - zoom & pan enabled)</span>
+                    <div class="panel-status" id="tile-status">
+                        <span class="status-icon untested"></span>
+                        <span class="status-text">Not tested</span>
+                    </div>
+                </div>
+                <div id="map"></div>
+                <div class="map-stats">
+                    <div class="map-stat">
+                        <span>Zoom:</span>
+                        <span class="map-stat-value" id="zoom-level">4</span>
+                    </div>
+                    <div class="map-stat">
+                        <span>Tiles Loaded:</span>
+                        <span class="map-stat-value" id="tiles-loaded">0</span>
+                    </div>
+                    <div class="map-stat">
+                        <span>Tile Errors:</span>
+                        <span class="map-stat-value" id="tile-errors">0</span>
+                    </div>
+                    <div class="map-stat">
+                        <span>Avg Load Time:</span>
+                        <span class="map-stat-value" id="avg-load-time">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- URL Display -->
+        <div class="url-display">
+            <div class="url-item">
+                <div class="url-label">
+                    <span>WMTS KVP Tile URL Pattern</span>
+                    <button class="copy-btn" onclick="copyUrl('kvp-url')">Copy</button>
+                </div>
+                <div class="url-value" id="kvp-url">-</div>
+            </div>
+            <div class="url-item">
+                <div class="url-label">
+                    <span>WMTS REST Tile URL Pattern</span>
+                    <button class="copy-btn" onclick="copyUrl('rest-url')">Copy</button>
+                </div>
+                <div class="url-value" id="rest-url">-</div>
+            </div>
+        </div>
+        
+        <div class="keyboard-hint">
+            Use <kbd>←</kbd> <kbd>→</kbd> to navigate layers, <kbd>Space</kbd> to re-test
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        // API URL detection
+        const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
+        
+        // State
+        let layers = [];
+        let currentIndex = 0;
+        let layerStatus = {}; // { layerName: { status: 'ok'|'error'|'untested', tilesLoaded, tileErrors, error } }
+        let map = null;
+        let currentTileLayer = null;
+        let testingAll = false;
+        let currentFilter = 'all';
+        let filteredIndices = [];
+        
+        // Tile loading stats for current layer
+        let tileStats = {
+            loaded: 0,
+            errors: 0,
+            loadTimes: [],
+            errorDetails: []
+        };
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            initMap();
+            await loadCapabilities();
+            setupEventListeners();
+            if (layers.length > 0) {
+                updateFilteredIndices();
+                displayLayer(0);
+            }
+        });
+        
+        // Initialize Leaflet map (interactive)
+        function initMap() {
+            map = L.map('map', {
+                center: [20, 0],
+                zoom: 2
+            });
+            
+            // Dark basemap
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Update zoom display on move
+            map.on('zoomend', () => {
+                document.getElementById('zoom-level').textContent = map.getZoom();
+            });
+        }
+        
+        // Load WMTS GetCapabilities
+        async function loadCapabilities() {
+            try {
+                const response = await fetch(`${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`);
+                const text = await response.text();
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(text, 'text/xml');
+                
+                // Parse layers from Contents
+                const layerElements = xml.querySelectorAll('Contents > Layer');
+                layers = [];
+                
+                layerElements.forEach(layerEl => {
+                    // WMTS uses ows:Identifier
+                    const name = layerEl.querySelector('Identifier')?.textContent;
+                    const title = layerEl.querySelector('Title')?.textContent;
+                    
+                    if (!name) return;
+                    
+                    // Parse styles
+                    const styles = [];
+                    layerEl.querySelectorAll('Style').forEach(styleEl => {
+                        styles.push({
+                            name: styleEl.querySelector('Identifier')?.textContent || 'default',
+                            title: styleEl.querySelector('Title')?.textContent || 'Default'
+                        });
+                    });
+                    
+                    // Parse dimensions
+                    const dimensions = {};
+                    layerEl.querySelectorAll('Dimension').forEach(dimEl => {
+                        const dimName = dimEl.querySelector('Identifier')?.textContent;
+                        const defaultVal = dimEl.querySelector('Default')?.textContent || '';
+                        const values = [];
+                        dimEl.querySelectorAll('Value').forEach(v => values.push(v.textContent));
+                        if (dimName) {
+                            dimensions[dimName] = { default: defaultVal, values };
+                        }
+                    });
+                    
+                    // Parse bounding box
+                    const bboxEl = layerEl.querySelector('WGS84BoundingBox');
+                    let bounds = { west: -180, east: 180, south: -90, north: 90 };
+                    if (bboxEl) {
+                        const lowerCorner = bboxEl.querySelector('LowerCorner')?.textContent?.split(' ');
+                        const upperCorner = bboxEl.querySelector('UpperCorner')?.textContent?.split(' ');
+                        if (lowerCorner && upperCorner) {
+                            bounds = {
+                                west: parseFloat(lowerCorner[0]) || -180,
+                                south: parseFloat(lowerCorner[1]) || -90,
+                                east: parseFloat(upperCorner[0]) || 180,
+                                north: parseFloat(upperCorner[1]) || 90
+                            };
+                        }
+                    }
+                    
+                    layers.push({ name, title, styles, dimensions, bounds });
+                });
+                
+                // Initialize all as untested
+                layers.forEach(l => {
+                    layerStatus[l.name] = { status: 'untested' };
+                });
+                
+                updateSummary();
+                
+            } catch (error) {
+                console.error('Failed to load capabilities:', error);
+                document.getElementById('layer-name').textContent = 'Error loading capabilities';
+            }
+        }
+        
+        // Setup event listeners
+        function setupEventListeners() {
+            document.getElementById('prev-btn').addEventListener('click', () => navigateLayer(-1));
+            document.getElementById('next-btn').addEventListener('click', () => navigateLayer(1));
+            document.getElementById('test-all-btn').addEventListener('click', testAllLayers);
+            document.getElementById('filter-select').addEventListener('change', onFilterChange);
+            document.getElementById('style-select').addEventListener('change', () => loadCurrentLayer());
+            
+            // Keyboard navigation
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+                
+                if (e.key === 'ArrowLeft') {
+                    navigateLayer(-1);
+                } else if (e.key === 'ArrowRight') {
+                    navigateLayer(1);
+                } else if (e.key === ' ') {
+                    e.preventDefault();
+                    loadCurrentLayer();
+                }
+            });
+        }
+        
+        // Navigate to previous/next layer
+        function navigateLayer(direction) {
+            if (filteredIndices.length === 0) return;
+            
+            const currentFilteredPos = filteredIndices.indexOf(currentIndex);
+            let newFilteredPos = currentFilteredPos + direction;
+            
+            if (newFilteredPos < 0) newFilteredPos = filteredIndices.length - 1;
+            if (newFilteredPos >= filteredIndices.length) newFilteredPos = 0;
+            
+            displayLayer(filteredIndices[newFilteredPos]);
+        }
+        
+        // Display a specific layer
+        function displayLayer(index) {
+            if (index < 0 || index >= layers.length) return;
+            
+            currentIndex = index;
+            const layer = layers[index];
+            
+            // Update layer info
+            document.getElementById('layer-name').textContent = layer.name;
+            document.getElementById('layer-title').textContent = layer.title || '';
+            
+            const filteredPos = filteredIndices.indexOf(index);
+            document.getElementById('layer-index').textContent = 
+                `${filteredPos + 1} of ${filteredIndices.length}` + 
+                (filteredIndices.length !== layers.length ? ` (${layers.length} total)` : '');
+            
+            // Update nav buttons
+            document.getElementById('prev-btn').disabled = filteredIndices.length <= 1;
+            document.getElementById('next-btn').disabled = filteredIndices.length <= 1;
+            
+            // Populate style selector
+            const styleSelect = document.getElementById('style-select');
+            styleSelect.innerHTML = '';
+            layer.styles.forEach(style => {
+                const opt = document.createElement('option');
+                opt.value = style.name;
+                opt.textContent = style.title;
+                styleSelect.appendChild(opt);
+            });
+            
+            // Populate dimension controls
+            populateDimensionControls(layer);
+            
+            // Load the tile layer
+            loadCurrentLayer();
+        }
+        
+        // Populate dimension dropdowns
+        function populateDimensionControls(layer) {
+            const container = document.getElementById('dimension-controls');
+            
+            // Remove existing dimension selects (keep style)
+            const existingDims = container.querySelectorAll('.dimension-group:not(:first-child)');
+            existingDims.forEach(el => el.remove());
+            
+            // Add dimension selects
+            const dimOrder = ['RUN', 'FORECAST', 'TIME', 'ELEVATION'];
+            dimOrder.forEach(dimName => {
+                if (!layer.dimensions[dimName]) return;
+                
+                const dim = layer.dimensions[dimName];
+                const group = document.createElement('div');
+                group.className = 'dimension-group';
+                
+                const label = document.createElement('span');
+                label.className = 'dimension-label';
+                label.textContent = dimName + ':';
+                
+                const select = document.createElement('select');
+                select.className = 'dimension-select';
+                select.id = `dim-${dimName}`;
+                select.addEventListener('change', () => loadCurrentLayer());
+                
+                // Limit displayed values for large arrays (like TIME)
+                const values = dim.values.slice(0, 50);
+                values.forEach(val => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = formatDimensionValue(dimName, val);
+                    if (val === dim.default) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                
+                if (dim.values.length > 50) {
+                    const opt = document.createElement('option');
+                    opt.disabled = true;
+                    opt.textContent = `... and ${dim.values.length - 50} more`;
+                    select.appendChild(opt);
+                }
+                
+                group.appendChild(label);
+                group.appendChild(select);
+                container.appendChild(group);
+            });
+        }
+        
+        // Format dimension value for display
+        function formatDimensionValue(dimName, value) {
+            if (dimName === 'TIME' || dimName === 'RUN') {
+                try {
+                    const date = new Date(value);
+                    return date.toLocaleString('en-US', { 
+                        month: 'short', day: 'numeric', 
+                        hour: '2-digit', minute: '2-digit',
+                        hour12: false
+                    });
+                } catch {
+                    return value;
+                }
+            }
+            if (dimName === 'FORECAST') {
+                return `+${value}h`;
+            }
+            return value;
+        }
+        
+        // Get current dimension values
+        function getCurrentDimensions() {
+            const dims = {};
+            const layer = layers[currentIndex];
+            
+            Object.keys(layer.dimensions || {}).forEach(dimName => {
+                const select = document.getElementById(`dim-${dimName}`);
+                if (select) {
+                    dims[dimName] = select.value;
+                }
+            });
+            
+            return dims;
+        }
+        
+        // Load the current layer as WMTS tiles
+        function loadCurrentLayer() {
+            const layer = layers[currentIndex];
+            const style = document.getElementById('style-select').value;
+            const dims = getCurrentDimensions();
+            
+            // Reset tile stats
+            tileStats = { loaded: 0, errors: 0, loadTimes: [], errorDetails: [] };
+            updateTileStats();
+            
+            // Hide error panel
+            document.getElementById('error-panel').classList.remove('visible', 'expanded');
+            
+            // Set loading state
+            setStatus('tile-status', 'loading', 'Loading tiles...');
+            
+            // Build URLs for display
+            const kvpUrl = buildKvpUrl(layer, style, dims);
+            const restUrl = buildRestUrl(layer, style);
+            
+            document.getElementById('kvp-url').textContent = kvpUrl;
+            document.getElementById('rest-url').textContent = restUrl;
+            
+            // Remove existing tile layer
+            if (currentTileLayer) {
+                map.removeLayer(currentTileLayer);
+            }
+            
+            // Create WMTS tile layer using KVP
+            const tileUrl = buildTileUrl(layer, style, dims);
+            
+            currentTileLayer = L.tileLayer(tileUrl, {
+                attribution: `${layer.name} (WMTS)`,
+                maxZoom: 18,
+                tileSize: 256,
+                opacity: 0.8
+            });
+            
+            // Track tile loading
+            const loadStartTimes = {};
+            
+            currentTileLayer.on('tileloadstart', (e) => {
+                const key = `${e.coords.x}_${e.coords.y}_${e.coords.z}`;
+                loadStartTimes[key] = Date.now();
+            });
+            
+            currentTileLayer.on('tileload', (e) => {
+                const key = `${e.coords.x}_${e.coords.y}_${e.coords.z}`;
+                const startTime = loadStartTimes[key];
+                if (startTime) {
+                    tileStats.loadTimes.push(Date.now() - startTime);
+                }
+                tileStats.loaded++;
+                updateTileStats();
+                checkLayerStatus();
+            });
+            
+            currentTileLayer.on('tileerror', (e) => {
+                tileStats.errors++;
+                tileStats.errorDetails.push({
+                    coords: e.coords,
+                    error: e.error || 'Unknown error'
+                });
+                updateTileStats();
+                checkLayerStatus();
+            });
+            
+            currentTileLayer.addTo(map);
+            
+            // Fit to layer bounds
+            const bounds = [[layer.bounds.south, layer.bounds.west], [layer.bounds.north, layer.bounds.east]];
+            map.fitBounds(bounds, { padding: [20, 20] });
+        }
+        
+        // Build WMTS KVP tile URL template
+        function buildTileUrl(layer, style, dims) {
+            let url = `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0` +
+                `&LAYER=${layer.name}&STYLE=${style}&FORMAT=image/png` +
+                `&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`;
+            
+            // Add dimensions
+            Object.entries(dims).forEach(([key, value]) => {
+                url += `&${key}=${encodeURIComponent(value)}`;
+            });
+            
+            return url;
+        }
+        
+        // Build KVP URL for display (with example tile coords)
+        function buildKvpUrl(layer, style, dims) {
+            let url = `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0` +
+                `&LAYER=${layer.name}&STYLE=${style}&FORMAT=image/png` +
+                `&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=4&TILEROW=5&TILECOL=4`;
+            
+            Object.entries(dims).forEach(([key, value]) => {
+                url += `&${key}=${encodeURIComponent(value)}`;
+            });
+            
+            return url;
+        }
+        
+        // Build REST URL pattern for display
+        function buildRestUrl(layer, style) {
+            return `${API_BASE}/wmts/rest/${layer.name}/${style}/WebMercatorQuad/{z}/{y}/{x}.png`;
+        }
+        
+        // Update tile stats display
+        function updateTileStats() {
+            document.getElementById('tiles-loaded').textContent = tileStats.loaded;
+            document.getElementById('tile-errors').textContent = tileStats.errors;
+            
+            if (tileStats.loadTimes.length > 0) {
+                const avg = Math.round(tileStats.loadTimes.reduce((a, b) => a + b, 0) / tileStats.loadTimes.length);
+                document.getElementById('avg-load-time').textContent = `${avg}ms`;
+            } else {
+                document.getElementById('avg-load-time').textContent = '--';
+            }
+        }
+        
+        // Check and update layer status based on tile loading
+        function checkLayerStatus() {
+            const layer = layers[currentIndex];
+            
+            if (tileStats.errors > 0 && tileStats.loaded === 0) {
+                // All tiles failed
+                setStatus('tile-status', 'error', `Error (${tileStats.errors} failed)`);
+                showError(`All ${tileStats.errors} tiles failed to load`, tileStats.errorDetails);
+                layerStatus[layer.name] = { 
+                    status: 'error', 
+                    tilesLoaded: tileStats.loaded, 
+                    tileErrors: tileStats.errors,
+                    error: 'All tiles failed'
+                };
+            } else if (tileStats.errors > 0) {
+                // Some tiles failed
+                setStatus('tile-status', 'error', `Partial (${tileStats.loaded} ok, ${tileStats.errors} failed)`);
+                showError(`${tileStats.errors} tiles failed to load`, tileStats.errorDetails);
+                layerStatus[layer.name] = { 
+                    status: 'error', 
+                    tilesLoaded: tileStats.loaded, 
+                    tileErrors: tileStats.errors,
+                    error: `${tileStats.errors} tile errors`
+                };
+            } else if (tileStats.loaded > 0) {
+                // All tiles succeeded
+                const avgTime = Math.round(tileStats.loadTimes.reduce((a, b) => a + b, 0) / tileStats.loadTimes.length);
+                setStatus('tile-status', 'ok', `OK (${tileStats.loaded} tiles, avg ${avgTime}ms)`);
+                document.getElementById('error-panel').classList.remove('visible');
+                layerStatus[layer.name] = { 
+                    status: 'ok', 
+                    tilesLoaded: tileStats.loaded, 
+                    tileErrors: 0,
+                    avgTime
+                };
+            }
+            
+            updateSummary();
+            updateLayerList();
+        }
+        
+        // Show error panel
+        function showError(summary, details) {
+            const panel = document.getElementById('error-panel');
+            panel.classList.add('visible');
+            document.getElementById('error-summary-text').textContent = summary;
+            document.getElementById('error-details').textContent = JSON.stringify(details, null, 2);
+        }
+        
+        // Set status indicator
+        function setStatus(elementId, status, text) {
+            const container = document.getElementById(elementId);
+            const icon = container.querySelector('.status-icon');
+            const textEl = container.querySelector('.status-text');
+            
+            icon.className = 'status-icon ' + status;
+            textEl.className = 'status-text ' + status;
+            textEl.textContent = text;
+        }
+        
+        // Update summary stats
+        function updateSummary() {
+            const working = Object.values(layerStatus).filter(s => s.status === 'ok').length;
+            const broken = Object.values(layerStatus).filter(s => s.status === 'error').length;
+            const untested = Object.values(layerStatus).filter(s => s.status === 'untested').length;
+            const tested = working + broken;
+            const percent = tested > 0 ? Math.round((working / tested) * 100) : 0;
+            
+            document.getElementById('working-count').textContent = working;
+            document.getElementById('broken-count').textContent = broken;
+            document.getElementById('untested-count').textContent = untested;
+            
+            const percentEl = document.getElementById('percent-working');
+            percentEl.textContent = tested > 0 ? `${percent}%` : '--%';
+            percentEl.className = 'stat-value ' + (percent >= 90 ? 'good' : percent >= 50 ? 'warning' : 'bad');
+        }
+        
+        // Filter change handler
+        function onFilterChange(e) {
+            currentFilter = e.target.value;
+            updateFilteredIndices();
+            updateLayerList();
+            
+            // If current layer doesn't match filter, jump to first matching
+            if (!filteredIndices.includes(currentIndex) && filteredIndices.length > 0) {
+                displayLayer(filteredIndices[0]);
+            }
+            
+            // Show/hide layer list based on filter
+            const layerListEl = document.getElementById('layer-list');
+            layerListEl.classList.toggle('visible', currentFilter !== 'all');
+        }
+        
+        // Update filtered indices
+        function updateFilteredIndices() {
+            filteredIndices = [];
+            
+            layers.forEach((layer, index) => {
+                const status = layerStatus[layer.name]?.status || 'untested';
+                
+                if (currentFilter === 'all') {
+                    filteredIndices.push(index);
+                } else if (currentFilter === 'working' && status === 'ok') {
+                    filteredIndices.push(index);
+                } else if (currentFilter === 'broken' && status === 'error') {
+                    filteredIndices.push(index);
+                } else if (currentFilter === 'untested' && status === 'untested') {
+                    filteredIndices.push(index);
+                }
+            });
+        }
+        
+        // Update layer list display
+        function updateLayerList() {
+            const listEl = document.getElementById('layer-list');
+            
+            if (currentFilter === 'all') {
+                listEl.innerHTML = '';
+                return;
+            }
+            
+            listEl.innerHTML = filteredIndices.map(index => {
+                const layer = layers[index];
+                const status = layerStatus[layer.name]?.status || 'untested';
+                const statusText = status === 'ok' ? 'OK' : status === 'error' ? 'Error' : 'Untested';
+                
+                return `
+                    <div class="layer-list-item" onclick="displayLayer(${index})">
+                        <span class="layer-list-name">${escapeHtml(layer.name)}</span>
+                        <span class="layer-list-status ${status}">${statusText}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Test all layers
+        async function testAllLayers() {
+            if (testingAll) return;
+            
+            testingAll = true;
+            const btn = document.getElementById('test-all-btn');
+            btn.disabled = true;
+            btn.textContent = 'Testing...';
+            
+            const progressBar = document.getElementById('progress-bar');
+            const progressFill = document.getElementById('progress-fill');
+            progressBar.classList.add('visible');
+            
+            for (let i = 0; i < layers.length; i++) {
+                // Update progress
+                const percent = Math.round(((i + 1) / layers.length) * 100);
+                progressFill.style.width = `${percent}%`;
+                btn.textContent = `Testing ${i + 1}/${layers.length}...`;
+                
+                // Display and load layer
+                displayLayer(i);
+                
+                // Wait for tiles to load (or timeout)
+                await waitForTileLoad(3000);
+                
+                // Small delay between layers
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            
+            testingAll = false;
+            btn.disabled = false;
+            btn.textContent = 'Test All Layers';
+            progressBar.classList.remove('visible');
+            
+            updateFilteredIndices();
+            updateLayerList();
+        }
+        
+        // Wait for tiles to load or timeout
+        function waitForTileLoad(timeout) {
+            return new Promise(resolve => {
+                const startTime = Date.now();
+                const startLoaded = tileStats.loaded;
+                const startErrors = tileStats.errors;
+                
+                const check = () => {
+                    const elapsed = Date.now() - startTime;
+                    const changed = tileStats.loaded !== startLoaded || tileStats.errors !== startErrors;
+                    
+                    if (elapsed >= timeout) {
+                        resolve();
+                    } else if (tileStats.loaded > 0 || tileStats.errors > 0) {
+                        // Wait a bit more for additional tiles
+                        setTimeout(resolve, 500);
+                    } else {
+                        setTimeout(check, 100);
+                    }
+                };
+                
+                check();
+            });
+        }
+        
+        // Copy URL to clipboard
+        function copyUrl(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                // Brief visual feedback
+                const btn = event.target;
+                const original = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = original, 1000);
+            });
+        }
+        
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

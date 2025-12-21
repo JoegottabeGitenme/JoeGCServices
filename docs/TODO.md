@@ -37,4 +37,3 @@
     - seems neat we can implement it if we feel like it later
 - implement the crazy radar diffing stuff to try and reduce bandwidth for radar loops
 - some kind of mismatch where MRMS is using REFD which then causes HRRR reflectivity to not render
-- chunk cache resetting to 0 constantly
