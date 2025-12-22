@@ -207,6 +207,12 @@ impl CleanupTask {
             let deleted = self.state.catalog.delete_expired().await?;
             stats.records_deleted = deleted;
             info!(count = deleted, "Deleted expired records from database");
+            
+            // Invalidate capabilities cache when data is deleted
+            if deleted > 0 {
+                self.state.capabilities_cache.invalidate().await;
+                tracing::debug!("Invalidated capabilities cache after cleanup deleted {} records", deleted);
+            }
         }
 
         info!(

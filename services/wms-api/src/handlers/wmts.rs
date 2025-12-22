@@ -25,6 +25,7 @@ use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileC
 use crate::state::AppState;
 use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
+use storage::ParameterAvailability;
 use super::common::{
     wmts_exception, DimensionParams, WmtsDimensionParams,
     get_wmts_styles_xml_from_file,
@@ -179,29 +180,52 @@ pub async fn xyz_tile_handler(
 // ============================================================================
 
 async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
-    let models = state.catalog.list_models().await.unwrap_or_default();
-    
-    let mut model_params = HashMap::new();
-    let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
-    let mut param_levels: HashMap<String, Vec<String>> = HashMap::new();
-    
-    for model in &models {
-        let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
-        
-        for param in &params_list {
-            let levels = state.catalog.get_available_levels(model, param).await.unwrap_or_default();
-            let key = format!("{}_{}", model, param);
-            param_levels.insert(key, levels);
-        }
-        
-        model_params.insert(model.clone(), params_list);
-        let dimensions = state.catalog.get_model_dimensions(model).await.unwrap_or_default();
-        model_dimensions.insert(model.clone(), dimensions);
+    // Check cache first
+    if let Some(cached_xml) = state.capabilities_cache.get_wmts().await {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/xml")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(cached_xml.into())
+            .unwrap();
     }
-    
+
+    // Build capabilities from layer configs (config-driven approach)
+    // Only include layers that have data in the catalog
     let layer_configs = state.layer_configs.read().await;
-    let xml = build_wmts_capabilities_xml(&models, &model_params, &model_dimensions, &param_levels, &state.model_dimensions, &layer_configs);
     
+    // Collect availability data for each configured layer
+    let mut param_availability: HashMap<String, ParameterAvailability> = HashMap::new();
+    
+    for model_id in layer_configs.models() {
+        if let Some(model_config) = layer_configs.get_model(model_id) {
+            for layer in &model_config.layers {
+                // Skip composite layers - they're handled separately
+                if layer.composite {
+                    continue;
+                }
+                
+                // Check if data exists for this layer
+                if let Ok(Some(availability)) = state.catalog
+                    .get_parameter_availability(model_id, &layer.parameter)
+                    .await
+                {
+                    let key = format!("{}_{}", model_id, layer.parameter);
+                    param_availability.insert(key, availability);
+                }
+            }
+        }
+    }
+
+    let xml = build_wmts_capabilities_xml_v2(
+        &layer_configs,
+        &param_availability,
+        &state.model_dimensions,
+    );
+
+    // Cache the result
+    state.capabilities_cache.set_wmts(xml.clone()).await;
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
@@ -564,9 +588,12 @@ async fn prefetch_single_tile(
 }
 
 // ============================================================================
-// WMTS Capabilities XML Builder
+// WMTS Capabilities XML Builder (Legacy - kept for reference)
 // ============================================================================
 
+/// Legacy capabilities builder - catalog-driven approach.
+/// Replaced by build_wmts_capabilities_xml_v2 which is config-driven.
+#[allow(dead_code)]
 fn build_wmts_capabilities_xml(
     models: &[String],
     model_params: &HashMap<String, Vec<String>>,
@@ -681,6 +708,7 @@ fn build_wmts_capabilities_xml(
     )
 }
 
+#[allow(dead_code)]
 fn build_time_dimensions(is_observational: bool, runs: &[String], forecasts: &[i32]) -> String {
     if is_observational {
         let time_values = if runs.is_empty() {
@@ -728,6 +756,7 @@ fn build_time_dimensions(is_observational: bool, runs: &[String], forecasts: &[i
     }
 }
 
+#[allow(dead_code)]
 fn build_elevation_dimension(levels: &[String]) -> String {
     if levels.len() <= 1 {
         return String::new();
@@ -775,6 +804,270 @@ fn build_tile_matrices() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Build WMTS capabilities XML from layer configs (config-driven approach).
+/// Only includes layers that have data available in the catalog.
+fn build_wmts_capabilities_xml_v2(
+    layer_configs: &LayerConfigRegistry,
+    param_availability: &HashMap<String, ParameterAvailability>,
+    dimension_registry: &ModelDimensionRegistry,
+) -> String {
+    let mut all_layers: Vec<String> = Vec::new();
+
+    for model_id in layer_configs.models() {
+        let Some(model_config) = layer_configs.get_model(model_id) else {
+            continue;
+        };
+
+        let is_observational = dimension_registry.is_observation(model_id);
+        
+        // Track availability for composite layer validation (e.g., WIND_BARBS)
+        let mut ugrd_availability: Option<&ParameterAvailability> = None;
+        let mut vgrd_availability: Option<&ParameterAvailability> = None;
+
+        for layer in &model_config.layers {
+            // Skip composite layers for now - handle them after regular layers
+            if layer.composite {
+                continue;
+            }
+
+            let key = format!("{}_{}", model_id, layer.parameter);
+            let Some(availability) = param_availability.get(&key) else {
+                // No data for this layer - skip it
+                continue;
+            };
+
+            // Track UGRD/VGRD for wind barbs
+            if layer.parameter == "UGRD" {
+                ugrd_availability = Some(availability);
+            } else if layer.parameter == "VGRD" {
+                vgrd_availability = Some(availability);
+            }
+
+            let layer_id = format!("{}_{}", model_id, layer.parameter);
+            let layer_title = format!("{} - {}", model_config.display_name, layer.title);
+
+            // Build dimensions for this specific layer
+            let time_dimensions = build_layer_time_dimensions_wmts(availability, is_observational);
+            let elevation_dim = build_layer_elevation_dimension_wmts(&availability.levels);
+
+            // Get styles from style file
+            let style_path = layer_configs.get_style_path(layer);
+            let styles = get_wmts_styles_xml_from_file(&style_path);
+
+            // Build bounding box
+            let (west, east, south, north) = normalize_bbox_wmts(&availability.bbox);
+
+            all_layers.push(format!(
+                r#"    <Layer>
+      <ows:Title>{}</ows:Title>
+      <ows:Identifier>{}</ows:Identifier>
+      <ows:WGS84BoundingBox>
+        <ows:LowerCorner>{} {}</ows:LowerCorner>
+        <ows:UpperCorner>{} {}</ows:UpperCorner>
+      </ows:WGS84BoundingBox>
+{}
+      <Format>image/png</Format>
+      <TileMatrixSetLink>
+        <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
+      </TileMatrixSetLink>
+{}{}
+      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+    </Layer>"#,
+                layer_title, layer_id,
+                west, south, east, north,
+                styles,
+                time_dimensions, elevation_dim,
+                layer_id
+            ));
+        }
+
+        // Handle WIND_BARBS composite layer
+        if let (Some(ugrd), Some(vgrd)) = (ugrd_availability, vgrd_availability) {
+            // Find common levels between UGRD and VGRD
+            let common_levels: Vec<String> = ugrd.levels.iter()
+                .filter(|l| vgrd.levels.contains(l))
+                .cloned()
+                .collect();
+
+            // Find common times between UGRD and VGRD
+            let common_times: Vec<String> = ugrd.times.iter()
+                .filter(|t| vgrd.times.contains(t))
+                .cloned()
+                .collect();
+
+            // Find common forecast hours
+            let common_forecast_hours: Vec<i32> = ugrd.forecast_hours.iter()
+                .filter(|h| vgrd.forecast_hours.contains(h))
+                .copied()
+                .collect();
+
+            // Only include WIND_BARBS if there's common data
+            if !common_times.is_empty() && (!common_levels.is_empty() || is_observational) {
+                let wind_availability = ParameterAvailability {
+                    times: common_times,
+                    forecast_hours: common_forecast_hours,
+                    levels: common_levels,
+                    bbox: ugrd.bbox.clone(),
+                };
+
+                let layer_id = format!("{}_WIND_BARBS", model_id);
+                let time_dimensions = build_layer_time_dimensions_wmts(&wind_availability, is_observational);
+                let elevation_dim = build_layer_elevation_dimension_wmts(&wind_availability.levels);
+
+                let (west, east, south, north) = normalize_bbox_wmts(&ugrd.bbox);
+
+                all_layers.push(format!(
+                    r#"    <Layer>
+      <ows:Title>{} - Wind Barbs</ows:Title>
+      <ows:Identifier>{}</ows:Identifier>
+      <ows:WGS84BoundingBox>
+        <ows:LowerCorner>{} {}</ows:LowerCorner>
+        <ows:UpperCorner>{} {}</ows:UpperCorner>
+      </ows:WGS84BoundingBox>
+      <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
+      <Format>image/png</Format>
+      <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
+{}{}
+      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+    </Layer>"#,
+                    model_config.display_name, layer_id,
+                    west, south, east, north,
+                    time_dimensions, elevation_dim,
+                    layer_id
+                ));
+            }
+        }
+    }
+
+    let layers = all_layers.join("\n");
+    let tile_matrices = build_tile_matrices();
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Capabilities xmlns="http://www.opengis.net/wmts/1.0"
+    xmlns:ows="http://www.opengis.net/ows/1.1"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    version="1.0.0">
+  <ows:ServiceIdentification>
+    <ows:Title>Weather WMTS Service</ows:Title>
+    <ows:ServiceType>OGC WMTS</ows:ServiceType>
+    <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
+  </ows:ServiceIdentification>
+  <Contents>
+{}
+    <TileMatrixSet>
+      <ows:Identifier>WebMercatorQuad</ows:Identifier>
+      <ows:SupportedCRS>urn:ogc:def:crs:EPSG::3857</ows:SupportedCRS>
+{}
+    </TileMatrixSet>
+  </Contents>
+</Capabilities>"#,
+        layers, tile_matrices
+    )
+}
+
+/// Build time dimension XML for a WMTS layer based on actual data availability.
+fn build_layer_time_dimensions_wmts(
+    availability: &ParameterAvailability,
+    is_observational: bool,
+) -> String {
+    if is_observational {
+        let time_values = if availability.times.is_empty() {
+            "        <Value>latest</Value>".to_string()
+        } else {
+            availability.times.iter()
+                .map(|v| format!("        <Value>{}</Value>", v))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        format!(
+            r#"      <Dimension>
+        <ows:Identifier>time</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+            default, time_values
+        )
+    } else {
+        let run_values = if availability.times.is_empty() {
+            "        <Value>latest</Value>".to_string()
+        } else {
+            availability.times.iter()
+                .map(|v| format!("        <Value>{}</Value>", v))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let run_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        
+        let forecast_values = if availability.forecast_hours.is_empty() {
+            "        <Value>0</Value>".to_string()
+        } else {
+            availability.forecast_hours.iter()
+                .map(|v| format!("        <Value>{}</Value>", v))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let forecast_default = availability.forecast_hours.first().unwrap_or(&0);
+        
+        format!(
+            r#"      <Dimension>
+        <ows:Identifier>run</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>
+      <Dimension>
+        <ows:Identifier>forecast</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+            run_default, run_values, forecast_default, forecast_values
+        )
+    }
+}
+
+/// Build elevation dimension XML for WMTS layer.
+fn build_layer_elevation_dimension_wmts(levels: &[String]) -> String {
+    if levels.len() <= 1 {
+        return String::new();
+    }
+    
+    let mut sorted = levels.to_vec();
+    sorted.sort_by(|a, b| {
+        let av = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+        let bv = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+        bv.cmp(&av)
+    });
+    
+    let values = sorted.iter()
+        .map(|v| format!("        <Value>{}</Value>", v))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let default = sorted.first().map(|s| s.as_str()).unwrap_or("");
+    
+    format!(
+        r#"
+      <Dimension>
+        <ows:Identifier>elevation</ows:Identifier>
+        <Default>{}</Default>
+{}
+      </Dimension>"#,
+        default, values
+    )
+}
+
+/// Normalize bounding box longitude to -180/180 for WMTS.
+fn normalize_bbox_wmts(bbox: &wms_common::BoundingBox) -> (f64, f64, f64, f64) {
+    let (west, east) = if bbox.min_x == 0.0 && bbox.max_x == 360.0 {
+        (-180.0, 180.0)
+    } else {
+        let w = if bbox.min_x > 180.0 { bbox.min_x - 360.0 } else { bbox.min_x };
+        let e = if bbox.max_x > 180.0 { bbox.max_x - 360.0 } else { bbox.max_x };
+        (w, e)
+    };
+    (west, east, bbox.min_y, bbox.max_y)
 }
 
 // ============================================================================

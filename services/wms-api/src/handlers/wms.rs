@@ -18,6 +18,7 @@ use tracing::{info, instrument, error};
 use crate::state::AppState;
 use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
+use storage::ParameterAvailability;
 use super::common::{
     wms_exception, mercator_to_wgs84, DimensionParams,
     get_styles_xml_from_file,
@@ -296,41 +297,53 @@ pub async fn wms_handler(
 
 async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Response {
     let version = params.version.as_deref().unwrap_or("1.3.0");
-    let models = state.catalog.list_models().await.unwrap_or_default();
+    
+    // Check cache first
+    if let Some(cached_xml) = state.capabilities_cache.get_wms().await {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/xml")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(cached_xml.into())
+            .unwrap();
+    }
 
-    // Get parameters and dimensions for each model
-    let mut model_params = HashMap::new();
-    let mut model_dimensions: HashMap<String, (Vec<String>, Vec<i32>)> = HashMap::new();
-    let mut param_levels: HashMap<String, Vec<String>> = HashMap::new();
-    let mut model_bboxes = HashMap::new();
-
-    for model in &models {
-        let params_list = state.catalog.list_parameters(model).await.unwrap_or_default();
-
-        // Get levels for each parameter
-        for param in &params_list {
-            let levels = state.catalog.get_available_levels(model, param).await.unwrap_or_default();
-            let key = format!("{}_{}", model, param);
-            param_levels.insert(key, levels);
-        }
-
-        model_params.insert(model.clone(), params_list);
-
-        // Get RUN and FORECAST dimensions
-        let dimensions = state.catalog.get_model_dimensions(model).await.unwrap_or_default();
-        model_dimensions.insert(model.clone(), dimensions);
-
-        // Get bounding box for the model
-        if let Ok(bbox) = state.catalog.get_model_bbox(model).await {
-            model_bboxes.insert(model.clone(), bbox);
+    // Build capabilities from layer configs (config-driven approach)
+    // Only include layers that have data in the catalog
+    let layer_configs = state.layer_configs.read().await;
+    
+    // Collect availability data for each configured layer
+    let mut param_availability: HashMap<String, storage::ParameterAvailability> = HashMap::new();
+    
+    for model_id in layer_configs.models() {
+        if let Some(model_config) = layer_configs.get_model(model_id) {
+            for layer in &model_config.layers {
+                // Skip composite layers - they're handled separately
+                if layer.composite {
+                    continue;
+                }
+                
+                // Check if data exists for this layer
+                if let Ok(Some(availability)) = state.catalog
+                    .get_parameter_availability(model_id, &layer.parameter)
+                    .await
+                {
+                    let key = format!("{}_{}", model_id, layer.parameter);
+                    param_availability.insert(key, availability);
+                }
+            }
         }
     }
 
-    let layer_configs = state.layer_configs.read().await;
-    let xml = build_wms_capabilities_xml(
-        version, &models, &model_params, &model_dimensions,
-        &param_levels, &model_bboxes, &state.model_dimensions, &layer_configs,
+    let xml = build_wms_capabilities_xml_v2(
+        version,
+        &layer_configs,
+        &param_availability,
+        &state.model_dimensions,
     );
+
+    // Cache the result
+    state.capabilities_cache.set_wms(xml.clone()).await;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -991,9 +1004,12 @@ fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
 }
 
 // ============================================================================
-// WMS Capabilities XML Builder
+// WMS Capabilities XML Builder (Legacy - kept for reference)
 // ============================================================================
 
+/// Legacy capabilities builder - catalog-driven approach.
+/// Replaced by build_wms_capabilities_xml_v2 which is config-driven.
+#[allow(dead_code)]
 fn build_wms_capabilities_xml(
     version: &str,
     models: &[String],
@@ -1174,6 +1190,244 @@ fn build_wms_capabilities_xml(
 </WMS_Capabilities>"#,
         version, layers
     )
+}
+
+/// Build WMS capabilities XML from layer configs (config-driven approach).
+/// Only includes layers that have data available in the catalog.
+fn build_wms_capabilities_xml_v2(
+    version: &str,
+    layer_configs: &LayerConfigRegistry,
+    param_availability: &HashMap<String, ParameterAvailability>,
+    dimension_registry: &ModelDimensionRegistry,
+) -> String {
+    let mut model_layers: Vec<String> = Vec::new();
+
+    for model_id in layer_configs.models() {
+        let Some(model_config) = layer_configs.get_model(model_id) else {
+            continue;
+        };
+
+        let is_observational = dimension_registry.is_observation(model_id);
+        let mut layer_xml_parts: Vec<String> = Vec::new();
+
+        // Track availability for composite layer validation (e.g., WIND_BARBS)
+        let mut ugrd_availability: Option<&ParameterAvailability> = None;
+        let mut vgrd_availability: Option<&ParameterAvailability> = None;
+
+        for layer in &model_config.layers {
+            // Skip composite layers for now - handle them after regular layers
+            if layer.composite {
+                continue;
+            }
+
+            let key = format!("{}_{}", model_id, layer.parameter);
+            let Some(availability) = param_availability.get(&key) else {
+                // No data for this layer - skip it
+                continue;
+            };
+
+            // Track UGRD/VGRD for wind barbs
+            if layer.parameter == "UGRD" {
+                ugrd_availability = Some(availability);
+            } else if layer.parameter == "VGRD" {
+                vgrd_availability = Some(availability);
+            }
+
+            // Build dimensions for this specific layer
+            let dimensions_xml = build_layer_dimensions_xml(
+                availability,
+                is_observational,
+            );
+
+            // Get styles from style file
+            let style_path = layer_configs.get_style_path(layer);
+            let styles_xml = get_styles_xml_from_file(&style_path);
+
+            // Build bounding box (normalize longitude to -180/180)
+            let (west, east, south, north) = normalize_bbox(&availability.bbox);
+
+            let layer_xml = format!(
+                r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/>{}{}</Layer>"#,
+                model_id, layer.parameter,
+                model_config.display_name, layer.title,
+                west, east, south, north,
+                west, south, east, north,
+                styles_xml, dimensions_xml
+            );
+            layer_xml_parts.push(layer_xml);
+        }
+
+        // Handle WIND_BARBS composite layer
+        if let (Some(ugrd), Some(vgrd)) = (ugrd_availability, vgrd_availability) {
+            // Find common levels between UGRD and VGRD
+            let common_levels: Vec<String> = ugrd.levels.iter()
+                .filter(|l| vgrd.levels.contains(l))
+                .cloned()
+                .collect();
+
+            // Find common times between UGRD and VGRD
+            let common_times: Vec<String> = ugrd.times.iter()
+                .filter(|t| vgrd.times.contains(t))
+                .cloned()
+                .collect();
+
+            // Find common forecast hours
+            let common_forecast_hours: Vec<i32> = ugrd.forecast_hours.iter()
+                .filter(|h| vgrd.forecast_hours.contains(h))
+                .copied()
+                .collect();
+
+            // Only include WIND_BARBS if there's common data
+            if !common_times.is_empty() && (!common_levels.is_empty() || is_observational) {
+                let wind_availability = ParameterAvailability {
+                    times: common_times,
+                    forecast_hours: common_forecast_hours,
+                    levels: common_levels,
+                    bbox: ugrd.bbox.clone(), // Use UGRD bbox (they should be the same)
+                };
+
+                let dimensions_xml = build_layer_dimensions_xml(
+                    &wind_availability,
+                    is_observational,
+                );
+
+                let (west, east, south, north) = normalize_bbox(&ugrd.bbox);
+
+                let wind_layer_xml = format!(
+                    r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}</Layer>"#,
+                    model_id, model_config.display_name,
+                    west, east, south, north,
+                    west, south, east, north,
+                    dimensions_xml
+                );
+                layer_xml_parts.push(wind_layer_xml);
+            }
+        }
+
+        // Only include model if it has at least one layer with data
+        if !layer_xml_parts.is_empty() {
+            let model_xml = format!(
+                r#"<Layer><Name>{}</Name><Title>{}</Title>{}</Layer>"#,
+                model_id,
+                model_config.display_name,
+                layer_xml_parts.join("")
+            );
+            model_layers.push(model_xml);
+        }
+    }
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<WMS_Capabilities version="{}" xmlns="http://www.opengis.net/wms" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <Service>
+    <Name>WMS</Name>
+    <Title>Weather WMS Service</Title>
+    <Abstract>Web Map Service for weather model data</Abstract>
+    <OnlineResource xlink:href="http://localhost:8080/wms"/>
+  </Service>
+  <Capability>
+    <Request>
+      <GetCapabilities>
+        <Format>text/xml</Format>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+      </GetCapabilities>
+      <GetMap>
+        <Format>image/png</Format>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+      </GetMap>
+      <GetFeatureInfo>
+        <Format>text/html</Format>
+        <Format>application/json</Format>
+        <Format>text/xml</Format>
+        <Format>text/plain</Format>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+      </GetFeatureInfo>
+    </Request>
+    <Exception><Format>XML</Format></Exception>
+    <Layer>
+      <Title>Weather Data</Title>
+      <CRS>EPSG:4326</CRS>
+      <CRS>EPSG:3857</CRS>
+      {}
+    </Layer>
+  </Capability>
+</WMS_Capabilities>"#,
+        version, model_layers.join("")
+    )
+}
+
+/// Build dimension XML for a specific layer based on its actual data availability.
+fn build_layer_dimensions_xml(
+    availability: &ParameterAvailability,
+    is_observational: bool,
+) -> String {
+    let mut dimensions = String::new();
+
+    // Time/Run dimensions
+    if is_observational {
+        // Observation models use TIME dimension
+        let time_values = if availability.times.is_empty() {
+            "latest".to_string()
+        } else {
+            availability.times.join(",")
+        };
+        let time_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        dimensions.push_str(&format!(
+            r#"<Dimension name="TIME" units="ISO8601" default="{}">{}</Dimension>"#,
+            time_default, time_values
+        ));
+    } else {
+        // Forecast models use RUN + FORECAST dimensions
+        let run_values = if availability.times.is_empty() {
+            "latest".to_string()
+        } else {
+            availability.times.join(",")
+        };
+        let run_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        
+        let forecast_values = if availability.forecast_hours.is_empty() {
+            "0".to_string()
+        } else {
+            availability.forecast_hours.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",")
+        };
+        let forecast_default = availability.forecast_hours.first().unwrap_or(&0);
+
+        dimensions.push_str(&format!(
+            r#"<Dimension name="RUN" units="ISO8601" default="{}">{}</Dimension><Dimension name="FORECAST" units="hours" default="{}">{}</Dimension>"#,
+            run_default, run_values, forecast_default, forecast_values
+        ));
+    }
+
+    // ELEVATION dimension (only if multiple levels)
+    if availability.levels.len() > 1 {
+        let mut sorted_levels = availability.levels.clone();
+        sorted_levels.sort_by(|a, b| {
+            // Sort pressure levels in descending order (1000 mb first)
+            let a_val = a.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+            let b_val = b.replace(" mb", "").parse::<i32>().unwrap_or(9999);
+            b_val.cmp(&a_val)
+        });
+        let level_values = sorted_levels.join(",");
+        let default_level = sorted_levels.first().map(|s| s.as_str()).unwrap_or("");
+        dimensions.push_str(&format!(
+            r#"<Dimension name="ELEVATION" units="" default="{}">{}</Dimension>"#,
+            default_level, level_values
+        ));
+    }
+
+    dimensions
+}
+
+/// Normalize bounding box longitude to -180/180 for WMS.
+fn normalize_bbox(bbox: &wms_common::BoundingBox) -> (f64, f64, f64, f64) {
+    let (west, east) = if bbox.min_x == 0.0 && bbox.max_x == 360.0 {
+        (-180.0, 180.0)
+    } else {
+        let w = if bbox.min_x > 180.0 { bbox.min_x - 360.0 } else { bbox.min_x };
+        let e = if bbox.max_x > 180.0 { bbox.max_x - 360.0 } else { bbox.max_x };
+        (w, e)
+    };
+    (west, east, bbox.min_y, bbox.max_y)
 }
 
 // ============================================================================

@@ -838,7 +838,7 @@ pub async fn update_model_config_handler(
 /// ingester service which handles GRIB2/NetCDF parsing, Zarr conversion,
 /// and catalog registration.
 pub async fn ingest_handler(
-    Extension(_state): Extension<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Json(payload): Json<IngestRequest>,
 ) -> impl IntoResponse {
     info!(
@@ -864,6 +864,11 @@ pub async fn ingest_handler(
             let status = response.status();
             match response.json::<IngestResponse>().await {
                 Ok(ingest_response) => {
+                    if status.is_success() && ingest_response.success {
+                        // Invalidate capabilities cache when new data is ingested
+                        state.capabilities_cache.invalidate().await;
+                        tracing::debug!("Invalidated capabilities cache after successful ingestion");
+                    }
                     if status.is_success() {
                         (StatusCode::OK, Json(ingest_response)).into_response()
                     } else {

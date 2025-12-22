@@ -64,6 +64,10 @@ pub async fn config_reload_layers_handler(
     let new_registry = crate::layer_config::LayerConfigRegistry::load_from_directory(&layer_config_dir);
     let mut configs = state.layer_configs.write().await;
     *configs = new_registry;
+    
+    // Invalidate capabilities cache when layer configs change
+    state.capabilities_cache.invalidate().await;
+    
     info!("Layer configurations reloaded successfully");
     (StatusCode::OK, "Layer configurations reloaded")
 }
@@ -86,6 +90,9 @@ pub async fn config_reload_handler(
     // Clear caches
     state.tile_memory_cache.clear().await;
     state.grid_processor_factory.clear_chunk_cache().await;
+    
+    // Invalidate capabilities cache when config changes
+    state.capabilities_cache.invalidate().await;
     
     (StatusCode::OK, "Configuration reloaded and caches cleared")
 }

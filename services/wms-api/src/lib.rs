@@ -3,6 +3,7 @@
 //! This module exposes the internal modules for testing purposes.
 
 pub mod admin;
+pub mod capabilities_cache;
 pub mod chunk_warming;
 pub mod cleanup;
 pub mod handlers;

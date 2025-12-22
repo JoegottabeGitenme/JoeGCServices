@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use grid_processor::{ChunkCache, GridProcessorConfig};
 use projection::ProjectionLutCache;
 use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
+use crate::capabilities_cache::CapabilitiesCache;
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
@@ -300,6 +301,7 @@ pub struct AppState {
     pub chunk_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::chunk_warming::ChunkWarmer>>>,  // Chunk cache warmer
     pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
+    pub capabilities_cache: CapabilitiesCache,  // Cache for WMS/WMTS capabilities documents
 }
 
 impl AppState {
@@ -398,6 +400,13 @@ impl AppState {
             );
         }
 
+        // Initialize capabilities cache
+        let capabilities_cache_ttl = env::var("CAPABILITIES_CACHE_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120);
+        let capabilities_cache = CapabilitiesCache::new(capabilities_cache_ttl);
+
         Ok(Self {
             catalog,
             cache: Mutex::new(cache),
@@ -411,6 +420,7 @@ impl AppState {
             chunk_warmer: tokio::sync::RwLock::new(None),
             model_dimensions,
             layer_configs,
+            capabilities_cache,
         })
     }
 }
