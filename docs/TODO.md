@@ -29,7 +29,8 @@
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
   how they impact performance
-- load testing needs to simulate real user scenarios
+- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
+  manage things like cold/warm cache etc.
 - need to consider actually deploying this to ec2 or something
     - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
 - implement renderer queue after we've deleted the renderer worker stuff???
