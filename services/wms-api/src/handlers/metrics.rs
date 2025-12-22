@@ -403,7 +403,7 @@ pub async fn tile_heatmap_clear_handler(
 // ============================================================================
 
 fn read_container_stats() -> serde_json::Value {
-    let (mem_total, mem_free, mem_available) = read_proc_meminfo();
+    let (mem_total, _mem_free, mem_available) = read_proc_meminfo();
     let (load_1, load_5, load_15) = read_load_average();
     let (cgroup_used, cgroup_limit) = read_cgroup_memory();
     let (vm_rss, vm_size) = read_proc_self_status();

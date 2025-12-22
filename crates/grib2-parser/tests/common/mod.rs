@@ -86,18 +86,6 @@ macro_rules! require_test_files {
     }};
 }
 
-/// Check if we're in CI environment (typically no test data available)
-#[allow(dead_code)]
-pub fn is_ci() -> bool {
-    std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
-}
-
-/// Helper to read a test file, returning None if not found
-#[allow(dead_code)]
-pub fn read_test_file(name: &str) -> Option<Vec<u8>> {
-    find_test_file(name).and_then(|path| std::fs::read(&path).ok())
-}
-
 /// Create test GRIB2 lookup tables with common parameters.
 ///
 /// This provides the parameter and level mappings needed for testing

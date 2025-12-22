@@ -119,14 +119,6 @@ impl Scheduler {
     pub fn get_model_schedules(&self) -> Vec<ModelSchedule> {
         self.model_configs.iter().map(ModelSchedule::from).collect()
     }
-    
-    /// Reload model configurations from disk.
-    #[allow(dead_code)]
-    pub fn reload_configs(&mut self) -> Result<()> {
-        self.model_configs = config::load_model_configs(&self.config_dir)?;
-        info!(count = self.model_configs.len(), "Reloaded model configurations");
-        Ok(())
-    }
 
     /// Run a single download cycle for all models.
     pub async fn run_all(&self) -> Result<()> {

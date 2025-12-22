@@ -334,10 +334,4 @@ impl LoadRunner {
             },
         }
     }
-
-    /// Execute a single HTTP request.
-    #[allow(dead_code)]
-    async fn execute_request(&self, url: &str) -> RequestResult {
-        Self::execute_request_static(&self.client, url).await
-    }
 }

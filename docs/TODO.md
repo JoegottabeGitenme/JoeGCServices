@@ -1,8 +1,18 @@
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
+- how to make EDR work
+    - create validation page using lots of AI and pdf files and other specs we can find
+    - test validation page against some other EDR servers
+    - implement Grid Processor abstraction API and document so we can use it for EDR
+        - this abstraction layer cannot break WMS or WMTS
+    - create another viewer to monitor EDR metrics, more stuff in prometheus and grafana
+    - create another 'viewer' so that we can form EDR queries and visualize them if needed
+    - ultimate test would be to point onlineweather to this EDR server
+    - grid processor will have it's own pod and cache and processing in the overall system, and can be deployed
+      with/without services connected to it
+    - need a way to load test gridprocessor without a service, so the API is important here
 - Need a better landing page with some sample queries
 - getFeatureInfo should support arbitrary html output
-- Need some swagger docs or something for WMS and WMTS
 - we have a projection crate and also reprojecting logic in the grid processor crate
 - could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or
   something to provide a colormap in a get request

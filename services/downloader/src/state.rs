@@ -302,21 +302,6 @@ impl DownloadState {
         Ok(())
     }
 
-    /// Set error message for a download.
-    #[allow(dead_code)]
-    pub async fn set_error(&self, url: &str, error: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-
-        sqlx::query("UPDATE downloads SET error_message = ?, updated_at = ? WHERE url = ?")
-            .bind(error)
-            .bind(&now)
-            .bind(url)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
     /// Get all in-progress downloads (for resuming after restart).
     pub async fn get_in_progress(&self) -> Result<Vec<DownloadRecord>> {
         let rows: Vec<(
@@ -453,24 +438,6 @@ impl DownloadState {
             completed: completed.0 as u64,
             total_bytes_downloaded: total_bytes.0 as u64,
         })
-    }
-
-    /// Clean up old completed downloads (older than retention_days).
-    #[allow(dead_code)]
-    pub async fn cleanup_old_records(&self, retention_days: u32) -> Result<u64> {
-        let cutoff = (Utc::now() - chrono::Duration::days(retention_days as i64)).to_rfc3339();
-
-        let result = sqlx::query(
-            "DELETE FROM completed_downloads WHERE completed_at < ? AND ingested = 1",
-        )
-        .bind(&cutoff)
-        .execute(&self.pool)
-        .await?;
-
-        let deleted = result.rows_affected();
-
-        info!(deleted = deleted, retention_days = retention_days, "Cleaned up old download records");
-        Ok(deleted)
     }
 
     /// Get recent completed downloads for display.

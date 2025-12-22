@@ -14,14 +14,6 @@ use tracing::{error, info, warn};
 
 use crate::state::AppState;
 
-/// Retention configuration for a model.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct ModelRetention {
-    pub model_id: String,
-    pub retention_hours: u32,
-}
-
 /// Configuration for the cleanup task.
 #[derive(Debug, Clone)]
 pub struct CleanupConfig {
