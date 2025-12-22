@@ -1890,10 +1890,14 @@ function updateTileStats() {
 }
 
 // Check layer status
+// For weather data with regional coverage (e.g., GOES satellites), tiles outside
+// the coverage area will legitimately have no data. We consider a layer "working"
+// if at least some tiles load successfully.
 function checkLayerStatus() {
     const layer = layers[currentIndex];
 
     if (tileStats.errors > 0 && tileStats.loaded === 0) {
+        // All tiles failed - this is a real error
         setStatus('tile-status', 'error', `Error (${tileStats.errors} failed)`);
         showError(`All ${tileStats.errors} tiles failed to load`, tileStats.errorDetails);
         layerStatus[layer.name] = {
@@ -1902,14 +1906,18 @@ function checkLayerStatus() {
             tileErrors: tileStats.errors,
             error: 'All tiles failed'
         };
-    } else if (tileStats.errors > 0) {
-        setStatus('tile-status', 'error', `Partial (${tileStats.loaded} ok, ${tileStats.errors} failed)`);
+    } else if (tileStats.errors > 0 && tileStats.loaded > 0) {
+        // Some tiles loaded, some failed - this is normal for regional data
+        // Show as "partial" but count as working since the layer is functional
+        const avgTime = Math.round(tileStats.loadTimes.reduce((a, b) => a + b, 0) / tileStats.loadTimes.length);
+        setStatus('tile-status', 'partial', `Partial (${tileStats.loaded} ok, ${tileStats.errors} failed)`);
         showError(`${tileStats.errors} tiles failed to load`, tileStats.errorDetails);
         layerStatus[layer.name] = {
-            status: 'error',
+            status: 'ok',  // Count as working since some tiles loaded
             tilesLoaded: tileStats.loaded,
             tileErrors: tileStats.errors,
-            error: `${tileStats.errors} tile errors`
+            avgTime,
+            partial: true  // Flag to indicate partial coverage
         };
     } else if (tileStats.loaded > 0) {
         const avgTime = Math.round(tileStats.loadTimes.reduce((a, b) => a + b, 0) / tileStats.loadTimes.length);

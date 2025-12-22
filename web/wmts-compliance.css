@@ -295,6 +295,11 @@ body {
     animation: pulse 1s infinite;
 }
 
+.status-icon.partial {
+    background: #fbbf24;
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.5);
+}
+
 .status-icon.untested {
     background: #6b7280;
 }
@@ -314,6 +319,10 @@ body {
 
 .status-text.ok {
     color: #4ade80;
+}
+
+.status-text.partial {
+    color: #fbbf24;
 }
 
 .status-text.error {
