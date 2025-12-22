@@ -1,6 +1,3 @@
-- Need to come up with some more validation for OGC compliance, and look into whatever hot new MAP api specs there are
-    - validation should be whatever is in the TEAM ENGINE stuff plus validating that every layer we have exposed is
-      retrievable
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
 - Need a better landing page with some sample queries

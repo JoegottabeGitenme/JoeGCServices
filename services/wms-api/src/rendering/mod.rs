@@ -20,7 +20,7 @@ use renderer::style::StyleConfig;
 use storage::{Catalog, CatalogEntry};
 use std::time::Instant;
 use tracing::{info, debug};
-use crate::metrics::MetricsCollector;
+use crate::metrics::{DataSourceType, MetricsCollector};
 use crate::state::{GridProcessorFactory, ProjectionLuts};
 
 // Re-export functions for tests and internal use
@@ -203,6 +203,10 @@ pub async fn render_weather_data_with_lut(
     ).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
+    
+    // Record per-data-source parse metrics for dashboard
+    let source_type = DataSourceType::from_model(model);
+    metrics.record_data_source_parse(&source_type, load_duration.as_micros() as u64).await;
     
     // Record model-specific fetch metrics
     if let Some(wm) = weather_model {
