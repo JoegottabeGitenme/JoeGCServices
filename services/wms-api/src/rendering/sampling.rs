@@ -35,7 +35,8 @@ use crate::state::GridProcessorFactory;
 /// - `i`: Pixel column (0-based from left)
 /// - `j`: Pixel row (0-based from top)
 /// - `crs`: Coordinate reference system (e.g., "EPSG:4326", "EPSG:3857")
-/// - `forecast_hour`: Optional forecast hour; if None, uses latest
+/// - `forecast_hour`: Optional forecast hour for forecast models (e.g., GFS, HRRR)
+/// - `valid_time`: Optional valid time for observation data (e.g., GOES satellite)
 /// - `level`: Optional vertical level/elevation (e.g., "500 mb", "2 m above ground")
 ///
 /// # Returns
@@ -52,6 +53,7 @@ pub async fn query_point_value(
     j: u32,
     crs: &str,
     forecast_hour: Option<u32>,
+    valid_time: Option<chrono::DateTime<chrono::Utc>>,
     level: Option<&str>,
 ) -> Result<Vec<wms_protocol::FeatureInfo>, String> {
     use wms_protocol::{pixel_to_geographic, mercator_to_wgs84, FeatureInfo, Location};
@@ -95,35 +97,52 @@ pub async fn query_point_value(
         return query_wind_barbs_value(catalog, grid_processor_factory, model, lon, lat, forecast_hour, level).await;
     }
     
-    // Get dataset for this parameter, optionally at a specific level
-    let entry = match (forecast_hour, level) {
-        (Some(hour), Some(lev)) => {
-            catalog
-                .find_by_forecast_hour_and_level(model, &parameter, hour, lev)
-                .await
-                .map_err(|e| format!("Catalog query failed: {}", e))?
-                .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
-        }
-        (Some(hour), None) => {
-            catalog
-                .find_by_forecast_hour(model, &parameter, hour)
-                .await
-                .map_err(|e| format!("Catalog query failed: {}", e))?
-                .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
-        }
-        (None, Some(lev)) => {
-            catalog
-                .get_latest_run_earliest_forecast_at_level(model, &parameter, lev)
-                .await
-                .map_err(|e| format!("Catalog query failed: {}", e))?
-                .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
-        }
-        (None, None) => {
-            catalog
-                .get_latest_run_earliest_forecast(model, &parameter)
-                .await
-                .map_err(|e| format!("Catalog query failed: {}", e))?
-                .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+    // Get dataset for this parameter
+    // Priority: valid_time (ISO timestamp) > forecast_hour (integer) > latest
+    let entry = if let Some(vt) = valid_time {
+        // Use valid_time for observation/satellite data (e.g., GOES)
+        info!(
+            model = model,
+            parameter = %parameter,
+            valid_time = %vt,
+            "Querying by valid_time (ISO timestamp)"
+        );
+        catalog
+            .find_by_time(model, &parameter, vt)
+            .await
+            .map_err(|e| format!("Catalog query failed: {}", e))?
+            .ok_or_else(|| format!("No data found for {}/{} at time {}", model, parameter, vt))?
+    } else {
+        // Use forecast_hour for forecast models, or fall back to latest
+        match (forecast_hour, level) {
+            (Some(hour), Some(lev)) => {
+                catalog
+                    .find_by_forecast_hour_and_level(model, &parameter, hour, lev)
+                    .await
+                    .map_err(|e| format!("Catalog query failed: {}", e))?
+                    .ok_or_else(|| format!("No data found for {}/{} at hour {} level {}", model, parameter, hour, lev))?
+            }
+            (Some(hour), None) => {
+                catalog
+                    .find_by_forecast_hour(model, &parameter, hour)
+                    .await
+                    .map_err(|e| format!("Catalog query failed: {}", e))?
+                    .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?
+            }
+            (None, Some(lev)) => {
+                catalog
+                    .get_latest_run_earliest_forecast_at_level(model, &parameter, lev)
+                    .await
+                    .map_err(|e| format!("Catalog query failed: {}", e))?
+                    .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?
+            }
+            (None, None) => {
+                catalog
+                    .get_latest_run_earliest_forecast(model, &parameter)
+                    .await
+                    .map_err(|e| format!("Catalog query failed: {}", e))?
+                    .ok_or_else(|| format!("No data found for {}/{}", model, parameter))?
+            }
         }
     };
     
@@ -147,9 +166,10 @@ pub async fn query_point_value(
         let grid_width = grid_result.width;
         let grid_height = grid_result.height;
         let goes_projection = grid_result.goes_projection;
+        let grid_bbox = grid_result.bbox;
         
         // Sample value at the point using projection-aware sampling
-        sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref())?
+        sample_grid_value_with_projection(&grid_data, grid_width, grid_height, lon, lat, model, goes_projection.as_ref(), grid_bbox)?
     } else {
         // Use Zarr for efficient point query (reads only one chunk)
         match query_point_from_zarr(grid_processor_factory, &entry, lon, lat).await? {
@@ -465,6 +485,7 @@ pub fn sample_grid_value_with_projection(
     lat: f64,
     model: &str,
     goes_projection: Option<&GoesProjectionParams>,
+    grid_bbox: Option<[f32; 4]>,
 ) -> Result<f32, String> {
     // Handle HRRR's Lambert Conformal projection
     if model == "hrrr" {
@@ -477,6 +498,8 @@ pub fn sample_grid_value_with_projection(
     }
     
     // Handle GOES geostationary projection
+    // Only use geostationary projection if we have projection params
+    // If goes_projection is None, the data is already reprojected to geographic coordinates
     if model == "goes16" || model == "goes18" || model == "goes" {
         if let Some(params) = goes_projection {
             let proj = Geostationary::from_goes(
@@ -506,27 +529,40 @@ pub fn sample_grid_value_with_projection(
             }
             
             return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
-        } else {
-            // Fallback to preset projection
-            let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
-            let proj = if satellite_lon < -100.0 {
-                Geostationary::goes18_conus()
-            } else {
-                Geostationary::goes16_conus()
-            };
+        } else if let Some(bbox) = grid_bbox {
+            // Data is already reprojected to geographic coordinates with known bbox
+            // Use the bbox to compute grid coordinates
+            let [min_lon, min_lat, max_lon, max_lat] = [
+                bbox[0] as f64, bbox[1] as f64, bbox[2] as f64, bbox[3] as f64
+            ];
             
-            let grid_coords = proj.geo_to_grid(lat, lon);
-            let (grid_x, grid_y) = match grid_coords {
-                Some((i, j)) => (i, j),
-                None => return Err(format!("Point ({}, {}) not visible from satellite", lon, lat)),
-            };
+            // Check if point is within bbox
+            if lon < min_lon || lon > max_lon || lat < min_lat || lat > max_lat {
+                return Err(format!(
+                    "Point ({}, {}) outside GOES coverage (bbox: {:.2} to {:.2} lon, {:.2} to {:.2} lat)",
+                    lon, lat, min_lon, max_lon, min_lat, max_lat
+                ));
+            }
             
+            // Convert geographic coordinates to grid indices
+            // Grid origin is top-left (NW corner), Y increases downward
+            let lon_step = (max_lon - min_lon) / (grid_width as f64 - 1.0);
+            let lat_step = (max_lat - min_lat) / (grid_height as f64 - 1.0);
+            
+            let grid_x = (lon - min_lon) / lon_step;
+            let grid_y = (max_lat - lat) / lat_step;  // Flip Y: top of image = max lat
+            
+            // Bounds check
             if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 - 1.0 || grid_y >= grid_height as f64 - 1.0 {
-                return Err(format!("Point ({}, {}) outside GOES coverage", lon, lat));
+                return Err(format!(
+                    "Point ({}, {}) outside GOES grid bounds (grid coords: {:.2}, {:.2})",
+                    lon, lat, grid_x, grid_y
+                ));
             }
             
             return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
         }
+        // If no projection and no bbox, fall through to standard sampling (shouldn't happen)
     }
     
     // Fall back to standard geographic grid sampling

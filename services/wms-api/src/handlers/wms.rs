@@ -601,8 +601,30 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         }
     };
 
-    // Parse TIME parameter (forecast hour)
-    let forecast_hour: Option<u32> = params.time.as_ref().and_then(|t| t.parse().ok());
+    // Parse TIME parameter - can be either:
+    // 1. A forecast hour integer (e.g., "6" for GFS/HRRR forecast models)
+    // 2. An ISO 8601 timestamp (e.g., "2024-12-21T21:01:00Z" for GOES satellite/observation data)
+    let (forecast_hour, valid_time): (Option<u32>, Option<chrono::DateTime<chrono::Utc>>) = 
+        if let Some(time_str) = params.time.as_ref() {
+            // First try parsing as integer (forecast hour)
+            if let Ok(hour) = time_str.parse::<u32>() {
+                (Some(hour), None)
+            } else {
+                // Try parsing as ISO 8601 timestamp
+                use chrono::{DateTime, Utc};
+                if let Ok(dt) = DateTime::parse_from_rfc3339(time_str) {
+                    (None, Some(dt.with_timezone(&Utc)))
+                } else if let Ok(dt) = time_str.parse::<DateTime<Utc>>() {
+                    (None, Some(dt))
+                } else {
+                    // Could not parse - log warning but continue
+                    tracing::warn!(time = %time_str, "Could not parse TIME parameter as forecast hour or ISO timestamp");
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
 
     // Parse ELEVATION parameter
     let elevation = params.elevation.clone();
@@ -617,6 +639,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         crs = crs,
         info_format = ?info_format,
         forecast_hour = ?forecast_hour,
+        valid_time = ?valid_time,
         elevation = ?elevation,
         "GetFeatureInfo request"
     );
@@ -683,6 +706,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             j,
             crs,
             forecast_hour,
+            valid_time,
             effective_elevation.as_deref(),
         )
             .await
