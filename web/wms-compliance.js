@@ -225,6 +225,8 @@ const SPEC_REFS = {
     'getmap-exception-xml': { section: '7.3.3.11', title: 'EXCEPTIONS', desc: 'Default exception format is XML if parameter absent' },
     'getmap-multi-layer': { section: '7.3.3.3', title: 'LAYERS', desc: 'LAYERS value is comma-separated list of one or more layer names' },
     'getmap-version-required': { section: '6.2.3', title: 'Appearance in requests', desc: 'VERSION is mandatory in requests other than GetCapabilities' },
+    'getmap-png-format': { section: '7.3.3.7', title: 'FORMAT (PNG)', desc: 'Server shall return image/png with valid PNG magic bytes when FORMAT=image/png' },
+    'getmap-jpeg-format': { section: '7.3.3.7', title: 'FORMAT (JPEG)', desc: 'Server shall return image/jpeg with valid JPEG magic bytes when FORMAT=image/jpeg (if supported)' },
     
     // GetFeatureInfo
     'gfi-basic-request': { section: '7.4.1', title: 'GetFeatureInfo General', desc: 'Optional operation for queryable layers only' },
@@ -710,6 +712,74 @@ const OGC_TESTS = {
                     const text = await resp.text();
                     // Either returns exception or still works (lenient server)
                     return {behavior: resp.ok ? 'lenient' : 'strict', dimensions, url};
+                }
+            },
+            {
+                id: 'getmap-png-format',
+                desc: 'FORMAT=image/png returns PNG with correct Content-Type and magic bytes',
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (!ct.includes('image/png')) throw new Error(`Expected Content-Type 'image/png', got '${ct}'`);
+                    
+                    // Verify response is actually a valid PNG by checking magic bytes
+                    const buffer = await resp.arrayBuffer();
+                    const bytes = new Uint8Array(buffer);
+                    // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A (first 8 bytes)
+                    const pngMagic = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+                    const isPng = bytes.length >= 8 && pngMagic.every((b, i) => bytes[i] === b);
+                    if (!isPng) {
+                        throw new Error(`Content-Type is image/png but response is not valid PNG`);
+                    }
+                    return {
+                        format: 'image/png',
+                        contentType: ct,
+                        size: bytes.length,
+                        validPngMagic: true,
+                        dimensions,
+                        url
+                    };
+                }
+            },
+            {
+                id: 'getmap-jpeg-format',
+                desc: 'FORMAT=image/jpeg returns JPEG with correct Content-Type and magic bytes',
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/jpeg`;
+                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    
+                    // Check HTTP Content-Type header explicitly
+                    if (ct.includes('image/jpeg')) {
+                        // Verify response is actually a valid JPEG by checking magic bytes
+                        const buffer = await resp.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        // JPEG magic bytes: FF D8 FF
+                        if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+                            return {
+                                format: 'image/jpeg',
+                                contentType: ct,
+                                size: bytes.length,
+                                validJpegMagic: true,
+                                dimensions,
+                                url
+                            };
+                        }
+                        throw new Error(`Content-Type is image/jpeg but response is not valid JPEG (magic bytes: ${bytes[0]?.toString(16)}, ${bytes[1]?.toString(16)}, ${bytes[2]?.toString(16)})`);
+                    }
+                    // JPEG may not be supported - check for proper exception
+                    if (!resp.ok || ct.includes('xml') || ct.includes('text')) {
+                        return {skipped: 'JPEG format not supported', url};
+                    }
+                    throw new Error(`Expected Content-Type 'image/jpeg', got '${ct}'`);
                 }
             }
         ]
