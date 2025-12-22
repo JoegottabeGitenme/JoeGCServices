@@ -2,6 +2,28 @@
 
 Custom RESTful API for administration and metadata queries.
 
+## API Documentation
+
+### OpenAPI/Swagger UI
+
+Interactive API documentation is available at:
+
+```http
+GET /api/docs
+```
+
+This serves a Swagger UI interface with:
+- All API endpoints documented
+- Request/response schemas
+- Try-it-out functionality for testing endpoints
+- Weather model information and layer naming conventions
+
+The OpenAPI specification is also available directly:
+
+```http
+GET /api/docs/openapi.yaml
+```
+
 ## Health & Status
 
 ### Health Check

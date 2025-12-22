@@ -46,3 +46,4 @@
     - see if this happens again after we fixed the orphaned files issue
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - need to give the swagger docs a human pass to catch some of the errors
+- clean up .env and .env.example to coordinate with any new environment variables (chunk cache mainly)

@@ -116,11 +116,34 @@ Located below the minimap, shows real-time download status:
 - **Dual Clock**: Real-time display of local time and UTC time (updates every second)
 - **Service Attribution**: Weather WMS branding
 
-### OGC Compliance Badges
+### OGC Compliance Test Pages
 
-Header badges show OGC compliance status:
-- **WMS 1.3.0**: Click to run validation
-- **WMTS 1.0.0**: Click to run validation
+Dedicated pages for comprehensive OGC protocol compliance testing:
+
+#### WMS Compliance (`wms-compliance.html`)
+
+Full WMS 1.3.0 compliance test suite:
+- **GetCapabilities tests**: Version negotiation, XML structure, metadata validation
+- **GetMap tests**: BBOX handling, CRS axis order, FORMAT/STYLES validation, exception handling
+- **GetFeatureInfo tests**: Coordinate handling, response format validation
+- **Per-layer testing**: Validates every layer in the capabilities document
+- **External server testing**: Can test any WMS server by entering its URL
+- **Visual results**: Shows pass/fail with detailed error messages and spec references
+
+#### WMTS Compliance (`wmts-compliance.html`)
+
+Full WMTS 1.0.0 compliance test suite:
+- **GetCapabilities tests**: Contents structure, TileMatrixSet definitions
+- **GetTile tests**: Both KVP and RESTful encodings
+- **TileMatrix validation**: Scale denominators, tile dimensions
+- **Per-layer testing**: Validates every layer and tile matrix set
+- **Visual tile preview**: Shows actual rendered tiles
+
+### OGC Compliance Badges (Main Dashboard)
+
+Header badges show quick OGC compliance status:
+- **WMS 1.3.0**: Click to open WMS compliance test page
+- **WMTS 1.0.0**: Click to open WMTS compliance test page
 
 ### External Links
 
@@ -222,16 +245,22 @@ Edit `web/style.css` for styling changes:
 
 ```
 web/
-├── index.html          # Main dashboard page
-├── app.js              # Application logic
-├── style.css           # Styling
-├── admin.html          # Admin dashboard
-├── admin.js            # Admin logic
-├── downloads.html      # Downloads dashboard
-├── downloads.js        # Downloads logic
-├── benchmarks.html     # Benchmark viewer
+├── index.html           # Main dashboard page
+├── app.js               # Application logic
+├── style.css            # Styling
+├── admin.html           # Admin dashboard
+├── admin.js             # Admin logic
+├── downloads.html       # Downloads dashboard
+├── downloads.js         # Downloads logic
+├── benchmarks.html      # Benchmark viewer
 ├── tile-visualizer.html # Tile request visualizer
-└── server.py           # Simple HTTP server
+├── wms-compliance.html  # WMS 1.3.0 compliance tests
+├── wms-compliance.js    # WMS test implementation
+├── wms-compliance.css   # WMS test styling
+├── wmts-compliance.html # WMTS 1.0.0 compliance tests
+├── wmts-compliance.js   # WMTS test implementation
+├── wmts-compliance.css  # WMTS test styling
+└── server.py            # Simple HTTP server
 ```
 
 ## Next Steps

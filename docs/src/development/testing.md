@@ -15,12 +15,16 @@ crates/
 services/
 ├── wms-api/
 │   ├── src/
-│   │   └── handlers.rs      # #[cfg(test)] mod tests
+│   │   └── handlers/        # Handler modules with tests
 │   └── tests/
 │       └── api_tests.rs
 validation/
-├── load-test/               # Load testing
-└── wms-validation/          # WMS compliance testing
+└── load-test/               # Load testing scenarios
+web/
+├── wms-compliance.html      # WMS 1.3.0 compliance tests
+├── wms-compliance.js        # WMS test implementation
+├── wmts-compliance.html     # WMTS 1.0.0 compliance tests
+└── wmts-compliance.js       # WMTS test implementation
 ```
 
 ## Running Tests
@@ -314,20 +318,58 @@ requests:
       VERSION: "1.3.0"
 ```
 
-## WMS Validation
+## OGC Compliance Testing
 
-### OGC Compliance Testing
+### Web-Based Compliance Test Suites
+
+Interactive OGC compliance test suites are available through the web dashboard:
+
+#### WMS 1.3.0 Compliance Tests
+
+```
+http://localhost:8000/wms-compliance.html
+```
+
+Tests include:
+- **GetCapabilities**: Version negotiation, XML structure, layer metadata
+- **GetMap**: BBOX handling, CRS axis order, FORMAT validation, STYLES parameter
+- **GetFeatureInfo**: Coordinate handling, INFO_FORMAT support
+- **Exceptions**: ServiceException XML format, error codes
+
+#### WMTS 1.0.0 Compliance Tests
+
+```
+http://localhost:8000/wmts-compliance.html
+```
+
+Tests include:
+- **GetCapabilities**: Contents structure, TileMatrixSet definitions
+- **GetTile (KVP)**: Parameter validation, error responses
+- **GetTile (RESTful)**: URL path parsing, format handling
+- **TileMatrix**: Scale denominators, tile bounds
+
+### Features
+
+Both compliance test suites support:
+
+- **External endpoint testing**: Point at any WMS/WMTS server for comparison
+- **Per-layer validation**: Tests run against each layer in capabilities
+- **Visual tile preview**: See rendered tiles alongside test results
+- **Reference links**: Direct links to OGC specification sections
+- **Batch execution**: Run all tests with a single click
+
+### Capabilities Caching Test
+
+Test that GetCapabilities responses are properly cached:
 
 ```bash
-cd validation/wms-validation
-
-# Run validation suite
-./validate.sh
-
-# Test specific operation
-./scripts/test-getcapabilities.sh
-./scripts/test-getmap.sh
+./scripts/test_capabilities_cache.sh
 ```
+
+This validates that:
+- Repeated requests return cached responses quickly
+- Cache is invalidated after configuration changes
+- Response times improve after initial request
 
 ## Performance Testing
 
