@@ -630,6 +630,15 @@
                 
                 <!-- Layer Options (Style + Elevation) - positioned under layer control -->
                 <div class="layer-options-map" id="layer-options-map">
+                    <!-- TileMatrixSet Selector (WMTS projection) -->
+                    <div id="tms-selector-container" class="tms-selector-container" style="display: none;">
+                        <div class="tms-selector-label">Projection</div>
+                        <div class="tms-selector-options" id="tms-selector-options">
+                            <button class="tms-option active" data-tms="WebMercatorQuad" title="Web Mercator (Google/OSM compatible)">Mercator</button>
+                            <button class="tms-option" data-tms="WorldCRS84Quad" title="WGS84 Geographic (CRS:84)">WGS84</button>
+                        </div>
+                    </div>
+                    
                     <!-- Style Selector -->
                     <div id="style-selector-container" class="style-selector-container" style="display: none;">
                         <div class="style-selector-label">Style</div>

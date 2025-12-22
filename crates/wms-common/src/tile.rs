@@ -252,6 +252,29 @@ pub fn tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
     BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
 }
 
+/// Convert WorldCRS84Quad tile coordinates to lat/lon bounds.
+/// 
+/// WorldCRS84Quad uses a 2:1 aspect ratio grid:
+/// - matrix_width = 2^(z+1) columns
+/// - matrix_height = 2^z rows
+/// - Linear latitude/longitude mapping (no Mercator projection)
+/// - Top-left origin at (-180, 90)
+pub fn wgs84_tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
+    let n_cols = 2u32.pow(coord.z + 1) as f64;  // 2^(z+1) columns
+    let n_rows = 2u32.pow(coord.z) as f64;      // 2^z rows
+
+    // Longitude spans 360 degrees across all columns
+    let lon_min = (coord.x as f64 / n_cols) * 360.0 - 180.0;
+    let lon_max = ((coord.x + 1) as f64 / n_cols) * 360.0 - 180.0;
+
+    // Latitude spans 180 degrees across all rows (top-left origin)
+    // lat decreases as row index increases
+    let lat_max = 90.0 - (coord.y as f64 / n_rows) * 180.0;
+    let lat_min = 90.0 - ((coord.y + 1) as f64 / n_rows) * 180.0;
+
+    BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
+}
+
 /// TMS (Tile Map Service) Y-flip conversion.
 /// TMS uses bottom-left origin, while XYZ/WMTS uses top-left.
 pub fn tms_to_xyz(z: u32, x: u32, y: u32) -> TileCoord {
@@ -489,5 +512,38 @@ mod tests {
         let (z, x, y) = xyz_to_tms(&xyz);
         let back = tms_to_xyz(z, x, y);
         assert_eq!(xyz, back);
+    }
+
+    #[test]
+    fn test_wgs84_tile_to_latlon_bounds() {
+        // At zoom 0: 2 columns, 1 row
+        // Tile (0,0,0) should cover western hemisphere: -180 to 0 lon, -90 to 90 lat
+        let bbox = wgs84_tile_to_latlon_bounds(&TileCoord { z: 0, x: 0, y: 0 });
+        assert!((bbox.min_x - (-180.0)).abs() < 0.001);
+        assert!((bbox.max_x - 0.0).abs() < 0.001);
+        assert!((bbox.min_y - (-90.0)).abs() < 0.001);
+        assert!((bbox.max_y - 90.0).abs() < 0.001);
+
+        // Tile (0,1,0) should cover eastern hemisphere: 0 to 180 lon, -90 to 90 lat
+        let bbox = wgs84_tile_to_latlon_bounds(&TileCoord { z: 0, x: 1, y: 0 });
+        assert!((bbox.min_x - 0.0).abs() < 0.001);
+        assert!((bbox.max_x - 180.0).abs() < 0.001);
+        assert!((bbox.min_y - (-90.0)).abs() < 0.001);
+        assert!((bbox.max_y - 90.0).abs() < 0.001);
+
+        // At zoom 1: 4 columns, 2 rows
+        // Tile (1,0,0) should cover: -180 to -90 lon, 0 to 90 lat
+        let bbox = wgs84_tile_to_latlon_bounds(&TileCoord { z: 1, x: 0, y: 0 });
+        assert!((bbox.min_x - (-180.0)).abs() < 0.001);
+        assert!((bbox.max_x - (-90.0)).abs() < 0.001);
+        assert!((bbox.min_y - 0.0).abs() < 0.001);
+        assert!((bbox.max_y - 90.0).abs() < 0.001);
+
+        // Tile (1,2,1) should cover: -90 to 0 lon, -90 to 0 lat
+        let bbox = wgs84_tile_to_latlon_bounds(&TileCoord { z: 1, x: 1, y: 1 });
+        assert!((bbox.min_x - (-90.0)).abs() < 0.001);
+        assert!((bbox.max_x - 0.0).abs() < 0.001);
+        assert!((bbox.min_y - (-90.0)).abs() < 0.001);
+        assert!((bbox.max_y - 0.0).abs() < 0.001);
     }
 }

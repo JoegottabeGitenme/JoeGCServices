@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use tracing::{info, instrument, error, debug};
 
 use storage::CacheKey;
-use wms_common::{tile::web_mercator_tile_matrix_set, BoundingBox, CrsCode, TileCoord};
+use wms_common::{tile::{web_mercator_tile_matrix_set, wgs84_tile_to_latlon_bounds}, BoundingBox, CrsCode, TileCoord};
 
 use crate::state::AppState;
 use crate::layer_config::LayerConfigRegistry;
@@ -28,7 +28,7 @@ use crate::model_config::ModelDimensionRegistry;
 use storage::ParameterAvailability;
 use super::common::{
     wmts_exception, DimensionParams, WmtsDimensionParams,
-    get_wmts_styles_xml_from_file,
+    get_wmts_styles_xml_from_file, convert_png_to_jpeg,
 };
 
 // ============================================================================
@@ -64,6 +64,13 @@ pub struct WmtsKvpParams {
     pub forecast: Option<String>,
     #[serde(rename = "ELEVATION")]
     pub elevation: Option<String>,
+    // GetFeatureInfo parameters
+    #[serde(rename = "I")]
+    pub i: Option<u32>,
+    #[serde(rename = "J")]
+    pub j: Option<u32>,
+    #[serde(rename = "INFOFORMAT")]
+    pub info_format: Option<String>,
 }
 
 // ============================================================================
@@ -87,12 +94,65 @@ pub async fn wmts_kvp_handler(
     match params.request.as_deref() {
         Some("GetCapabilities") => wmts_get_capabilities(state).await,
         Some("GetTile") => {
+            // Validate FORMAT parameter
+            let format = params.format.as_deref().unwrap_or("image/png");
+            if format != "image/png" && format != "image/jpeg" {
+                return wmts_exception(
+                    "InvalidParameterValue",
+                    &format!("FORMAT '{}' is not supported. Supported formats: image/png, image/jpeg", format),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            
+            // Validate TILEMATRIXSET parameter
+            let tile_matrix_set = params.tile_matrix_set.as_deref().unwrap_or("WebMercatorQuad");
+            if tile_matrix_set != "WebMercatorQuad" && tile_matrix_set != "WorldCRS84Quad" {
+                return wmts_exception(
+                    "InvalidParameterValue",
+                    &format!("TILEMATRIXSET '{}' is not supported. Supported: WebMercatorQuad, WorldCRS84Quad", tile_matrix_set),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            
             let layer = params.layer.clone().unwrap_or_default();
             let style = params.style.clone().unwrap_or_else(|| "default".to_string());
             let tile_matrix = params.tile_matrix.clone().unwrap_or_default();
             let tile_row = params.tile_row.unwrap_or(0);
             let tile_col = params.tile_col.unwrap_or(0);
             let z: u32 = tile_matrix.parse().unwrap_or(0);
+            
+            // Validate TILEMATRIX (zoom level) - both TileMatrixSets support 0-18
+            if z > 18 {
+                return wmts_exception(
+                    "TileOutOfRange",
+                    &format!("TILEMATRIX '{}' is out of range. Valid range: 0-18", z),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            
+            // Validate TILEROW and TILECOL bounds for the zoom level
+            // WorldCRS84Quad has 2:1 aspect ratio: cols = 2^(z+1), rows = 2^z
+            // WebMercatorQuad has 1:1 aspect ratio: cols = rows = 2^z
+            let (max_cols, max_rows) = if tile_matrix_set == "WorldCRS84Quad" {
+                (2u32.pow(z + 1), 2u32.pow(z))
+            } else {
+                (2u32.pow(z), 2u32.pow(z))
+            };
+            
+            if tile_row >= max_rows {
+                return wmts_exception(
+                    "TileOutOfRange",
+                    &format!("TILEROW '{}' is out of range for TILEMATRIX '{}'. Valid range: 0-{}", tile_row, z, max_rows - 1),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            if tile_col >= max_cols {
+                return wmts_exception(
+                    "TileOutOfRange",
+                    &format!("TILECOL '{}' is out of range for TILEMATRIX '{}'. Valid range: 0-{}", tile_col, z, max_cols - 1),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
             
             let dimensions = DimensionParams {
                 time: params.time.clone(),
@@ -104,7 +164,68 @@ pub async fn wmts_kvp_handler(
             let model = layer.split('_').next().unwrap_or("");
             let (forecast_hour, observation_time, _) = dimensions.parse_for_layer(model, &state.model_dimensions);
             
-            wmts_get_tile(state, &layer, &style, z, tile_col, tile_row, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
+            wmts_get_tile(state, &layer, &style, tile_matrix_set, z, tile_col, tile_row, forecast_hour, observation_time, dimensions.elevation.as_deref(), format).await
+        }
+        Some("GetFeatureInfo") => {
+            // Validate required parameters
+            let layer = match &params.layer {
+                Some(l) => l.clone(),
+                None => return wmts_exception("MissingParameterValue", "LAYER is required", StatusCode::BAD_REQUEST),
+            };
+            let tile_matrix = match &params.tile_matrix {
+                Some(tm) => tm.clone(),
+                None => return wmts_exception("MissingParameterValue", "TILEMATRIX is required", StatusCode::BAD_REQUEST),
+            };
+            let tile_row = match params.tile_row {
+                Some(tr) => tr,
+                None => return wmts_exception("MissingParameterValue", "TILEROW is required", StatusCode::BAD_REQUEST),
+            };
+            let tile_col = match params.tile_col {
+                Some(tc) => tc,
+                None => return wmts_exception("MissingParameterValue", "TILECOL is required", StatusCode::BAD_REQUEST),
+            };
+            let i = match params.i {
+                Some(i) => i,
+                None => return wmts_exception("MissingParameterValue", "I is required", StatusCode::BAD_REQUEST),
+            };
+            let j = match params.j {
+                Some(j) => j,
+                None => return wmts_exception("MissingParameterValue", "J is required", StatusCode::BAD_REQUEST),
+            };
+            
+            let z: u32 = tile_matrix.parse().unwrap_or(0);
+            let info_format = params.info_format.as_deref().unwrap_or("application/json");
+            
+            // Validate I and J are within tile bounds (0-255 for 256x256 tiles)
+            if i >= 256 {
+                return wmts_exception(
+                    "PointIJOutOfRange",
+                    &format!("I parameter value {} is out of range. Must be between 0 and 255.", i),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            if j >= 256 {
+                return wmts_exception(
+                    "PointIJOutOfRange",
+                    &format!("J parameter value {} is out of range. Must be between 0 and 255.", j),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+            
+            let dimensions = DimensionParams {
+                time: params.time.clone(),
+                run: params.run.clone(),
+                forecast: params.forecast.clone(),
+                elevation: params.elevation.clone(),
+            };
+            
+            let model = layer.split('_').next().unwrap_or("");
+            let (forecast_hour, observation_time, _) = dimensions.parse_for_layer(model, &state.model_dimensions);
+            
+            wmts_get_feature_info(
+                state, &layer, z, tile_col, tile_row, i, j,
+                forecast_hour, observation_time, dimensions.elevation.as_deref(), info_format
+            ).await
         }
         _ => wmts_exception(
             "MissingParameterValue",
@@ -133,11 +254,21 @@ pub async fn wmts_rest_handler(
     // URL format: {layer}/{style}/{TileMatrixSet}/{z}/{x}/{y}.png
     let layer = parts[0];
     let style = parts[1];
+    let tile_matrix_set = parts[2];
     let z: u32 = parts[3].parse().unwrap_or(0);
     let x: u32 = parts[4].parse().unwrap_or(0);
     let last = parts[5];
     let (y_str, _) = last.rsplit_once('.').unwrap_or((last, "png"));
     let y: u32 = y_str.parse().unwrap_or(0);
+    
+    // Validate TileMatrixSet
+    if tile_matrix_set != "WebMercatorQuad" && tile_matrix_set != "WorldCRS84Quad" {
+        return wmts_exception(
+            "InvalidParameterValue",
+            &format!("TileMatrixSet '{}' is not supported. Supported: WebMercatorQuad, WorldCRS84Quad", tile_matrix_set),
+            StatusCode::BAD_REQUEST,
+        );
+    }
     
     let dimensions = DimensionParams {
         time: params.time.clone(),
@@ -149,7 +280,8 @@ pub async fn wmts_rest_handler(
     let model = layer.split('_').next().unwrap_or("");
     let (forecast_hour, observation_time, _) = dimensions.parse_for_layer(model, &state.model_dimensions);
     
-    wmts_get_tile(state, layer, style, z, x, y, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
+    // REST always uses PNG (format determined by file extension)
+    wmts_get_tile(state, layer, style, tile_matrix_set, z, x, y, forecast_hour, observation_time, dimensions.elevation.as_deref(), "image/png").await
 }
 
 /// XYZ tile handler for Leaflet/OpenLayers
@@ -172,7 +304,8 @@ pub async fn xyz_tile_handler(
     let model = layer.split('_').next().unwrap_or("");
     let (forecast_hour, observation_time, _) = dimensions.parse_for_layer(model, &state.model_dimensions);
     
-    wmts_get_tile(state, &layer, &style, z, x, y_val, forecast_hour, observation_time, dimensions.elevation.as_deref()).await
+    // XYZ always uses WebMercatorQuad and PNG
+    wmts_get_tile(state, &layer, &style, "WebMercatorQuad", z, x, y_val, forecast_hour, observation_time, dimensions.elevation.as_deref(), "image/png").await
 }
 
 // ============================================================================
@@ -242,12 +375,14 @@ async fn wmts_get_tile(
     state: Arc<AppState>,
     layer: &str,
     style: &str,
+    tile_matrix_set: &str,
     z: u32,
     x: u32,
     y: u32,
     forecast_hour: Option<u32>,
     observation_time: Option<chrono::DateTime<chrono::Utc>>,
     elevation: Option<&str>,
+    format: &str,
 ) -> Response {
     use crate::metrics::Timer;
     
@@ -275,9 +410,9 @@ async fn wmts_get_tile(
     };
     let elevation = effective_elevation.as_deref();
     
-    info!(layer = %layer, style = %style, z = z, x = x, y = y, forecast_hour = ?forecast_hour, elevation = ?elevation, "GetTile request");
+    info!(layer = %layer, style = %style, tile_matrix_set = %tile_matrix_set, z = z, x = x, y = y, forecast_hour = ?forecast_hour, elevation = ?elevation, "GetTile request");
     
-    // Build cache key
+    // Build cache key - include TileMatrixSet to avoid cache collisions
     let time_key = forecast_hour.map(|h| format!("t{}", h))
         .or_else(|| observation_time.map(|t| format!("obs{}", t.timestamp())));
     let elevation_key = elevation.map(|e| e.replace(' ', "_"));
@@ -288,32 +423,45 @@ async fn wmts_get_tile(
         (None, None) => None,
     };
     
+    // Use appropriate CRS code based on TileMatrixSet
+    let crs_code = if tile_matrix_set == "WorldCRS84Quad" {
+        CrsCode::Epsg4326
+    } else {
+        CrsCode::Epsg3857
+    };
+    
     let cache_key = CacheKey::new(
         layer,
         style,
-        CrsCode::Epsg3857,
+        crs_code,
         BoundingBox::new(x as f64, y as f64, z as f64, 0.0),
         256, 256,
         dimension_suffix.clone(),
         "png",
     );
     
+    // Cache key includes TileMatrixSet to avoid collisions between different projections
     let cache_key_str = format!(
-        "{}:{}:EPSG:3857:{}_{}_{}:{}",
-        layer, style, z, x, y,
+        "{}:{}:{}:{}_{}_{}:{}",
+        tile_matrix_set, layer, style, z, x, y,
         dimension_suffix.as_deref().unwrap_or("current")
     );
     
-    // Get tile bounds
-    let tms = web_mercator_tile_matrix_set();
+    // Get tile bounds based on TileMatrixSet
     let coord = TileCoord::new(z, x, y);
     
-    let _bbox = match tms.tile_bbox(&coord) {
-        Some(bbox) => bbox,
-        None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
+    let latlon_bbox = if tile_matrix_set == "WorldCRS84Quad" {
+        // WorldCRS84Quad uses linear lat/lon mapping
+        wgs84_tile_to_latlon_bounds(&coord)
+    } else {
+        // WebMercatorQuad uses Mercator projection
+        let tms = web_mercator_tile_matrix_set();
+        let _bbox = match tms.tile_bbox(&coord) {
+            Some(bbox) => bbox,
+            None => return wmts_exception("TileOutOfRange", "Invalid tile", StatusCode::BAD_REQUEST),
+        };
+        wms_common::tile::tile_to_latlon_bounds(&coord)
     };
-    
-    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
     let bbox_array = [
         latlon_bbox.min_x as f32,
         latlon_bbox.min_y as f32,
@@ -326,13 +474,24 @@ async fn wmts_get_tile(
         if let Some(tile_data) = state.tile_memory_cache.get(&cache_key_str).await {
             state.metrics.record_l1_cache_hit();
             state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::L1Hit);
+            
+            // Convert to JPEG if requested
+            let (output_data, content_type) = if format == "image/jpeg" {
+                match convert_png_to_jpeg(&tile_data) {
+                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                    Err(_) => (tile_data.to_vec(), "image/png"),
+                }
+            } else {
+                (tile_data.to_vec(), "image/png")
+            };
+            
             return Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CONTENT_TYPE, content_type)
                 .header(header::CACHE_CONTROL, "max-age=300")
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .header("X-Cache", "L1-HIT")
-                .body(tile_data.to_vec().into())
+                .body(output_data.into())
                 .unwrap();
         }
         state.metrics.record_l1_cache_miss();
@@ -350,13 +509,23 @@ async fn wmts_get_tile(
                 state.tile_memory_cache.set(&cache_key_str, data_bytes.clone(), None).await;
             }
             
+            // Convert to JPEG if requested
+            let (output_data, content_type) = if format == "image/jpeg" {
+                match convert_png_to_jpeg(&cached_data) {
+                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                    Err(_) => (cached_data.to_vec(), "image/png"),
+                }
+            } else {
+                (cached_data.to_vec(), "image/png")
+            };
+            
             return Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CONTENT_TYPE, content_type)
                 .header(header::CACHE_CONTROL, "max-age=3600")
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .header("X-Cache", "L2-HIT")
-                .body(cached_data.to_vec().into())
+                .body(output_data.into())
                 .unwrap();
         }
         state.metrics.record_cache_miss().await;
@@ -366,6 +535,21 @@ async fn wmts_get_tile(
     
     if parameter.is_empty() {
         return wmts_exception("InvalidParameterValue", "Invalid layer format", StatusCode::BAD_REQUEST);
+    }
+    
+    // Validate layer exists in configuration
+    {
+        let configs = state.layer_configs.read().await;
+        if configs.get_layer_by_param(model, &parameter).is_none() {
+            // Check if it's a wind barbs layer
+            if parameter != "WIND_BARBS" {
+                return wmts_exception(
+                    "TileNotDefined", 
+                    &format!("Layer '{}' is not defined", layer), 
+                    StatusCode::BAD_REQUEST
+                );
+            }
+        }
     }
     
     // Render the tile
@@ -406,7 +590,20 @@ async fn wmts_get_tile(
             let layer_type = crate::metrics::LayerType::from_layer_and_style(layer, style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
             
-            // Cache the result
+            // Convert to JPEG if requested
+            let (output_data, content_type) = if format == "image/jpeg" {
+                match convert_png_to_jpeg(&png_data) {
+                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                    Err(e) => {
+                        error!(error = %e, "Failed to convert PNG to JPEG");
+                        (png_data.clone(), "image/png") // Fallback to PNG
+                    }
+                }
+            } else {
+                (png_data.clone(), "image/png")
+            };
+            
+            // Cache the result (always cache as PNG for simplicity)
             if state.optimization_config.l1_cache_enabled {
                 let png_bytes = bytes::Bytes::from(png_data.clone());
                 state.tile_memory_cache.set(&cache_key_str, png_bytes, None).await;
@@ -430,11 +627,11 @@ async fn wmts_get_tile(
             
             Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CONTENT_TYPE, content_type)
                 .header(header::CACHE_CONTROL, "max-age=3600")
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .header("X-Cache", "MISS")
-                .body(png_data.into())
+                .body(output_data.into())
                 .unwrap()
         }
         Err(e) => {
@@ -443,6 +640,138 @@ async fn wmts_get_tile(
             wmts_exception("NoApplicableCode", &format!("Rendering failed: {}", e), StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+// ============================================================================
+// GetFeatureInfo
+// ============================================================================
+
+async fn wmts_get_feature_info(
+    state: Arc<AppState>,
+    layer: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+    i: u32,
+    j: u32,
+    forecast_hour: Option<u32>,
+    observation_time: Option<chrono::DateTime<chrono::Utc>>,
+    elevation: Option<&str>,
+    info_format: &str,
+) -> Response {
+    use wms_protocol::{InfoFormat, FeatureInfoResponse};
+    
+    info!(layer = %layer, z = z, x = x, y = y, i = i, j = j, forecast_hour = ?forecast_hour, elevation = ?elevation, "WMTS GetFeatureInfo request");
+    
+    // Parse info format
+    let format = match InfoFormat::from_mime(info_format) {
+        Some(f) => f,
+        None => {
+            return wmts_exception(
+                "InvalidParameterValue",
+                &format!("INFOFORMAT '{}' is not supported. Supported formats: application/json, text/html, text/xml, text/plain", info_format),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+    };
+    
+    // Calculate the geographic bbox for the tile
+    let coord = TileCoord::new(z, x, y);
+    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
+    
+    // Convert tile pixel coordinates to lat/lon
+    // Tile is 256x256 pixels
+    let tile_width = latlon_bbox.max_x - latlon_bbox.min_x;
+    let tile_height = latlon_bbox.max_y - latlon_bbox.min_y;
+    
+    // Note: In web tiles, J=0 is at the top, so we need to flip the y coordinate
+    let pixel_lon = latlon_bbox.min_x + (i as f64 / 256.0) * tile_width;
+    let pixel_lat = latlon_bbox.max_y - (j as f64 / 256.0) * tile_height;  // Flip Y
+    
+    // Create a small bbox around the point (single pixel)
+    let pixel_width = tile_width / 256.0;
+    let pixel_height = tile_height / 256.0;
+    let bbox_array = [
+        pixel_lon - pixel_width / 2.0,  // min_lon
+        pixel_lat - pixel_height / 2.0, // min_lat
+        pixel_lon + pixel_width / 2.0,  // max_lon
+        pixel_lat + pixel_height / 2.0, // max_lat
+    ];
+    
+    // Parse layer
+    let parts: Vec<&str> = layer.split('_').collect();
+    let (model, parameter) = if parts.len() >= 2 {
+        (parts[0], parts[1..].join("_").to_uppercase())
+    } else {
+        return wmts_exception("InvalidParameterValue", "Invalid layer format", StatusCode::BAD_REQUEST);
+    };
+    
+    // Get effective elevation
+    let effective_elevation: Option<String> = match elevation {
+        Some(elev) => Some(elev.to_string()),
+        None => {
+            let configs = state.layer_configs.read().await;
+            configs
+                .get_layer_by_param(model, &parameter)
+                .and_then(|l| l.default_level())
+                .map(|s| s.to_string())
+        }
+    };
+    
+    // Query the point value
+    let features = match crate::rendering::query_point_value(
+        &state.catalog,
+        &state.metrics,
+        &state.grid_processor_factory,
+        layer,
+        bbox_array,
+        256,
+        256,
+        i,
+        j,
+        "EPSG:4326",
+        forecast_hour,
+        observation_time,
+        effective_elevation.as_deref(),
+    ).await {
+        Ok(features) => features,
+        Err(e) => {
+            error!(layer = %layer, error = %e, "WMTS GetFeatureInfo query failed");
+            return wmts_exception(
+                "NoApplicableCode",
+                &format!("Query failed: {}", e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+        }
+    };
+    
+    let response = FeatureInfoResponse::new(features);
+    
+    // Format response based on INFOFORMAT
+    let (body, content_type) = match format {
+        InfoFormat::Json => {
+            match response.to_json() {
+                Ok(json) => (json, "application/json"),
+                Err(e) => {
+                    return wmts_exception(
+                        "NoApplicableCode",
+                        &format!("JSON encoding failed: {}", e),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    );
+                }
+            }
+        }
+        InfoFormat::Html => (response.to_html(), "text/html"),
+        InfoFormat::Xml => (response.to_xml(), "text/xml"),
+        InfoFormat::Text => (response.to_text(), "text/plain"),
+    };
+    
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(body.into())
+        .unwrap()
 }
 
 // ============================================================================
@@ -638,6 +967,7 @@ fn build_wmts_capabilities_xml(
       </ows:WGS84BoundingBox>
 {}
       <Format>image/png</Format>
+      <Format>image/jpeg</Format>
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
@@ -672,6 +1002,7 @@ fn build_wmts_capabilities_xml(
       </ows:WGS84BoundingBox>
       <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
       <Format>image/png</Format>
+      <Format>image/jpeg</Format>
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
 {}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
@@ -695,6 +1026,17 @@ fn build_wmts_capabilities_xml(
     <ows:ServiceType>OGC WMTS</ows:ServiceType>
     <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
   </ows:ServiceIdentification>
+  <ows:OperationsMetadata>
+    <ows:Operation name="GetCapabilities">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetTile">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetFeatureInfo">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+  </ows:OperationsMetadata>
   <Contents>
 {}
     <TileMatrixSet>
@@ -806,6 +1148,34 @@ fn build_tile_matrices() -> String {
         .join("\n")
 }
 
+/// Build TileMatrix elements for WorldCRS84Quad TileMatrixSet.
+/// WorldCRS84Quad uses 2:1 aspect ratio: matrix_width = 2^(z+1), matrix_height = 2^z
+fn build_wgs84_tile_matrices() -> String {
+    (0..=18)
+        .map(|z| {
+            let n_rows = 2u32.pow(z);
+            let n_cols = 2u32.pow(z + 1);  // 2:1 aspect ratio
+            // Scale denominator based on degrees per pixel
+            // At zoom 0: 180 degrees / 256 pixels = 0.703125 degrees/pixel
+            // Standard pixel size is 0.00028m, 1 degree ≈ 111320m at equator
+            let scale = 559082264.0287178 / (n_rows as f64);
+            format!(
+                r#"      <TileMatrix>
+        <ows:Identifier>{}</ows:Identifier>
+        <ScaleDenominator>{}</ScaleDenominator>
+        <TopLeftCorner>-180.0 90.0</TopLeftCorner>
+        <TileWidth>256</TileWidth>
+        <TileHeight>256</TileHeight>
+        <MatrixWidth>{}</MatrixWidth>
+        <MatrixHeight>{}</MatrixHeight>
+      </TileMatrix>"#,
+                z, scale, n_cols, n_rows
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Build WMTS capabilities XML from layer configs (config-driven approach).
 /// Only includes layers that have data available in the catalog.
 fn build_wmts_capabilities_xml_v2(
@@ -869,8 +1239,12 @@ fn build_wmts_capabilities_xml_v2(
       </ows:WGS84BoundingBox>
 {}
       <Format>image/png</Format>
+      <Format>image/jpeg</Format>
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
+      </TileMatrixSetLink>
+      <TileMatrixSetLink>
+        <TileMatrixSet>WorldCRS84Quad</TileMatrixSet>
       </TileMatrixSetLink>
 {}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
@@ -928,7 +1302,9 @@ fn build_wmts_capabilities_xml_v2(
       </ows:WGS84BoundingBox>
       <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
       <Format>image/png</Format>
+      <Format>image/jpeg</Format>
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
+      <TileMatrixSetLink><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></TileMatrixSetLink>
 {}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
     </Layer>"#,
@@ -942,7 +1318,8 @@ fn build_wmts_capabilities_xml_v2(
     }
 
     let layers = all_layers.join("\n");
-    let tile_matrices = build_tile_matrices();
+    let webmercator_tile_matrices = build_tile_matrices();
+    let wgs84_tile_matrices = build_wgs84_tile_matrices();
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -955,6 +1332,17 @@ fn build_wmts_capabilities_xml_v2(
     <ows:ServiceType>OGC WMTS</ows:ServiceType>
     <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
   </ows:ServiceIdentification>
+  <ows:OperationsMetadata>
+    <ows:Operation name="GetCapabilities">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetTile">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetFeatureInfo">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+  </ows:OperationsMetadata>
   <Contents>
 {}
     <TileMatrixSet>
@@ -962,9 +1350,14 @@ fn build_wmts_capabilities_xml_v2(
       <ows:SupportedCRS>urn:ogc:def:crs:EPSG::3857</ows:SupportedCRS>
 {}
     </TileMatrixSet>
+    <TileMatrixSet>
+      <ows:Identifier>WorldCRS84Quad</ows:Identifier>
+      <ows:SupportedCRS>urn:ogc:def:crs:OGC:1.3:CRS84</ows:SupportedCRS>
+{}
+    </TileMatrixSet>
   </Contents>
 </Capabilities>"#,
-        layers, tile_matrices
+        layers, webmercator_tile_matrices, wgs84_tile_matrices
     )
 }
 

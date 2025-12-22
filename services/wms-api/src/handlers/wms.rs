@@ -21,7 +21,7 @@ use crate::model_config::ModelDimensionRegistry;
 use storage::ParameterAvailability;
 use super::common::{
     wms_exception, mercator_to_wgs84, DimensionParams,
-    get_styles_xml_from_file,
+    get_styles_xml_from_file, convert_png_to_jpeg,
 };
 
 // ============================================================================
@@ -156,22 +156,22 @@ fn validate_bbox(bbox: Option<&str>, crs: Option<&str>) -> Result<(), WmsError> 
         Some(b) => b,
         None => return Ok(()), // BBOX is optional in some contexts
     };
-    
+
     let coords: Vec<f64> = bbox_str
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect();
-    
+
     if coords.len() != 4 {
         return Err(WmsError::InvalidBBox(format!(
             "BBOX must contain exactly 4 comma-separated values, got {}",
             coords.len()
         )));
     }
-    
+
     let crs_str = crs.unwrap_or("EPSG:4326");
     let is_geographic = !crs_str.contains("3857");
-    
+
     // For EPSG:4326 (WMS 1.3.0): BBOX is minLat,minLon,maxLat,maxLon
     // For EPSG:3857: BBOX is minX,minY,maxX,maxY
     let (min_x, min_y, max_x, max_y) = if is_geographic {
@@ -180,7 +180,7 @@ fn validate_bbox(bbox: Option<&str>, crs: Option<&str>) -> Result<(), WmsError> 
     } else {
         (coords[0], coords[1], coords[2], coords[3])
     };
-    
+
     // Check that min < max for both axes
     if min_x > max_x {
         return Err(WmsError::InvalidBBox(format!(
@@ -188,14 +188,14 @@ fn validate_bbox(bbox: Option<&str>, crs: Option<&str>) -> Result<(), WmsError> 
             min_x, max_x
         )));
     }
-    
+
     if min_y > max_y {
         return Err(WmsError::InvalidBBox(format!(
             "Invalid BBOX: minY ({}) is greater than maxY ({})",
             min_y, max_y
         )));
     }
-    
+
     Ok(())
 }
 
@@ -297,7 +297,7 @@ pub async fn wms_handler(
 
 async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Response {
     let version = params.version.as_deref().unwrap_or("1.3.0");
-    
+
     // Check cache first
     if let Some(cached_xml) = state.capabilities_cache.get_wms().await {
         return Response::builder()
@@ -311,10 +311,10 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
     // Build capabilities from layer configs (config-driven approach)
     // Only include layers that have data in the catalog
     let layer_configs = state.layer_configs.read().await;
-    
+
     // Collect availability data for each configured layer
     let mut param_availability: HashMap<String, storage::ParameterAvailability> = HashMap::new();
-    
+
     for model_id in layer_configs.models() {
         if let Some(model_config) = layer_configs.get_model(model_id) {
             for layer in &model_config.layers {
@@ -322,7 +322,7 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
                 if layer.composite {
                     continue;
                 }
-                
+
                 // Check if data exists for this layer
                 if let Ok(Some(availability)) = state.catalog
                     .get_parameter_availability(model_id, &layer.parameter)
@@ -373,7 +373,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             )
         }
     };
-    
+
     let width = params.width.unwrap_or(256);
     let height = params.height.unwrap_or(256);
     let styles_param = params.styles.as_deref().unwrap_or("default");
@@ -399,7 +399,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     // Parse multiple layers and styles
     let layer_names: Vec<&str> = layers_param.split(',').map(|s| s.trim()).collect();
     let style_names: Vec<&str> = styles_param.split(',').map(|s| s.trim()).collect();
-    
+
     // Build dimension parameters from request
     let dimensions = DimensionParams {
         time: params.time.clone(),
@@ -449,11 +449,23 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     match render_result {
         Ok(png_data) => {
             state.metrics.record_render(timer.elapsed_us(), true).await;
+
+            // Convert to requested format
+            let requested_format = format.unwrap_or("image/png").to_lowercase();
+            let (output_data, content_type) = if requested_format == "image/jpeg" {
+                match convert_png_to_jpeg(&png_data) {
+                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                    Err(_) => (png_data, "image/png"), // Fallback to PNG on error
+                }
+            } else {
+                (png_data, "image/png")
+            };
+
             Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CONTENT_TYPE, content_type)
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                .body(png_data.into())
+                .body(output_data.into())
                 .unwrap()
         }
         Err(e) => {
@@ -604,7 +616,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     // Parse TIME parameter - can be either:
     // 1. A forecast hour integer (e.g., "6" for GFS/HRRR forecast models)
     // 2. An ISO 8601 timestamp (e.g., "2024-12-21T21:01:00Z" for GOES satellite/observation data)
-    let (forecast_hour, valid_time): (Option<u32>, Option<chrono::DateTime<chrono::Utc>>) = 
+    let (forecast_hour, valid_time): (Option<u32>, Option<chrono::DateTime<chrono::Utc>>) =
         if let Some(time_str) = params.time.as_ref() {
             // First try parsing as integer (forecast hour)
             if let Ok(hour) = time_str.parse::<u32>() {
@@ -646,11 +658,11 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
 
     // Query each layer
     let layers: Vec<&str> = query_layers.split(',').map(|s| s.trim()).collect();
-    
+
     // Validate all layer names before querying
     // Get list of valid models from catalog
     let valid_models = state.catalog.list_models().await.unwrap_or_default();
-    
+
     for layer in &layers {
         let parts: Vec<&str> = layer.split('_').collect();
         if parts.len() < 2 {
@@ -660,7 +672,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
                 StatusCode::BAD_REQUEST,
             );
         }
-        
+
         // Check if the model exists in the catalog
         let model = parts[0].to_lowercase();
         if !valid_models.iter().any(|m| m.to_lowercase() == model) {
@@ -671,7 +683,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             );
         }
     }
-    
+
     let mut all_features = Vec::new();
 
     for layer in layers {
@@ -912,22 +924,22 @@ async fn render_multi_layer(
 ) -> Result<Vec<u8>, WmsError> {
     use image::{ImageBuffer, Rgba, RgbaImage};
     use std::io::Cursor;
-    
+
     if layer_names.is_empty() {
         return Err(WmsError::LayerNotDefined("No layers specified".to_string()));
     }
-    
+
     // Create a transparent base image
     let mut composite: RgbaImage = ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0]));
-    
+
     // Render each layer and composite
     for (i, layer_name) in layer_names.iter().enumerate() {
         // Get the style for this layer (use default if not enough styles provided)
         let style = style_names.get(i).copied().unwrap_or("default");
         let style = if style.is_empty() { "default" } else { style };
-        
+
         info!(layer = %layer_name, style = %style, layer_index = i, "Rendering layer for multi-layer composite");
-        
+
         // Render this layer
         match render_weather_data(state, layer_name, style, width, height, bbox, crs, dimensions).await {
             Ok(png_bytes) => {
@@ -939,7 +951,7 @@ async fn render_multi_layer(
                         continue; // Skip this layer but continue with others
                     }
                 };
-                
+
                 // Composite this layer on top using alpha blending
                 for (x, y, pixel) in layer_image.enumerate_pixels() {
                     if x < width && y < height {
@@ -955,14 +967,14 @@ async fn render_multi_layer(
             }
         }
     }
-    
+
     // Encode the composite image to PNG
     let mut png_bytes: Vec<u8> = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(Cursor::new(&mut png_bytes));
-    
+
     composite.write_with_encoder(encoder)
         .map_err(|e| WmsError::RenderingError(format!("Failed to encode composite PNG: {}", e)))?;
-    
+
     Ok(png_bytes)
 }
 
@@ -970,31 +982,31 @@ async fn render_multi_layer(
 fn alpha_blend(dst: image::Rgba<u8>, src: image::Rgba<u8>) -> image::Rgba<u8> {
     let src_a = src[3] as f32 / 255.0;
     let dst_a = dst[3] as f32 / 255.0;
-    
+
     // If source is fully transparent, return destination
     if src_a == 0.0 {
         return dst;
     }
-    
+
     // If source is fully opaque, return source
     if src_a == 1.0 {
         return src;
     }
-    
+
     // Standard "source over" alpha compositing
     let out_a = src_a + dst_a * (1.0 - src_a);
-    
+
     if out_a == 0.0 {
         return image::Rgba([0, 0, 0, 0]);
     }
-    
+
     let blend_channel = |src_c: u8, dst_c: u8| -> u8 {
         let src_c = src_c as f32 / 255.0;
         let dst_c = dst_c as f32 / 255.0;
         let out_c = (src_c * src_a + dst_c * dst_a * (1.0 - src_a)) / out_a;
         (out_c * 255.0).round() as u8
     };
-    
+
     image::Rgba([
         blend_channel(src[0], dst[0]),
         blend_channel(src[1], dst[1]),
@@ -1193,6 +1205,7 @@ fn build_wms_capabilities_xml(
       </GetCapabilities>
       <GetMap>
         <Format>image/png</Format>
+        <Format>image/jpeg</Format>
         <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
       </GetMap>
       <GetFeatureInfo>
@@ -1218,6 +1231,8 @@ fn build_wms_capabilities_xml(
 
 /// Build WMS capabilities XML from layer configs (config-driven approach).
 /// Only includes layers that have data available in the catalog.
+///
+///TODO we only need the one correct method to create a capabilities document CLAUDE!
 fn build_wms_capabilities_xml_v2(
     version: &str,
     layer_configs: &LayerConfigRegistry,
@@ -1357,6 +1372,7 @@ fn build_wms_capabilities_xml_v2(
       </GetCapabilities>
       <GetMap>
         <Format>image/png</Format>
+        <Format>image/jpeg</Format>
         <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
       </GetMap>
       <GetFeatureInfo>
@@ -1408,7 +1424,7 @@ fn build_layer_dimensions_xml(
             availability.times.join(",")
         };
         let run_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
-        
+
         let forecast_values = if availability.forecast_hours.is_empty() {
             "0".to_string()
         } else {

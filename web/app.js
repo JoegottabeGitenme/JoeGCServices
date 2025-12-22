@@ -132,6 +132,7 @@ let layerBounds = {}; // Map of layer name -> {west, south, east, north}
 let layerTitles = {}; // Map of layer name -> human-readable title from capabilities
 let selectedProtocol = 'wmts';
 let selectedStyle = 'default';
+let selectedTileMatrixSet = 'WebMercatorQuad'; // 'WebMercatorQuad' or 'WorldCRS84Quad'
 
 
 // Initialize the application
@@ -148,6 +149,30 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     // Time control listeners
     setupTimeControls();
+    
+    // TileMatrixSet selector (WMTS projection)
+    setupTileMatrixSetSelector();
+}
+
+// Setup TileMatrixSet selector event listeners
+function setupTileMatrixSetSelector() {
+    const tmsOptions = document.querySelectorAll('.tms-option');
+    tmsOptions.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tms = btn.dataset.tms;
+            if (tms === selectedTileMatrixSet) return;
+            
+            // Update selection state in UI
+            tmsOptions.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            console.log('Switching TileMatrixSet to:', tms);
+            
+            // Reinitialize the map with the new CRS
+            // This will also reload the weather layer if one is active
+            initMapWithCRS(tms);
+        });
+    });
 }
 
 // Setup time control event listeners
@@ -441,6 +466,36 @@ function hideStyleSelector() {
     }
 }
 
+// Show the TileMatrixSet selector (only for WMTS)
+function showTmsSelector() {
+    const container = document.getElementById('tms-selector-container');
+    if (container && selectedProtocol === 'wmts') {
+        container.style.display = 'flex';
+        // Sync button state with current selection
+        syncTmsSelectorState();
+    }
+}
+
+// Hide the TileMatrixSet selector
+function hideTmsSelector() {
+    const container = document.getElementById('tms-selector-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+// Sync TMS selector button state with current selectedTileMatrixSet
+function syncTmsSelectorState() {
+    const tmsOptions = document.querySelectorAll('.tms-option');
+    tmsOptions.forEach(btn => {
+        if (btn.dataset.tms === selectedTileMatrixSet) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
 // Populate the style selector
 function populateStyleSelector() {
     const container = document.getElementById('style-selector-options');
@@ -495,6 +550,7 @@ function populateStyleSelector() {
     });
     
     showStyleSelector();
+    showTmsSelector();
 }
 
 // Populate the elevation slider
@@ -755,15 +811,171 @@ function unlockMap() {
     console.log('Map interactions unlocked');
 }
 
-// Initialize Leaflet map
+// Initialize Leaflet map with default CRS (Web Mercator)
 function initMap() {
-    map = L.map('map').setView([39, -98], 4); // Center on US
+    initMapWithCRS('WebMercatorQuad');
+}
 
-    // Create a custom pane for weather overlays that sits above the tile pane
+// Initialize or reinitialize the Leaflet map with a specific CRS
+// crsType: 'WebMercatorQuad' (EPSG:3857) or 'WorldCRS84Quad' (EPSG:4326/CRS:84)
+function initMapWithCRS(crsType) {
+    // Save current position if map exists
+    let savedCenter = [39, -98]; // Default: US center
+    let savedZoom = 4;
+    let hadWeatherLayer = false;
+    let savedLayerName = selectedLayer;
+    let savedStyle = selectedStyle;
+    
+    if (map) {
+        savedCenter = [map.getCenter().lat, map.getCenter().lng];
+        savedZoom = map.getZoom();
+        hadWeatherLayer = wmsLayer !== null;
+        
+        // Clean up existing map
+        if (wmsLayer) {
+            map.removeLayer(wmsLayer);
+            map.off('moveend', onMapMoveEnd);
+            wmsLayer = null;
+        }
+        map.remove();
+        map = null;
+    }
+    
+    // Choose CRS based on TileMatrixSet
+    const isWGS84 = crsType === 'WorldCRS84Quad';
+    const crs = isWGS84 ? L.CRS.EPSG4326 : L.CRS.EPSG3857;
+    
+    // Adjust zoom for CRS differences
+    // EPSG:4326 zoom levels are different - typically need to subtract 1
+    let adjustedZoom = savedZoom;
+    if (isWGS84 && selectedTileMatrixSet !== 'WorldCRS84Quad') {
+        // Switching TO WGS84 from Mercator - adjust zoom
+        adjustedZoom = Math.max(0, savedZoom - 1);
+    } else if (!isWGS84 && selectedTileMatrixSet === 'WorldCRS84Quad') {
+        // Switching FROM WGS84 to Mercator - adjust zoom
+        adjustedZoom = Math.min(18, savedZoom + 1);
+    }
+    
+    // Create map with selected CRS
+    const mapOptions = {
+        crs: crs,
+        center: savedCenter,
+        zoom: adjustedZoom,
+        maxZoom: 18,
+        minZoom: 0
+    };
+    
+    // For WGS84, set world bounds to full extent
+    if (isWGS84) {
+        mapOptions.maxBounds = [[-90, -180], [90, 180]];
+        mapOptions.maxBoundsViscosity = 1.0;
+    }
+    
+    map = L.map('map', mapOptions);
+    
+    // Create a custom pane for weather overlays
     map.createPane('weatherPane');
-    map.getPane('weatherPane').style.zIndex = 450; // Above tilePane (200) but below popups (700)
+    map.getPane('weatherPane').style.zIndex = 450;
+    
+    // Add appropriate base layer based on CRS
+    if (isWGS84) {
+        // WGS84 mode: use graticule on light gray background
+        addGraticuleLayer();
+        map.attributionControl.addAttribution('Graticule: 5° intervals | Weather Data: WMTS Service');
+    } else {
+        // Web Mercator mode: use CartoDB/OSM tiles
+        addMercatorBaseLayers();
+        map.attributionControl.addAttribution('Weather Data: WMTS Service');
+    }
+    
+    // Update the TileMatrixSet variable
+    selectedTileMatrixSet = crsType;
+    
+    // Restore weather layer if one was active
+    if (hadWeatherLayer && savedLayerName) {
+        selectedLayer = savedLayerName;
+        selectedStyle = savedStyle;
+        createWeatherLayer();
+    }
+    
+    console.log(`Map initialized with CRS: ${crsType}, zoom: ${adjustedZoom}`);
+}
 
-    // Define base layers
+// Add graticule layer for WGS84 mode (5° intervals with labels)
+function addGraticuleLayer() {
+    // Set background color
+    document.getElementById('map').style.backgroundColor = '#f0f0f0';
+    
+    const graticuleGroup = L.layerGroup();
+    
+    // Style for grid lines
+    const gridStyle = {
+        color: '#999',
+        weight: 1,
+        opacity: 0.6
+    };
+    
+    const majorGridStyle = {
+        color: '#666',
+        weight: 1.5,
+        opacity: 0.8
+    };
+    
+    // Draw longitude lines (meridians) every 5 degrees
+    for (let lon = -180; lon <= 180; lon += 5) {
+        const isMajor = lon % 30 === 0;
+        const style = isMajor ? majorGridStyle : gridStyle;
+        
+        L.polyline([[-90, lon], [90, lon]], style).addTo(graticuleGroup);
+        
+        // Add label at equator for major lines
+        if (isMajor && lon !== 180) {
+            const label = lon === 0 ? '0°' : (lon > 0 ? `${lon}°E` : `${Math.abs(lon)}°W`);
+            L.marker([0, lon], {
+                icon: L.divIcon({
+                    className: 'graticule-label',
+                    html: `<span class="graticule-label-text">${label}</span>`,
+                    iconSize: [50, 20],
+                    iconAnchor: [25, 10]
+                })
+            }).addTo(graticuleGroup);
+        }
+    }
+    
+    // Draw latitude lines (parallels) every 5 degrees
+    for (let lat = -90; lat <= 90; lat += 5) {
+        const isMajor = lat % 30 === 0;
+        const style = isMajor ? majorGridStyle : gridStyle;
+        
+        L.polyline([[lat, -180], [lat, 180]], style).addTo(graticuleGroup);
+        
+        // Add label at prime meridian for major lines
+        if (isMajor) {
+            const label = lat === 0 ? '0°' : (lat > 0 ? `${lat}°N` : `${Math.abs(lat)}°S`);
+            L.marker([lat, 5], {
+                icon: L.divIcon({
+                    className: 'graticule-label',
+                    html: `<span class="graticule-label-text">${label}</span>`,
+                    iconSize: [50, 20],
+                    iconAnchor: [0, 10]
+                })
+            }).addTo(graticuleGroup);
+        }
+    }
+    
+    graticuleGroup.addTo(map);
+    
+    // Store for layer control
+    window.baseLayers = {
+        'Graticule (5°)': graticuleGroup
+    };
+}
+
+// Add Mercator base layers (CartoDB, OSM)
+function addMercatorBaseLayers() {
+    // Reset background color
+    document.getElementById('map').style.backgroundColor = '';
+    
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19
@@ -788,9 +1000,6 @@ function initMap() {
         'CartoDB Dark': cartoDark,
         'OpenStreetMap': osmLayer
     };
-
-    // Add attribution for weather data
-    map.attributionControl.addAttribution('Weather Data: WMS Service');
 }
 
 // Check WMS and WMTS service status
@@ -1084,6 +1293,7 @@ function clearWeatherLayer() {
     hideTimeSlider();
     hideElevationSlider();
     hideStyleSelector();
+    hideTmsSelector();
 }
 
 // Format layer name for display
@@ -1188,7 +1398,7 @@ function createWeatherLayer() {
         const wmtsUrl = buildWmtsTileUrl(selectedLayer, selectedStyle);
         
         wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle} - ${selectedTileMatrixSet})`,
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7,
@@ -1264,7 +1474,7 @@ function buildWmtsTileUrl(layerName, style) {
         'REQUEST=GetTile',
         `LAYER=${layerName}`,
         `STYLE=${style}`,
-        'TILEMATRIXSET=WebMercatorQuad',
+        `TILEMATRIXSET=${selectedTileMatrixSet}`,
         'TILEMATRIX={z}',
         'TILEROW={y}',
         'TILECOL={x}',
@@ -2507,7 +2717,7 @@ function updateLayerTime() {
         }
         
         wmsLayer = L.tileLayer(wmtsUrl, {
-            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle})`,
+            attribution: `${formatLayerName(selectedLayer)} (WMTS - ${selectedStyle} - ${selectedTileMatrixSet})`,
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7,
@@ -2643,6 +2853,13 @@ async function fetchAvailableTimes() {
         // Populate and show the style selector if available
         populateStyleSelector();
         
+        // Show TileMatrixSet selector for WMTS layers
+        if (selectedProtocol === 'wmts') {
+            showTmsSelector();
+        } else {
+            hideTmsSelector();
+        }
+        
         // Now create the layer with the correct time parameters
         createWeatherLayer();
         
@@ -2650,6 +2867,7 @@ async function fetchAvailableTimes() {
         console.error('Failed to fetch available times:', error);
         hideTimeSlider();
         hideElevationSlider();
+        hideTmsSelector();
         // Default to forecast mode with hour 0 if time fetch fails
         layerTimeMode = 'forecast';
         currentForecastHour = 0;

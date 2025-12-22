@@ -219,6 +219,66 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
 }
 
 // ============================================================================
+// Image Format Conversion
+// ============================================================================
+
+/// Default JPEG quality (0-100). Can be overridden via environment variable.
+const DEFAULT_JPEG_QUALITY: u8 = 90;
+
+/// Convert PNG image data to JPEG format.
+/// 
+/// Uses quality level from JPEG_QUALITY environment variable, defaulting to 90.
+/// Note: JPEG does not support transparency, so alpha channel is composited
+/// onto a white background.
+pub fn convert_png_to_jpeg(png_data: &[u8]) -> Result<Vec<u8>, String> {
+    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use std::io::Cursor;
+    
+    // Get quality from environment or use default
+    let quality = std::env::var("JPEG_QUALITY")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(DEFAULT_JPEG_QUALITY)
+        .min(100);  // Cap at 100
+    
+    // Decode PNG
+    let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
+        .map_err(|e| format!("Failed to decode PNG: {}", e))?;
+    
+    // Convert RGBA to RGB by compositing onto white background
+    // (JPEG doesn't support transparency)
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut rgb_img = RgbaImage::new(width, height);
+    
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        let Rgba([r, g, b, a]) = *pixel;
+        let alpha = a as f32 / 255.0;
+        // Composite onto white background
+        let new_r = (r as f32 * alpha + 255.0 * (1.0 - alpha)) as u8;
+        let new_g = (g as f32 * alpha + 255.0 * (1.0 - alpha)) as u8;
+        let new_b = (b as f32 * alpha + 255.0 * (1.0 - alpha)) as u8;
+        rgb_img.put_pixel(x, y, Rgba([new_r, new_g, new_b, 255]));
+    }
+    
+    let rgb_img = DynamicImage::ImageRgba8(rgb_img).to_rgb8();
+    
+    // Encode as JPEG with specified quality
+    let mut jpeg_data = Vec::new();
+    let mut cursor = Cursor::new(&mut jpeg_data);
+    
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
+    encoder.encode(
+        &rgb_img,
+        width,
+        height,
+        image::ColorType::Rgb8,
+    ).map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+    
+    Ok(jpeg_data)
+}
+
+// ============================================================================
 // PNG Image Utilities
 // ============================================================================
 
