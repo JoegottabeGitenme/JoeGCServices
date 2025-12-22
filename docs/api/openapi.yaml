@@ -1,0 +1,1131 @@
+openapi: 3.0.3
+info:
+  title: Weather WMS/WMTS API
+  version: 1.0.0
+  description: |
+    OGC-compliant Web Map Service (WMS 1.3.0) and Web Map Tile Service (WMTS 1.0.0) 
+    for weather data visualization.
+
+    ## Supported Weather Models
+
+    | Model | Type | Resolution | Coverage | Update Frequency |
+    |-------|------|------------|----------|------------------|
+    | **GFS** | Forecast | 0.25° | Global | Every 6 hours |
+    | **HRRR** | Forecast | 3 km | CONUS | Hourly |
+    | **GOES-16/18** | Observation | 1-2 km | Western Hemisphere | Every 5-15 min |
+    | **MRMS** | Observation | 1 km | CONUS | Every 2 min |
+
+    ## Layer Naming Convention
+
+    Layers follow the pattern: `{model}_{parameter}`
+
+    Examples:
+    - `gfs_TMP` - GFS Temperature
+    - `hrrr_WIND_SPEED` - HRRR Wind Speed
+    - `goes16_CMI_C13` - GOES-16 Band 13 (IR)
+    - `mrms_REFC` - MRMS Composite Reflectivity
+
+    ## Weather-Specific Dimensions
+
+    This service extends standard WMS/WMTS with weather-specific dimension parameters:
+
+    - **TIME**: Observation timestamp (for GOES, MRMS)
+    - **RUN**: Model initialization/run time (for GFS, HRRR)
+    - **FORECAST**: Forecast hour offset from run time (for GFS, HRRR)
+    - **ELEVATION**: Vertical level (e.g., "500 mb", "2 m above ground")
+
+  contact:
+    name: Weather WMS Support
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: '{protocol}://{host}:{port}'
+    description: Custom server
+    variables:
+      protocol:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost
+      port:
+        default: '8080'
+
+tags:
+  - name: WMS
+    description: |
+      OGC Web Map Service 1.3.0 - Returns rendered map images for geographic areas.
+      
+      The WMS endpoint supports three operations:
+      - **GetCapabilities**: Returns service metadata and available layers
+      - **GetMap**: Returns a rendered map image
+      - **GetFeatureInfo**: Returns data values at a specific point
+  - name: WMTS
+    description: |
+      OGC Web Map Tile Service 1.0.0 - Returns pre-defined map tiles.
+      
+      Supports both KVP (Key-Value Pair) and RESTful request encodings.
+      
+      Available TileMatrixSets:
+      - **WebMercatorQuad** (EPSG:3857) - Standard web mercator, Google/OSM compatible
+      - **WorldCRS84Quad** (CRS:84) - WGS84 geographic, 2:1 aspect ratio
+  - name: Tiles
+    description: |
+      Simple XYZ tile endpoint for easy integration with Leaflet, OpenLayers, and MapLibre.
+      
+      URL pattern: `/tiles/{layer}/{style}/{z}/{x}/{y}.png`
+
+paths:
+  # =============================================================================
+  # WMS Endpoints
+  # =============================================================================
+  /wms:
+    get:
+      tags: [WMS]
+      operationId: wmsRequest
+      summary: WMS 1.3.0 endpoint
+      description: |
+        OGC Web Map Service endpoint. The operation is determined by the `REQUEST` parameter:
+        - `GetCapabilities` - Returns service metadata
+        - `GetMap` - Returns a rendered map image
+        - `GetFeatureInfo` - Returns feature data at a point
+      parameters:
+        - $ref: '#/components/parameters/WmsService'
+        - $ref: '#/components/parameters/WmsRequest'
+        - $ref: '#/components/parameters/WmsVersion'
+        # GetCapabilities has no additional required params
+        # GetMap params
+        - $ref: '#/components/parameters/WmsLayers'
+        - $ref: '#/components/parameters/WmsStyles'
+        - $ref: '#/components/parameters/WmsCrs'
+        - $ref: '#/components/parameters/WmsBbox'
+        - $ref: '#/components/parameters/WmsWidth'
+        - $ref: '#/components/parameters/WmsHeight'
+        - $ref: '#/components/parameters/WmsFormat'
+        - $ref: '#/components/parameters/WmsTransparent'
+        - $ref: '#/components/parameters/WmsBgcolor'
+        # GetFeatureInfo params
+        - $ref: '#/components/parameters/WmsQueryLayers'
+        - $ref: '#/components/parameters/WmsInfoFormat'
+        - $ref: '#/components/parameters/WmsI'
+        - $ref: '#/components/parameters/WmsJ'
+        - $ref: '#/components/parameters/WmsFeatureCount'
+        # Weather dimensions
+        - $ref: '#/components/parameters/DimensionTime'
+        - $ref: '#/components/parameters/DimensionRun'
+        - $ref: '#/components/parameters/DimensionForecast'
+        - $ref: '#/components/parameters/DimensionElevation'
+        # Exception format
+        - $ref: '#/components/parameters/WmsExceptions'
+      responses:
+        '200':
+          description: |
+            Response varies by REQUEST type:
+            - GetCapabilities: XML capabilities document
+            - GetMap: Map image (PNG/JPEG)
+            - GetFeatureInfo: Feature data (JSON/HTML/XML)
+          content:
+            application/xml:
+              schema:
+                type: string
+              example: |
+                <?xml version="1.0" encoding="UTF-8"?>
+                <WMS_Capabilities version="1.3.0">...</WMS_Capabilities>
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureInfoResponse'
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Invalid request parameters
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmsException'
+        '404':
+          description: Layer not found
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmsException'
+        '500':
+          description: Internal server error
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmsException'
+
+  # =============================================================================
+  # WMTS Endpoints - KVP
+  # =============================================================================
+  /wmts:
+    get:
+      tags: [WMTS]
+      operationId: wmtsKvpRequest
+      summary: WMTS 1.0.0 KVP endpoint
+      description: |
+        OGC Web Map Tile Service endpoint using Key-Value Pair (KVP) encoding.
+        
+        The operation is determined by the `REQUEST` parameter:
+        - `GetCapabilities` - Returns service metadata and tile matrix sets
+        - `GetTile` - Returns a map tile
+        - `GetFeatureInfo` - Returns feature data at a point within a tile
+      parameters:
+        - $ref: '#/components/parameters/WmtsService'
+        - $ref: '#/components/parameters/WmtsRequest'
+        - $ref: '#/components/parameters/WmtsVersion'
+        # GetTile params
+        - $ref: '#/components/parameters/WmtsLayer'
+        - $ref: '#/components/parameters/WmtsStyle'
+        - $ref: '#/components/parameters/WmtsTileMatrixSet'
+        - $ref: '#/components/parameters/WmtsTileMatrix'
+        - $ref: '#/components/parameters/WmtsTileRow'
+        - $ref: '#/components/parameters/WmtsTileCol'
+        - $ref: '#/components/parameters/WmtsFormat'
+        # GetFeatureInfo params
+        - $ref: '#/components/parameters/WmtsI'
+        - $ref: '#/components/parameters/WmtsJ'
+        - $ref: '#/components/parameters/WmtsInfoFormat'
+        # Weather dimensions
+        - $ref: '#/components/parameters/DimensionTime'
+        - $ref: '#/components/parameters/DimensionRun'
+        - $ref: '#/components/parameters/DimensionForecast'
+        - $ref: '#/components/parameters/DimensionElevation'
+      responses:
+        '200':
+          description: |
+            Response varies by REQUEST type:
+            - GetCapabilities: XML capabilities document
+            - GetTile: Tile image (PNG/JPEG)
+            - GetFeatureInfo: Feature data (JSON/HTML/XML)
+          content:
+            application/xml:
+              schema:
+                type: string
+              example: |
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Capabilities xmlns="http://www.opengis.net/wmts/1.0">...</Capabilities>
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureInfoResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmtsException'
+        '404':
+          description: Layer or tile not found
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmtsException'
+        '500':
+          description: Internal server error
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmtsException'
+
+  # =============================================================================
+  # WMTS Endpoints - RESTful
+  # =============================================================================
+  /wmts/1.0.0/WMTSCapabilities.xml:
+    get:
+      tags: [WMTS]
+      operationId: wmtsRestCapabilities
+      summary: WMTS RESTful GetCapabilities
+      description: |
+        Returns the WMTS capabilities document via RESTful URL.
+        
+        This is equivalent to the KVP request:
+        `/wmts?SERVICE=WMTS&REQUEST=GetCapabilities`
+      responses:
+        '200':
+          description: WMTS Capabilities XML document
+          content:
+            application/xml:
+              schema:
+                type: string
+              example: |
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Capabilities xmlns="http://www.opengis.net/wmts/1.0" version="1.0.0">
+                  <ServiceIdentification>
+                    <Title>Weather WMS Tile Service</Title>
+                  </ServiceIdentification>
+                  ...
+                </Capabilities>
+
+  /wmts/rest/{layer}/{style}/{tileMatrixSet}/{tileMatrix}/{tileRow}/{tileCol}.png:
+    get:
+      tags: [WMTS]
+      operationId: wmtsRestTile
+      summary: WMTS RESTful GetTile
+      description: |
+        Returns a map tile via RESTful URL pattern.
+        
+        This is the recommended method for high-performance tile access.
+        
+        **URL Pattern:**
+        ```
+        /wmts/rest/{layer}/{style}/{tileMatrixSet}/{z}/{row}/{col}.png
+        ```
+        
+        **Example:**
+        ```
+        /wmts/rest/gfs_TMP/default/WebMercatorQuad/5/10/15.png
+        ```
+      parameters:
+        - $ref: '#/components/parameters/PathLayer'
+        - $ref: '#/components/parameters/PathStyle'
+        - $ref: '#/components/parameters/PathTileMatrixSet'
+        - $ref: '#/components/parameters/PathTileMatrix'
+        - $ref: '#/components/parameters/PathTileRow'
+        - $ref: '#/components/parameters/PathTileCol'
+        # Weather dimensions as query params
+        - $ref: '#/components/parameters/DimensionTime'
+        - $ref: '#/components/parameters/DimensionRun'
+        - $ref: '#/components/parameters/DimensionForecast'
+        - $ref: '#/components/parameters/DimensionElevation'
+      responses:
+        '200':
+          description: Tile image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '204':
+          description: Empty tile (no data in this area)
+        '400':
+          description: Invalid tile coordinates
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmtsException'
+        '404':
+          description: Layer not found or tile out of range
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/WmtsException'
+
+  # =============================================================================
+  # XYZ Tile Endpoint
+  # =============================================================================
+  /tiles/{layer}/{style}/{z}/{x}/{y}.png:
+    get:
+      tags: [Tiles]
+      operationId: xyzTile
+      summary: XYZ tile endpoint
+      description: |
+        Simple XYZ tile endpoint for easy integration with web mapping libraries.
+        
+        Uses Web Mercator (EPSG:3857) projection with standard Google/OSM tile numbering.
+        
+        **Leaflet Example:**
+        ```javascript
+        L.tileLayer('/tiles/gfs_TMP/default/{z}/{x}/{y}.png?run=2024-01-15T12:00:00Z&forecast=6', {
+          attribution: 'Weather WMS'
+        }).addTo(map);
+        ```
+        
+        **OpenLayers Example:**
+        ```javascript
+        new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: '/tiles/gfs_TMP/default/{z}/{x}/{y}.png'
+          })
+        })
+        ```
+      parameters:
+        - name: layer
+          in: path
+          required: true
+          description: |
+            Layer identifier in format `{model}_{parameter}`
+            
+            Examples: `gfs_TMP`, `hrrr_WIND_SPEED`, `goes16_CMI_C13`, `mrms_REFC`
+          schema:
+            type: string
+          example: gfs_TMP
+        - name: style
+          in: path
+          required: true
+          description: |
+            Style name. Use `default` for the layer's default style.
+            
+            Available styles vary by layer but commonly include:
+            - `default` - Default colormap for the parameter
+            - `temperature` - Temperature-specific colormap
+            - `precipitation` - Precipitation colormap
+            - `wind` - Wind speed colormap
+          schema:
+            type: string
+            default: default
+          example: default
+        - name: z
+          in: path
+          required: true
+          description: Zoom level (0-18)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 18
+          example: 5
+        - name: x
+          in: path
+          required: true
+          description: Tile column (X coordinate)
+          schema:
+            type: integer
+            minimum: 0
+          example: 10
+        - name: 'y'
+          in: path
+          required: true
+          description: Tile row (Y coordinate), with .png extension
+          schema:
+            type: string
+            pattern: '^\d+\.png$'
+          example: '15.png'
+        # Weather dimensions
+        - $ref: '#/components/parameters/DimensionTime'
+        - $ref: '#/components/parameters/DimensionRun'
+        - $ref: '#/components/parameters/DimensionForecast'
+        - $ref: '#/components/parameters/DimensionElevation'
+      responses:
+        '200':
+          description: Tile image
+          headers:
+            Cache-Control:
+              description: Cache control header
+              schema:
+                type: string
+                example: 'public, max-age=300'
+            X-Tile-Cache:
+              description: Cache hit/miss indicator
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '204':
+          description: Empty tile (no data coverage in this area)
+        '400':
+          description: Invalid parameters
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Layer not found
+          content:
+            text/plain:
+              schema:
+                type: string
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    # WMS Parameters
+    WmsService:
+      name: SERVICE
+      in: query
+      required: true
+      description: Service type identifier
+      schema:
+        type: string
+        enum: [WMS]
+      example: WMS
+
+    WmsRequest:
+      name: REQUEST
+      in: query
+      required: true
+      description: Operation name
+      schema:
+        type: string
+        enum: [GetCapabilities, GetMap, GetFeatureInfo]
+      example: GetMap
+
+    WmsVersion:
+      name: VERSION
+      in: query
+      required: false
+      description: WMS protocol version
+      schema:
+        type: string
+        enum: ['1.3.0', '1.1.1', '1.1.0', '1.0.0']
+        default: '1.3.0'
+      example: '1.3.0'
+
+    WmsLayers:
+      name: LAYERS
+      in: query
+      required: false
+      description: |
+        Comma-separated list of layer names to render.
+        Required for GetMap requests.
+        
+        Layer names follow the pattern `{model}_{parameter}`.
+      schema:
+        type: string
+      example: gfs_TMP
+
+    WmsStyles:
+      name: STYLES
+      in: query
+      required: false
+      description: |
+        Comma-separated list of style names (one per layer).
+        Empty string uses default styles.
+      schema:
+        type: string
+        default: ''
+      example: default
+
+    WmsCrs:
+      name: CRS
+      in: query
+      required: false
+      description: |
+        Coordinate Reference System. Also accepts `SRS` parameter name.
+        
+        Supported values:
+        - `EPSG:4326` - WGS84 Geographic (lat/lon)
+        - `EPSG:3857` - Web Mercator
+        - `CRS:84` - WGS84 (lon/lat axis order)
+      schema:
+        type: string
+        enum: ['EPSG:4326', 'EPSG:3857', 'CRS:84']
+        default: 'EPSG:4326'
+      example: 'EPSG:3857'
+
+    WmsBbox:
+      name: BBOX
+      in: query
+      required: false
+      description: |
+        Bounding box for the map extent.
+        Required for GetMap and GetFeatureInfo requests.
+        
+        Format depends on CRS:
+        - **EPSG:4326**: `minLat,minLon,maxLat,maxLon`
+        - **EPSG:3857**: `minX,minY,maxX,maxY` (meters)
+        - **CRS:84**: `minLon,minLat,maxLon,maxLat`
+      schema:
+        type: string
+      example: '-90,-180,90,180'
+
+    WmsWidth:
+      name: WIDTH
+      in: query
+      required: false
+      description: Output image width in pixels. Required for GetMap.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 4096
+        default: 256
+      example: 256
+
+    WmsHeight:
+      name: HEIGHT
+      in: query
+      required: false
+      description: Output image height in pixels. Required for GetMap.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 4096
+        default: 256
+      example: 256
+
+    WmsFormat:
+      name: FORMAT
+      in: query
+      required: false
+      description: Output image format
+      schema:
+        type: string
+        enum: ['image/png', 'image/jpeg', 'image/gif']
+        default: 'image/png'
+      example: 'image/png'
+
+    WmsTransparent:
+      name: TRANSPARENT
+      in: query
+      required: false
+      description: Whether the background should be transparent
+      schema:
+        type: string
+        enum: ['TRUE', 'FALSE', 'true', 'false']
+        default: 'TRUE'
+      example: 'TRUE'
+
+    WmsBgcolor:
+      name: BGCOLOR
+      in: query
+      required: false
+      description: Background color in hex format (RRGGBB)
+      schema:
+        type: string
+        pattern: '^[0-9A-Fa-f]{6}$'
+        default: 'FFFFFF'
+      example: 'FFFFFF'
+
+    WmsQueryLayers:
+      name: QUERY_LAYERS
+      in: query
+      required: false
+      description: Layers to query for GetFeatureInfo
+      schema:
+        type: string
+      example: gfs_TMP
+
+    WmsInfoFormat:
+      name: INFO_FORMAT
+      in: query
+      required: false
+      description: Response format for GetFeatureInfo
+      schema:
+        type: string
+        enum: ['application/json', 'text/html', 'text/xml', 'text/plain']
+        default: 'application/json'
+      example: 'application/json'
+
+    WmsI:
+      name: I
+      in: query
+      required: false
+      description: |
+        X pixel coordinate for GetFeatureInfo (0 = left edge).
+        Also accepts `X` parameter name.
+      schema:
+        type: integer
+        minimum: 0
+      example: 128
+
+    WmsJ:
+      name: J
+      in: query
+      required: false
+      description: |
+        Y pixel coordinate for GetFeatureInfo (0 = top edge).
+        Also accepts `Y` parameter name.
+      schema:
+        type: integer
+        minimum: 0
+      example: 128
+
+    WmsFeatureCount:
+      name: FEATURE_COUNT
+      in: query
+      required: false
+      description: Maximum number of features to return
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      example: 1
+
+    WmsExceptions:
+      name: EXCEPTIONS
+      in: query
+      required: false
+      description: Exception response format
+      schema:
+        type: string
+        enum: ['XML', 'INIMAGE', 'BLANK', 'JSON']
+        default: 'XML'
+      example: 'XML'
+
+    # WMTS Parameters
+    WmtsService:
+      name: SERVICE
+      in: query
+      required: true
+      description: Service type identifier
+      schema:
+        type: string
+        enum: [WMTS]
+      example: WMTS
+
+    WmtsRequest:
+      name: REQUEST
+      in: query
+      required: true
+      description: Operation name
+      schema:
+        type: string
+        enum: [GetCapabilities, GetTile, GetFeatureInfo]
+      example: GetTile
+
+    WmtsVersion:
+      name: VERSION
+      in: query
+      required: false
+      description: WMTS protocol version
+      schema:
+        type: string
+        enum: ['1.0.0']
+        default: '1.0.0'
+      example: '1.0.0'
+
+    WmtsLayer:
+      name: LAYER
+      in: query
+      required: false
+      description: Layer identifier. Required for GetTile.
+      schema:
+        type: string
+      example: gfs_TMP
+
+    WmtsStyle:
+      name: STYLE
+      in: query
+      required: false
+      description: Style identifier
+      schema:
+        type: string
+        default: default
+      example: default
+
+    WmtsTileMatrixSet:
+      name: TILEMATRIXSET
+      in: query
+      required: false
+      description: |
+        Tile matrix set identifier. Required for GetTile.
+        
+        - **WebMercatorQuad**: EPSG:3857, standard web tiles
+        - **WorldCRS84Quad**: CRS:84, geographic tiles
+      schema:
+        type: string
+        enum: [WebMercatorQuad, WorldCRS84Quad]
+        default: WebMercatorQuad
+      example: WebMercatorQuad
+
+    WmtsTileMatrix:
+      name: TILEMATRIX
+      in: query
+      required: false
+      description: Zoom level (0-18). Required for GetTile.
+      schema:
+        type: string
+      example: '5'
+
+    WmtsTileRow:
+      name: TILEROW
+      in: query
+      required: false
+      description: Tile row index. Required for GetTile.
+      schema:
+        type: integer
+        minimum: 0
+      example: 10
+
+    WmtsTileCol:
+      name: TILECOL
+      in: query
+      required: false
+      description: Tile column index. Required for GetTile.
+      schema:
+        type: integer
+        minimum: 0
+      example: 15
+
+    WmtsFormat:
+      name: FORMAT
+      in: query
+      required: false
+      description: Tile format
+      schema:
+        type: string
+        enum: ['image/png', 'image/jpeg']
+        default: 'image/png'
+      example: 'image/png'
+
+    WmtsI:
+      name: I
+      in: query
+      required: false
+      description: X pixel coordinate within tile (0-255) for GetFeatureInfo
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 255
+      example: 128
+
+    WmtsJ:
+      name: J
+      in: query
+      required: false
+      description: Y pixel coordinate within tile (0-255) for GetFeatureInfo
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 255
+      example: 128
+
+    WmtsInfoFormat:
+      name: INFOFORMAT
+      in: query
+      required: false
+      description: Response format for GetFeatureInfo
+      schema:
+        type: string
+        enum: ['application/json', 'text/html', 'text/xml', 'text/plain']
+        default: 'application/json'
+      example: 'application/json'
+
+    # Path Parameters for RESTful WMTS
+    PathLayer:
+      name: layer
+      in: path
+      required: true
+      description: Layer identifier
+      schema:
+        type: string
+      example: gfs_TMP
+
+    PathStyle:
+      name: style
+      in: path
+      required: true
+      description: Style identifier
+      schema:
+        type: string
+      example: default
+
+    PathTileMatrixSet:
+      name: tileMatrixSet
+      in: path
+      required: true
+      description: Tile matrix set identifier
+      schema:
+        type: string
+        enum: [WebMercatorQuad, WorldCRS84Quad]
+      example: WebMercatorQuad
+
+    PathTileMatrix:
+      name: tileMatrix
+      in: path
+      required: true
+      description: Zoom level
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 18
+      example: 5
+
+    PathTileRow:
+      name: tileRow
+      in: path
+      required: true
+      description: Tile row index
+      schema:
+        type: integer
+        minimum: 0
+      example: 10
+
+    PathTileCol:
+      name: tileCol
+      in: path
+      required: true
+      description: Tile column index (with .png extension)
+      schema:
+        type: string
+      example: '15.png'
+
+    # Weather Dimension Parameters
+    DimensionTime:
+      name: TIME
+      in: query
+      required: false
+      description: |
+        Observation timestamp for time-based layers (GOES, MRMS).
+        
+        Format: ISO 8601 (e.g., `2024-01-15T18:00:00Z`)
+        
+        If not specified, returns the most recent available data.
+      schema:
+        type: string
+        format: date-time
+      example: '2024-01-15T18:00:00Z'
+
+    DimensionRun:
+      name: RUN
+      in: query
+      required: false
+      description: |
+        Model run/initialization time for forecast models (GFS, HRRR).
+        
+        Format: ISO 8601 (e.g., `2024-01-15T12:00:00Z`)
+        
+        GFS runs: 00Z, 06Z, 12Z, 18Z
+        HRRR runs: Every hour
+        
+        If not specified, uses the latest available run.
+      schema:
+        type: string
+        format: date-time
+      example: '2024-01-15T12:00:00Z'
+
+    DimensionForecast:
+      name: FORECAST
+      in: query
+      required: false
+      description: |
+        Forecast hour offset from the model run time.
+        
+        Examples:
+        - `0` - Analysis (T+0)
+        - `6` - 6-hour forecast
+        - `24` - 24-hour forecast
+        
+        Available forecast hours vary by model:
+        - GFS: 0-384 hours (3-hour intervals after 120h)
+        - HRRR: 0-18 hours (hourly)
+      schema:
+        type: integer
+        minimum: 0
+      example: 6
+
+    DimensionElevation:
+      name: ELEVATION
+      in: query
+      required: false
+      description: |
+        Vertical level for 3D parameters.
+        
+        Common values:
+        - `2 m above ground` - Surface temperature
+        - `10 m above ground` - Surface wind
+        - `500 mb` - 500 hPa level
+        - `850 mb` - 850 hPa level
+        - `surface` - Surface level
+        
+        If not specified, uses the default level for the parameter.
+      schema:
+        type: string
+      example: '500 mb'
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+  schemas:
+    WmsException:
+      type: object
+      xml:
+        name: ServiceExceptionReport
+        namespace: http://www.opengis.net/ogc
+      description: WMS 1.3.0 exception response
+      properties:
+        ServiceException:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Exception code
+              enum:
+                - InvalidFormat
+                - InvalidCRS
+                - LayerNotDefined
+                - StyleNotDefined
+                - LayerNotQueryable
+                - InvalidPoint
+                - CurrentUpdateSequence
+                - InvalidUpdateSequence
+                - MissingDimensionValue
+                - InvalidDimensionValue
+            message:
+              type: string
+              description: Human-readable error message
+      example:
+        ServiceException:
+          code: LayerNotDefined
+          message: "Layer 'invalid_layer' does not exist"
+
+    WmtsException:
+      type: object
+      xml:
+        name: ExceptionReport
+        namespace: http://www.opengis.net/ows/1.1
+      description: WMTS 1.0.0 exception response (OWS Common)
+      properties:
+        Exception:
+          type: object
+          properties:
+            exceptionCode:
+              type: string
+              description: Exception code
+              enum:
+                - OperationNotSupported
+                - MissingParameterValue
+                - InvalidParameterValue
+                - VersionNegotiationFailed
+                - NoApplicableCode
+                - TileOutOfRange
+                - PointIJOutOfRange
+            exceptionText:
+              type: string
+              description: Human-readable error message
+            locator:
+              type: string
+              description: Parameter that caused the error
+      example:
+        Exception:
+          exceptionCode: TileOutOfRange
+          exceptionText: "Tile coordinates out of range for zoom level 5"
+          locator: TILEROW
+
+    FeatureInfoResponse:
+      type: object
+      description: GetFeatureInfo JSON response
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [Feature]
+              geometry:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [Point]
+                  coordinates:
+                    type: array
+                    items:
+                      type: number
+                    minItems: 2
+                    maxItems: 2
+              properties:
+                type: object
+                properties:
+                  layer:
+                    type: string
+                    description: Layer name
+                  value:
+                    type: number
+                    description: Data value at the queried point
+                  unit:
+                    type: string
+                    description: Unit of measurement
+                  time:
+                    type: string
+                    format: date-time
+                    description: Data timestamp
+                  elevation:
+                    type: string
+                    description: Vertical level
+      example:
+        type: FeatureCollection
+        features:
+          - type: Feature
+            geometry:
+              type: Point
+              coordinates: [-95.5, 35.2]
+            properties:
+              layer: gfs_TMP
+              value: 288.5
+              unit: K
+              time: '2024-01-15T18:00:00Z'
+              elevation: '2 m above ground'
+
+    Layer:
+      type: object
+      description: Layer metadata
+      properties:
+        name:
+          type: string
+          description: Layer identifier
+        title:
+          type: string
+          description: Human-readable title
+        abstract:
+          type: string
+          description: Layer description
+        crs:
+          type: array
+          items:
+            type: string
+          description: Supported coordinate reference systems
+        boundingBox:
+          type: object
+          properties:
+            minx:
+              type: number
+            miny:
+              type: number
+            maxx:
+              type: number
+            maxy:
+              type: number
+        styles:
+          type: array
+          items:
+            type: string
+          description: Available styles
+        dimensions:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              values:
+                type: array
+                items:
+                  type: string
+              default:
+                type: string
+      example:
+        name: gfs_TMP
+        title: GFS Temperature
+        abstract: Global Forecast System temperature at various levels
+        crs: ['EPSG:4326', 'EPSG:3857', 'CRS:84']
+        boundingBox:
+          minx: -180
+          miny: -90
+          maxx: 180
+          maxy: 90
+        styles: [default, temperature]
+        dimensions:
+          elevation:
+            values: ['2 m above ground', '500 mb', '850 mb']
+            default: '2 m above ground'

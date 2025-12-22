@@ -14,6 +14,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY services ./services
 COPY validation ./validation
+COPY docs ./docs
 
 # Build the service
 RUN cargo build --release --package wms-api

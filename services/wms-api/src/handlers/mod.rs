@@ -8,6 +8,7 @@
 //! - `validation`: WMS/WMTS validation handlers
 //! - `cache`: Cache management and config reload handlers
 //! - `benchmarks`: Load test results and benchmark handlers
+//! - `docs`: API documentation (Swagger UI, OpenAPI spec)
 //! - `common`: Shared utilities (exceptions, coordinate conversion, XML helpers)
 
 pub mod common;
@@ -18,6 +19,7 @@ pub mod metrics;
 pub mod validation;
 pub mod cache;
 pub mod benchmarks;
+pub mod docs;
 
 // Re-export all public types and handlers for backwards compatibility
 pub use common::{
@@ -87,4 +89,10 @@ pub use benchmarks::{
     criterion_benchmarks_handler,
     benchmarks_handler,
     loadtest_dashboard_handler,
+};
+
+pub use docs::{
+    swagger_ui_handler,
+    openapi_yaml_handler,
+    openapi_json_handler,
 };
