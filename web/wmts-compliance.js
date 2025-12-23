@@ -195,6 +195,7 @@ const SPEC_REFS = {
     'gettile-invalid-tilecol': { section: '7.2.1', title: 'Invalid TileCol', desc: 'Server shall return exception for column out of bounds' },
     'gettile-png-format': { section: '7.2.1', title: 'PNG format', desc: 'Server shall return Content-Type: image/png and valid PNG data when FORMAT=image/png' },
     'gettile-jpeg-format': { section: '7.2.1', title: 'JPEG format', desc: 'Server shall return Content-Type: image/jpeg and valid JPEG data when FORMAT=image/jpeg (if supported)' },
+    'gettile-webp-format': { section: '7.2.1', title: 'WebP format', desc: 'Server shall return Content-Type: image/webp and valid WebP data when FORMAT=image/webp (if supported)' },
     
     // GetFeatureInfo
     'gfi-basic-request': { section: '7.3.1', title: 'GetFeatureInfo', desc: 'Optional operation for InfoFormat-enabled layers' },
@@ -623,6 +624,48 @@ const OGC_TESTS = {
                         return {skipped: 'JPEG format not supported', url};
                     }
                     throw new Error(`Expected Content-Type 'image/jpeg', got '${ct}'`);
+                }
+            },
+            {
+                id: 'gettile-webp-format',
+                desc: 'FORMAT=image/webp returns WebP image with correct Content-Type header',
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    const style = ctx.sampleStyle || 'default';
+                    const tms = ctx.sampleTileMatrixSet || 'WebMercatorQuad';
+                    let url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer.name}&STYLE=${style}&FORMAT=image/webp&TILEMATRIXSET=${tms}&TILEMATRIX=2&TILEROW=1&TILECOL=1`;
+                    const dims = buildRandomDimensionParams(layer);
+                    Object.entries(dims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    
+                    // Check HTTP Content-Type header explicitly
+                    if (ct.includes('image/webp')) {
+                        // Verify response is actually a valid WebP by checking magic bytes
+                        // WebP format: RIFF....WEBP
+                        const buffer = await resp.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        const isRiff = bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+                        const isWebp = bytes.length >= 12 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+                        if (isRiff && isWebp) {
+                            return {
+                                format: 'image/webp',
+                                contentType: ct,
+                                size: bytes.length,
+                                validWebpMagic: true,
+                                dimensions: dims,
+                                url
+                            };
+                        }
+                        throw new Error(`Content-Type is image/webp but response is not valid WebP`);
+                    }
+                    // WebP may not be supported - check for proper exception
+                    if (!resp.ok || ct.includes('xml') || ct.includes('text')) {
+                        return {skipped: 'WebP format not supported', url};
+                    }
+                    throw new Error(`Expected Content-Type 'image/webp', got '${ct}'`);
                 }
             }
         ]

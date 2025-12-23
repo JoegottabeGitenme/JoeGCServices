@@ -133,6 +133,7 @@ let layerTitles = {}; // Map of layer name -> human-readable title from capabili
 let selectedProtocol = 'wmts';
 let selectedStyle = 'default';
 let selectedTileMatrixSet = 'WebMercatorQuad'; // 'WebMercatorQuad' or 'WorldCRS84Quad'
+let selectedFormat = 'image/png'; // 'image/png', 'image/webp', or 'image/jpeg'
 
 
 // Initialize the application
@@ -152,6 +153,9 @@ function setupEventListeners() {
     
     // TileMatrixSet selector (WMTS projection)
     setupTileMatrixSetSelector();
+    
+    // Image format selector (PNG/WebP)
+    setupFormatSelector();
 }
 
 // Setup TileMatrixSet selector event listeners
@@ -172,6 +176,59 @@ function setupTileMatrixSetSelector() {
             // This will also reload the weather layer if one is active
             initMapWithCRS(tms);
         });
+    });
+}
+
+// Setup image format selector event listeners
+function setupFormatSelector() {
+    const formatOptions = document.querySelectorAll('.format-option');
+    formatOptions.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const format = btn.dataset.format;
+            if (format === selectedFormat) return;
+            
+            // Update selection state in UI
+            formatOptions.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            console.log('Switching image format to:', format);
+            selectedFormat = format;
+            
+            // Reload the current layer with new format
+            if (selectedLayer) {
+                updateLayerTime();
+            }
+        });
+    });
+}
+
+// Show the format selector
+function showFormatSelector() {
+    const container = document.getElementById('format-selector-container');
+    if (container) {
+        container.style.display = 'flex';
+        // Sync button state with current selection
+        syncFormatSelectorState();
+    }
+}
+
+// Hide the format selector
+function hideFormatSelector() {
+    const container = document.getElementById('format-selector-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+// Sync format selector button state with current selectedFormat
+function syncFormatSelectorState() {
+    const formatOptions = document.querySelectorAll('.format-option');
+    formatOptions.forEach(btn => {
+        if (btn.dataset.format === selectedFormat) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
     });
 }
 
@@ -551,6 +608,7 @@ function populateStyleSelector() {
     
     showStyleSelector();
     showTmsSelector();
+    showFormatSelector();
 }
 
 // Populate the elevation slider
@@ -1294,6 +1352,7 @@ function clearWeatherLayer() {
     hideElevationSlider();
     hideStyleSelector();
     hideTmsSelector();
+    hideFormatSelector();
 }
 
 // Format layer name for display
@@ -1478,7 +1537,7 @@ function buildWmtsTileUrl(layerName, style) {
         'TILEMATRIX={z}',
         'TILEROW={y}',
         'TILECOL={x}',
-        'FORMAT=image/png'
+        `FORMAT=${selectedFormat}`
     ];
     
     // Add dimension parameters based on layer mode
@@ -1552,7 +1611,7 @@ function buildWmsGetMapUrl(layerName, style, bounds, size) {
         BBOX: bbox,
         WIDTH: size.x,
         HEIGHT: size.y,
-        FORMAT: 'image/png',
+        FORMAT: selectedFormat,
         TRANSPARENT: 'true'
     });
     

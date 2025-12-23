@@ -28,7 +28,7 @@ use crate::model_config::ModelDimensionRegistry;
 use storage::ParameterAvailability;
 use super::common::{
     wmts_exception, DimensionParams, WmtsDimensionParams,
-    get_wmts_styles_xml_from_file, convert_png_to_jpeg,
+    get_wmts_styles_xml_from_file, convert_png_to_jpeg, convert_png_to_webp,
 };
 
 // ============================================================================
@@ -96,10 +96,10 @@ pub async fn wmts_kvp_handler(
         Some("GetTile") => {
             // Validate FORMAT parameter
             let format = params.format.as_deref().unwrap_or("image/png");
-            if format != "image/png" && format != "image/jpeg" {
+            if format != "image/png" && format != "image/jpeg" && format != "image/webp" {
                 return wmts_exception(
                     "InvalidParameterValue",
-                    &format!("FORMAT '{}' is not supported. Supported formats: image/png, image/jpeg", format),
+                    &format!("FORMAT '{}' is not supported. Supported formats: image/png, image/jpeg, image/webp", format),
                     StatusCode::BAD_REQUEST,
                 );
             }
@@ -475,14 +475,21 @@ async fn wmts_get_tile(
             state.metrics.record_l1_cache_hit();
             state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::L1Hit);
             
-            // Convert to JPEG if requested
-            let (output_data, content_type) = if format == "image/jpeg" {
-                match convert_png_to_jpeg(&tile_data) {
-                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
-                    Err(_) => (tile_data.to_vec(), "image/png"),
+            // Convert to requested format
+            let (output_data, content_type) = match format {
+                "image/jpeg" => {
+                    match convert_png_to_jpeg(&tile_data) {
+                        Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                        Err(_) => (tile_data.to_vec(), "image/png"),
+                    }
                 }
-            } else {
-                (tile_data.to_vec(), "image/png")
+                "image/webp" => {
+                    match convert_png_to_webp(&tile_data) {
+                        Ok(webp_data) => (webp_data, "image/webp"),
+                        Err(_) => (tile_data.to_vec(), "image/png"),
+                    }
+                }
+                _ => (tile_data.to_vec(), "image/png"),
             };
             
             return Response::builder()
@@ -509,14 +516,21 @@ async fn wmts_get_tile(
                 state.tile_memory_cache.set(&cache_key_str, data_bytes.clone(), None).await;
             }
             
-            // Convert to JPEG if requested
-            let (output_data, content_type) = if format == "image/jpeg" {
-                match convert_png_to_jpeg(&cached_data) {
-                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
-                    Err(_) => (cached_data.to_vec(), "image/png"),
+            // Convert to requested format
+            let (output_data, content_type) = match format {
+                "image/jpeg" => {
+                    match convert_png_to_jpeg(&cached_data) {
+                        Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                        Err(_) => (cached_data.to_vec(), "image/png"),
+                    }
                 }
-            } else {
-                (cached_data.to_vec(), "image/png")
+                "image/webp" => {
+                    match convert_png_to_webp(&cached_data) {
+                        Ok(webp_data) => (webp_data, "image/webp"),
+                        Err(_) => (cached_data.to_vec(), "image/png"),
+                    }
+                }
+                _ => (cached_data.to_vec(), "image/png"),
             };
             
             return Response::builder()
@@ -595,17 +609,27 @@ async fn wmts_get_tile(
             let layer_type = crate::metrics::LayerType::from_layer_and_style(layer, style);
             state.metrics.record_render_with_type(timer.elapsed_us(), true, layer_type).await;
             
-            // Convert to JPEG if requested
-            let (output_data, content_type) = if format == "image/jpeg" {
-                match convert_png_to_jpeg(&png_data) {
-                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
-                    Err(e) => {
-                        error!(error = %e, "Failed to convert PNG to JPEG");
-                        (png_data.clone(), "image/png") // Fallback to PNG
+            // Convert to requested format
+            let (output_data, content_type) = match format {
+                "image/jpeg" => {
+                    match convert_png_to_jpeg(&png_data) {
+                        Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                        Err(e) => {
+                            error!(error = %e, "Failed to convert PNG to JPEG");
+                            (png_data.clone(), "image/png") // Fallback to PNG
+                        }
                     }
                 }
-            } else {
-                (png_data.clone(), "image/png")
+                "image/webp" => {
+                    match convert_png_to_webp(&png_data) {
+                        Ok(webp_data) => (webp_data, "image/webp"),
+                        Err(e) => {
+                            error!(error = %e, "Failed to convert PNG to WebP");
+                            (png_data.clone(), "image/png") // Fallback to PNG
+                        }
+                    }
+                }
+                _ => (png_data.clone(), "image/png"),
             };
             
             // Cache the result (always cache as PNG for simplicity)
@@ -1045,6 +1069,7 @@ fn build_wmts_capabilities_xml_v2(
 {}
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
+      <Format>image/webp</Format>
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
@@ -1053,12 +1078,13 @@ fn build_wmts_capabilities_xml_v2(
       </TileMatrixSetLink>
 {}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
                 layer_title, layer_id,
                 west, south, east, north,
                 styles,
                 time_dimensions, elevation_dim,
-                layer_id
+                layer_id, layer_id
             ));
         }
 
@@ -1108,15 +1134,17 @@ fn build_wmts_capabilities_xml_v2(
       <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
+      <Format>image/webp</Format>
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
       <TileMatrixSetLink><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></TileMatrixSetLink>
 {}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
                     model_config.display_name, layer_id,
                     west, south, east, north,
                     time_dimensions, elevation_dim,
-                    layer_id
+                    layer_id, layer_id
                 ));
             }
         }
