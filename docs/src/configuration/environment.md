@@ -7,7 +7,7 @@ Complete reference of all environment variables used by Weather WMS services.
 ### Database
 ```bash
 DATABASE_URL=postgresql://weatherwms:weatherwms@postgres:5432/weatherwms
-DATABASE_POOL_SIZE=50               # Connection pool size
+DATABASE_POOL_SIZE=50               # Connection pool size (default: 20)
 ```
 
 ### Redis
@@ -26,6 +26,12 @@ S3_REGION=us-east-1
 S3_ALLOW_HTTP=true                 # Disable for production
 ```
 
+### Configuration
+```bash
+CONFIG_DIR=/app/config             # Path to config directory (contains models/)
+                                   # Used by ingester for GRIB2 parameter tables
+```
+
 ## Performance Tuning
 
 ### Runtime
@@ -37,14 +43,14 @@ RUST_BACKTRACE=1                   # Enable backtraces
 
 ### Caching
 ```bash
-# L1 (In-Memory) Cache
+# L1 (In-Memory) Tile Cache
 ENABLE_L1_CACHE=true
 TILE_CACHE_SIZE=10000              # Max tiles (~300 MB)
 TILE_CACHE_TTL_SECS=300            # TTL: 5 minutes
 
-# GRIB Data Cache
-ENABLE_GRIB_CACHE=true
-GRIB_CACHE_SIZE=500                # Max GRIB files (~2.5 GB)
+# Zarr Chunk Cache (decompressed grid data chunks)
+ENABLE_CHUNK_CACHE=true
+CHUNK_CACHE_SIZE_MB=1024           # ~1 GB for decompressed chunks
 
 # Prefetching
 ENABLE_PREFETCH=true
@@ -52,7 +58,7 @@ PREFETCH_RINGS=2                   # Surrounding tile rings (1=8, 2=24)
 PREFETCH_MIN_ZOOM=3
 PREFETCH_MAX_ZOOM=12
 
-# Cache Warming
+# Tile Cache Warming (at startup)
 ENABLE_CACHE_WARMING=true
 CACHE_WARMING_MAX_ZOOM=4           # Warm zooms 0-4 (341 tiles)
 CACHE_WARMING_HOURS=0,3,6          # Forecast hours to warm

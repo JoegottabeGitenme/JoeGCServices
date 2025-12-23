@@ -136,10 +136,38 @@ impl ValidationStatus {
     }
 }
 
+/// Extract a valid layer and style from WMS capabilities for testing
+async fn get_test_layer_from_capabilities(base_url: &str) -> Option<(String, String)> {
+    let resp = reqwest::get(format!("{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0", base_url)).await.ok()?;
+    let text = resp.text().await.ok()?;
+    
+    // Preferred layers in order (gradient style is most reliable)
+    let preferred = [
+        ("gfs_TMP", "gradient"),
+        ("hrrr_TMP", "gradient"),
+        ("gfs_RH", "gradient"),
+        ("mrms_REFL", "standard"),
+    ];
+    
+    for (layer, style) in preferred {
+        // Check if layer exists in capabilities
+        if text.contains(&format!("<Name>{}</Name>", layer)) {
+            return Some((layer.to_string(), style.to_string()));
+        }
+    }
+    
+    None
+}
+
 /// Run WMS validation checks
 pub async fn validate_wms(base_url: &str) -> WmsValidation {
     let mut layers_tested = 0;
     let mut layers_passed = 0;
+
+    // Get a valid test layer from capabilities
+    let (test_layer, test_style) = get_test_layer_from_capabilities(base_url)
+        .await
+        .unwrap_or(("gfs_TMP".to_string(), "gradient".to_string()));
 
     // Check 1: GetCapabilities
     let capabilities = match reqwest::get(format!("{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0", base_url)).await {
@@ -162,16 +190,24 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
         Err(e) => CheckResult::fail(format!("Request failed: {}", e)),
     };
 
-    // Check 2: GetMap
+    // Check 2: GetMap (use discovered layer/style)
     let getmap = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_PRMSL&STYLES=default&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
-        base_url
+        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={}&STYLES={}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
+        base_url, test_layer, test_style
     )).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                layers_tested += 1;
-                layers_passed += 1;
-                CheckResult::pass("GetMap returns valid images")
+                // Verify it's actually an image (PNG magic bytes or check content-type)
+                let content_type = resp.headers().get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if content_type.contains("image/png") {
+                    layers_tested += 1;
+                    layers_passed += 1;
+                    CheckResult::pass(format!("GetMap returns valid PNG (tested {})", test_layer))
+                } else {
+                    CheckResult::fail(format!("Expected image/png, got {}", content_type))
+                }
             } else {
                 CheckResult::fail(format!("HTTP {}", resp.status()))
             }
@@ -181,8 +217,8 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
     // Check 3: GetFeatureInfo
     let getfeatureinfo = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.3.0&LAYERS=gfs_PRMSL&QUERY_LAYERS=gfs_PRMSL&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json",
-        base_url
+        "{}?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.3.0&LAYERS={}&QUERY_LAYERS={}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json",
+        base_url, test_layer, test_layer
     )).await {
         Ok(resp) => {
             if resp.status().is_success() {
@@ -199,17 +235,17 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
     // Check 4: Exception handling
     let exceptions = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=INVALID_LAYER&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
+        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=INVALID_LAYER_DOESNT_EXIST&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png",
         base_url
     )).await {
         Ok(resp) => {
             if resp.status().is_client_error() || resp.status().is_server_error() {
-                CheckResult::pass("Proper exception handling")
+                CheckResult::pass("Returns HTTP error for invalid layer")
             } else {
                 match resp.text().await {
                     Ok(text) => {
                         if text.contains("ServiceException") {
-                            CheckResult::pass("Returns ServiceException XML")
+                            CheckResult::pass("Returns ServiceException XML for invalid layer")
                         } else {
                             CheckResult::fail("No exception for invalid layer")
                         }
@@ -221,16 +257,23 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
         Err(_) => CheckResult::pass("HTTP error for invalid request (acceptable)"),
     };
 
-    // Check 5: CRS support (EPSG:3857)
+    // Check 5: CRS support (EPSG:3857 - Web Mercator)
     let crs_support = match reqwest::get(format!(
-        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=gfs_PRMSL&STYLES=default&CRS=EPSG:3857&BBOX=-20037508,-20037508,20037508,20037508&WIDTH=256&HEIGHT=256&FORMAT=image/png",
-        base_url
+        "{}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={}&STYLES={}&CRS=EPSG:3857&BBOX=-20037508,-20037508,20037508,20037508&WIDTH=256&HEIGHT=256&FORMAT=image/png",
+        base_url, test_layer, test_style
     )).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                CheckResult::pass("EPSG:4326 and EPSG:3857 support")
+                let content_type = resp.headers().get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if content_type.contains("image/png") {
+                    CheckResult::pass("EPSG:3857 (Web Mercator) supported")
+                } else {
+                    CheckResult::fail("EPSG:3857 returned non-image response")
+                }
             } else {
-                CheckResult::fail("EPSG:3857 not supported")
+                CheckResult::fail(format!("EPSG:3857 not supported (HTTP {})", resp.status()))
             }
         }
         Err(e) => CheckResult::fail(format!("Request failed: {}", e)),
@@ -265,8 +308,37 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
     }
 }
 
+/// Extract a valid layer and style from WMTS capabilities for testing
+async fn get_test_layer_from_wmts_capabilities(base_url: &str) -> Option<(String, String)> {
+    let resp = reqwest::get(format!("{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0", base_url)).await.ok()?;
+    let text = resp.text().await.ok()?;
+    
+    // Preferred layers in order (gradient style is most reliable)
+    let preferred = [
+        ("gfs_TMP", "gradient"),
+        ("hrrr_TMP", "gradient"),
+        ("gfs_RH", "gradient"),
+        ("mrms_REFL", "standard"),
+    ];
+    
+    for (layer, style) in preferred {
+        // Check if layer exists in capabilities (WMTS uses <ows:Identifier>)
+        if text.contains(&format!("<ows:Identifier>{}</ows:Identifier>", layer)) 
+           || text.contains(&format!("<Identifier>{}</Identifier>", layer)) {
+            return Some((layer.to_string(), style.to_string()));
+        }
+    }
+    
+    None
+}
+
 /// Run WMTS validation checks
 pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
+    // Get a valid test layer from capabilities
+    let (test_layer, test_style) = get_test_layer_from_wmts_capabilities(base_url)
+        .await
+        .unwrap_or(("gfs_TMP".to_string(), "gradient".to_string()));
+
     // Check 1: GetCapabilities
     let capabilities = match reqwest::get(format!("{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0", base_url)).await {
         Ok(resp) => {
@@ -288,11 +360,18 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
         Err(e) => CheckResult::fail(format!("Request failed: {}", e)),
     };
 
-    // Check 2: GetTile REST
-    let gettile_rest = match reqwest::get(format!("{}/rest/gfs_PRMSL/default/WebMercatorQuad/2/1/1.png", base_url)).await {
+    // Check 2: GetTile REST (use discovered layer/style)
+    let gettile_rest = match reqwest::get(format!("{}/rest/{}/{}/WebMercatorQuad/2/1/1.png", base_url, test_layer, test_style)).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                CheckResult::pass("REST tiles working")
+                let content_type = resp.headers().get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if content_type.contains("image/png") {
+                    CheckResult::pass(format!("REST tiles working (tested {})", test_layer))
+                } else {
+                    CheckResult::fail(format!("Expected image/png, got {}", content_type))
+                }
             } else {
                 CheckResult::fail(format!("HTTP {}", resp.status()))
             }
@@ -300,14 +379,21 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
         Err(e) => CheckResult::fail(format!("Request failed: {}", e)),
     };
 
-    // Check 3: GetTile KVP
+    // Check 3: GetTile KVP (use discovered layer/style)
     let gettile_kvp = match reqwest::get(format!(
-        "{}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=gfs_PRMSL&STYLE=default&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=2&TILEROW=1&TILECOL=1",
-        base_url
+        "{}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER={}&STYLE={}&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=2&TILEROW=1&TILECOL=1",
+        base_url, test_layer, test_style
     )).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                CheckResult::pass("KVP tiles working")
+                let content_type = resp.headers().get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if content_type.contains("image/png") {
+                    CheckResult::pass("KVP tiles working")
+                } else {
+                    CheckResult::fail(format!("Expected image/png, got {}", content_type))
+                }
             } else {
                 CheckResult::fail(format!("HTTP {}", resp.status()))
             }

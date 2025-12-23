@@ -217,7 +217,7 @@
           "refId": "A"
         },
         {
-          "expr": "grib_cache_hit_rate_percent",
+          "expr": "chunk_cache_hit_rate_percent",
           "legendFormat": "Global GRIB Cache",
           "refId": "B"
         }

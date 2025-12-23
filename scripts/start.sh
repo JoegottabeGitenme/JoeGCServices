@@ -523,7 +523,6 @@ build_k8s_images() {
   # Build the Rust services (these take longer)
   build_single_image "wms-api" "services/wms-api/Dockerfile" "." || failed=1
   build_single_image "ingester" "services/ingester/Dockerfile" "." || failed=1
-  build_single_image "renderer-worker" "services/renderer-worker/Dockerfile" "." || failed=1
   build_single_image "downloader" "services/downloader/Dockerfile" "." || failed=1
 
   if [ $failed -eq 1 ]; then
@@ -544,7 +543,6 @@ build_k8s_images() {
   load_single_image "dashboard" || failed=1
   load_single_image "wms-api" || failed=1
   load_single_image "ingester" || failed=1
-  load_single_image "renderer-worker" || failed=1
   load_single_image "downloader" || failed=1
 
   if [ $failed -eq 1 ]; then

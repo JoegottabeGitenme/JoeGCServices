@@ -4,12 +4,13 @@
 //! Each GRIB2 message consists of multiple sections containing
 //! metadata, grid information, and compressed data.
 
+use crate::tables::Grib2Tables;
 use crate::Grib2Error;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDate, Utc};
 
 /// Decode a GRIB2 signed integer using sign-magnitude encoding.
-/// 
+///
 /// GRIB2 uses sign-magnitude representation for signed values (like coordinates),
 /// NOT two's complement. The MSB (most significant bit) indicates the sign:
 /// - MSB = 0: positive value
@@ -18,9 +19,9 @@ pub fn decode_grib2_signed(bytes: &[u8]) -> i32 {
     if bytes.len() != 4 {
         return 0;
     }
-    
+
     let raw = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    
+
     if raw & 0x80000000 != 0 {
         // Sign bit is set - value is negative
         // Clear the sign bit to get magnitude, then negate
@@ -125,13 +126,13 @@ pub fn parse_indicator(data: &[u8]) -> Result<Indicator, Grib2Error> {
 
     // Section 0 (Indicator) layout per GRIB2 spec:
     // Octets 1-4: "GRIB" (indices 0-3)
-    // Octets 5-6: Reserved (indices 4-5)  
+    // Octets 5-6: Reserved (indices 4-5)
     // Octet 7: Discipline (index 6)
     // Octet 8: GRIB Edition Number (index 7)
     // Octets 9-16: Total length of GRIB message (indices 8-15, 8-byte big-endian)
     let discipline = data[6];
     let edition = data[7];
-    
+
     // Message length is 8 bytes at indices 8-15
     // Most GRIB2 files fit in u32, so we read the lower 4 bytes
     let message_length = u32::from_be_bytes([data[12], data[13], data[14], data[15]]);
@@ -156,7 +157,7 @@ pub fn parse_indicator(data: &[u8]) -> Result<Indicator, Grib2Error> {
 /// Located at offset 16 in the message
 pub fn parse_identification(data: &[u8]) -> Result<Identification, Grib2Error> {
     const OFFSET: usize = 16;
-    
+
     if data.len() < OFFSET + 22 {
         return Err(Grib2Error::InvalidSection {
             section: 1,
@@ -185,7 +186,10 @@ pub fn parse_identification(data: &[u8]) -> Result<Identification, Grib2Error> {
         .and_then(|date| date.and_hms_opt(hour as u32, minute as u32, second as u32))
         .ok_or_else(|| Grib2Error::InvalidSection {
             section: 1,
-            reason: format!("Invalid date: {}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, minute, second),
+            reason: format!(
+                "Invalid date: {}-{:02}-{:02} {:02}:{:02}:{:02}",
+                year, month, day, hour, minute, second
+            ),
         })?;
 
     let reference_time = DateTime::<Utc>::from_naive_utc_and_offset(reference_time, Utc);
@@ -228,12 +232,12 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
     // Byte 11: Interpretation of optional list
     // Bytes 12-13: Grid definition template number (u16)
     // Bytes 14+: Template-specific data
-    
+
     let grid_template = u16::from_be_bytes([section_data[12], section_data[13]]);
-    
+
     // Template data starts at byte 14
     let gd = &section_data[14..];
-    
+
     if grid_template == 0 {
         // Template 0: Latitude/longitude (or equidistant cylindrical or Plate Carree)
         // GRIB2 Code Table 3.1 - Template 3.0
@@ -257,18 +261,18 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         // Bytes 49-52: Di - i direction increment (u32, microdegrees)
         // Bytes 53-56: Dj - j direction increment (u32, microdegrees)
         // Byte 57: Scanning mode (flags)
-        
+
         if gd.len() < 58 {
             return Err(Grib2Error::InvalidSection {
                 section: 3,
                 reason: format!("Template 0 needs at least 58 bytes, got {}", gd.len()),
             });
         }
-        
+
         let grid_shape = gd[0];
         let ni = u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]]);
         let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
-        
+
         // Latitudes and longitudes are in microdegrees (10^-6 degrees)
         // GRIB2 uses sign-magnitude encoding: MSB indicates sign, remaining bits are magnitude
         // This is NOT two's complement!
@@ -279,7 +283,7 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         let di = u32::from_be_bytes([gd[49], gd[50], gd[51], gd[52]]);
         let dj = u32::from_be_bytes([gd[53], gd[54], gd[55], gd[56]]);
         let scanning_mode = gd[57];
-        
+
         // Convert from microdegrees to millidegrees (divide by 1000)
         // Note: Our struct uses millidegrees for historical reasons
         Ok(GridDefinition {
@@ -307,7 +311,7 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         } else {
             0
         };
-        
+
         Ok(GridDefinition {
             grid_shape: gd.first().copied().unwrap_or(0),
             num_points_latitude: nj,
@@ -324,7 +328,11 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
 }
 
 /// Parse Section 4 (Product Definition)
-pub fn parse_product_definition(data: &[u8], discipline: u8) -> Result<ProductDefinition, Grib2Error> {
+pub fn parse_product_definition(
+    data: &[u8],
+    discipline: u8,
+    tables: &Grib2Tables,
+) -> Result<ProductDefinition, Grib2Error> {
     let section_offset = find_section(data, 4)?;
     let section_data = &data[section_offset..];
 
@@ -343,29 +351,39 @@ pub fn parse_product_definition(data: &[u8], discipline: u8) -> Result<ProductDe
     // Byte 9: Parameter category
     // Byte 10: Parameter number
     // ... (rest depends on template)
-    
+
     let parameter_category = section_data[9];
     let parameter_number = section_data[10];
-    
+
     // For template 0 (analysis/forecast at horizontal level):
     // Byte 18-21: Forecast time (4 bytes)
     // Byte 22: Type of first fixed surface
     // Byte 23: Scale factor of first fixed surface
     // Byte 24-27: Scaled value of first fixed surface (4 bytes)
     let forecast_hour = if section_data.len() >= 22 {
-        u32::from_be_bytes([section_data[18], section_data[19], section_data[20], section_data[21]])
+        u32::from_be_bytes([
+            section_data[18],
+            section_data[19],
+            section_data[20],
+            section_data[21],
+        ])
     } else {
         0
     };
-    
+
     let level_type = section_data.get(22).copied().unwrap_or(1);
     let scale_factor = section_data.get(23).copied().unwrap_or(0) as i8;
     let scaled_value = if section_data.len() >= 28 {
-        u32::from_be_bytes([section_data[24], section_data[25], section_data[26], section_data[27]])
+        u32::from_be_bytes([
+            section_data[24],
+            section_data[25],
+            section_data[26],
+            section_data[27],
+        ])
     } else {
         0
     };
-    
+
     // Apply scale factor: actual_value = scaled_value / (10^scale_factor)
     // For heights in meters, scale_factor is typically 0, so level_value = scaled_value
     let level_value = if scale_factor == 0 {
@@ -376,8 +394,9 @@ pub fn parse_product_definition(data: &[u8], discipline: u8) -> Result<ProductDe
         scaled_value
     };
 
-    let parameter_short_name = get_parameter_short_name(discipline, parameter_category, parameter_number);
-    let level_description = get_level_description(level_type, level_value);
+    let parameter_short_name =
+        tables.get_parameter_name(discipline, parameter_category, parameter_number);
+    let level_description = tables.get_level_description(level_type, level_value);
 
     Ok(ProductDefinition {
         parameter_category,
@@ -417,18 +436,26 @@ pub fn parse_data_representation(data: &[u8]) -> Result<DataRepresentation, Grib
     // Octet 21 [20]: Type of original field values
 
     let num_data_points = u32::from_be_bytes([
-        section_data[5], section_data[6], section_data[7], section_data[8]
+        section_data[5],
+        section_data[6],
+        section_data[7],
+        section_data[8],
     ]);
-    
+
     let template_number = u16::from_be_bytes([section_data[9], section_data[10]]);
     let packing_method = template_number as u8;
 
     // Template-specific data starts at offset 11
     let template_data = &section_data[11..];
-    
+
     // Parse Template 5.0 fields
     let reference_value = if template_data.len() >= 4 {
-        f32::from_be_bytes([template_data[0], template_data[1], template_data[2], template_data[3]])
+        f32::from_be_bytes([
+            template_data[0],
+            template_data[1],
+            template_data[2],
+            template_data[3],
+        ])
     } else {
         0.0
     };
@@ -575,140 +602,4 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
     }
 }
 
-/// Get parameter short name
-fn get_parameter_short_name(discipline: u8, category: u8, number: u8) -> String {
-    match (discipline, category, number) {
-        // ==========================================================================
-        // Discipline 0: Meteorological products
-        // ==========================================================================
-        
-        // Category 0: Temperature
-        (0, 0, 0) => "TMP".to_string(),
-        (0, 0, 1) => "VTMP".to_string(),
-        (0, 0, 2) => "POT".to_string(),
-        (0, 0, 6) => "DPT".to_string(),     // Dew point temperature
-        
-        // Category 1: Moisture
-        (0, 1, 0) => "SPFH".to_string(),    // Specific humidity
-        (0, 1, 1) => "RH".to_string(),      // Relative humidity
-        (0, 1, 3) => "PWAT".to_string(),    // Precipitable water
-        (0, 1, 7) => "PRATE".to_string(),   // Precipitation rate
-        (0, 1, 8) => "APCP".to_string(),    // Total precipitation (accumulated)
-        (0, 1, 9) => "NCPCP".to_string(),   // Large scale precipitation
-        (0, 1, 10) => "ACPCP".to_string(),  // Convective precipitation
-        
-        // Category 2: Momentum (wind)
-        (0, 2, 0) => "WDIR".to_string(),    // Wind direction
-        (0, 2, 1) => "WIND".to_string(),    // Wind speed
-        (0, 2, 2) => "UGRD".to_string(),    // U-component of wind
-        (0, 2, 3) => "VGRD".to_string(),    // V-component of wind
-        (0, 2, 8) => "VVEL".to_string(),    // Vertical velocity (pressure)
-        (0, 2, 10) => "ABSV".to_string(),   // Absolute vorticity
-        (0, 2, 22) => "GUST".to_string(),   // Wind gust
-        
-        // Category 3: Mass (pressure/height)
-        (0, 3, 0) => "PRES".to_string(),    // Pressure
-        (0, 3, 1) => "PRMSL".to_string(),   // Pressure reduced to MSL
-        (0, 3, 5) => "HGT".to_string(),     // Geopotential height
-        
-        // Category 6: Cloud
-        (0, 6, 1) => "TCDC".to_string(),    // Total cloud cover
-        (0, 6, 3) => "LCDC".to_string(),    // Low cloud cover
-        (0, 6, 4) => "MCDC".to_string(),    // Medium cloud cover
-        (0, 6, 5) => "HCDC".to_string(),    // High cloud cover
-        (0, 6, 6) => "CWAT".to_string(),    // Cloud water
-        
-        // Category 7: Thermodynamic Stability
-        (0, 7, 6) => "CAPE".to_string(),    // Convective Available Potential Energy
-        (0, 7, 7) => "CIN".to_string(),     // Convective Inhibition
-        (0, 7, 8) => "HLCY".to_string(),    // Storm-relative helicity
-        
-        // Category 16: Forecast Radar Imagery
-        (0, 16, 195) => "REFD".to_string(),   // Reflectivity
-        (0, 16, 196) => "REFC".to_string(),   // Composite reflectivity
-        (0, 16, 197) => "RETOP".to_string(),  // Echo top
-        (0, 16, 198) => "MAXREF".to_string(), // Max reflectivity
-        
-        // Category 19: Physical Atmospheric Properties
-        (0, 19, 0) => "VIS".to_string(),    // Visibility
-        (0, 19, 2) => "TSTM".to_string(),   // Thunderstorm probability
-        (0, 19, 11) => "TKE".to_string(),   // Turbulent kinetic energy
-        
-        // ==========================================================================
-        // NCEP Local Use Parameters (discipline 0, local tables)
-        // ==========================================================================
-        
-        // Category 2: Momentum (NCEP extensions)
-        (0, 2, 194) => "USTM".to_string(),  // U-component storm motion
-        (0, 2, 195) => "VSTM".to_string(),  // V-component storm motion
-        
-        // Category 7: Stability (NCEP extensions for severe weather)
-        (0, 7, 192) => "LFTX".to_string(),  // Surface lifted index
-        (0, 7, 193) => "4LFTX".to_string(), // Best (4-layer) lifted index
-        
-        // Category 16: Radar (NCEP extensions)
-        // Note: REFC (196) already covered above
-        
-        // Category 17: Electrodynamics (Lightning)
-        (0, 17, 192) => "LTNG".to_string(), // Lightning (NCEP local)
-        
-        // ==========================================================================
-        // HRRR-specific parameters (discipline 0, local use)
-        // ==========================================================================
-        
-        // Updraft Helicity is often encoded as NCEP local
-        // The exact encoding may vary - common ones:
-        (0, 7, 199) => "MXUPHL".to_string(), // Max updraft helicity (alternative)
-        
-        // ==========================================================================
-        // Discipline 209: MRMS (local use)
-        // ==========================================================================
-        
-        // Category 0: Reflectivity
-        (209, 0, 16) => "REFL".to_string(),  // MergedReflectivityQC
-        // Category 1: Precipitation
-        (209, 1, 0) => "PRECIP_RATE".to_string(),  // PrecipRate
-        (209, 1, 1) => "QPE".to_string(),          // Quantitative Precipitation Estimate
-        
-        _ => format!("P{}_{}_{}", discipline, category, number),
-    }
-}
 
-/// Get level description
-fn get_level_description(level_type: u8, level_value: u32) -> String {
-    match level_type {
-        1 => "surface".to_string(),
-        2 => "cloud base".to_string(),
-        3 => "cloud top".to_string(),
-        4 => "0C isotherm".to_string(),
-        5 => "adiabatic condensation level".to_string(),
-        6 => "max wind".to_string(),
-        7 => "tropopause".to_string(),
-        8 => "top of atmosphere".to_string(),
-        10 => "entire atmosphere".to_string(),  // Alternative code for entire atmos
-        100 => format!("{} mb", level_value),  // Isobaric surface (pressure in mb)
-        101 => "mean sea level".to_string(),
-        102 => format!("{} m above MSL", level_value),
-        103 => format!("{} m above ground", level_value),  // Height above ground in meters
-        104 => format!("sigma level {}", level_value),
-        105 => "hybrid level".to_string(),
-        106 => format!("{} m below surface", level_value),  // Depth below land surface
-        108 => format!("{} mb above ground", level_value),  // Pressure level above ground
-        200 => "entire atmosphere".to_string(),
-        204 => "highest tropospheric freezing level".to_string(),
-        206 => "grid-scale cloud bottom".to_string(),
-        207 => "grid-scale cloud top".to_string(),
-        211 => "boundary layer cloud layer".to_string(),
-        212 => "low cloud layer".to_string(),
-        213 => "low cloud bottom".to_string(),
-        214 => "low cloud top".to_string(),
-        222 => "middle cloud layer".to_string(),
-        223 => "middle cloud bottom".to_string(),
-        224 => "middle cloud top".to_string(),
-        232 => "high cloud layer".to_string(),
-        233 => "high cloud bottom".to_string(),
-        234 => "high cloud top".to_string(),
-        220 => "planetary boundary layer".to_string(),
-        _ => format!("Level type {} value {}", level_type, level_value),
-    }
-}

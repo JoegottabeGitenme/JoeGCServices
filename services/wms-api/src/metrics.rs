@@ -839,16 +839,6 @@ impl MetricsCollector {
         counter!("model_cache_misses_total", "model" => model.label().to_string()).increment(1);
     }
     
-    /// Record weather model grid cache hit (parsed grid data)
-    pub fn record_model_grid_cache_hit(&self, model: WeatherModel) {
-        counter!("model_grid_cache_hits_total", "model" => model.label().to_string()).increment(1);
-    }
-    
-    /// Record weather model grid cache miss (parsed grid data)
-    pub fn record_model_grid_cache_miss(&self, model: WeatherModel) {
-        counter!("model_grid_cache_misses_total", "model" => model.label().to_string()).increment(1);
-    }
-    
     /// Record weather model resampling/projection time
     pub fn record_model_resample(&self, model: WeatherModel, duration_us: u64) {
         histogram!("model_resample_duration_ms", "model" => model.label().to_string())
@@ -902,42 +892,6 @@ impl MetricsCollector {
         let mut times = self.cache_lookup_times.write().await;
         times.record(duration_us);
         histogram!("cache_lookup_duration_ms").record(duration_us as f64 / 1000.0);
-    }
-    
-    /// Record GRIB cache statistics
-    pub fn record_grib_cache_stats(&self, hits: u64, misses: u64, evictions: u64, size: usize, capacity: usize) {
-        // Record GRIB cache hit rate
-        let total = hits + misses;
-        let hit_rate = if total > 0 {
-            (hits as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-        
-        gauge!("grib_cache_hit_rate_percent").set(hit_rate);
-        gauge!("grib_cache_hits_total").set(hits as f64);
-        gauge!("grib_cache_misses_total").set(misses as f64);
-        gauge!("grib_cache_evictions_total").set(evictions as f64);
-        gauge!("grib_cache_size").set(size as f64);
-        gauge!("grib_cache_capacity").set(capacity as f64);
-        gauge!("grib_cache_utilization_percent").set((size as f64 / capacity as f64) * 100.0);
-    }
-    
-    /// Record grid data cache statistics (for parsed GOES/GRIB grids)
-    pub fn record_grid_cache_stats(&self, stats: &storage::GridCacheStats) {
-        let hit_rate = stats.hit_rate();
-        let utilization = stats.utilization();
-        let memory_mb = stats.memory_mb();
-        
-        gauge!("grid_cache_hits_total").set(stats.hits as f64);
-        gauge!("grid_cache_misses_total").set(stats.misses as f64);
-        gauge!("grid_cache_evictions_total").set(stats.evictions as f64);
-        gauge!("grid_cache_entries").set(stats.entries as f64);
-        gauge!("grid_cache_capacity").set(stats.capacity as f64);
-        gauge!("grid_cache_memory_bytes").set(stats.memory_bytes as f64);
-        gauge!("grid_cache_memory_mb").set(memory_mb);
-        gauge!("grid_cache_hit_rate_percent").set(hit_rate);
-        gauge!("grid_cache_utilization_percent").set(utilization);
     }
     
     /// Record Zarr chunk cache statistics (for chunked grid data)

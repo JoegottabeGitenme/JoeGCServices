@@ -83,7 +83,7 @@ This file defines the sidebar navigation. Copy exactly:
   - [WMS API](./services/wms-api.md)
   - [Ingester](./services/ingester.md)
   - [Downloader](./services/downloader.md)
-  - [Renderer Worker](./services/renderer-worker.md)
+  - [Renderer Worker](./services/
 
 # Crates (Libraries)
 
@@ -475,9 +475,9 @@ Table of services with brief descriptions and ports.
 
 ### Task 3.5: Document Renderer Worker
 
-**Create file: `docs/src/services/renderer-worker.md`**
+**Create file: `docs/src/services/
 
-**Source to reference:** `services/renderer-worker/src/main.rs`
+**Source to reference:** `services/
 
 **Content to include:**
 - Purpose: Background tile rendering

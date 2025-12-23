@@ -2,6 +2,7 @@
 mod common;
 
 use bytes::Bytes;
+use common::create_test_tables;
 use grib2_parser::Grib2Reader;
 use std::fs;
 
@@ -11,8 +12,9 @@ fn test_parse_gfs_file() {
 
     let data = fs::read(&path).expect("Failed to read test file");
     let data = Bytes::from(data);
+    let tables = create_test_tables();
 
-    let mut reader = Grib2Reader::new(data);
+    let mut reader = Grib2Reader::new(data, tables);
 
     println!("File size: {} bytes", reader.size());
 

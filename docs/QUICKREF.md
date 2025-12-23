@@ -121,7 +121,6 @@ crates/              # Shared libraries
 services/            # Deployable microservices
   ├── wms-api/      # HTTP server
   ├── ingester/     # Data import
-  └── renderer-worker/  # Tile rendering
 
 deploy/helm/         # Kubernetes manifests
 scripts/             # Automation scripts
@@ -192,8 +191,8 @@ cargo run --package load-test -- run \
 
 ### Monitor Cache Performance
 ```bash
-# Check GRIB cache metrics
-curl http://localhost:8080/metrics | grep -E "grib_cache"
+# Check chunk cache metrics
+curl http://localhost:8080/metrics | grep -E "chunk_cache"
 
 # Monitor memory usage
 docker stats wms-api --no-stream

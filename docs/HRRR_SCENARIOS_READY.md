@@ -311,7 +311,7 @@ cargo run --package load-test -- run \
 ### Check Cache Metrics
 ```bash
 # GRIB cache stats
-curl http://localhost:8080/metrics | grep -E "grib_cache"
+curl http://localhost:8080/metrics | grep -E "chunk_cache"
 
 # Watch real-time
 watch -n 2 'curl -s http://localhost:8080/metrics | grep -E "cache_(hit|miss|size|evict)"'
@@ -374,9 +374,9 @@ Mixed: 59 + 5 + 9 = 73 files, ~1.24 GB
 
 4. **Cache configuration**:
    ```yaml
-   GRIB_CACHE_SIZE: "500"           # Entry count
-   GRIB_CACHE_MAX_MB: "2048"        # Max memory (2 GB)
-   GRIB_CACHE_HRRR_PRIORITY: "low"  # Evict HRRR first
+   CHUNK_CACHE_SIZE_MB: "500"           # Entry count
+   CHUNK_CACHE_SIZE_MB: "2048"        # Max memory (2 GB)
+   CHUNK_CACHE_PRIORITY: "low"  # Evict HRRR first
    ```
 
 ---
@@ -486,7 +486,7 @@ cargo run --package load-test -- run --scenario \
   validation/load-test/scenarios/hrrr_comprehensive_temporal.yaml
 
 # Monitor
-curl http://localhost:8080/metrics | grep grib_cache
+curl http://localhost:8080/metrics | grep chunk_cache
 docker stats wms-api --no-stream
 ```
 

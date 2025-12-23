@@ -1,5 +1,7 @@
 # HRRR Rendering Performance Analysis
 
+> **Note (December 2024):** This document describes the architecture before GribCache removal. Data access now uses Zarr storage with chunk-level caching. Some implementation details (e.g., GribCache, GRIB_CACHE_SIZE) are historical.
+
 ## Executive Summary
 
 HRRR (High-Resolution Rapid Refresh) is a **3km resolution regional forecast model** covering CONUS with **1,905,141 grid points** (1799 x 1059). While current performance is excellent for cached requests (**12,778 req/s**), HRRR presents unique caching challenges due to:
@@ -96,8 +98,8 @@ Based on profiling data and architecture analysis:
 // From services/wms-api/src/state.rs
 
 // GRIB file cache (raw bytes)
-grib_cache_enabled: parse_bool("ENABLE_GRIB_CACHE", true),
-grib_cache_size: parse_usize("GRIB_CACHE_SIZE", 500),  // Entry count
+chunk_cache_enabled: parse_bool("ENABLE_CHUNK_CACHE", true),
+chunk_cache_size_mb: parse_usize("CHUNK_CACHE_SIZE_MB", 500),  // Entry count
 
 // Grid data cache (parsed f32 arrays)  
 grid_cache_enabled: parse_bool("ENABLE_GRID_CACHE", true),
@@ -253,7 +255,7 @@ This is small compared to I/O but adds up under high concurrency.
 
 **Current Configuration**:
 ```yaml
-GRIB_CACHE_SIZE: 500  # Entry count only
+CHUNK_CACHE_SIZE_MB: 500  # Entry count only
 # With all HRRR: 500 x 130 MB = 65 GB (!)
 ```
 
@@ -295,7 +297,7 @@ impl GribCache {
 
 **Configuration**:
 ```yaml
-GRIB_CACHE_SIZE: 500           # Max entries
+CHUNK_CACHE_SIZE_MB: 500           # Max entries
 GRIB_CACHE_MAX_MB: 3072        # 3 GB memory limit
 ```
 
@@ -369,7 +371,7 @@ async fn prefetch_next_forecast_hour(
 
 ```yaml
 # Low memory, single-model testing
-GRIB_CACHE_SIZE: 50
+CHUNK_CACHE_SIZE_MB: 50
 GRIB_CACHE_MAX_MB: 512
 GRID_CACHE_SIZE: 50
 ```
@@ -378,7 +380,7 @@ GRID_CACHE_SIZE: 50
 
 ```yaml
 # Mixed model usage, moderate memory
-GRIB_CACHE_SIZE: 500
+CHUNK_CACHE_SIZE_MB: 500
 GRIB_CACHE_MAX_MB: 3072   # 3 GB
 GRID_CACHE_SIZE: 150
 ```
@@ -387,7 +389,7 @@ GRID_CACHE_SIZE: 150
 
 ```yaml
 # Forecast animation, high memory available
-GRIB_CACHE_SIZE: 500
+CHUNK_CACHE_SIZE_MB: 500
 GRIB_CACHE_MAX_MB: 6144   # 6 GB
 GRID_CACHE_SIZE: 250
 ```

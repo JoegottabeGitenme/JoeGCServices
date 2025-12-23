@@ -1,39 +1,53 @@
 # Caching Strategy
 
-Weather WMS employs a sophisticated two-tier caching system to minimize latency and reduce computational load. This page explains the caching architecture, configuration options, and best practices.
+Weather WMS employs a multi-tier caching system to minimize latency and reduce computational load. This page explains the caching architecture, configuration options, and best practices.
 
 ## Cache Architecture Overview
+
+The system has three cache layers:
+1. **L1 (In-Memory)**: Per-instance LRU cache for rendered PNG tiles
+2. **L2 (Redis)**: Shared cache for rendered PNG tiles across instances
+3. **Chunk Cache**: In-memory cache for decompressed Zarr data chunks
 
 ```mermaid
 graph TB
     Client["Client Request"]
     
     subgraph Instance1["WMS API Instance 1"]
-        L1A["L1 Cache
+        L1A["L1 Tile Cache
         In-Memory LRU
         ~300 MB"]
+        CC1["Chunk Cache
+        Zarr Chunks
+        ~1 GB"]
     end
     
     subgraph Instance2["WMS API Instance 2"]
-        L1B["L1 Cache
+        L1B["L1 Tile Cache
         In-Memory LRU
         ~300 MB"]
+        CC2["Chunk Cache
+        Zarr Chunks
+        ~1 GB"]
     end
     
-    L2["L2 Cache
+    L2["L2 Tile Cache
     Redis
     ~4 GB"]
     
     Source["Source Data
-    PostgreSQL + MinIO"]
+    PostgreSQL + MinIO (Zarr)"]
     
     Client -->|1. Check| L1A
     L1A -->|2. Miss| L2
     L1B -->|2. Miss| L2
-    L2 -->|3. Miss| Source
-    Source -->|4. Populate| L2
-    L2 -->|5. Populate| L1A
-    L2 -->|5. Populate| L1B
+    L2 -->|3. Miss| CC1
+    L2 -->|3. Miss| CC2
+    CC1 -->|4. Fetch chunks| Source
+    CC2 -->|4. Fetch chunks| Source
+    Source -->|5. Populate| L2
+    L2 -->|6. Populate| L1A
+    L2 -->|6. Populate| L1B
 ```
 
 ## L1 Cache: In-Memory
@@ -233,6 +247,123 @@ With 4 GB Redis and ~30 KB per tile: **~140,000 tiles**
 - 🐌 Slower than L1 (network latency)
 - 💰 Requires Redis infrastructure
 - 🔧 More complex operations
+
+---
+
+## Chunk Cache: Zarr Data
+
+The Chunk Cache stores decompressed Zarr chunks in memory. All weather data is stored in Zarr V3 format with multi-resolution pyramids, and this cache avoids repeatedly fetching and decompressing chunks from MinIO.
+
+### Characteristics
+
+| Property | Value |
+|----------|-------|
+| Location | Process memory (per WMS API instance) |
+| Access Time | <1ms (in-memory) |
+| Capacity | Configurable (default: 1 GB) |
+| Eviction | LRU (Least Recently Used) |
+| Sharing | Not shared between instances |
+| Persistence | No (lost on restart) |
+
+### Configuration
+
+```bash
+# .env
+ENABLE_CHUNK_CACHE=true
+CHUNK_CACHE_SIZE_MB=1024     # 1 GB default
+```
+
+### How It Works
+
+When rendering a tile:
+
+1. **Calculate required chunks**: Based on the tile bounding box and zoom level
+2. **Check chunk cache**: Look for already-decompressed chunks
+3. **Fetch missing chunks**: Use HTTP byte-range requests to MinIO
+4. **Decompress**: Blosc LZ4 decompression (very fast)
+5. **Cache chunks**: Store decompressed data for reuse
+6. **Assemble region**: Combine chunks into contiguous grid data
+
+### Implementation
+
+```rust
+use grid_processor::ChunkCache;
+
+pub struct ChunkCache {
+    cache: LruCache<ChunkKey, Arc<Vec<f32>>>,
+    max_bytes: usize,
+    current_bytes: usize,
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct ChunkKey {
+    zarr_path: String,
+    pyramid_level: u32,
+    chunk_coords: (usize, usize),
+}
+
+impl ChunkCache {
+    pub fn get(&mut self, key: &ChunkKey) -> Option<Arc<Vec<f32>>> {
+        self.cache.get(key).cloned()
+    }
+    
+    pub fn insert(&mut self, key: ChunkKey, data: Vec<f32>) {
+        let bytes = data.len() * 4;  // f32 = 4 bytes
+        
+        // Evict if necessary
+        while self.current_bytes + bytes > self.max_bytes {
+            if let Some((_, evicted)) = self.cache.pop_lru() {
+                self.current_bytes -= evicted.len() * 4;
+            }
+        }
+        
+        self.current_bytes += bytes;
+        self.cache.put(key, Arc::new(data));
+    }
+}
+```
+
+### Memory Usage
+
+Chunk sizes vary by dataset:
+
+| Dataset | Chunk Size | Decompressed |
+|---------|------------|--------------|
+| GFS (512×512) | ~200 KB | ~1 MB |
+| HRRR (512×512) | ~200 KB | ~1 MB |
+| GOES (512×512) | ~400 KB | ~1 MB |
+
+With 1 GB cache: **~1,000 chunks**
+
+### Trade-offs
+
+**Pros**:
+- ⚡ Ultra-fast chunk access (<1ms)
+- 🔧 Automatic pyramid level selection
+- 📦 Only loads needed chunks (partial reads)
+- 🎯 Perfect for tile rendering workloads
+
+**Cons**:
+- 💾 RAM constrained per instance
+- 🚫 Not shared between instances
+- 🔄 Lost on restart
+
+### Chunk Warming
+
+The `ChunkWarmer` pre-populates the chunk cache for frequently-accessed data:
+
+```yaml
+# config/models/goes16.yaml
+precaching:
+  enabled: true
+  keep_recent: 3          # Keep 3 most recent observations
+  warm_on_ingest: true    # Warm after new data arrives
+  poll_interval_secs: 60
+  parameters: [CMI_C02, CMI_C13]
+  zoom_levels: [0, 2, 4]  # Pre-warm at these zoom levels
+```
+
+This ensures common zoom levels are cached before users request them, providing instant response times.
 
 ---
 

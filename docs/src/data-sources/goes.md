@@ -67,13 +67,23 @@ Examples:
 
 **AWS S3 (NOAA Open Data)**:
 ```
-https://noaa-goes{SATELLITE}.s3.amazonaws.com/ABI-L2-CMIPF/{YYYY}/{DDD}/{HH}/OR_ABI-L2-CMIPF-M6C{CHANNEL}_G{SATELLITE}_s{START}_e{END}_c{CREATED}.nc
+s3://noaa-goes{SATELLITE}/ABI-L2-CMIPC/{YYYY}/{DDD}/{HH}/OR_ABI-L2-CMIPC-M6C{CHANNEL}_G{SATELLITE}_s{START}_e{END}_c{CREATED}.nc
 ```
 
 **Example**:
 ```
-https://noaa-goes18.s3.amazonaws.com/ABI-L2-CMIPF/2024/338/18/OR_ABI-L2-CMIPF-M6C13_G18_s20243371800207_e20243371809515_c20243371810002.nc
+s3://noaa-goes18/ABI-L2-CMIPC/2024/338/18/OR_ABI-L2-CMIPC-M6C13_G18_s20243371800207_e20243371809515_c20243371810002.nc
 ```
+
+### Efficient File Discovery
+
+The downloader uses S3's `start_after` parameter to efficiently discover files for specific channels. Since files are sorted lexicographically (C01 < C02 < ... < C16), we can skip directly to the desired channel:
+
+```
+start_after: ABI-L2-CMIPC/2024/338/18/OR_ABI-L2-CMIPC-M6C13_G18_
+```
+
+This avoids listing all files in an hour directory (which may contain hundreds of files across all 16 channels) and instead jumps directly to the target channel, discovering all ~12 timesteps per hour efficiently.
 
 ## File Sizes
 

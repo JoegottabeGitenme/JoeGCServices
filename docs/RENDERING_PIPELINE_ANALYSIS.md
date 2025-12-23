@@ -130,11 +130,9 @@ pub fn create_png(
 
 ---
 
-### 2.3 Renderer-Worker Service (services/renderer-worker/src/)
 
 **Status**: Mostly placeholder/incomplete
 
-**Location**: services/renderer-worker/src/main.rs (215 lines)
 
 **Architecture**:
 - Async Rust service consuming Redis jobs
@@ -411,7 +409,6 @@ renderer
   ├─ projection
   └─ flate2, crc32fast (PNG)
 
-renderer-worker
   ├─ wms-common
   ├─ storage
   ├─ renderer
@@ -431,8 +428,6 @@ renderer-worker
 | Location | Code | Priority | Impact |
 |----------|------|----------|--------|
 | `crates/renderer/src/lib.rs:14` | "TODO: Implement rendering algorithms" | HIGH | Library main documentation |
-| `services/renderer-worker/src/main.rs:128-132` | "TODO: Implement actual rendering" | CRITICAL | Worker is non-functional |
-| `services/renderer-worker/src/main.rs:153` | "TODO: Use proper PNG encoder from renderer crate" | MEDIUM | Code duplication |
 | `services/wms-api/src/handlers.rs:392` | "TODO: Implement proper resampling to match WMS request dimensions" | HIGH | Output size mismatch |
 
 ### Unimplemented Rendering Styles
@@ -456,7 +451,6 @@ renderer-worker
 1. **Renderer-Worker Non-Functional**
    - Returns test patterns, not real GRIB data
    - Can't be used for production tile generation
-   - Path: `services/renderer-worker/src/main.rs:127-155`
 
 2. **No Grid Resampling**
    - WMS allows arbitrary output dimensions
@@ -484,7 +478,6 @@ renderer-worker
    - Path: `services/wms-api/src/handlers.rs:124-140`
 
 6. **Duplicate PNG Encoding**
-   - renderer-worker has its own PNG encoder (lines 158-211)
    - Duplicates code from `renderer::png::create_png()`
    - Should consolidate to single implementation
 
@@ -611,7 +604,6 @@ render_weather_data()
 ## Recommendations
 
 ### High Priority (Blocking production)
-1. Implement actual rendering in renderer-worker service
 2. Add grid resampling for WMS output dimensions
 3. Implement proper error reporting (don't silently fall back)
 4. Add GRIB2 message filtering (by level, height)

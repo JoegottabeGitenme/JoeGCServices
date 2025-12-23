@@ -63,10 +63,10 @@ log_info "Step 1/4: Clearing L1 in-memory caches..."
 L1_RESPONSE=$(timeout 10 curl -s --connect-timeout 2 --max-time 5 -X POST "http://localhost:8080/api/cache/clear" 2>/dev/null || echo "")
 if echo "$L1_RESPONSE" | grep -q '"success":true'; then
     L1_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"l1_tile_cache":[0-9]*' | cut -d: -f2)
-    GRIB_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"grib_cache":[0-9]*' | cut -d: -f2)
+    CHUNK_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"chunk_cache":[0-9]*' | cut -d: -f2)
     GRID_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"grid_cache":[0-9]*' | cut -d: -f2)
     log_success "  L1 tile cache cleared: ${L1_CLEARED:-0} entries"
-    log_success "  GRIB cache cleared: ${GRIB_CLEARED:-0} entries"
+    log_success "  Chunk cache cleared: ${CHUNK_CLEARED:-0} entries"
     log_success "  Grid cache cleared: ${GRID_CLEARED:-0} entries"
 else
     log_warn "  Could not clear L1 cache (API may not be running or timed out)"

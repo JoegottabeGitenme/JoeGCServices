@@ -74,9 +74,9 @@ ENABLE_L1_CACHE=true                 # Enable in-memory tile cache (huge perform
 TILE_CACHE_SIZE=10000                # Max tiles in L1 cache (~300MB at 30KB/tile)
 TILE_CACHE_TTL_SECS=300              # L1 cache entry TTL (default: 5 minutes)
 
-# --- GRIB Data Cache (Phase 4) ---
-ENABLE_GRIB_CACHE=true               # Enable GRIB data caching (reduces storage I/O)
-GRIB_CACHE_SIZE=500                  # Max GRIB files in cache (~2.5GB RAM)
+# --- Zarr Chunk Cache ---
+ENABLE_CHUNK_CACHE=true              # Enable Zarr chunk caching (reduces storage I/O)
+CHUNK_CACHE_SIZE_MB=1024             # Chunk cache size in MB (~1GB)
 
 # --- Tile Prefetching (Phase 7.B) ---
 ENABLE_PREFETCH=true                 # Enable predictive tile prefetching
@@ -168,9 +168,9 @@ pub struct OptimizationConfig {
     pub l1_cache_size: usize,
     pub l1_cache_ttl_secs: u64,
     
-    // GRIB Cache
-    pub grib_cache_enabled: bool,
-    pub grib_cache_size: usize,
+    // Chunk Cache
+    pub chunk_cache_enabled: bool,
+    pub chunk_cache_size_mb: usize,
     
     // Prefetch
     pub prefetch_enabled: bool,
@@ -246,9 +246,9 @@ pub async fn config_handler(
                 "size": state.optimization_config.l1_cache_size,
                 "ttl_secs": state.optimization_config.l1_cache_ttl_secs,
             },
-            "grib_cache": {
-                "enabled": state.optimization_config.grib_cache_enabled,
-                "size": state.optimization_config.grib_cache_size,
+            "chunk_cache": {
+                "enabled": state.optimization_config.chunk_cache_enabled,
+                "size_mb": state.optimization_config.chunk_cache_size_mb,
             },
             "prefetch": {
                 "enabled": state.optimization_config.prefetch_enabled,
@@ -404,7 +404,7 @@ pub struct LoadTestRun {
 pub struct SystemConfig {
     pub l1_cache_enabled: bool,
     pub l1_cache_size: usize,
-    pub grib_cache_enabled: bool,
+    pub chunk_cache_enabled: bool,
     pub prefetch_enabled: bool,
     pub prefetch_rings: u32,
     pub cache_warming_enabled: bool,

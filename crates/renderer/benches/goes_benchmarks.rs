@@ -16,7 +16,6 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
 };
 use projection::geostationary::Geostationary;
-use projection::{compute_tile_lut, resample_with_lut};
 use rand::Rng;
 use renderer::png;
 use std::io::{Read, Write};
@@ -859,98 +858,6 @@ fn bench_goes_png_encoding(c: &mut Criterion) {
 }
 
 // =============================================================================
-// PROJECTION LUT BENCHMARKS
-// =============================================================================
-
-/// Benchmark the projection LUT computation and lookup vs on-the-fly projection.
-fn bench_projection_lut(c: &mut Criterion) {
-    let mut group = c.benchmark_group("projection_lut");
-    
-    // GOES CONUS grid size (typical for 2km resolution)
-    let goes_width = 2500;
-    let goes_height = 1500;
-    let goes_data = generate_goes_ir_data(goes_width, goes_height);
-    let proj = Geostationary::goes16_conus();
-    
-    // Test a few representative tiles
-    let tiles = [
-        (5, 7, 11, "z5_central_conus"),
-        (6, 14, 22, "z6_midwest"),
-        (7, 28, 44, "z7_detailed"),
-    ];
-    
-    for (z, x, y, name) in tiles {
-        group.throughput(Throughput::Elements(256 * 256));
-        
-        // Pre-compute the LUT for this tile
-        let lut = compute_tile_lut(&proj, z, x, y, goes_width, goes_height);
-        let valid_count = lut.valid_count();
-        
-        // Calculate tile bbox for on-the-fly comparison
-        let n = 2u32.pow(z) as f64;
-        let lon_min = x as f64 / n * 360.0 - 180.0;
-        let lon_max = (x + 1) as f64 / n * 360.0 - 180.0;
-        let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * y as f64 / n))
-            .sinh()
-            .atan()
-            .to_degrees();
-        let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (y + 1) as f64 / n))
-            .sinh()
-            .atan()
-            .to_degrees();
-        let bbox = [lon_min as f32, lat_min as f32, lon_max as f32, lat_max as f32];
-        
-        // Benchmark: On-the-fly projection (current method)
-        group.bench_with_input(
-            BenchmarkId::new("on_the_fly", name),
-            &(&goes_data, &proj, bbox),
-            |b, (data, proj, bbox)| {
-                b.iter(|| {
-                    resample_goes_to_mercator(
-                        black_box(data),
-                        goes_width,
-                        goes_height,
-                        256,
-                        256,
-                        *bbox,
-                        proj,
-                    )
-                });
-            },
-        );
-        
-        // Benchmark: LUT-based resampling (optimized method)
-        group.bench_with_input(
-            BenchmarkId::new("with_lut", name),
-            &(&goes_data, &lut),
-            |b, (data, lut)| {
-                b.iter(|| {
-                    resample_with_lut(black_box(data), goes_width, lut)
-                });
-            },
-        );
-        
-        // Print info about this tile
-        println!("Tile {}: {} valid pixels out of {}", name, valid_count, 256 * 256);
-    }
-    
-    // Benchmark: LUT computation time (one-time cost)
-    group.bench_function("compute_lut_z5", |b| {
-        b.iter(|| {
-            compute_tile_lut(black_box(&proj), 5, 7, 11, goes_width, goes_height)
-        });
-    });
-    
-    group.bench_function("compute_lut_z7", |b| {
-        b.iter(|| {
-            compute_tile_lut(black_box(&proj), 7, 28, 44, goes_width, goes_height)
-        });
-    });
-    
-    group.finish();
-}
-
-// =============================================================================
 // BENCHMARK GROUPS
 // =============================================================================
 
@@ -977,14 +884,9 @@ criterion_group!(
 );
 
 criterion_group!(
-    lut_benches,
-    bench_projection_lut,
-);
-
-criterion_group!(
     pipeline_benches,
     bench_goes_full_pipeline,
     bench_goes_png_encoding,
 );
 
-criterion_main!(io_benches, projection_benches, resample_benches, color_benches, lut_benches, pipeline_benches);
+criterion_main!(io_benches, projection_benches, resample_benches, color_benches, pipeline_benches);

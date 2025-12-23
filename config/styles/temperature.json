@@ -36,11 +36,13 @@
       "name": "Temperature Isolines",
       "description": "Temperature contour lines at 5°C intervals",
       "type": "contour",
+      "transform": {
+        "type": "kelvin_to_celsius"
+      },
       "contour": {
         "interval": 5.0,
         "min_value": -40,
         "max_value": 40,
-        "unit_conversion": 273.15,
         "line_width": 1.5,
         "line_color": "#333333",
         "labels": true,
@@ -64,6 +66,9 @@
       "name": "Numeric Values",
       "description": "Display temperature values as numbers on the map",
       "type": "numbers",
+      "transform": {
+        "type": "kelvin_to_celsius"
+      },
       "numbers": {
         "spacing": 50,
         "font_size": 11.0,

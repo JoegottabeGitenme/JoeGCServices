@@ -14,14 +14,6 @@ use tracing::{error, info, warn};
 
 use crate::state::AppState;
 
-/// Retention configuration for a model.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct ModelRetention {
-    pub model_id: String,
-    pub retention_hours: u32,
-}
-
 /// Configuration for the cleanup task.
 #[derive(Debug, Clone)]
 pub struct CleanupConfig {
@@ -207,6 +199,12 @@ impl CleanupTask {
             let deleted = self.state.catalog.delete_expired().await?;
             stats.records_deleted = deleted;
             info!(count = deleted, "Deleted expired records from database");
+            
+            // Invalidate capabilities cache when data is deleted
+            if deleted > 0 {
+                self.state.capabilities_cache.invalidate().await;
+                tracing::debug!("Invalidated capabilities cache after cleanup deleted {} records", deleted);
+            }
         }
 
         info!(

@@ -1,6 +1,6 @@
 # Services Overview
 
-Weather WMS is built as a microservices architecture with four main services, each with a specific responsibility. All services are written in Rust for performance and reliability.
+Weather WMS is built as a microservices architecture with three main services, each with a specific responsibility. All services are written in Rust for performance and reliability.
 
 ## Service Architecture
 
@@ -14,12 +14,8 @@ graph TB
     subgraph Services["Weather WMS Services"]
         DL["Downloader
         Port 8081"]
-        ING["Ingester
-        No Port"]
         API["WMS API
         Port 8080"]
-        WORKER["Renderer Worker
-        No Port"]
     end
     
     subgraph Infrastructure
@@ -30,28 +26,22 @@ graph TB
     
     NOAA -->|HTTP| DL
     DL -->|Trigger| API
-    API -->|Call| ING
-    ING --> PG
-    ING --> MINIO
+    API -->|Ingest| MINIO
+    API --> PG
     
     Client -->|WMS/WMTS| API
     API --> PG
     API --> MINIO
     API --> REDIS
-    
-    WORKER --> REDIS
-    WORKER --> PG
-    WORKER --> MINIO
 ```
 
 ## Service Summary
 
 | Service | Purpose | Port | Language | Scaling |
 |---------|---------|------|----------|---------|
-| [WMS API](./wms-api.md) | HTTP server for OGC WMS/WMTS requests | 8080 | Rust | Horizontal |
+| [WMS API](./wms-api.md) | HTTP server for OGC WMS/WMTS requests + ingestion | 8080 | Rust | Horizontal |
 | [Downloader](./downloader.md) | Fetches weather data from NOAA sources | 8081 | Rust | Horizontal |
-| [Ingester](./ingester.md) | Parses and stores weather data | - | Rust | Vertical |
-| [Renderer Worker](./renderer-worker.md) | Background tile rendering | - | Rust | Horizontal |
+| [Ingester](./ingester.md) | Standalone ingestion CLI (development/testing) | - | Rust | Vertical |
 
 ## Service Responsibilities
 
@@ -86,16 +76,6 @@ graph TB
 
 **Supported Formats**: GRIB2, NetCDF-4
 
-### Renderer Worker
-- Consumes render jobs from Redis queue
-- Generates PNG tiles from grid data
-- Stores tiles in L2 (Redis) cache
-- Supports cache warming strategies
-- Runs in background (no direct client interaction)
-- Scales horizontally for throughput
-
-**Use Cases**: Cache warming, prefetching, scheduled rendering
-
 ## Communication Patterns
 
 ### Synchronous (HTTP)
@@ -105,7 +85,6 @@ graph TB
 
 ### Asynchronous (Redis Pub/Sub)
 - Ingester → WMS API: Cache invalidation messages
-- WMS API → Renderer Workers: Render job queue
 
 ### Database
 - All services → PostgreSQL: Metadata catalog queries
@@ -122,25 +101,13 @@ services:
     replicas: 1
     resources:
       limits:
-        memory: 2G
+        memory: 4G
         
   downloader:
     replicas: 1
     resources:
       limits:
         memory: 1G
-        
-  ingester:
-    replicas: 1
-    resources:
-      limits:
-        memory: 4G
-        
-  renderer-worker:
-    replicas: 2
-    resources:
-      limits:
-        memory: 2G
 ```
 
 ### Production (Kubernetes)
@@ -204,9 +171,6 @@ curl http://localhost:8081/health
 
 # Ingester (via logs)
 docker-compose logs ingester | grep "healthy"
-
-# Renderer Worker (via logs)
-docker-compose logs renderer-worker | grep "Processing render job"
 ```
 
 ## Monitoring
@@ -216,7 +180,6 @@ All services expose metrics for Prometheus:
 - **WMS API**: `http://localhost:8080/metrics`
 - **Downloader**: `http://localhost:8081/metrics`
 - **Ingester**: Logs to stdout (JSON format)
-- **Renderer Worker**: Logs to stdout (JSON format)
 
 View in Grafana: http://localhost:3001
 
@@ -229,32 +192,22 @@ WMS API → (Direct call) → Ingester library
 Ingester → (Redis PUBLISH) → WMS API instances
 ```
 
-### Rendering Flow
-```
-WMS API → (Redis LPUSH) → Render queue
-Renderer Worker → (Redis BRPOPLPUSH) → Claim job
-Renderer Worker → (Redis SET) → Store tile
-```
-
 ## Resource Requirements
 
 ### CPU (per instance)
 - WMS API: 2-4 cores
 - Downloader: 1-2 cores
 - Ingester: 4-8 cores (CPU-intensive parsing)
-- Renderer Worker: 2-4 cores
 
 ### Memory (per instance)
-- WMS API: 2-4 GB (L1 cache)
+- WMS API: 2-4 GB (L1 cache + rendering)
 - Downloader: 512 MB - 1 GB
 - Ingester: 4-8 GB (large file parsing)
-- Renderer Worker: 1-2 GB
 
 ### Disk I/O
-- Ingester: High (reads large files, writes shards)
+- Ingester: High (reads large files, writes Zarr pyramids)
 - Downloader: High (writes large files)
-- WMS API: Medium (reads shards from MinIO)
-- Renderer Worker: Medium (reads shards, writes tiles)
+- WMS API: Medium (reads Zarr chunks from MinIO)
 
 ## Next Steps
 
@@ -263,4 +216,3 @@ Dive into each service for detailed documentation:
 - [WMS API Service](./wms-api.md) - HTTP server and request handling
 - [Downloader Service](./downloader.md) - Data fetching and resumable downloads
 - [Ingester Service](./ingester.md) - Data parsing and storage
-- [Renderer Worker Service](./renderer-worker.md) - Background tile generation

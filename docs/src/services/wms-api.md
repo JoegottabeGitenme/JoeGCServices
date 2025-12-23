@@ -12,12 +12,15 @@ The WMS API service is the primary HTTP server that implements OGC Web Map Servi
 
 ## Responsibilities
 
-1. **OGC Compliance**: Implements WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications
+1. **OGC Compliance**: Implements WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications with strict validation
 2. **Tile Serving**: Renders and caches weather map tiles
-3. **Cache Management**: Maintains L1 (in-memory) cache
-4. **Metadata**: Provides GetCapabilities and layer information
-5. **Admin API**: Triggers ingestion, clears caches, provides statistics
-6. **Metrics**: Exposes Prometheus metrics for monitoring
+3. **Cache Management**: Maintains L1 (in-memory) cache and capabilities response cache
+4. **Metadata**: Provides GetCapabilities with intelligent caching
+5. **Admin API**: Dashboard endpoints, cache management, proxies to ingester service
+6. **API Documentation**: Serves OpenAPI/Swagger UI at `/api/docs`
+7. **Metrics**: Exposes Prometheus metrics for monitoring
+
+> **Note**: Ingestion is handled by the dedicated [Ingester Service](./ingester.md). The wms-api proxies ingestion requests and status queries to the ingester.
 
 ## Architecture
 
@@ -73,6 +76,8 @@ GET /wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0
 Returns XML document describing available layers, styles, and coordinate systems.
 
 **Response**: XML (WMS_Capabilities)
+
+**Caching**: Capabilities responses are cached in-memory and automatically invalidated when the layer catalog changes (e.g., after data ingestion).
 
 ---
 
@@ -205,18 +210,20 @@ Exposes Prometheus-format metrics.
 
 ---
 
-#### Trigger Ingestion
+#### Trigger Ingestion (Proxy)
 ```http
 POST /admin/ingest
 Content-Type: application/json
 
 {
-  "path": "/data/incoming/gfs.t00z.pgrb2.0p25.f000",
+  "file_path": "/data/downloads/gfs.t00z.pgrb2.0p25.f000",
   "model": "gfs"
 }
 ```
 
-Triggers manual ingestion of a data file.
+Proxies ingestion request to the [Ingester Service](./ingester.md) at `http://ingester:8082/ingest`.
+
+> **Note**: This endpoint forwards requests to the dedicated ingester service. Direct calls to the ingester are also supported.
 
 ---
 
@@ -380,6 +387,24 @@ POST /api/tile-heatmap/clear
 ```
 
 Clears tile request heatmap data.
+
+---
+
+#### API Documentation (Swagger)
+```http
+GET /api/docs
+```
+
+Serves interactive Swagger UI for API exploration and testing.
+
+---
+
+#### OpenAPI Specification
+```http
+GET /api/docs/openapi.yaml
+```
+
+Returns the raw OpenAPI 3.0 specification file.
 
 ---
 
@@ -626,17 +651,35 @@ curl http://localhost:9000/minio/health/live
 
 ```
 services/wms-api/src/
-├── main.rs              # Entry point, server setup
-├── state.rs             # Application state (connections, config)
-├── handlers.rs          # HTTP request handlers
-├── admin.rs             # Admin API handlers
-├── rendering.rs         # Tile rendering logic
-├── validation.rs        # Request validation
-├── warming.rs           # Cache warming
-├── cleanup.rs           # Background cleanup tasks
-├── metrics.rs           # Prometheus metrics
-└── startup_validation.rs  # Startup health checks
+├── main.rs                 # Entry point, server setup
+├── state.rs                # Application state (connections, config)
+├── handlers/               # HTTP request handlers (modular)
+│   ├── mod.rs              # Handler module exports
+│   ├── wms.rs              # WMS GetCapabilities, GetMap, GetFeatureInfo
+│   ├── wmts.rs             # WMTS GetCapabilities, GetTile (KVP + REST)
+│   ├── tiles.rs            # XYZ tile endpoint
+│   ├── cache.rs            # Cache management endpoints
+│   ├── admin.rs            # Admin API handlers
+│   ├── docs.rs             # OpenAPI/Swagger documentation
+│   └── common.rs           # Shared handler utilities
+├── capabilities_cache.rs   # GetCapabilities response caching
+├── admin.rs                # Admin API handlers (proxies to ingester for ingestion)
+├── rendering/              # Tile rendering logic
+│   ├── mod.rs              # Main rendering functions
+│   ├── loaders.rs          # Zarr data loading
+│   ├── resampling.rs       # Grid resampling for tiles
+│   └── ...
+├── validation.rs           # Request validation
+├── warming.rs              # Tile cache warming at startup
+├── cleanup.rs              # Background cleanup tasks
+├── chunk_warming.rs        # Zarr chunk pre-caching for observation data
+├── memory_pressure.rs      # Memory management and cache eviction
+├── metrics.rs              # Prometheus metrics
+├── layer_config.rs         # Layer configuration loading
+└── startup_validation.rs   # Startup health checks
 ```
+
+> **Note**: Ingestion logic has been moved to the `crates/ingestion` library and `services/ingester` service. The `admin.rs` file now proxies ingestion requests to the ingester service.
 
 ## Dependencies
 

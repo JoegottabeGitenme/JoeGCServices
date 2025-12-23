@@ -9,9 +9,9 @@ members = [
     "crates/wms-protocol",
     "crates/storage",
     "crates/grid-processor",
+    "crates/ingestion",
     "services/downloader",
     "services/ingester",
-    "services/renderer-worker",
     "services/wms-api",
     "validation/load-test",
 ]
@@ -43,8 +43,8 @@ bytes = "1.5"
 
 # Storage
 object_store = { version = "0.9", features = ["aws", "http"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }
-redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }
+redis = { version = "0.27", features = ["tokio-comp", "streams"] }
 
 # Time & IDs
 chrono = { version = "0.4", features = ["serde"] }
@@ -85,3 +85,14 @@ dotenvy = "0.15"
 
 # Testing
 tokio-test = "0.4"
+tempfile = "3"
+
+# Filesystem
+walkdir = "2"
+serde_yaml = "0.9"
+
+# Zarr
+zarrs = "0.18"
+zarrs_storage = "0.3"
+zarrs_filesystem = "0.2"
+zarrs_object_store = "0.3"

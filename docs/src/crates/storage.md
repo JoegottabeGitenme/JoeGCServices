@@ -180,31 +180,6 @@ println!("Entries: {}, Hit rate: {:.1}%",
 cache.clear().await;
 ```
 
-### GridDataCache
-
-In-memory cache for decompressed grid data:
-
-```rust
-use storage::GridDataCache;
-
-let cache = GridDataCache::new(100);  // 100 grids
-
-// Cache key includes path and pyramid level
-let key = GridCacheKey {
-    storage_path: "grids/gfs/tmp.zarr".to_string(),
-    pyramid_level: 0,
-    bbox: Some(bbox.clone()),
-};
-
-// Get cached grid region
-if let Some(region) = cache.get(&key).await {
-    return Ok(region);
-}
-
-// Cache grid region
-cache.set(key, region.clone()).await;
-```
-
 ## Zarr Storage Integration
 
 The storage crate integrates with the `grid-processor` crate for Zarr access:

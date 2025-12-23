@@ -90,7 +90,6 @@ cargo run --bin wms-api -- --listen 0.0.0.0:8080
 cargo run --bin ingester
 
 # Renderer Worker
-cargo run --bin renderer-worker
 ```
 
 ### Debugging
@@ -161,7 +160,6 @@ redis-cli -h localhost
 - **services/**: Deployable microservices
   - `wms-api/`: HTTP API server
   - `ingester/`: Data ingestion from NOAA sources
-  - `renderer-worker/`: Tile rendering worker
 
 - **config/**: Configuration files (YAML-based)
   - `models/`: Model-specific configs (GFS, HRRR, GOES, MRMS)

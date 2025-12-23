@@ -1,52 +1,53 @@
 //! Weather data ingester service.
 //!
-//! Polls NOAA data sources (NOMADS, AWS Open Data) and ingests
-//! GRIB2/NetCDF files into object storage with catalog updates.
+//! HTTP-triggered ingestion service that receives ingestion requests from the downloader
+//! and processes GRIB2/NetCDF files into Zarr format.
+//!
+//! # Usage
+//!
+//! ## Server mode (default)
+//! ```bash
+//! ingester --port 8082
+//! ```
+//!
+//! ## Test file mode (development)
+//! ```bash
+//! ingester --test-file /path/to/data.grib2 --test-model gfs
+//! ```
 
-mod config;
-mod config_loader;
-mod ingest;
-mod sources;
+mod server;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::Parser;
-use tracing::{debug, info, warn, Level};
+use std::sync::Arc;
+use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use config::IngesterConfig;
-use ingest::IngestionPipeline;
-use std::fs;
-use std::collections::HashSet;
-use bytes::Bytes;
-use chrono::Utc;
+use ingestion::{Ingester, IngestOptions};
+use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
+use std::env;
+
+use server::{IngestionTracker, ServerState, start_server};
 
 #[derive(Parser, Debug)]
 #[command(name = "ingester")]
-#[command(about = "Weather data ingester for WMS services")]
+#[command(about = "Weather data ingester HTTP service")]
 struct Args {
-    /// Configuration file path
-    #[arg(short, long, default_value = "/etc/ingester/config.yaml")]
-    config: String,
+    /// HTTP server port
+    #[arg(short, long, default_value = "8082")]
+    port: u16,
 
-    /// Run once and exit (vs continuous polling)
-    #[arg(long)]
-    once: bool,
-
-    /// Specific model to ingest (default: all configured)
-    #[arg(short, long)]
-    model: Option<String>,
-
-    /// Test with local GRIB2 file
+    /// Test with local file (bypasses HTTP server)
     #[arg(long)]
     test_file: Option<String>,
 
-    /// Forecast hour for test file (overrides GRIB metadata)
-    #[arg(long)]
-    forecast_hour: Option<u32>,
-    
-    /// Model name for test file (e.g., "gfs", "hrrr")
+    /// Model name for test file (e.g., "gfs", "hrrr", "goes16")
     #[arg(long)]
     test_model: Option<String>,
+
+    /// Forecast hour for test file
+    #[arg(long)]
+    forecast_hour: Option<u32>,
 
     /// Log level
     #[arg(long, default_value = "info")]
@@ -78,754 +79,73 @@ async fn main() -> Result<()> {
 
     info!("Starting weather data ingester");
 
-    // Load configuration (try YAML first, fall back to env vars)
-    let config = if std::path::Path::new("config/ingestion.yaml").exists() {
-        info!("Loading configuration from YAML files");
-        match IngesterConfig::from_yaml(".") {
-            Ok(cfg) => {
-                info!(models = ?cfg.models.keys().collect::<Vec<_>>(), "Loaded configuration from YAML");
-                cfg
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to load YAML config, falling back to environment variables");
-                IngesterConfig::from_env()?
-            }
-        }
-    } else {
-        info!("No YAML config found, loading from environment variables");
-        IngesterConfig::from_env()?
+    // Create storage and catalog connections
+    let storage_config = ObjectStorageConfig {
+        endpoint: env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://minio:9000".to_string()),
+        bucket: env::var("S3_BUCKET").unwrap_or_else(|_| "weather-data".to_string()),
+        access_key_id: env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
+        secret_access_key: env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
+        region: env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
+        allow_http: env::var("S3_ALLOW_HTTP")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(true),
     };
+    let storage = Arc::new(ObjectStorage::new(&storage_config)?);
     
-    info!(models = ?config.models.keys().collect::<Vec<_>>(), "Configuration loaded");
+    let database_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weather:weather@localhost:5432/weather".to_string());
+    let catalog = Catalog::connect(&database_url).await?;
+    catalog.migrate().await?;
 
-    // Handle test file mode
+    // Create ingester
+    let ingester = Ingester::new(storage, catalog);
+
+    // Handle test file mode (for development)
     if let Some(test_file) = &args.test_file {
-        return test_file_ingestion(&config, test_file, args.forecast_hour, args.test_model.as_deref()).await;
+        return run_test_file(ingester, test_file, args.test_model, args.forecast_hour).await;
     }
 
-    // Create ingestion pipeline
-    let pipeline = IngestionPipeline::new(&config).await?;
-
-    if args.once {
-        // Single run mode
-        info!("Running single ingestion cycle");
-
-        if let Some(model) = &args.model {
-            pipeline.ingest_model(model).await?;
-        } else {
-            pipeline.ingest_all().await?;
-        }
-    } else {
-        // Continuous polling mode
-        info!("Starting continuous polling");
-        pipeline.run_forever().await?;
-    }
-
-    Ok(())
-}
-
-/// Ingest a local GRIB2 or NetCDF test file with shredding (extract individual parameters)
-/// 
-/// TODO: This function stores GRIB2 files as shredded GRIB2 format, not Zarr.
-/// It should be refactored to use the IngestionPipeline with Zarr output,
-/// or removed in favor of the IngestionPipeline for all ingestion paths.
-/// See MRMS Zarr ingestion implementation for context.
-async fn test_file_ingestion(
-    config: &IngesterConfig, 
-    test_file: &str, 
-    forecast_hour_override: Option<u32>,
-    model_override: Option<&str>
-) -> Result<()> {
-    use storage::{Catalog, CatalogEntry, ObjectStorage};
-    use wms_common::BoundingBox;
-
-    info!(file = %test_file, forecast_hour = ?forecast_hour_override, model = ?model_override, "Testing ingestion with local file (shredded mode)");
-
-    // Check if this is a NetCDF file (GOES satellite data)
-    let is_netcdf = test_file.ends_with(".nc") || test_file.ends_with(".nc4");
-    
-    if is_netcdf {
-        return test_goes_file_ingestion(config, test_file, model_override).await;
-    }
-
-    // Read file
-    let data = fs::read(test_file)?;
-    let data_bytes = Bytes::from(data);
-    let original_file_size = data_bytes.len() as u64;
-
-    // Setup storage and catalog
-    let storage = ObjectStorage::new(&config.storage)?;
-    let catalog = Catalog::connect(&config.database_url).await?;
-    catalog.migrate().await?;
-
-    // Determine model name (use override or extract from filename or default to "gfs")
-    let model = model_override.map(String::from).or_else(|| {
-        // Try to extract from filename like "hrrr.t00z.wrfsfcf00.grib2" -> "hrrr"
-        // or "gfs.t00z.pgrb2.0p25.f003" -> "gfs"
-        // or "MRMS_MergedReflectivityComposite..." -> "mrms"
-        std::path::Path::new(test_file)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .and_then(|s| {
-                if s.starts_with("hrrr.") {
-                    Some("hrrr".to_string())
-                } else if s.starts_with("gfs.") || s.starts_with("gfs_") {
-                    Some("gfs".to_string())
-                } else if s.starts_with("MRMS_") || s.contains("_latest") {
-                    Some("mrms".to_string())
-                } else {
-                    None
-                }
-            })
-    }).unwrap_or_else(|| "gfs".to_string());
-
-    // Determine forecast hour (use override or extract from filename or default to 0)
-    let forecast_hour = forecast_hour_override.or_else(|| {
-        let filename = std::path::Path::new(test_file)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        
-        // Try different patterns:
-        // 1. GFS: "gfs_f003.grib2" or "f003"
-        // 2. HRRR: "hrrr.t00z.wrfsfcf03.grib2" -> wrfsfcf03 -> 3
-        if let Some(stripped) = filename.strip_prefix("gfs_f") {
-            stripped.parse::<u32>().ok()
-        } else if filename.contains("wrfsfcf") {
-            // Extract hour from wrfsfcf##
-            filename.split("wrfsfcf")
-                .nth(1)
-                .and_then(|s| s.get(..2))
-                .and_then(|s| s.parse::<u32>().ok())
-        } else if filename.starts_with('f') {
-            filename.get(1..).and_then(|s| s.parse::<u32>().ok())
-        } else {
-            None
-        }
-    }).unwrap_or(0);
-
-    // Extract MRMS parameter name from filename (since GRIB2 uses local tables)
-    // Examples: "MRMS_MergedReflectivityComposite_..." -> "REFL"
-    //           "PrecipRate_latest.grib2" -> "PRECIP_RATE"
-    //           "MultiSensor_QPE_01H_Pass2_..." -> "QPE_01H"
-    let mrms_param_name: Option<String> = if model == "mrms" {
-        std::path::Path::new(test_file)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .and_then(|s| {
-                let lower = s.to_lowercase();
-                if lower.contains("reflectivity") || lower.contains("refl") {
-                    Some("REFL".to_string())
-                } else if lower.contains("preciprate") || lower.contains("precip_rate") {
-                    Some("PRECIP_RATE".to_string())
-                } else if lower.contains("qpe_01h") {
-                    Some("QPE_01H".to_string())
-                } else if lower.contains("qpe_03h") {
-                    Some("QPE_03H".to_string())
-                } else if lower.contains("qpe_06h") {
-                    Some("QPE_06H".to_string())
-                } else if lower.contains("qpe_24h") {
-                    Some("QPE_24H".to_string())
-                } else if lower.contains("qpe") {
-                    Some("QPE".to_string())
-                } else {
-                    // Fall back to extracting the product name from MRMS_ prefix
-                    if s.starts_with("MRMS_") {
-                        s.strip_prefix("MRMS_")
-                            .and_then(|rest| rest.split('_').next())
-                            .map(|p| p.to_uppercase())
-                    } else {
-                        // Use the first part of the filename
-                        s.split('_').next().map(|p| p.to_uppercase())
-                    }
-                }
-            })
-    } else {
-        None
-    };
-
-    info!(forecast_hour = forecast_hour, model = %model, mrms_param = ?mrms_param_name, original_size = original_file_size, "Using forecast hour and model");
-
-    // Parse GRIB2
-    let mut reader = grib2_parser::Grib2Reader::new(data_bytes);
-    let mut message_count = 0;
-    let mut registered_params = HashSet::new();
-    let mut grib_reference_time: Option<chrono::DateTime<Utc>> = None;
-
-    // Parameters to ingest with their accepted level types
-    // GRIB2 Code Table 4.5 level type codes:
-    // - 1 = Ground/water surface
-    // - 100 = Isobaric surface (pressure level in Pa, we convert to mb)
-    // - 101 = Mean sea level
-    // - 103 = Specified height above ground (value in meters)
-    // - 104 = Sigma level
-    // - 106 = Depth below land surface
-    // - 200 = Entire atmosphere (column)
-    // - 214 = Low cloud layer
-    // - 224 = Middle cloud layer
-    // - 234 = High cloud layer
-    // - 108 = Specified height level above ground (layer)
-    
-    // Standard pressure levels to ingest (in mb)
-    let pressure_levels: HashSet<u32> = [
-        1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 
-        600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 
-        100, 70, 50, 30, 20, 10
-    ].into_iter().collect();
-    
-    // Parameters and the level types we accept for each
-    // Format: (param, Vec<(level_type, optional_specific_value)>)
-    let target_params: Vec<(&str, Vec<(u8, Option<u32>)>)> = vec![
-        // ==========================================================================
-        // Existing Parameters
-        // ==========================================================================
-        ("PRMSL", vec![(101, None)]),                    // Mean sea level pressure only
-        ("TMP", vec![
-            (103, Some(2)),                              // 2m above ground
-            (100, None),                                 // All pressure levels
-        ]),
-        ("UGRD", vec![
-            (103, Some(10)),                             // 10m above ground
-            (100, None),                                 // All pressure levels
-        ]),
-        ("VGRD", vec![
-            (103, Some(10)),                             // 10m above ground
-            (100, None),                                 // All pressure levels
-        ]),
-        ("RH", vec![
-            (103, Some(2)),                              // 2m above ground
-            (100, None),                                 // All pressure levels
-        ]),
-        ("HGT", vec![
-            (100, None),                                 // All pressure levels (geopotential height)
-        ]),
-        ("GUST", vec![(1, None)]),                       // Surface wind gust
-        
-        // ==========================================================================
-        // Phase 1: Surface & Near-Surface Parameters
-        // ==========================================================================
-        ("DPT", vec![
-            (103, Some(2)),                              // 2m dew point temperature
-        ]),
-        
-        // ==========================================================================
-        // Phase 1: Precipitation Parameters
-        // ==========================================================================
-        ("APCP", vec![
-            (1, None),                                   // Surface total precipitation (accumulated)
-        ]),
-        ("PWAT", vec![
-            (200, None),                                 // Entire atmosphere precipitable water
-        ]),
-        
-        // ==========================================================================
-        // Phase 1: Convective/Stability Parameters
-        // ==========================================================================
-        ("CAPE", vec![
-            (1, None),                                   // Surface-based CAPE
-            (108, None),                                 // CAPE in specified layer (for MUCAPE, SBCAPE)
-        ]),
-        ("CIN", vec![
-            (1, None),                                   // Surface-based CIN
-            (108, None),                                 // CIN in specified layer
-        ]),
-        
-        // ==========================================================================
-        // Phase 1: Cloud Parameters
-        // ==========================================================================
-        ("TCDC", vec![
-            (200, None),                                 // Total cloud cover (entire atmosphere)
-            (10, None),                                  // Entire atmosphere (alternative code)
-        ]),
-        ("LCDC", vec![
-            (214, None),                                 // Low cloud layer
-        ]),
-        ("MCDC", vec![
-            (224, None),                                 // Middle cloud layer
-        ]),
-        ("HCDC", vec![
-            (234, None),                                 // High cloud layer
-        ]),
-        
-        // ==========================================================================
-        // Phase 1: Visibility
-        // ==========================================================================
-        ("VIS", vec![
-            (1, None),                                   // Surface visibility
-        ]),
-        
-        // ==========================================================================
-        // HRRR-specific: Radar & Reflectivity
-        // ==========================================================================
-        ("REFC", vec![
-            (200, None),                                 // Composite reflectivity (entire atmosphere)
-            (10, None),                                  // Entire atmosphere (alternative)
-            (103, Some(1000)),                           // 1000m above ground (alternative)
-        ]),
-        ("RETOP", vec![
-            (3, None),                                   // Echo top (cloud top level)
-            (200, None),                                 // Entire atmosphere
-        ]),
-        
-        // ==========================================================================
-        // HRRR-specific: Severe Weather Parameters
-        // ==========================================================================
-        ("MXUPHL", vec![
-            (103, None),                                 // Height above ground layer (2-5km)
-            (108, None),                                 // Specified height layer
-        ]),
-        ("LTNG", vec![
-            (200, None),                                 // Lightning threat (entire atmosphere)
-            (10, None),                                  // Entire atmosphere (alternative)
-        ]),
-        ("HLCY", vec![
-            (106, None),                                 // Storm-relative helicity (0-1km, 0-3km layers)
-            (108, None),                                 // Specified height layer
-        ]),
-    ];
-
-    while let Some(message) = reader.next_message().ok().flatten() {
-        message_count += 1;
-
-        // Extract reference time from the first message (it's the same for all messages in a file)
-        if grib_reference_time.is_none() {
-            grib_reference_time = Some(message.identification.reference_time);
-            info!(reference_time = %message.identification.reference_time, "Extracted reference time from GRIB2");
-        }
-
-        // For MRMS, use the parameter name extracted from filename (more reliable than local GRIB2 tables)
-        // For other models, use the GRIB2 parameter name
-        let grib_param = &message.product_definition.parameter_short_name;
-        let param = if model == "mrms" {
-            mrms_param_name.as_ref().unwrap_or(grib_param)
-        } else {
-            grib_param
-        };
-        let level = &message.product_definition.level_description;
-        let level_type = message.product_definition.level_type;
-        let level_value = message.product_definition.level_value;
-        
-        // Create a unique key for param+level combination
-        let param_level_key = format!("{}:{}", param, level);
-
-        // For MRMS, accept all parameters and derive parameter name from filename
-        // For other models, check against the target parameter list
-        let should_register = if model == "mrms" {
-            // Accept any parameter that hasn't been registered yet
-            !registered_params.contains(&param_level_key)
-        } else {
-            // Check if this matches one of our target parameter:level combinations
-            target_params.iter().any(|(p, level_specs)| {
-                if param != p || registered_params.contains(&param_level_key) {
-                    return false;
-                }
-                
-                // Check if any of the level specs match
-                level_specs.iter().any(|(lt, lv)| {
-                    if level_type != *lt {
-                        return false;
-                    }
-                    
-                    // For isobaric levels (type 100), check if it's in our target pressure levels
-                    // GRIB2 stores pressure in Pa, level_value is in 100*mb (so 850mb = 85000 Pa / 100 = 850)
-                    if level_type == 100 {
-                        return pressure_levels.contains(&level_value);
-                    }
-                    
-                    // For other level types, check specific value if required
-                    if let Some(required_value) = lv {
-                        level_value == *required_value
-                    } else {
-                        true
-                    }
-                })
-            })
-        };
-
-        if should_register {
-            // Use reference time from GRIB2 file, fallback to now if not available
-            let reference_time = grib_reference_time.unwrap_or_else(Utc::now);
-            
-            // Create a sanitized level string for the path (replace spaces and special chars)
-            let level_sanitized = level
-                .replace([' ', '/'], "_")
-                .to_lowercase();
-            
-            // New shredded storage path structure:
-            // shredded/{model}/{run_date}/{param}_{level}/f{fhr:03}.grib2
-            // For observation data like MRMS (updates every ~2 minutes), use minute-level paths
-            // For forecast models like GFS/HRRR, use hourly paths (they have hourly forecast cycles)
-            let run_date = if model == "mrms" {
-                reference_time.format("%Y%m%d_%H%Mz").to_string()
-            } else {
-                reference_time.format("%Y%m%d_%Hz").to_string()
-            };
-            let storage_path = format!(
-                "shredded/{}/{}/{}_{}/f{:03}.grib2",
-                model,
-                run_date,
-                param.to_lowercase(),
-                level_sanitized,
-                forecast_hour
-            );
-            
-            // Extract just this message's raw data and store it
-            let shredded_data = message.raw_data.clone();
-            let shredded_size = shredded_data.len() as u64;
-            
-            // Store the shredded (individual parameter) GRIB2 file
-            storage.put(&storage_path, shredded_data).await?;
-            
-            info!(
-                message = message_count, 
-                param = %param, 
-                level = %level, 
-                path = %storage_path,
-                size = shredded_size,
-                "Stored shredded GRIB message"
-            );
-            
-            // Get model-specific bounding box
-            // TODO: Parse from GRIB2 Section 3 (Grid Definition) instead of hardcoding
-            let bbox = match model.as_str() {
-                "hrrr" => {
-                    // HRRR CONUS domain (Lambert Conformal 3km)
-                    // Extracted using wgrib2 -ijlat from actual HRRR files
-                    // First point: (237.280472, 21.138123) -> (-122.719528, 21.138123)
-                    // Last point: (299.082807, 47.842195) -> (-60.917193, 47.842195)
-                    BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195)
-                },
-                "mrms" => {
-                    // MRMS CONUS domain (regular lat-lon 0.01 degree, ~1km)
-                    // Grid: 7000 x 3500 points
-                    // lat 54.995 to 20.005 by 0.01
-                    // lon 230.005 to 299.995 by 0.01 (= -130.0 to -60.0)
-                    BoundingBox::new(-130.0, 20.0, -60.0, 55.0)
-                },
-                "gfs" => {
-                    // GFS global 0.25 degree
-                    BoundingBox::new(0.0, -90.0, 360.0, 90.0)
-                },
-                _ => {
-                    // Default to global for unknown models
-                    warn!(model = %model, "Unknown model, using global bbox");
-                    BoundingBox::new(0.0, -90.0, 360.0, 90.0)
-                }
-            };
-            
-            let entry = CatalogEntry {
-                model: model.clone(),
-                parameter: param.clone(),
-                level: level.clone(),
-                reference_time,
-                forecast_hour,
-                bbox,
-                storage_path,
-                file_size: shredded_size,
-                zarr_metadata: None,
-            };
-
-                match catalog.register_dataset(&entry).await {
-                Ok(id) => {
-                    info!(id = %id, param = %param, level = %level, "Registered dataset");
-                    registered_params.insert(param_level_key.clone());
-                }
-                Err(e) => {
-                    info!(param = %param, level = %level, error = %e, "Could not register (may already exist)");
-                }
-            }
-        }
-    }
-
-    info!(
-        messages = message_count,
-        datasets = registered_params.len(),
-        "Test file ingestion completed"
-    );
-
-    Ok(())
-}
-
-/// Ingest a local GOES NetCDF test file with reprojection to geographic coordinates and Zarr storage
-async fn test_goes_file_ingestion(
-    config: &IngesterConfig,
-    test_file: &str,
-    model_override: Option<&str>,
-) -> Result<()> {
-    use grid_processor::{
-        DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter,
-        reproject_geostationary_to_geographic,
-    };
-    use projection::Geostationary;
-    use storage::{Catalog, CatalogEntry, ObjectStorage};
-    use wms_common::BoundingBox;
-    use chrono::TimeZone;
-    use zarrs_filesystem::FilesystemStore;
-
-    info!(file = %test_file, model = ?model_override, "Testing GOES NetCDF ingestion with Zarr reprojection");
-
-    // Read file
-    let data = fs::read(test_file)?;
-    let file_size = data.len() as u64;
-
-    // Setup storage and catalog
-    let storage = ObjectStorage::new(&config.storage)?;
-    let catalog = Catalog::connect(&config.database_url).await?;
-    catalog.migrate().await?;
-
-    // Parse filename to extract band and time info
-    let filename = std::path::Path::new(test_file)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown.nc");
-
-    // Extract band number from filename (e.g., "C02" from "...M6C02_G16...")
-    let band = filename
-        .find("M6C")
-        .or_else(|| filename.find("M3C"))
-        .and_then(|pos| {
-            let band_str = &filename[pos + 3..pos + 5];
-            band_str.parse::<u8>().ok()
-        })
-        .unwrap_or(2); // Default to band 2 (visible red)
-
-    // Determine model from filename or override
-    let model = model_override.map(String::from).unwrap_or_else(|| {
-        if filename.contains("_G16_") || filename.to_lowercase().contains("goes16") {
-            "goes16".to_string()
-        } else if filename.contains("_G18_") || filename.to_lowercase().contains("goes18") {
-            "goes18".to_string()
-        } else {
-            "goes16".to_string() // Default to GOES-16
-        }
+    // Create server state
+    let state = Arc::new(ServerState {
+        ingester,
+        tracker: IngestionTracker::new(),
     });
 
-    // Extract observation time from filename (format: s20250500001170)
-    // Time is in format: YYYYDDDHHMMSSt (year, day-of-year, hour, min, sec, tenths)
-    let observation_time = filename
-        .find("_s")
-        .and_then(|pos| {
-            if pos + 15 > filename.len() {
-                return None;
-            }
-            let time_str = &filename[pos + 2..pos + 15];
-            // Parse YYYYDDDHHMMSS
-            let year: i32 = time_str.get(0..4)?.parse().ok()?;
-            let doy: u32 = time_str.get(4..7)?.parse().ok()?;
-            let hour: u32 = time_str.get(7..9)?.parse().ok()?;
-            let min: u32 = time_str.get(9..11)?.parse().ok()?;
-            let sec: u32 = time_str.get(11..13)?.parse().ok()?;
+    // Start HTTP server
+    info!(port = args.port, "Starting HTTP server");
+    start_server(state, args.port).await?;
 
-            // Convert to DateTime
-            let date = chrono::NaiveDate::from_yo_opt(year, doy)?;
-            let time = chrono::NaiveTime::from_hms_opt(hour, min, sec)?;
-            Some(Utc.from_utc_datetime(&date.and_time(time)))
-        })
-        .unwrap_or_else(Utc::now);
+    Ok(())
+}
 
-    // Determine parameter name based on band
-    let (parameter, level) = match band {
-        1 => ("CMI_C01", "visible_blue"),       // 0.47µm Blue
-        2 => ("CMI_C02", "visible_red"),        // 0.64µm Red (most common visible)
-        3 => ("CMI_C03", "visible_veggie"),     // 0.86µm Vegetation
-        4 => ("CMI_C04", "cirrus"),             // 1.37µm Cirrus
-        5 => ("CMI_C05", "snow_ice"),           // 1.6µm Snow/Ice
-        6 => ("CMI_C06", "cloud_particle"),     // 2.2µm Cloud Particle Size
-        7 => ("CMI_C07", "shortwave_ir"),       // 3.9µm Shortwave Window
-        8 => ("CMI_C08", "upper_vapor"),        // 6.2µm Upper-Level Water Vapor
-        9 => ("CMI_C09", "mid_vapor"),          // 6.9µm Mid-Level Water Vapor
-        10 => ("CMI_C10", "low_vapor"),         // 7.3µm Lower-Level Water Vapor
-        11 => ("CMI_C11", "cloud_phase"),       // 8.4µm Cloud-Top Phase
-        12 => ("CMI_C12", "ozone"),             // 9.6µm Ozone
-        13 => ("CMI_C13", "clean_ir"),          // 10.3µm "Clean" Longwave IR
-        14 => ("CMI_C14", "ir"),                // 11.2µm Longwave IR
-        15 => ("CMI_C15", "dirty_ir"),          // 12.3µm "Dirty" Longwave IR
-        16 => ("CMI_C16", "co2"),               // 13.3µm CO2
-        _ => ("CMI_C02", "visible_red"),        // Default to visible red
+/// Run test file ingestion (development mode).
+async fn run_test_file(
+    ingester: Ingester,
+    test_file: &str,
+    model: Option<String>,
+    forecast_hour: Option<u32>,
+) -> Result<()> {
+    info!(
+        file = %test_file,
+        model = ?model,
+        forecast_hour = ?forecast_hour,
+        "Test file ingestion mode"
+    );
+
+    let options = IngestOptions {
+        model,
+        forecast_hour,
     };
 
-    info!(
-        band = band,
-        model = %model,
-        parameter = parameter,
-        observation_time = %observation_time,
-        file_size = file_size,
-        "Parsed GOES file metadata - starting NetCDF parsing"
-    );
-
-    // Parse the NetCDF file to extract data and projection parameters
-    let (raw_data, width, height, projection, x_offset, y_offset, x_scale, y_scale) =
-        netcdf_parser::load_goes_netcdf_from_bytes(&data)
-            .map_err(|e| anyhow!("Failed to parse GOES NetCDF: {}", e))?;
+    let result = ingester.ingest_file(test_file, options).await?;
 
     info!(
-        width = width,
-        height = height,
-        x_offset = x_offset,
-        y_offset = y_offset,
-        x_scale = x_scale,
-        y_scale = y_scale,
-        longitude_origin = projection.longitude_origin,
-        "Parsed GOES NetCDF data - starting reprojection"
-    );
-
-    // Create Geostationary projection for reprojection
-    let proj = Geostationary::from_goes(
-        projection.perspective_point_height,
-        projection.semi_major_axis,
-        projection.semi_minor_axis,
-        projection.longitude_origin,
-        x_offset as f64,
-        y_offset as f64,
-        x_scale as f64,
-        y_scale as f64,
-        width,
-        height,
-    );
-
-    // Reproject from geostationary to geographic coordinates
-    info!("Reprojecting GOES data from geostationary to geographic coordinates");
-    let (reprojected_data, out_width, out_height, gp_bbox) =
-        reproject_geostationary_to_geographic(&raw_data, width, height, &proj);
-
-    info!(
-        out_width = out_width,
-        out_height = out_height,
-        bbox_min_lon = gp_bbox.min_lon,
-        bbox_max_lon = gp_bbox.max_lon,
-        bbox_min_lat = gp_bbox.min_lat,
-        bbox_max_lat = gp_bbox.max_lat,
-        "Reprojection complete - writing Zarr"
-    );
-
-    // Create Zarr storage path: grids/{model}/{date}/{HH}/{param}_{MM}.zarr
-    let date_str = observation_time.format("%Y%m%d").to_string();
-    let hour = observation_time.format("%H").to_string();
-    let minute = observation_time.format("%M").to_string();
-    let zarr_storage_path = format!(
-        "grids/{}/{}/{}/{}_{}.zarr",
-        model, date_str, hour, parameter, minute
-    );
-
-    // Create a temporary directory for Zarr output
-    let temp_dir = tempfile::tempdir()?;
-    let zarr_path = temp_dir.path().join("grid.zarr");
-    std::fs::create_dir_all(&zarr_path)?;
-
-    // Create Zarr writer with default config
-    let grid_config = GridProcessorConfig::default();
-    let writer = ZarrWriter::new(grid_config);
-
-    // Create filesystem store for the temp directory
-    let store = FilesystemStore::new(&zarr_path)
-        .map_err(|e| anyhow!("Failed to create filesystem store: {}", e))?;
-
-    // Determine units based on band type
-    let units = if band <= 6 {
-        "reflectance" // Visible/near-IR bands
-    } else {
-        "K" // IR bands (brightness temperature)
-    };
-
-    // Configure pyramid generation
-    let pyramid_config = PyramidConfig::from_env();
-
-    // Use Mean downsampling for all GOES bands
-    let downsample_method = DownsampleMethod::Mean;
-
-    // Write Zarr data with multi-resolution pyramids
-    let write_result = writer
-        .write_multiscale(
-            store,
-            "/",
-            &reprojected_data,
-            out_width,
-            out_height,
-            &gp_bbox,
-            &model,
-            parameter,
-            level,
-            units,
-            observation_time,
-            0, // forecast_hour = 0 for observational data
-            &pyramid_config,
-            downsample_method,
-        )
-        .map_err(|e| anyhow!("Failed to write Zarr: {}", e))?;
-
-    info!(
-        path = %zarr_storage_path,
-        width = out_width,
-        height = out_height,
-        bytes = write_result.bytes_written,
-        num_levels = write_result.num_levels,
-        "Wrote multiscale Zarr grid with pyramid - uploading to storage"
-    );
-
-    // Upload Zarr files to object storage
-    let mut total_size = 0u64;
-    for entry in walkdir::WalkDir::new(&zarr_path) {
-        let entry = entry?;
-        if entry.file_type().is_file() {
-            let relative_path = entry.path().strip_prefix(&zarr_path)?;
-            let storage_path_full = format!("{}/{}", zarr_storage_path, relative_path.display());
-
-            let file_data = tokio::fs::read(entry.path()).await?;
-            let size = file_data.len() as u64;
-            total_size += size;
-
-            storage.put(&storage_path_full, Bytes::from(file_data)).await?;
-            debug!(path = %storage_path_full, size = size, "Uploaded Zarr file");
-        }
-    }
-
-    info!(total_size = total_size, "Zarr files uploaded to storage");
-
-    // Create catalog entry with Zarr metadata
-    let mut zarr_json = write_result.zarr_metadata.to_json();
-    // Add multiscale metadata for the reader to use
-    if let serde_json::Value::Object(ref mut map) = zarr_json {
-        map.insert(
-            "multiscale".to_string(),
-            serde_json::to_value(&write_result.multiscale_metadata).unwrap_or_default(),
-        );
-    }
-
-    // Convert grid-processor BoundingBox to wms-common BoundingBox
-    let catalog_bbox = BoundingBox::new(
-        gp_bbox.min_lon,
-        gp_bbox.min_lat,
-        gp_bbox.max_lon,
-        gp_bbox.max_lat,
-    );
-
-    let entry = CatalogEntry {
-        model: model.clone(),
-        parameter: parameter.to_string(),
-        level: level.to_string(),
-        reference_time: observation_time,
-        forecast_hour: 0, // Observational data
-        bbox: catalog_bbox,
-        storage_path: zarr_storage_path.clone(),
-        file_size: total_size,
-        zarr_metadata: Some(zarr_json),
-    };
-
-    match catalog.register_dataset(&entry).await {
-        Ok(id) => {
-            info!(id = %id, parameter = %parameter, model = %model, "Registered GOES Zarr dataset");
-        }
-        Err(e) => {
-            warn!(error = %e, "Could not register (may already exist)");
-        }
-    }
-
-    info!(
-        model = %model,
-        parameter = %parameter,
-        band = band,
-        path = %zarr_storage_path,
-        "GOES file ingestion with Zarr reprojection completed successfully"
+        datasets = result.datasets_registered,
+        model = %result.model,
+        reference_time = %result.reference_time,
+        parameters = ?result.parameters,
+        bytes_written = result.bytes_written,
+        "Ingestion completed"
     );
 
     Ok(())

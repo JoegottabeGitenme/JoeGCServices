@@ -852,6 +852,95 @@ impl Catalog {
             })
             .collect())
     }
+
+    /// Get availability information for a specific parameter.
+    /// Returns None if no data exists for this model/parameter combination.
+    /// Used by capabilities generation to ensure we only advertise available data.
+    pub async fn get_parameter_availability(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Option<ParameterAvailability>> {
+        // First check if any data exists for this model/parameter
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        if count == 0 {
+            return Ok(None);
+        }
+
+        // Get distinct reference times (RUN times for forecast, TIME for observation)
+        let times = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT DATE_TRUNC('minute', reference_time) as ref_time FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY ref_time DESC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Get distinct forecast hours
+        let forecast_hours = sqlx::query_scalar::<_, i32>(
+            "SELECT DISTINCT forecast_hour FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY forecast_hour ASC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Get distinct levels
+        let levels = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT level FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+             ORDER BY level ASC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Get bounding box
+        let bbox_result = sqlx::query_as::<_, (f64, f64, f64, f64)>(
+            "SELECT \
+                MIN(bbox_min_x) as min_x, \
+                MIN(bbox_min_y) as min_y, \
+                MAX(bbox_max_x) as max_x, \
+                MAX(bbox_max_y) as max_y \
+             FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(parameter)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        // Format times as ISO8601 strings
+        let time_strings: Vec<String> = times
+            .into_iter()
+            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .collect();
+
+        Ok(Some(ParameterAvailability {
+            times: time_strings,
+            forecast_hours,
+            levels,
+            bbox: BoundingBox::new(bbox_result.0, bbox_result.1, bbox_result.2, bbox_result.3),
+        }))
+    }
 }
 
 /// Full dataset information for tree views.
@@ -976,6 +1065,21 @@ impl From<DatasetRow> for CatalogEntry {
             zarr_metadata: row.zarr_metadata,
         }
     }
+}
+
+/// Availability information for a specific parameter.
+/// Used by capabilities generation to determine which dimensions to advertise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParameterAvailability {
+    /// For forecast models: RUN times (ISO8601)
+    /// For observation models: TIME values (ISO8601)
+    pub times: Vec<String>,
+    /// Forecast hours (empty for observation models)
+    pub forecast_hours: Vec<i32>,
+    /// Available levels for this parameter
+    pub levels: Vec<String>,
+    /// Bounding box for this parameter's data
+    pub bbox: BoundingBox,
 }
 
 /// Database schema SQL.

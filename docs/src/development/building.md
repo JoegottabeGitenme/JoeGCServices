@@ -25,7 +25,6 @@ cargo build --release
 ls -lh target/release/wms-api
 ls -lh target/release/ingester
 ls -lh target/release/downloader
-ls -lh target/release/renderer-worker
 ```
 
 ## Build Modes
@@ -212,7 +211,6 @@ Typical release binary sizes:
 | wms-api | 45 MB | 28 MB |
 | ingester | 38 MB | 24 MB |
 | downloader | 32 MB | 20 MB |
-| renderer-worker | 35 MB | 22 MB |
 
 ### Reduce Binary Size
 
@@ -234,7 +232,6 @@ target/release/
 ├── wms-api              # HTTP API server
 ├── ingester             # Ingestion binary
 ├── downloader           # Download binary
-├── renderer-worker      # Renderer binary
 ├── libgrib2_parser.so   # Shared libraries (if built)
 └── deps/                # Dependencies
 ```

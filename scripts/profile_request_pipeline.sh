@@ -140,7 +140,7 @@ grep -E "catalog_lookup|find_by_forecast" "$LOG_FILE" 2>/dev/null | tail -20 || 
 echo ""
 
 echo "--- Data Loading Times ---"
-grep -E "load_grid_data|grib_cache|storage_get" "$LOG_FILE" 2>/dev/null | tail -20 || echo "No data loading logs found"
+grep -E "load_grid_data|chunk_cache|storage_get|zarr" "$LOG_FILE" 2>/dev/null | tail -20 || echo "No data loading logs found"
 echo ""
 
 echo "--- Resampling Times ---"

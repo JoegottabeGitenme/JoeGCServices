@@ -83,7 +83,7 @@ layers:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
       # Lower troposphere
       - value: "1000 mb"
@@ -110,7 +110,7 @@ layers:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
       # Lower troposphere
       - value: "1000 mb"
@@ -148,14 +148,14 @@ layers:
     composite: true
     requires: [UGRD, VGRD]
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
-      - value: "850 mb"
+      - value: "1000 mb"
       - value: "700 mb"
       - value: "500 mb"
       - value: "300 mb"
-      - value: "250 mb"
       - value: "200 mb"
+      - value: "100 mb"
 
   # ==========================================================================
   # Pressure Layers
@@ -278,7 +278,7 @@ layers:
     parameter: CIN
     title: "CIN"
     abstract: "Convective Inhibition - energy barrier to convection initiation"
-    style_file: cape.json
+    style_file: cin.json
     units:
       native: "J/kg"
       display: "J/kg"

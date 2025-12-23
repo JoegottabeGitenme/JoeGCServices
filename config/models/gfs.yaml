@@ -11,7 +11,7 @@ model:
   id: gfs
   name: "GFS - Global Forecast System"
   description: "NCEP Global Forecast System, 0.25° resolution"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -27,7 +27,7 @@ source:
   prefix_template: "gfs.{date}/{cycle:02}/atmos"
   file_pattern: "gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}"
   region: us-east-1
-  
+
 grid:
   projection: geographic
   resolution: "0.25deg"
@@ -40,8 +40,8 @@ grid:
   lon_convention: 0_to_360
 
 schedule:
-  cycles: [0, 6, 12, 18]              # UTC hours (00z, 06z, 12z, 18z)
-  forecast_hours: 
+  cycles: [ 0, 6, 12, 18 ]              # UTC hours (00z, 06z, 12z, 18z)
+  forecast_hours:
     start: 0
     end: 15                          # ~15 hours of forecast
     step: 3                           # Every 3 hours
@@ -55,10 +55,20 @@ retention:
 precaching:
   enabled: false
   keep_recent_cycles: 1               # Only most recent model cycle
-  forecast_hours: [0, 3, 6, 9, 12]    # Key forecast hours
+  forecast_hours: [ 0, 3, 6, 9, 12 ]    # Key forecast hours
   warm_on_ingest: false
   poll_interval_secs: 300
-  parameters: ["TMP", "UGRD", "VGRD"] # Most requested parameters
+  parameters: [ "TMP", "UGRD", "VGRD" ] # Most requested parameters
+
+# GRIB2 level type codes reference:
+#   1 = surface
+#   100 = isobaric (pressure level in Pa, displayed as mb)
+#   101 = mean sea level
+#   103 = height above ground (in m)
+#   200 = entire atmosphere
+#   212 = low cloud layer
+#   222 = middle cloud layer
+#   232 = high cloud layer
 
 parameters:
   # ==========================================================================
@@ -68,23 +78,33 @@ parameters:
   # Surface Temperature (2m)
   - name: TMP
     description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 2
         display: "2 m above ground"
     style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
-    
+
   # Temperature at pressure levels
   - name: TMP
     description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
     downsample: mean
     levels:
       - type: isobaric
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        level_code: 100
+        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10 ]
         display_template: "{value} mb"
     style: temperature
     units: K
@@ -94,9 +114,14 @@ parameters:
   # Dew Point Temperature (2m)
   - name: DPT
     description: "Dew Point Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 6
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 2
         display: "2 m above ground"
     style: temperature
@@ -111,13 +136,19 @@ parameters:
   # U-component wind at 10m and pressure levels
   - name: UGRD
     description: "U-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 2
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        level_code: 100
+        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 ]
         display_template: "{value} mb"
     style: wind
     units: m/s
@@ -125,13 +156,19 @@ parameters:
   # V-component wind at 10m and pressure levels
   - name: VGRD
     description: "V-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 3
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 10
         display: "10 m above ground"
       - type: isobaric
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        level_code: 100
+        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 ]
         display_template: "{value} mb"
     style: wind
     units: m/s
@@ -139,9 +176,14 @@ parameters:
   # Surface wind gust
   - name: GUST
     description: "Wind Speed (Gust)"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 22
     downsample: max
     levels:
       - type: surface
+        level_code: 1
         display: "surface"
     style: wind
     units: m/s
@@ -153,9 +195,14 @@ parameters:
   # Mean sea level pressure
   - name: PRMSL
     description: "Pressure Reduced to MSL"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 1
     downsample: mean
     levels:
       - type: mean_sea_level
+        level_code: 101
         display: "mean sea level"
     style: atmospheric
     units: Pa
@@ -165,10 +212,15 @@ parameters:
   # Geopotential height
   - name: HGT
     description: "Geopotential Height"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 5
     downsample: mean
     levels:
       - type: isobaric
-        values: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        level_code: 100
+        values: [ 1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10 ]
         display_template: "{value} mb"
     style: geopotential
     units: gpm
@@ -180,13 +232,19 @@ parameters:
   # Relative humidity
   - name: RH
     description: "Relative Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 1
     downsample: mean
     levels:
       - type: height_above_ground
+        level_code: 103
         value: 2
         display: "2 m above ground"
       - type: isobaric
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
+        level_code: 100
+        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300 ]
         display_template: "{value} mb"
     style: humidity
     units: "%"
@@ -194,9 +252,14 @@ parameters:
   # Precipitable Water (entire atmosphere column)
   - name: PWAT
     description: "Precipitable Water"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 3
     downsample: mean
     levels:
       - type: entire_atmosphere
+        level_code: 200
         display: "entire atmosphere"
     style: humidity
     units: kg/m^2
@@ -209,9 +272,14 @@ parameters:
   # Total Precipitation (accumulated)
   - name: APCP
     description: "Total Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 8
     downsample: mean
     levels:
       - type: surface
+        level_code: 1
         display: "surface"
     style: precipitation
     units: kg/m^2
@@ -221,9 +289,14 @@ parameters:
   # Composite Reflectivity
   - name: REFC
     description: "Composite Reflectivity"
+    grib2:
+      discipline: 0
+      category: 16
+      number: 196
     downsample: max
     levels:
       - type: entire_atmosphere
+        level_code: 200
         display: "entire atmosphere"
     style: reflectivity
     units: dBZ
@@ -235,9 +308,14 @@ parameters:
   # Convective Available Potential Energy
   - name: CAPE
     description: "Convective Available Potential Energy"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 6
     downsample: max
     levels:
       - type: surface
+        level_code: 1
         display: "surface"
     style: cape
     units: J/kg
@@ -245,9 +323,14 @@ parameters:
   # Convective Inhibition
   - name: CIN
     description: "Convective Inhibition"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 7
     downsample: mean
     levels:
       - type: surface
+        level_code: 1
         display: "surface"
     style: cape
     units: J/kg
@@ -259,9 +342,14 @@ parameters:
   # Total Cloud Cover
   - name: TCDC
     description: "Total Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 1
     downsample: mean
     levels:
       - type: entire_atmosphere
+        level_code: 200
         display: "entire atmosphere"
     style: cloud
     units: "%"
@@ -269,9 +357,14 @@ parameters:
   # Low Cloud Cover
   - name: LCDC
     description: "Low Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 3
     downsample: mean
     levels:
       - type: low_cloud_layer
+        level_code: 212
         display: "low cloud layer"
     style: cloud
     units: "%"
@@ -279,9 +372,14 @@ parameters:
   # Middle Cloud Cover
   - name: MCDC
     description: "Middle Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 4
     downsample: mean
     levels:
       - type: middle_cloud_layer
+        level_code: 222
         display: "middle cloud layer"
     style: cloud
     units: "%"
@@ -289,9 +387,14 @@ parameters:
   # High Cloud Cover
   - name: HCDC
     description: "High Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 5
     downsample: mean
     levels:
       - type: high_cloud_layer
+        level_code: 232
         display: "high cloud layer"
     style: cloud
     units: "%"
@@ -303,9 +406,14 @@ parameters:
   # Visibility
   - name: VIS
     description: "Visibility"
+    grib2:
+      discipline: 0
+      category: 19
+      number: 0
     downsample: mean
     levels:
       - type: surface
+        level_code: 1
         display: "surface"
     style: visibility
     units: m
@@ -316,6 +424,6 @@ parameters:
 composites:
   - name: WIND_BARBS
     description: "Wind barbs visualization"
-    requires: [UGRD, VGRD]
+    requires: [ UGRD, VGRD ]
     renderer: wind_barbs
     style: wind_barbs

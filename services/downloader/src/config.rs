@@ -1,6 +1,10 @@
 //! Configuration loading for model download schedules.
 //!
 //! Loads model configurations from YAML files in config/models/
+//!
+//! Note: `#[allow(dead_code)]` is used on structs because they are deserialized
+//! from YAML via serde. The compiler can't see field access through deserialization,
+//! so it incorrectly reports them as unused. All fields must remain for YAML parsing.
 
 use std::path::Path;
 
@@ -84,8 +88,6 @@ pub struct GridConfig {
     pub dimensions: Option<Dimensions>,
 }
 
-
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BBox {
@@ -159,7 +161,9 @@ pub struct ForecastHoursConfig {
 impl ForecastHoursConfig {
     /// Generate the list of forecast hours.
     pub fn hours(&self) -> Vec<u32> {
-        (self.start..=self.end).step_by(self.step as usize).collect()
+        (self.start..=self.end)
+            .step_by(self.step as usize)
+            .collect()
     }
 }
 
@@ -212,22 +216,23 @@ impl ModelConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        
+
         let config: ModelConfig = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
-        
+
         debug!(model = %config.model.id, path = %path.display(), "Loaded model config");
         Ok(config)
     }
-    
+
     /// Get forecast hours as a Vec.
     pub fn forecast_hours(&self) -> Vec<u32> {
-        self.schedule.forecast_hours
+        self.schedule
+            .forecast_hours
             .as_ref()
             .map(|fh| fh.hours())
             .unwrap_or_default()
     }
-    
+
     /// Check if this is an observation-type data source (vs forecast).
     pub fn is_observation(&self) -> bool {
         self.schedule.schedule_type == "observation"
@@ -237,19 +242,22 @@ impl ModelConfig {
 /// Load all enabled model configurations from a directory.
 pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
     let models_dir = config_dir.join("models");
-    
+
     if !models_dir.exists() {
         warn!(path = %models_dir.display(), "Models config directory not found");
         return Ok(Vec::new());
     }
-    
+
     let mut configs = Vec::new();
-    
+
     for entry in std::fs::read_dir(&models_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
-        if path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
+
+        if path
+            .extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+        {
             match ModelConfig::load(&path) {
                 Ok(config) => {
                     if config.model.enabled {
@@ -269,7 +277,7 @@ pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
             }
         }
     }
-    
+
     info!(count = configs.len(), "Loaded model configurations");
     Ok(configs)
 }
@@ -277,7 +285,7 @@ pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_forecast_hours() {
         let fh = ForecastHoursConfig {
@@ -287,7 +295,7 @@ mod tests {
         };
         assert_eq!(fh.hours(), vec![0, 3, 6, 9, 12]);
     }
-    
+
     #[test]
     fn test_parse_gfs_config() {
         let yaml = r#"
@@ -321,11 +329,13 @@ schedule:
   poll_interval_secs: 3600
   delay_hours: 4
 "#;
-        
+
         let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.model.id, "gfs");
         assert_eq!(config.schedule.cycles, vec![0, 6, 12, 18]);
-        assert_eq!(config.forecast_hours(), vec![0, 3, 6, 9, 12, 15, 18, 21, 24]);
+        assert_eq!(
+            config.forecast_hours(),
+            vec![0, 3, 6, 9, 12, 15, 18, 21, 24]
+        );
     }
-    
 }

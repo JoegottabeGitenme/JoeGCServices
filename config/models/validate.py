@@ -50,6 +50,7 @@ VALID_LEVEL_TYPES = {
     "surface",
     "height_above_ground",
     "height_above_ground_layer",  # For layer-averaged data (e.g., 0-6km)
+    "height_above_msl",  # For radar data at height above mean sea level
     "isobaric",
     "mean_sea_level",
     "entire_atmosphere",
@@ -81,6 +82,7 @@ VALID_STYLES = {
     "lightning",
     "smoke",
     "radar",
+    "geopotential",
 }
 VALID_CONVERSIONS = {
     "K_to_C",
@@ -608,7 +610,8 @@ def main():
         "-v",
         "--verbose",
         action="store_true",
-        help="Show detailed output for valid files",
+        default=True,
+        help="Show detailed output for valid files (default: True)",
     )
 
     args = parser.parse_args()

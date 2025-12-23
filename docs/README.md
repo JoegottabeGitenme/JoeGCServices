@@ -102,7 +102,6 @@ weather-wms/
 │   └── storage/               # S3, PostgreSQL, Redis clients
 ├── services/                   # Deployable services
 │   ├── ingester/              # Data ingestion service
-│   ├── renderer-worker/       # Tile rendering workers
 │   └── wms-api/               # HTTP API server
 ├── deploy/                     # Deployment configurations
 │   └── helm/                  # Helm charts

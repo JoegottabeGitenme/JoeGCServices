@@ -1,28 +1,49 @@
-- keep getting 'ingester is its own standalone service' and 'need to trigger the ingester after the downloader' or something maybe we need to create an 'ingester' crate now that we're doing all this zarr processing
-- Need to come up with some more validation for OGC compliance, and look into whatever hot new MAP api specs there are
 - Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
+- how to make EDR work
+    - create validation page using lots of AI and pdf files and other specs we can find
+    - test validation page against some other EDR servers
+    - implement Grid Processor abstraction API and document so we can use it for EDR
+        - this abstraction layer cannot break WMS or WMTS
+    - create another viewer to monitor EDR metrics, more stuff in prometheus and grafana
+    - create another 'viewer' so that we can form EDR queries and visualize them if needed
+    - ultimate test would be to point onlineweather to this EDR server
+    - grid processor will have it's own pod and cache and processing in the overall system, and can be deployed
+      with/without services connected to it
+    - need a way to load test gridprocessor without a service, so the API is important here
 - Need a better landing page with some sample queries
-- startup validation of the system should be another widget on the dashboard (did all of the requests made by the hammer produce an actual image?)
 - getFeatureInfo should support arbitrary html output
-- Need some swagger docs or something for WMS and WMTS
-- we have a projection crate and also reprojecting logic in the grid processor crate 
-- could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or something to provide a colormap in a get request
-- mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile then just compress to that b64 string, ofc this would rely on the frontend being able to render it
-- grid cache section in the web dashboard needs to go away
-- can we combine the crates and services folders?
+- we have a projection crate and also reprojecting logic in the grid processor crate
+- could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or
+  something to provide a colormap in a get request
+- mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile
+  then just compress to that b64 string, ofc this would rely on the frontend being able to render it
+    - this could be useful for a mobile app
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
-- we have a bunch of stuff in the wms-validation folder i don't think we're using, could be expanded
 - some of the scripts in the scripts folder could be moved somewhere into validation
-- i guess the idea of the validation folder is to help ensure the code and system are behaving as expected
-- need to come up with plan to de-crapify the codebase, look through files one by one and consolidate functionality where possible
-- unit tests for EVERYTHING 
+- unit tests for EVERYTHING
 - integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
-- satellite data still using the old grid cache i presume due to the precaching config in the models directory
 - style viewing and editing web app, view current styles and how they would look on the map
-- need to disable all caching and 'optmizations' to get a baseline performance metric, then apply them one by one to see how they impact performance
-- load testing needs to simulate real user scenarios
+- need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
+  see
+  how they impact performance
+- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
+  manage things like cold/warm cache etc.
 - need to consider actually deploying this to ec2 or something
-  - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
+    - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
+- implement renderer queue after we've deleted the renderer worker stuff???
+    - The Renderer Worker is a background service that consumes render jobs from a Redis queue and generates PNG tiles
+      for caching. It enables cache warming, prefetching, and scheduled tile rendering without blocking client requests.
+    - seems neat we can implement it if we feel like it later
+- implement the crazy radar diffing stuff to try and reduce bandwidth for radar loops
+- need to implement custom CRS for getMap requests and WMTS we can add more projections later but for now we just have
+  the two outlined in the spec
+- add some sort of json schema for the various yaml files so that making new ones is less of a pain
+- web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
+    - this may have been due to the 10s of thousands of objects in minio
+    - see if this happens again after we fixed the orphaned files issue
+- see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
+- need to give the swagger docs a human pass to catch some of the errors
+- clean up .env and .env.example to coordinate with any new environment variables (chunk cache mainly)

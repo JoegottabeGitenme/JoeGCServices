@@ -357,7 +357,7 @@ The system follows a data pipeline architecture:
 | `services/downloader/` | ~3,000 | Fetch data from NOAA |
 | `services/ingester/` | ~2,800 | Parse and store data |
 | `services/wms-api/` | ~12,000 | Serve WMS/WMTS requests |
-| `services/renderer-worker/` | ~500 | Worker for distributed rendering |
+| `services/
 
 ### Libraries (Crates)
 | Crate | Lines | Purpose |

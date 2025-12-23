@@ -1,5 +1,7 @@
 # Performance Optimization Plan: "World's Fastest WMTS"
 
+> **Note (December 2024):** This document describes the historical optimization phases. The GribCache has been removed and replaced with Zarr-based storage. All data access now uses chunk-level caching during rendering, with GRIB2 parsing only occurring during ingestion.
+
 This is a comprehensive plan to benchmark, profile, and optimize the WMTS rendering pipeline.
 
 ---
@@ -416,7 +418,7 @@ Based on code review, these are likely bottlenecks:
 ```yaml
 TOKIO_WORKER_THREADS: "8"      # Tokio async workers
 DATABASE_POOL_SIZE: "50"        # PostgreSQL connections (5x increase)
-GRIB_CACHE_SIZE: "500"          # GRIB files in memory
+CHUNK_CACHE_SIZE_MB: "500"          # GRIB files in memory
 ```
 
 **Next Steps (Phase 5)**:
@@ -1616,7 +1618,7 @@ api:
     # Existing
     TOKIO_WORKER_THREADS: "8"
     DATABASE_POOL_SIZE: "50"
-    GRIB_CACHE_SIZE: "500"
+    CHUNK_CACHE_SIZE_MB: "500"
     
     # New - L1 Cache
     TILE_CACHE_SIZE: "15000"

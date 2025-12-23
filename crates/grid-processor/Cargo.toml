@@ -7,11 +7,11 @@ repository.workspace = true
 description = "Grid processing abstraction layer with Zarr V3 support for efficient chunked data access"
 
 [dependencies]
-# Zarr support - compatible versions (zarrs 0.18.x ecosystem)
-zarrs = "0.18"
-zarrs_storage = "0.3"
-zarrs_filesystem = "0.2"
-zarrs_object_store = "0.3"
+# Zarr support
+zarrs.workspace = true
+zarrs_storage.workspace = true
+zarrs_filesystem.workspace = true
+zarrs_object_store.workspace = true
 
 # Async runtime
 tokio.workspace = true
@@ -49,5 +49,5 @@ projection = { path = "../projection" }
 
 [dev-dependencies]
 tokio-test.workspace = true
-tempfile = "3"
-zarrs_filesystem = "0.2"
+tempfile.workspace = true
+zarrs_filesystem.workspace = true

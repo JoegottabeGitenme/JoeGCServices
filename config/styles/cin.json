@@ -1,0 +1,71 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "CAPE/CIN Styles",
+    "description": "Styles for convective stability parameters (CAPE and CIN)"
+  },
+  "styles": {
+    "cin": {
+      "name": "CIN",
+      "description": "Convective Inhibition - energy needed to initiate convection",
+      "type": "gradient",
+      "units": "J/kg",
+      "range": {
+        "min": -500,
+        "max": 0
+      },
+      "stops": [
+        {
+          "value": -500,
+          "color": "#000066",
+          "label": "-500"
+        },
+        {
+          "value": -300,
+          "color": "#0000CC",
+          "label": "-300"
+        },
+        {
+          "value": -200,
+          "color": "#3366FF",
+          "label": "-200"
+        },
+        {
+          "value": -100,
+          "color": "#6699FF",
+          "label": "-100"
+        },
+        {
+          "value": -50,
+          "color": "#99CCFF",
+          "label": "-50"
+        },
+        {
+          "value": -25,
+          "color": "#CCE5FF",
+          "label": "-25"
+        },
+        {
+          "value": 0,
+          "color": "#FFFFFF00",
+          "label": "0"
+        }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "CIN (J/kg)",
+        "labels": [
+          "0",
+          "-50",
+          "-100",
+          "-200",
+          "-300",
+          "-500"
+        ],
+        "description": "Weak (<50), Moderate (50-200), Strong (>200)"
+      },
+      "default": true
+    }
+  }
+}

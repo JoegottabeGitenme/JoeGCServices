@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS 1.3.0 OGC Compliance Tests</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="wms-compliance.css">
+</head>
+<body>
+<div class="container">
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <a href="index.html" class="back-link">← Back to Map</a>
+            <h1>WMS 1.3.0 OGC Compliance Tests</h1>
+        </div>
+        <span class="header-badge">OGC TEAM ENGINE</span>
+    </div>
+
+    <!-- Endpoint Configuration -->
+    <div class="endpoint-config">
+        <div class="endpoint-config-row">
+            <label class="endpoint-label" for="endpoint-input">WMS Endpoint:</label>
+            <input type="text" id="endpoint-input" class="endpoint-input" placeholder="e.g., http://localhost:8080 or https://example.com/geoserver">
+            <button class="endpoint-btn" id="endpoint-apply-btn" title="Apply endpoint and reload">Apply</button>
+            <button class="endpoint-btn secondary" id="endpoint-reset-btn" title="Reset to default endpoint">Reset</button>
+            <div class="endpoint-status" id="endpoint-status">
+                <span class="endpoint-status-icon" id="endpoint-status-icon"></span>
+                <span class="endpoint-status-text" id="endpoint-status-text">Not connected</span>
+            </div>
+        </div>
+        <div class="endpoint-config-row auth-row" id="auth-row">
+            <label class="endpoint-label">Auth (optional):</label>
+            <input type="text" id="auth-username" class="auth-input" placeholder="Username">
+            <input type="password" id="auth-password" class="auth-input" placeholder="Password">
+            <button class="endpoint-btn secondary small" id="auth-toggle-btn" title="Show/hide password">Show</button>
+        </div>
+    </div>
+
+    <!-- OGC Protocol Compliance Overall Summary -->
+    <div class="ogc-overall">
+        <div class="ogc-overall-left">
+            <span class="ogc-overall-title">OGC Protocol Compliance</span>
+            <div class="ogc-overall-stats">
+                <div class="ogc-stat">
+                    <span class="ogc-stat-value pass" id="ogc-pass-count">0</span>
+                    <span class="ogc-stat-label">Pass</span>
+                </div>
+                <div class="ogc-stat">
+                    <span class="ogc-stat-value fail" id="ogc-fail-count">0</span>
+                    <span class="ogc-stat-label">Fail</span>
+                </div>
+                <div class="ogc-stat">
+                    <span class="ogc-stat-value pending" id="ogc-pending-count">0</span>
+                    <span class="ogc-stat-label">Pending</span>
+                </div>
+            </div>
+        </div>
+        <div class="ogc-overall-right">
+            <button class="ogc-run-all-btn" id="run-all-ogc-btn">Run All OGC Tests</button>
+        </div>
+    </div>
+
+    <!-- OGC GetCapabilities Tests -->
+    <div class="ogc-section" id="ogc-getcapabilities">
+        <div class="ogc-header" onclick="toggleOgcSection('ogc-getcapabilities', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">GetCapabilities</span>
+                <span class="ogc-subtitle">Version negotiation, XML validation, metadata</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="ogc-getcapabilities-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="ogc-getcapabilities-content"></div>
+    </div>
+
+    <!-- OGC GetMap Tests -->
+    <div class="ogc-section" id="ogc-getmap">
+        <div class="ogc-header" onclick="toggleOgcSection('ogc-getmap', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">GetMap</span>
+                <span class="ogc-subtitle">BBOX, CRS, FORMAT, STYLES, TRANSPARENT, Exceptions</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="ogc-getmap-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="ogc-getmap-content"></div>
+    </div>
+
+    <!-- OGC GetFeatureInfo Tests -->
+    <div class="ogc-section" id="ogc-getfeatureinfo">
+        <div class="ogc-header" onclick="toggleOgcSection('ogc-getfeatureinfo', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">GetFeatureInfo</span>
+                <span class="ogc-subtitle">Query parameters, exceptions, formats</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="ogc-getfeatureinfo-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="ogc-getfeatureinfo-content"></div>
+    </div>
+
+    <!-- OGC Dimensions Tests -->
+    <div class="ogc-section" id="ogc-dimensions">
+        <div class="ogc-header" onclick="toggleOgcSection('ogc-dimensions', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Dimensions</span>
+                <span class="ogc-subtitle">TIME, ELEVATION, custom dimensions</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="ogc-dimensions-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="ogc-dimensions-content"></div>
+    </div>
+
+    <!-- Section Divider -->
+    <div class="section-divider">Layer Coverage Tests</div>
+
+    <!-- Summary Bar -->
+    <div class="summary-bar">
+        <div class="summary-stats">
+            <div class="stat-item">
+                <span class="stat-value" id="working-count">0</span>
+                <span class="stat-label">Working</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value bad" id="broken-count">0</span>
+                <span class="stat-label">Broken</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="untested-count">0</span>
+                <span class="stat-label">Untested</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value good" id="percent-working">--%</span>
+                <span class="stat-label">of Tested</span>
+            </div>
+        </div>
+        <div class="summary-actions">
+            <select class="filter-select" id="filter-select">
+                <option value="all">Show All</option>
+                <option value="working">Working Only</option>
+                <option value="broken">Broken Only</option>
+                <option value="untested">Untested Only</option>
+            </select>
+            <button class="action-btn primary" id="test-all-btn">Test All Layers</button>
+        </div>
+        <div class="progress-bar" id="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+        </div>
+    </div>
+
+    <!-- Layer List (shown when filter active) -->
+    <div class="layer-list" id="layer-list"></div>
+
+    <!-- Controls Bar -->
+    <div class="controls-bar">
+        <div class="layer-nav">
+            <button class="nav-btn" id="prev-btn" title="Previous layer (←)">◀</button>
+            <div class="layer-info">
+                <div class="layer-name" id="layer-name">Loading...</div>
+                <div class="layer-title" id="layer-title"></div>
+                <div class="layer-index" id="layer-index"></div>
+            </div>
+            <button class="nav-btn" id="next-btn" title="Next layer (→)">▶</button>
+        </div>
+        <div class="dimension-controls" id="dimension-controls">
+            <div class="dimension-group">
+                <span class="dimension-label">Style:</span>
+                <select class="dimension-select" id="style-select"></select>
+            </div>
+            <!-- Dynamic dimension selects will be added here -->
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="map-panel">
+            <div class="panel-header">
+                <span class="panel-title">GetMap Response</span>
+                <div class="panel-status" id="getmap-status">
+                    <span class="status-icon untested"></span>
+                    <span class="status-text">Not tested</span>
+                </div>
+            </div>
+            <div id="map"></div>
+        </div>
+        <div class="info-panel">
+            <div class="panel-header">
+                <span class="panel-title">GetFeatureInfo Response</span>
+                <div class="panel-status" id="getfeatureinfo-status">
+                    <span class="status-icon untested"></span>
+                    <span class="status-text">Not tested</span>
+                </div>
+            </div>
+            <div class="info-content" id="info-content">
+                <div class="info-placeholder">Select a layer to test</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- URL Display -->
+    <div class="url-display">
+        <div class="url-item">
+            <div class="url-label">
+                <span>GetMap URL</span>
+                <button class="copy-btn" onclick="copyUrl('getmap-url')">Copy</button>
+            </div>
+            <div class="url-value" id="getmap-url">-</div>
+        </div>
+        <div class="url-item">
+            <div class="url-label">
+                <span>GetFeatureInfo URL</span>
+                <button class="copy-btn" onclick="copyUrl('getfeatureinfo-url')">Copy</button>
+            </div>
+            <div class="url-value" id="getfeatureinfo-url">-</div>
+        </div>
+    </div>
+
+    <div class="keyboard-hint">
+        Use <kbd>←</kbd> <kbd>→</kbd> to navigate layers, <kbd>Space</kbd> to re-test
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="wms-compliance.js"></script>
+</body>
+</html>

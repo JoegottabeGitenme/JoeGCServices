@@ -28,24 +28,6 @@
 //!               ▼
 //!          Return to renderer
 //! ```
-//!
-//! # Example
-//!
-//! ```ignore
-//! use grid_processor::{GridProcessor, ZarrGridProcessor, BoundingBox};
-//!
-//! // Open a Zarr grid
-//! let processor = ZarrGridProcessor::open(storage, "grids/gfs/TMP.zarr", config).await?;
-//!
-//! // Read a region
-//! let bbox = BoundingBox::new(-100.0, 30.0, -90.0, 40.0);
-//! let region = processor.read_region(&bbox).await?;
-//!
-//! // Use the data for rendering
-//! for value in &region.data {
-//!     // ...
-//! }
-//! ```
 
 pub mod cache;
 pub mod config;

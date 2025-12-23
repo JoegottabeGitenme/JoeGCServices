@@ -421,7 +421,7 @@ pub fn apply_style_gradient(
 **Solution**: Ensure style name is passed through the rendering pipeline:
 ```rust
 // In handlers.rs - WMTS GetTile
-crate::rendering::render_weather_data_with_lut(
+crate::rendering::render_weather_data(
     ...
     Some(style),  // Pass style name, not None!
     ...

@@ -49,6 +49,9 @@ precaching:
   poll_interval_secs: 120
   parameters: []
 
+# GRIB2 level type codes reference:
+#   102 = height above MSL (in m)
+
 parameters:
   # Seamless Hybrid Scan Reflectivity - the fully composited radar mosaic
   # This is the product that shows continuous coverage like Windy/NWS
@@ -58,10 +61,11 @@ parameters:
     grib2:
       discipline: 209                    # MRMS local table
       category: 0
-      parameter: 16                      # SeamlessHSR uses same parameter ID
+      number: 16                         # SeamlessHSR uses same parameter ID
     product: "SeamlessHSR_00.00"
     levels:
       - type: height_above_msl
+        level_code: 102
         value: 0
         display: "0 m above MSL"
     style: reflectivity
@@ -76,10 +80,11 @@ parameters:
     grib2:
       discipline: 209
       category: 1
-      parameter: 0                       # PrecipRate
+      number: 0                          # PrecipRate
     product: "PrecipRate_00.00"
     levels:
       - type: height_above_msl
+        level_code: 102
         value: 0
         display: "0 m above MSL"
     style: precip_rate
@@ -94,10 +99,11 @@ parameters:
     grib2:
       discipline: 209
       category: 1
-      parameter: 1                       # QPE
+      number: 1                          # QPE
     product: "MultiSensor_QPE_01H_Pass2_00.00"
     levels:
       - type: height_above_msl
+        level_code: 102
         value: 0
         display: "0 m above MSL"
     style: precipitation
@@ -112,10 +118,11 @@ parameters:
     grib2:
       discipline: 209
       category: 1
-      parameter: 1
+      number: 1
     product: "MultiSensor_QPE_24H_Pass2_00.00"
     levels:
       - type: height_above_msl
+        level_code: 102
         value: 0
         display: "0 m above MSL"
     style: precipitation

@@ -67,7 +67,6 @@ weather-wms/
 │   ├── wms-api/         # HTTP API server
 │   ├── ingester/        # Data ingestion
 │   ├── downloader/      # Data download
-│   └── renderer-worker/ # Background rendering
 ├── validation/          # Testing and validation
 │   └── load-test/       # Load testing suite
 ├── config/              # Configuration files

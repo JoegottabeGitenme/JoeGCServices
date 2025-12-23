@@ -33,16 +33,23 @@ use crate::types::BoundingBox;
 /// * Bilinear interpolation is used for smooth resampling
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use projection::Geostationary;
-/// use grid_processor::reproject_geostationary_to_geographic;
+/// use grid_processor::projection::reproject::reproject_geostationary_to_geographic;
 ///
-/// let proj = Geostationary::from_goes(
-///     35786023.0, 6378137.0, 6356752.31414, -137.0,
-///     -0.101353, 0.128233, 1.4e-05, -1.4e-05, 2500, 1500
-/// );
-/// let (reprojected, width, height, bbox) =
-///     reproject_geostationary_to_geographic(&data, 2500, 1500, &proj);
+/// // Use GOES-16 CONUS projection with known valid parameters
+/// let proj = Geostationary::goes16_conus();
+/// let width = proj.nx;
+/// let height = proj.ny;
+///
+/// // Create sample data
+/// let data: Vec<f32> = vec![0.0; width * height];
+///
+/// let (reprojected, out_width, out_height, bbox) =
+///     reproject_geostationary_to_geographic(&data, width, height, &proj);
+///
+/// assert_eq!(out_width, width);
+/// assert_eq!(out_height, height);
 /// ```
 pub fn reproject_geostationary_to_geographic(
     data: &[f32],
@@ -100,24 +107,13 @@ mod tests {
 
     #[test]
     fn test_reproject_preserves_dimensions() {
-        // Create a small test grid
-        let width = 100;
-        let height = 60;
-        let data: Vec<f32> = (0..width * height).map(|i| i as f32).collect();
+        // Use the standard GOES-16 CONUS projection which has known valid parameters
+        let proj = Geostationary::goes16_conus();
+        let width = proj.nx;
+        let height = proj.ny;
 
-        // Create a GOES-like projection
-        let proj = Geostationary::from_goes(
-            35786023.0,
-            6378137.0,
-            6356752.31414,
-            -137.0, // GOES-18 longitude
-            -0.101353,
-            0.128233,
-            1.4e-05,
-            -1.4e-05,
-            width,
-            height,
-        );
+        // Create test data matching the projection dimensions
+        let data: Vec<f32> = (0..width * height).map(|i| i as f32).collect();
 
         let (output, out_width, out_height, bbox) =
             reproject_geostationary_to_geographic(&data, width, height, &proj);
@@ -128,32 +124,24 @@ mod tests {
         assert_eq!(output.len(), width * height);
 
         // Bbox should be valid
-        assert!(bbox.min_lon < bbox.max_lon);
-        assert!(bbox.min_lat < bbox.max_lat);
+        assert!(bbox.min_lon < bbox.max_lon, "min_lon ({}) should be < max_lon ({})", bbox.min_lon, bbox.max_lon);
+        assert!(bbox.min_lat < bbox.max_lat, "min_lat ({}) should be < max_lat ({})", bbox.min_lat, bbox.max_lat);
     }
 
     #[test]
     fn test_reproject_handles_nan_input() {
-        let width = 10;
-        let height = 10;
+        // Use the standard GOES-16 CONUS projection
+        let proj = Geostationary::goes16_conus();
+        let width = proj.nx;
+        let height = proj.ny;
+
+        // Create test data with some NaN values
         let mut data: Vec<f32> = (0..width * height).map(|i| i as f32).collect();
 
         // Set some values to NaN
         data[45] = f32::NAN;
         data[46] = f32::NAN;
-
-        let proj = Geostationary::from_goes(
-            35786023.0,
-            6378137.0,
-            6356752.31414,
-            -137.0,
-            -0.101353,
-            0.128233,
-            1.4e-05,
-            -1.4e-05,
-            width,
-            height,
-        );
+        data[1000] = f32::NAN;
 
         let (output, _, _, _) = reproject_geostationary_to_geographic(&data, width, height, &proj);
 

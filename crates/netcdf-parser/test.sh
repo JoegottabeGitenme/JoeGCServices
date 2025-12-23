@@ -1,4 +1,5 @@
 #!/bin/bash
+# TODO move to scripts folder or ideally delete since this just runs cargo commands
 # Test script for netcdf-parser crate
 #
 # Usage:

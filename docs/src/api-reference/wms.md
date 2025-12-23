@@ -1,6 +1,6 @@
 # WMS Endpoints
 
-OGC Web Map Service (WMS) 1.1.1 and 1.3.0 implementation.
+OGC Web Map Service (WMS) 1.1.1 and 1.3.0 implementation with full OGC compliance.
 
 ## GetCapabilities
 
@@ -11,6 +11,14 @@ GET /wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0
 ```
 
 **Response**: XML (Content-Type: `application/vnd.ogc.wms_xml`)
+
+### Capabilities Caching
+
+GetCapabilities responses are cached in-memory to improve response times. The cache is automatically invalidated when:
+- New data is ingested (layer list changes)
+- Configuration is reloaded
+
+This ensures clients always receive up-to-date capabilities while avoiding redundant XML generation.
 
 ## GetMap
 
@@ -105,7 +113,53 @@ GET /wms?
 | BBOX axis order (EPSG:4326) | lon,lat | lat,lon |
 | Exception format | `application/vnd.ogc.se_xml` | `XML` |
 
+## Supported Formats
+
+### Image Formats
+
+| Format | MIME Type | Description |
+|--------|-----------|-------------|
+| PNG | `image/png` | Lossless with transparency (recommended) |
+| JPEG | `image/jpeg` | Lossy compression, no transparency |
+
+### Exception Formats
+
+| Format | MIME Type | Description |
+|--------|-----------|-------------|
+| XML | `XML` | WMS 1.3.0 standard exception format |
+| XML (1.1.1) | `application/vnd.ogc.se_xml` | WMS 1.1.1 exception format |
+| Blank | `BLANK` | Returns blank/transparent image on error |
+| JSON | `application/json` | JSON-formatted error details |
+
+## OGC Compliance
+
+The WMS implementation follows OGC WMS 1.3.0 specification strictly, including:
+
+- **Proper exception handling**: Returns OGC ServiceException XML for invalid requests
+- **Parameter validation**: Validates all required parameters with appropriate error codes
+- **BBOX axis order**: Respects CRS-dependent axis ordering (lat/lon vs lon/lat)
+- **Version negotiation**: Supports both 1.1.1 and 1.3.0 with proper version negotiation
+- **Default style**: The literal string `default` can be used to request the default style
+
+### Compliance Testing
+
+A comprehensive WMS compliance test suite is available at:
+
+```
+http://localhost:8000/wms-compliance.html
+```
+
+This web-based test runner validates:
+- GetCapabilities response structure and XML validity
+- GetMap parameter handling and error responses
+- GetFeatureInfo coordinate handling
+- Exception format compliance
+- All layers in the capabilities document
+
+The test page can also be pointed at external WMS servers for comparison testing.
+
 ## See Also
 
 - [WMS API Service](../services/wms-api.md) - Implementation details
 - [Examples](./examples.md) - Integration examples
+- [WMTS Endpoints](./wmts.md) - Alternative tile-based API

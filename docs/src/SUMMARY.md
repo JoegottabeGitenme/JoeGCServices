@@ -24,13 +24,13 @@
   - [WMS API](./services/wms-api.md)
   - [Ingester](./services/ingester.md)
   - [Downloader](./services/downloader.md)
-  - [Renderer Worker](./services/renderer-worker.md)
 
 # Crates (Libraries)
 
 - [Overview](./crates/README.md)
   - [grib2-parser](./crates/grib2-parser.md)
   - [grid-processor](./crates/grid-processor.md)
+  - [ingestion](./crates/ingestion.md)
   - [netcdf-parser](./crates/netcdf-parser.md)
   - [projection](./crates/projection.md)
   - [renderer](./crates/renderer.md)

@@ -96,9 +96,6 @@ services:
       RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
       # Performance tuning
       TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-8}
-      # GRIB cache
-      ENABLE_GRIB_CACHE: ${ENABLE_GRIB_CACHE:-true}
-      GRIB_CACHE_SIZE: ${GRIB_CACHE_SIZE:-500}
       # L1 tile memory cache (Phase 7.A)
       ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
       TILE_CACHE_SIZE: ${TILE_CACHE_SIZE:-10000}
@@ -114,21 +111,18 @@ services:
       CACHE_WARMING_HOURS: ${CACHE_WARMING_HOURS:-0}
       CACHE_WARMING_LAYERS: ${CACHE_WARMING_LAYERS:-gfs_TMP:temperature}
       CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-10}
-      # Projection LUT for GOES (Phase: LUT optimization)
-      ENABLE_PROJECTION_LUT: ${ENABLE_PROJECTION_LUT:-true}
-      PROJECTION_LUT_DIR: ${PROJECTION_LUT_DIR:-/app/data/luts}
-      # Grid cache (parsed GOES/NetCDF data) - GOES grids are ~240MB each!
-      GRID_CACHE_SIZE: ${GRID_CACHE_SIZE:-20}
+
       # Memory pressure management - evict caches before running out of memory
       ENABLE_MEMORY_PRESSURE: ${ENABLE_MEMORY_PRESSURE:-true}
       MEMORY_LIMIT_MB: ${MEMORY_LIMIT_MB:-4000}
       MEMORY_PRESSURE_THRESHOLD: ${MEMORY_PRESSURE_THRESHOLD:-0.80}
       MEMORY_PRESSURE_TARGET: ${MEMORY_PRESSURE_TARGET:-0.60}
+      # Ingester service URL (for proxying ingestion requests)
+      INGESTER_URL: ${INGESTER_URL:-http://ingester:8082}
     volumes:
       - ./validation/load-test/results:/app/validation/load-test/results:ro
       - ./config:/app/config:ro
       - downloader_data:/data/downloads:ro
-      - ./data/luts:/app/data/luts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -141,7 +135,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
 
   web-dashboard:
@@ -257,6 +251,45 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ingester:
+    build:
+      context: .
+      dockerfile: services/ingester/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8082:8082"
+    environment:
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
+      # Database
+      DATABASE_URL: ${DATABASE_URL:-postgresql://weatherwms:weatherwms@postgres:5432/weatherwms}
+      # Object Storage
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ALLOW_HTTP: ${S3_ALLOW_HTTP:-true}
+      # Config directory for GRIB2 parameter tables
+      CONFIG_DIR: /app/config
+    volumes:
+      - downloader_data:/data/downloads:ro
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   downloader:
     build:
       context: .
@@ -269,8 +302,8 @@ services:
       # Logging
       RUST_LOG: ${RUST_LOG:-info}
       RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
-      # Ingester URL for triggering ingestion after download (full endpoint path)
-      INGESTER_URL: ${INGESTER_URL:-http://wms-api:8080/admin/ingest}
+      # Ingester URL for triggering ingestion after download
+      INGESTER_URL: ${INGESTER_URL:-http://ingester:8082/ingest}
       # Status server port
       STATUS_PORT: 8081
       # Config directory
@@ -281,7 +314,7 @@ services:
       - ./config:/app/config:ro
     command: ["--max-concurrent", "4", "--config-dir", "/app/config"]
     depends_on:
-      wms-api:
+      ingester:
         condition: service_healthy
       minio:
         condition: service_healthy
