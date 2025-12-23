@@ -248,13 +248,15 @@ jobs:
           fi
 
       - name: Create gh-pages branch if it doesn't exist
-        if: github.ref == 'refs/heads/main'
         run: |
-          # Check if gh-pages branch exists
+          # Check if gh-pages branch exists on remote
           if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
-            echo "Creating gh-pages branch..."
+            echo "gh-pages branch does not exist, creating it..."
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Save current HEAD
+            CURRENT_SHA=$(git rev-parse HEAD)
             
             # Create orphan branch with initial commit
             git checkout --orphan gh-pages
@@ -262,8 +264,8 @@ jobs:
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
             git push origin gh-pages
             
-            # Switch back to the original branch
-            git checkout -f ${{ github.sha }}
+            # Switch back to the original commit
+            git checkout -f $CURRENT_SHA
             echo "gh-pages branch created successfully"
           else
             echo "gh-pages branch already exists"
@@ -278,7 +280,7 @@ jobs:
           # Store benchmark data in gh-pages branch
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
-          # Always push to gh-pages on main branch
+          # Only push to gh-pages on main branch
           auto-push: ${{ github.ref == 'refs/heads/main' }}
           # Comment on PRs with comparison
           comment-on-alert: true
