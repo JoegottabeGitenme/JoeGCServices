@@ -93,6 +93,7 @@ pub fn subset_grid(
 ///
 /// # Performance
 /// Uses rayon for parallel row processing when resampling is needed.
+/// Buffer pooling reduces allocation overhead under high load.
 pub fn resample_grid(
     data: &[f32],
     src_width: usize,
@@ -100,14 +101,27 @@ pub fn resample_grid(
     dst_width: usize,
     dst_height: usize,
 ) -> Vec<f32> {
-    use rayon::prelude::*;
-    
     if src_width == dst_width && src_height == dst_height {
         // No resampling needed
         return data.to_vec();
     }
 
-    let mut output = vec![0.0f32; dst_width * dst_height];
+    // Use buffer pool for the output buffer
+    crate::buffer_pool::take_resample_buffer(dst_width, dst_height, |output| {
+        resample_grid_into(data, src_width, src_height, dst_width, dst_height, output);
+    })
+}
+
+/// Resample grid data into a pre-allocated buffer.
+fn resample_grid_into(
+    data: &[f32],
+    src_width: usize,
+    src_height: usize,
+    dst_width: usize,
+    dst_height: usize,
+    output: &mut [f32],
+) {
+    use rayon::prelude::*;
 
     let x_ratio = (src_width - 1) as f32 / (dst_width - 1) as f32;
     let y_ratio = (src_height - 1) as f32 / (dst_height - 1) as f32;
@@ -144,8 +158,6 @@ pub fn resample_grid(
                 row[x] = value;
             }
         });
-
-    output
 }
 
 /// Color value in RGBA format
@@ -196,6 +208,7 @@ pub fn interpolate_color(color1: Color, color2: Color, t: f32) -> Color {
 /// # Performance
 /// Uses rayon for parallel row processing. A 256×256 tile has 65,536 pixels,
 /// which are processed across multiple CPU cores for improved throughput.
+/// Buffer pooling reduces allocation overhead under high load.
 pub fn render_grid<F>(
     data: &[f32],
     width: usize,
@@ -207,9 +220,26 @@ pub fn render_grid<F>(
 where
     F: Fn(f32) -> Color + Sync,
 {
+    // Use buffer pool for the pixel buffer
+    crate::buffer_pool::take_pixel_buffer(width, height, |pixels| {
+        render_grid_into(data, width, height, min_val, max_val, &color_fn, pixels);
+    })
+}
+
+/// Render grid data into a pre-allocated buffer.
+fn render_grid_into<F>(
+    data: &[f32],
+    width: usize,
+    _height: usize,
+    min_val: f32,
+    max_val: f32,
+    color_fn: &F,
+    pixels: &mut [u8],
+)
+where
+    F: Fn(f32) -> Color + Sync,
+{
     use rayon::prelude::*;
-    
-    let mut pixels = vec![0u8; width * height * 4];
     
     let range = max_val - min_val;
     let range = if range.abs() < 0.001 { 1.0 } else { range };
@@ -251,6 +281,4 @@ where
                 }
             }
         });
-
-    pixels
 }

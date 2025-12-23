@@ -642,21 +642,36 @@ pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
 ///
 /// # Performance
 /// Uses rayon for parallel row processing. Each row is processed independently
-/// across multiple CPU cores.
+/// across multiple CPU cores. Buffer pooling reduces allocation overhead under load.
 pub fn apply_style_gradient(
     data: &[f32],
     width: usize,
     height: usize,
     style: &StyleDefinition,
 ) -> Vec<u8> {
-    let mut pixels = vec![0u8; width * height * 4];
+    // Use buffer pool for the pixel buffer
+    crate::buffer_pool::take_pixel_buffer(width, height, |pixels| {
+        apply_style_gradient_into(data, width, height, style, pixels);
+    })
+}
+
+/// Apply style-based color mapping into a pre-allocated buffer.
+///
+/// This is the internal implementation that writes to a provided buffer.
+fn apply_style_gradient_into(
+    data: &[f32],
+    width: usize,
+    _height: usize,
+    style: &StyleDefinition,
+    pixels: &mut [u8],
+) {
     
     // Extract color stops and sort by value
     let mut stops = style.stops.clone();
     stops.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(std::cmp::Ordering::Equal));
     
     if stops.is_empty() {
-        return pixels;
+        return;
     }
     
     // Convert hex colors to RGBA (supports 6-char RGB and 8-char RGBA)
@@ -782,8 +797,6 @@ pub fn apply_style_gradient(
                 row[pixel_idx + 3] = a;
             }
         });
-    
-    pixels
 }
 
 /// Apply style-based color mapping, outputting palette indices directly.
@@ -802,6 +815,9 @@ pub fn apply_style_gradient(
 ///
 /// # Returns
 /// Vec of palette indices (1 byte per pixel), ready for indexed PNG encoding
+///
+/// # Performance
+/// Uses buffer pooling to reduce allocation overhead under high load.
 pub fn apply_style_gradient_indexed(
     data: &[f32],
     width: usize,
@@ -809,8 +825,21 @@ pub fn apply_style_gradient_indexed(
     palette: &PrecomputedPalette,
     style: &StyleDefinition,
 ) -> Vec<u8> {
-    let mut indices = vec![0u8; width * height];
-    
+    // Use buffer pool for the index buffer
+    crate::buffer_pool::take_index_buffer(width, height, |indices| {
+        apply_style_gradient_indexed_into(data, width, height, palette, style, indices);
+    })
+}
+
+/// Apply style-based color mapping into a pre-allocated index buffer.
+fn apply_style_gradient_indexed_into(
+    data: &[f32],
+    width: usize,
+    _height: usize,
+    palette: &PrecomputedPalette,
+    style: &StyleDefinition,
+    indices: &mut [u8],
+) {
     let transform = style.transform.as_ref();
     let min_value = palette.min_value;
     let max_value = palette.max_value;
@@ -867,8 +896,6 @@ pub fn apply_style_gradient_indexed(
                 row[x] = palette.value_to_index[lut_idx.min(PALETTE_LUT_SIZE - 1)];
             }
         });
-    
-    indices
 }
 
 #[cfg(test)]

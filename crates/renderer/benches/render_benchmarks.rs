@@ -577,6 +577,104 @@ fn bench_full_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+// =============================================================================
+// BUFFER POOLING BENCHMARKS
+// =============================================================================
+
+/// Benchmark buffer pool performance vs fresh allocations.
+/// 
+/// Buffer pooling is designed to improve p99 latency under high load by
+/// reducing allocator contention. The benefits are most visible under
+/// concurrent access, but we can measure the overhead here.
+fn bench_buffer_pooling(c: &mut Criterion) {
+    use renderer::buffer_pool;
+    
+    let mut group = c.benchmark_group("buffer_pooling");
+    
+    let sizes = [(256, 256), (512, 512), (1024, 1024)];
+    let temp_style = create_temperature_style();
+    let palette = temp_style.compute_palette().expect("Failed to compute palette");
+    
+    for (width, height) in sizes {
+        let size_name = format!("{}x{}", width, height);
+        
+        // Generate temperature data
+        let data: Vec<f32> = generate_linear_grid(width, height)
+            .iter()
+            .map(|v| 233.15 + v * 0.8)
+            .collect();
+        
+        group.throughput(Throughput::Elements((width * height) as u64));
+        
+        // Benchmark: Multiple iterations with buffer pool (simulates reuse)
+        group.bench_function(format!("pool_repeated_{}", size_name), |b| {
+            b.iter(|| {
+                // This uses the buffer pool under the hood
+                let indices = style::apply_style_gradient_indexed(
+                    black_box(&data),
+                    width,
+                    height,
+                    &palette,
+                    &temp_style,
+                );
+                black_box(indices)
+            });
+        });
+        
+        // Benchmark: Direct allocation without pool
+        group.bench_function(format!("alloc_direct_{}", size_name), |b| {
+            b.iter(|| {
+                // Direct allocation (similar to old code path)
+                let mut indices = vec![0u8; width * height];
+                for (i, val) in data.iter().enumerate() {
+                    if !val.is_nan() {
+                        let t = (val - palette.min_value) / (palette.max_value - palette.min_value);
+                        let lut_idx = (t * 4095.0) as usize;
+                        indices[i] = palette.value_to_index[lut_idx.min(4095)];
+                    }
+                }
+                black_box(indices)
+            });
+        });
+        
+        // Benchmark: With resampling (tests resample buffer pool)
+        let larger_data = generate_temperature_grid(1440, 721);
+        group.bench_function(format!("pool_with_resample_{}", size_name), |b| {
+            b.iter(|| {
+                let resampled = gradient::resample_grid(
+                    black_box(&larger_data),
+                    1440,
+                    721,
+                    width,
+                    height,
+                );
+                let indices = style::apply_style_gradient_indexed(
+                    &resampled,
+                    width,
+                    height,
+                    &palette,
+                    &temp_style,
+                );
+                black_box(indices)
+            });
+        });
+    }
+    
+    // Benchmark pool stats access (should be very fast)
+    group.bench_function("get_pool_stats", |b| {
+        // Warm up the pools
+        buffer_pool::with_pixel_buffer(256, 256, |_| {});
+        buffer_pool::with_index_buffer(256, 256, |_| {});
+        
+        b.iter(|| {
+            let stats = buffer_pool::get_pool_stats();
+            black_box(stats)
+        });
+    });
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_resample_grid,
@@ -588,5 +686,6 @@ criterion_group!(
     bench_precomputed_palette,
     bench_precomputed_png_encoding,
     bench_full_pipeline,
+    bench_buffer_pooling,
 );
 criterion_main!(benches);
