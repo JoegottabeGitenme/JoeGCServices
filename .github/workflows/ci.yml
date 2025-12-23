@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main, feature/automated-testing ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -136,7 +136,7 @@ jobs:
           try:
               with open('tarpaulin-report.json') as f:
                   data = json.load(f)
-              
+          
               # Group by crate
               crates = {}
               for file_path, file_data in data.get('files', {}).items():
@@ -156,13 +156,13 @@ jobs:
                           continue
                   else:
                       continue
-                  
+          
                   if crate_name not in crates:
                       crates[crate_name] = {'covered': 0, 'coverable': 0}
-                  
+          
                   crates[crate_name]['covered'] += file_data.get('covered', 0)
                   crates[crate_name]['coverable'] += file_data.get('coverable', 0)
-              
+          
               # Calculate percentages and output
               results = []
               for name, data in sorted(crates.items()):
@@ -170,7 +170,7 @@ jobs:
                       pct = (data['covered'] / data['coverable']) * 100
                       emoji = ":white_check_mark:" if pct >= 80 else (":warning:" if pct >= 60 else ":x:")
                       results.append(f"| {name} | {pct:.1f}% | {emoji} |")
-              
+          
               print('\n'.join(results))
           except Exception as e:
               print(f"Error parsing coverage: {e}", file=sys.stderr)
@@ -234,7 +234,7 @@ jobs:
   # Summary job
   ci-status:
     name: CI Status
-    needs: [lint, test, coverage, docs]
+    needs: [ lint, test, coverage, docs ]
     if: always()
     runs-on: ubuntu-latest
     steps:
