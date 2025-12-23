@@ -8,11 +8,3 @@ wms-common = { path = "../wms-common" }
 nalgebra = { workspace = true }
 num-traits = { workspace = true }
 thiserror = { workspace = true }
-
-[[bin]]
-name = "generate-goes-lut"
-path = "src/bin/generate_goes_lut.rs"
-
-[[bin]]
-name = "test-lut-performance"
-path = "src/bin/test_lut_performance.rs"

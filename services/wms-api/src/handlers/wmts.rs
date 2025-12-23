@@ -577,11 +577,11 @@ async fn wmts_get_tile(
         ).await
     } else {
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
-        crate::rendering::render_weather_data_with_lut(
+        crate::rendering::render_weather_data(
             &state.catalog, &state.metrics, model, &parameter,
             forecast_hour, observation_time, elevation, 256, 256,
             Some(bbox_array), &style_file, Some(style), true,
-            Some((z, x, y)), Some(&state.projection_luts), &state.grid_processor_factory,
+            &state.grid_processor_factory,
         ).await
     };
     
@@ -902,11 +902,11 @@ async fn prefetch_single_tile(
             &style_file, None, None, true,
         ).await
     } else {
-        crate::rendering::render_weather_data_with_lut(
+        crate::rendering::render_weather_data(
             &state.catalog, &state.metrics, model, &parameter,
             None, None, None, 256, 256, Some(bbox_array),
-            &style_file, Some(style), true, Some((coord.z, coord.x, coord.y)),
-            Some(&state.projection_luts), &state.grid_processor_factory,
+            &style_file, Some(style), true,
+            &state.grid_processor_factory,
         ).await
     };
     

@@ -14,7 +14,6 @@ use projection::{LambertConformal, Geostationary};
 use tracing::debug;
 
 use super::types::GoesProjectionParams;
-use crate::state::ProjectionLuts;
 
 // ============================================================================
 // Web Mercator coordinate conversions
@@ -446,40 +445,6 @@ pub fn resample_grid_for_bbox_with_proj(
             resample_from_geographic(data, data_width, data_height, output_width, output_height, output_bbox, data_bounds, grid_uses_360)
         }
     }
-}
-
-/// Try to resample GOES data using a pre-computed LUT.
-/// 
-/// Returns Some(resampled_data) if a LUT is available for this tile,
-/// or None if we should fall back to computing the projection.
-/// 
-/// NOTE: LUT is currently disabled due to a mismatch between hardcoded projection
-/// parameters in the pre-computed LUTs and the actual dynamic parameters from
-/// NetCDF files. The hardcoded values (x_origin: -0.101360, y_origin: 0.128226)
-/// differ from actual file values (x_offset: -0.101353, y_offset: 0.128233),
-/// causing visible pixel misalignment between zoom levels 0-7 (LUT) and 8+ (on-the-fly).
-/// 
-/// TODO: Regenerate LUTs using actual projection parameters from NetCDF files,
-/// or implement on-demand LUT generation with caching per unique projection params.
-#[allow(unused_variables)]
-pub fn try_resample_with_lut(
-    _model: &str,
-    _tile_coords: Option<(u32, u32, u32)>,
-    _projection_luts: Option<&ProjectionLuts>,
-    _data: &[f32],
-    _data_width: usize,
-) -> Option<Vec<f32>> {
-    // DISABLED: LUT projection parameters don't match actual NetCDF file parameters,
-    // causing pixel misalignment at zoom level boundaries. Using on-the-fly projection
-    // computation ensures consistent results across all zoom levels.
-    // 
-    // The mismatch is:
-    // - LUT hardcoded:  x_origin=-0.101360, y_origin=0.128226, dx=0.000028
-    // - NetCDF actual:  x_offset=-0.101353, y_offset=0.128233, x_scale=1.4e-05
-    //
-    // To re-enable, the LUT generation must use the exact same projection parameters
-    // as the NetCDF files being rendered.
-    None
 }
 
 /// Model-aware resampling for geographic output (used for wind barbs and other non-Mercator rendering)

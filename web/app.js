@@ -4610,7 +4610,6 @@ function renderPerfWidget(metrics, modelsConfig, optConfig) {
     updateFeatureFlag('perf-flag-chunk', opts.chunk_cache?.enabled !== false);
     updateFeatureFlag('perf-flag-prefetch', opts.prefetch?.enabled !== false);
     updateFeatureFlag('perf-flag-warming', modelsConfig.models?.some(m => m.precaching_enabled));
-    updateFeatureFlag('perf-flag-lut', opts.projection_lut?.enabled !== false);
     
     // Model Precaching List
     renderPrecacheList(modelsConfig.models || []);

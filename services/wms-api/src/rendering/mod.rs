@@ -11,17 +11,15 @@ mod wind;
 #[cfg(test)]
 mod tests;
 
-use resampling::{
-    resample_grid_for_bbox, resample_grid_for_bbox_with_proj, try_resample_with_lut,
-};
+use resampling::{resample_grid_for_bbox, resample_grid_for_bbox_with_proj};
 use loaders::load_grid_data;
 use renderer::numbers::{self, NumbersConfig};
 use renderer::style::StyleConfig;
 use storage::{Catalog, CatalogEntry};
 use std::time::Instant;
-use tracing::{info, debug};
+use tracing::info;
 use crate::metrics::{DataSourceType, MetricsCollector};
-use crate::state::{GridProcessorFactory, ProjectionLuts};
+use crate::state::GridProcessorFactory;
 
 // Re-export functions for tests and internal use
 pub(crate) use colorscales::render_with_style_file;
@@ -36,8 +34,7 @@ pub use isolines::render_isolines_tile_with_level;
 
 /// Render weather data with optional style configuration and level.
 ///
-/// This is a convenience wrapper for callers that don't need observation time,
-/// tile coordinates, projection LUTs, or Zarr factory access.
+/// This is a convenience wrapper for callers that don't need observation time.
 ///
 /// # Arguments
 /// - `catalog`: Catalog for finding datasets
@@ -71,19 +68,18 @@ pub async fn render_weather_data_with_level(
     style_name: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
-    render_weather_data_with_lut(
+    render_weather_data(
         catalog, metrics, model, parameter,
         forecast_hour, None, level, width, height, bbox,
-        style_file, style_name, use_mercator, None, None, grid_processor_factory,
+        style_file, style_name, use_mercator, grid_processor_factory,
     ).await
 }
 
-/// Render weather data with optional projection LUT for fast GOES rendering.
+/// Render weather data to a PNG image.
 ///
 /// This is the full-featured rendering function that supports:
 /// - Forecast models (GFS, HRRR): Use `forecast_hour` parameter
 /// - Observation data (MRMS, GOES): Use `observation_time` parameter
-/// - Pre-computed projection LUTs for fast GOES tile rendering
 /// - Zarr-format grid data with efficient chunked reads
 ///
 /// # Arguments
@@ -100,10 +96,8 @@ pub async fn render_weather_data_with_level(
 /// - `style_file`: Path to style JSON file (from layer config)
 /// - `style_name`: Optional style name within the file
 /// - `use_mercator`: Use Web Mercator projection
-/// - `tile_coords`: Optional tile coordinates (z, x, y) for LUT lookup
-/// - `projection_luts`: Optional pre-computed projection LUTs
 /// - `grid_processor_factory`: Factory for Zarr-based grid access
-pub async fn render_weather_data_with_lut(
+pub async fn render_weather_data(
     catalog: &Catalog,
     metrics: &MetricsCollector,
     model: &str,
@@ -117,8 +111,6 @@ pub async fn render_weather_data_with_lut(
     style_file: &str,
     style_name: Option<&str>,
     use_mercator: bool,
-    tile_coords: Option<(u32, u32, u32)>,  // (z, x, y) for LUT lookup
-    projection_luts: Option<&ProjectionLuts>,
     grid_processor_factory: &GridProcessorFactory,
 ) -> Result<Vec<u8>, String> {
     // Record model-specific request
@@ -247,34 +239,20 @@ pub async fn render_weather_data_with_lut(
     let start = Instant::now();
     let resampled_data = {
         if let Some(output_bbox) = bbox {
-            // Try to use LUT for GOES models if available
-            let lut_result = try_resample_with_lut(
-                model,
-                tile_coords,
-                projection_luts,
+            // Resample grid data to output bbox using projection-aware resampling
+            resample_grid_for_bbox_with_proj(
                 &grid_data,
                 grid_width,
-            );
-            
-            if let Some(resampled) = lut_result {
-                debug!(model = model, "Used projection LUT for fast resampling");
-                resampled
-            } else {
-                // Fall back to computing projection on-the-fly
-                resample_grid_for_bbox_with_proj(
-                    &grid_data,
-                    grid_width,
-                    grid_height,
-                    rendered_width,
-                    rendered_height,
-                    output_bbox,
-                    data_bounds,
-                    use_mercator,
-                    model,
-                    goes_projection.as_ref(),
-                    grid_result.grid_uses_360,
-                )
-            }
+                grid_height,
+                rendered_width,
+                rendered_height,
+                output_bbox,
+                data_bounds,
+                use_mercator,
+                model,
+                goes_projection.as_ref(),
+                grid_result.grid_uses_360,
+            )
         } else {
             // No bbox - resample entire data grid
             if grid_width != rendered_width || grid_height != rendered_height {

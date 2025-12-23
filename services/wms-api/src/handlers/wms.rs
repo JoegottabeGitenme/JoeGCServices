@@ -888,7 +888,7 @@ async fn render_weather_data(
     // Standard rendering
     let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
 
-    crate::rendering::render_weather_data_with_lut(
+    crate::rendering::render_weather_data(
         &state.catalog,
         &state.metrics,
         model,
@@ -902,8 +902,6 @@ async fn render_weather_data(
         &style_file,
         Some(style),
         use_mercator,
-        None,
-        None,
         &state.grid_processor_factory,
     )
         .await

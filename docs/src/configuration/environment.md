@@ -7,7 +7,7 @@ Complete reference of all environment variables used by Weather WMS services.
 ### Database
 ```bash
 DATABASE_URL=postgresql://weatherwms:weatherwms@postgres:5432/weatherwms
-DATABASE_POOL_SIZE=50               # Connection pool size
+DATABASE_POOL_SIZE=50               # Connection pool size (default: 20)
 ```
 
 ### Redis

@@ -408,7 +408,7 @@ docker-compose exec postgres vacuumdb -U weatherwms --analyze weatherwms
 **Solution**: Ensure the WMTS/WMS handlers pass the style parameter:
 ```rust
 // In handlers.rs - WMTS GetTile
-crate::rendering::render_weather_data_with_lut(
+crate::rendering::render_weather_data(
     ...
     Some(style),  // Must pass style name, not None
     ...

@@ -14,8 +14,12 @@ pub struct TileCache {
 }
 
 impl TileCache {
-    /// Connect to Redis.
-    pub async fn connect(redis_url: &str) -> WmsResult<Self> {
+    /// Connect to Redis with a specified TTL for cached tiles.
+    ///
+    /// # Arguments
+    /// - `redis_url`: Redis connection URL (e.g., "redis://redis:6379")
+    /// - `ttl_secs`: Time-to-live for cached tiles in seconds (default: 3600 = 1 hour)
+    pub async fn connect(redis_url: &str, ttl_secs: u64) -> WmsResult<Self> {
         let client = Client::open(redis_url)
             .map_err(|e| WmsError::CacheError(format!("Redis connection failed: {}", e)))?;
 
@@ -26,7 +30,7 @@ impl TileCache {
 
         Ok(Self {
             conn,
-            default_ttl: Duration::from_secs(3600), // 1 hour default
+            default_ttl: Duration::from_secs(ttl_secs),
         })
     }
 

@@ -72,8 +72,11 @@ impl MinioConfig {
                 .unwrap_or_else(|_| "minioadmin".to_string()),
             secret_access_key: std::env::var("S3_SECRET_KEY")
                 .unwrap_or_else(|_| "minioadmin".to_string()),
-            region: "us-east-1".to_string(),
-            allow_http: true,
+            region: std::env::var("S3_REGION")
+                .unwrap_or_else(|_| "us-east-1".to_string()),
+            allow_http: std::env::var("S3_ALLOW_HTTP")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(true),
         }
     }
 }
