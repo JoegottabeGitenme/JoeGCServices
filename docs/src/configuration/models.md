@@ -77,10 +77,25 @@ grid:
   lon_convention: 0_to_360  # Optional: 0_to_360 or -180_to_180
 ```
 
-**Projection Types**:
-- `geographic` / `latlon` - Lat/lon (EPSG:4326)
-- `geostationary` - Geostationary satellite
-- `lambert_conformal` - Lambert Conformal Conic
+**Projection Types** and Grid Reading Behavior:
+
+| Projection | `requires_full_grid` | Description |
+|------------|---------------------|-------------|
+| `geographic` / `latlon` | `false` (auto) | Lat/lon (EPSG:4326) - supports partial bbox reads |
+| `geostationary` | `true` (auto) | Geostationary satellite - requires full grid |
+| `lambert_conformal` | `true` (auto) | Lambert Conformal Conic - requires full grid |
+| `polar_stereographic` | `true` (auto) | Polar projection - requires full grid |
+| `mercator` | `true` (auto) | Mercator - requires full grid |
+
+The `requires_full_grid` setting is **automatically inferred** from the projection type. Non-geographic projections have a non-linear mapping between grid indices and geographic coordinates, so partial bounding box reads would produce incorrect results.
+
+You can override the inferred value if needed:
+
+```yaml
+grid:
+  projection: geographic
+  requires_full_grid: true   # Force full grid reads even for geographic
+```
 
 ### `schedule` (required)
 

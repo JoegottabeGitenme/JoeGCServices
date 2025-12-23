@@ -6,7 +6,7 @@ The grid-processor crate provides efficient access to chunked gridded weather da
 
 **Location**: `crates/grid-processor/`  
 **Dependencies**: `zarrs`, `zarrs-filesystem`, `object_store`, `ndarray`  
-**LOC**: ~4,000
+**LOC**: ~4,500
 
 ## Key Features
 
@@ -15,6 +15,94 @@ The grid-processor crate provides efficient access to chunked gridded weather da
 - **Partial Reads**: Only fetch the chunks needed for a tile request (byte-range requests)
 - **LRU Chunk Cache**: In-memory caching of decompressed chunks
 - **Configurable Compression**: Blosc with LZ4/Zstd, chunk sizes, etc.
+- **Unified Query API**: `DatasetQuery` builder for finding datasets by model/parameter/time/level
+
+## API Levels
+
+The crate provides three levels of abstraction:
+
+### High-Level: `GridDataService`
+
+The recommended interface for most use cases. Combines catalog queries with data access:
+
+```rust
+use grid_processor::{GridDataService, DatasetQuery, BoundingBox};
+
+// Create service at application startup
+let service = GridDataService::new(catalog, minio_config, 1024); // 1GB cache
+
+// Query for a forecast dataset using the builder pattern
+let query = DatasetQuery::forecast("gfs", "TMP")
+    .at_level("2 m above ground")
+    .at_forecast_hour(6);
+
+// Read a region (for tile rendering)
+let bbox = BoundingBox::new(-100.0, 30.0, -90.0, 40.0);
+let region = service.read_region(&query, &bbox, Some((256, 256))).await?;
+
+// Query a single point (for GetFeatureInfo or EDR Position)
+let value = service.read_point(&query, -95.0, 35.0).await?;
+println!("Temperature: {} {}", value.value.unwrap_or(f32::NAN), value.units);
+```
+
+### Mid-Level: `GridProcessorFactory`
+
+For cases where you have a catalog entry and want direct control:
+
+```rust
+use grid_processor::{GridProcessorFactory, MinioConfig, ZarrGridProcessor};
+
+// Factory manages shared chunk cache
+let factory = GridProcessorFactory::new(MinioConfig::from_env(), 1024);
+
+// Create storage and processor manually
+let store = create_minio_storage(factory.minio_config())?;
+let processor = ZarrGridProcessor::with_metadata(
+    store, 
+    &zarr_path,
+    grid_metadata,
+    factory.chunk_cache(),
+    factory.config().clone(),
+)?;
+
+let region = processor.read_region(&bbox).await?;
+```
+
+### Low-Level: `GridProcessor` Trait
+
+For custom implementations or direct Zarr access:
+
+```rust
+use grid_processor::{GridProcessor, ZarrGridProcessor, GridProcessorConfig};
+
+let processor = ZarrGridProcessor::open(store, "/path/to/array.zarr", config)?;
+let region = processor.read_region(&bbox).await?;
+let point = processor.read_point(-95.0, 35.0).await?;
+```
+
+## DatasetQuery Builder
+
+The `DatasetQuery` type provides a fluent API for specifying which dataset to access:
+
+```rust
+use grid_processor::{DatasetQuery, TimeSpecification};
+use chrono::Utc;
+
+// Forecast model query
+let query = DatasetQuery::forecast("gfs", "TMP")
+    .at_level("2 m above ground")
+    .at_forecast_hour(6)
+    .at_run(Utc::now());  // Optional: specific model run
+
+// Observation data query (GOES, MRMS)
+let query = DatasetQuery::observation("goes18", "CMI_C13")
+    .at_time(Utc::now());
+
+// Get latest available data
+let query = DatasetQuery::forecast("hrrr", "REFC")
+    .at_level("entire atmosphere")
+    .latest();
+```
 
 ## Architecture
 
@@ -579,8 +667,8 @@ async fn handle_wcs_getcoverage(
 
 ## Model-Specific Configuration
 
-Some models require special handling due to their coordinate systems. This is configured
-in the model YAML files:
+Some models require special handling due to their coordinate systems. The grid-processor
+automatically infers settings from the `projection` field in model YAML files:
 
 ```yaml
 # config/models/hrrr.yaml
@@ -589,8 +677,7 @@ model:
   name: "HRRR - High-Resolution Rapid Refresh"
 
 grid:
-  projection: lambert_conformal
-  requires_full_grid: true  # Cannot do partial bbox reads due to non-linear projection
+  projection: lambert_conformal  # Auto-sets requires_full_grid: true
   
   # Lambert Conformal projection parameters
   projection_params:
@@ -600,10 +687,33 @@ grid:
     lon_0: -97.5
 ```
 
+### Projection-Based Inference
+
+The `requires_full_grid` setting is automatically inferred from the projection type:
+
+| Projection | `requires_full_grid` | Reason |
+|------------|---------------------|--------|
+| `lambert_conformal` | `true` | Non-linear mapping between grid and geographic coords |
+| `polar_stereographic` | `true` | Non-linear mapping |
+| `geostationary` | `true` | Satellite viewing geometry |
+| `mercator` | `true` | Non-linear latitude scaling |
+| `geographic` / `lat_lon` | `false` | Linear mapping allows partial reads |
+
+You can override the inferred value explicitly if needed:
+
+```yaml
+grid:
+  projection: geographic
+  requires_full_grid: true  # Force full grid reads even for geographic
+```
+
+### Configuration Fields
+
 | Config Field | Description | Default |
 |--------------|-------------|---------|
-| `requires_full_grid` | If true, always load entire grid (for non-geographic projections) | `false` |
-| `uses_360_longitude` | If true, longitude range is 0-360 instead of -180/180 | auto-detected |
+| `projection` | Coordinate system type | Required |
+| `requires_full_grid` | Force full grid reads | Auto-inferred from projection |
+| `uses_360_longitude` | Longitude range 0-360 vs -180/180 | Auto-detected from bbox |
 
 ## See Also
 
