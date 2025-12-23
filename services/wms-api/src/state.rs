@@ -3,10 +3,10 @@
 use anyhow::Result;
 use std::env;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tracing::info;
 
-use grid_processor::{ChunkCache, GridProcessorConfig};
+use grid_processor::{GridProcessorFactory, MinioConfig};
 use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::capabilities_cache::CapabilitiesCache;
 use crate::layer_config::LayerConfigRegistry;
@@ -116,69 +116,13 @@ impl OptimizationConfig {
     }
 }
 
-/// Factory for creating grid processors from Zarr-format data.
-///
-/// This factory manages a shared chunk cache for efficient partial reads
-/// from Zarr-format grid data stored in MinIO.
-///
-/// # Data Flow
-/// 
-/// When a tile request comes in for a dataset with `zarr_metadata`:
-/// 1. The catalog query returns the `CatalogEntry` with embedded `zarr_metadata`
-/// 2. `GridProcessorFactory::create_processor()` creates a `ZarrGridProcessor`
-///    using metadata from the catalog (no MinIO request needed for metadata)
-/// 3. The processor fetches only the chunks needed for the tile via byte-range requests
-/// 4. Decompressed chunks are cached in the shared `ChunkCache` for reuse
-///
-/// For datasets without `zarr_metadata`, the legacy GRIB2/NetCDF path is used.
-pub struct GridProcessorFactory {
-    /// Grid processor configuration.
-    pub config: GridProcessorConfig,
-    /// Shared chunk cache for decompressed Zarr chunks.
-    pub chunk_cache: Arc<RwLock<ChunkCache>>,
-}
-
-impl GridProcessorFactory {
-    /// Create a new GridProcessorFactory.
-    pub fn new(_storage: Arc<ObjectStorage>, chunk_cache_size_mb: usize) -> Self {
-        let chunk_cache = Arc::new(RwLock::new(ChunkCache::new(
-            chunk_cache_size_mb * 1024 * 1024,
-        )));
-        
-        let config = GridProcessorConfig::default();
-        
-        Self {
-            config,
-            chunk_cache,
-        }
-    }
-    
-    /// Get chunk cache statistics for monitoring.
-    pub async fn cache_stats(&self) -> grid_processor::CacheStats {
-        self.chunk_cache.read().await.stats()
-    }
-    
-    /// Get the shared chunk cache reference (for creating processors).
-    pub fn chunk_cache(&self) -> Arc<RwLock<ChunkCache>> {
-        self.chunk_cache.clone()
-    }
-    
-    /// Get the processor config.
-    pub fn config(&self) -> &GridProcessorConfig {
-        &self.config
-    }
-    
-    /// Clear the chunk cache (for hot reload / cache invalidation).
-    /// Returns the number of entries and bytes cleared.
-    pub async fn clear_chunk_cache(&self) -> (usize, u64) {
-        let mut cache = self.chunk_cache.write().await;
-        let stats = cache.stats();
-        let entries = stats.entries;
-        let bytes = stats.memory_bytes;
-        cache.clear();
-        (entries, bytes)
-    }
-}
+// GridProcessorFactory is now imported from grid_processor crate.
+// It provides:
+// - Shared ChunkCache for decompressed Zarr chunks
+// - MinIO configuration for creating storage on demand
+// - Common GridProcessorConfig settings
+//
+// See grid_processor::GridProcessorFactory for documentation.
 
 /// Shared application state.
 pub struct AppState {
@@ -243,9 +187,11 @@ impl AppState {
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
         
         // Create GridProcessorFactory for Zarr-based data access
+        // Now using the factory from grid-processor crate which manages MinIO config internally
         let grid_processor_factory = if optimization_config.chunk_cache_enabled {
+            let minio_config = MinioConfig::from_env();
             let factory = GridProcessorFactory::new(
-                storage.clone(),
+                minio_config,
                 optimization_config.chunk_cache_size_mb,
             );
             info!(
@@ -255,7 +201,8 @@ impl AppState {
             factory
         } else {
             info!("Chunk cache disabled (set ENABLE_CHUNK_CACHE=true to enable)");
-            GridProcessorFactory::new(storage.clone(), 0) // 0 MB = minimal cache
+            let minio_config = MinioConfig::from_env();
+            GridProcessorFactory::new(minio_config, 0) // 0 MB = minimal cache
         };
 
         // Load model dimension configurations from YAML files

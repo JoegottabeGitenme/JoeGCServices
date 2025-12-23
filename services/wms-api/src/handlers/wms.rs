@@ -864,6 +864,9 @@ async fn render_weather_data(
             .map_err(WmsError::from_rendering_error);
     }
 
+    // Check if model requires full grid reads (non-geographic projection)
+    let requires_full_grid = state.model_dimensions.requires_full_grid(model);
+
     if style == "numbers" {
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
 
@@ -880,6 +883,7 @@ async fn render_weather_data(
             forecast_hour,
             level.as_deref(),
             use_mercator,
+            requires_full_grid,
         )
             .await
             .map_err(WmsError::from_rendering_error);
@@ -903,6 +907,7 @@ async fn render_weather_data(
         Some(style),
         use_mercator,
         &state.grid_processor_factory,
+        requires_full_grid,
     )
         .await
         .map_err(WmsError::from_rendering_error)

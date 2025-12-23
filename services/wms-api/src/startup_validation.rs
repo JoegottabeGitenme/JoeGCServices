@@ -447,6 +447,8 @@ async fn run_single_validation(
     } else {
         // Get style file from layer config registry (single source of truth)
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(&target.model, &target.parameter);
+        // Check if model requires full grid reads (non-geographic projection)
+        let requires_full_grid = state.model_dimensions.requires_full_grid(&target.model);
         
         rendering::render_weather_data_with_level(
             &state.catalog,
@@ -462,6 +464,7 @@ async fn run_single_validation(
             &style_file,
             Some(target.style.as_str()),
             true, // use_mercator
+            requires_full_grid,
         )
         .await
     };

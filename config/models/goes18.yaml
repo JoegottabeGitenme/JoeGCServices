@@ -20,7 +20,7 @@ source:
   product: "ABI-L2-CMIPC"                # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [13]                            # Start with Clean IR only for testing
+  bands: [ 13 ]                            # Start with Clean IR only for testing
 
 grid:
   projection: geostationary
@@ -51,7 +51,7 @@ precaching:
   keep_recent: 3                        # Keep 3 most recent observations (~15 min, ~1.5GB)
   warm_on_ingest: true                  # Immediately warm when new data ingested
   poll_interval_secs: 60                # Background poll every 60s for missed data
-  parameters: [CMI_C02, CMI_C13]        # Only precache most-used bands (visible red, IR)
+  parameters: [ CMI_C02, CMI_C13 ]        # Only precache most-used bands (visible red, IR)
 
 parameters:
   # Blue Visible (0.47µm)

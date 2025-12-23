@@ -463,6 +463,148 @@ catalog.insert(CatalogEntry {
 }).await?;
 ```
 
+## Integration with Other OGC Services
+
+### EDR (Environmental Data Retrieval)
+
+The grid-processor provides the data access layer for EDR implementations. EDR is responsible for:
+- Query parsing (position, area, trajectory, corridor)
+- Output format conversion (CoverageJSON, GeoJSON)
+- Temporal aggregation across multiple datasets
+
+Grid-processor is responsible for:
+- Finding the right dataset given query parameters
+- Efficiently fetching grid data for a region or point
+- Caching chunks to optimize repeated queries
+
+#### EDR Query Type Mapping
+
+| EDR Query Type | grid-processor Method | Post-Processing |
+|----------------|----------------------|-----------------|
+| Position | `read_point(lon, lat)` | Convert to CoverageJSON point |
+| Area | `read_region(bbox)` | Convert GridRegion to CoverageJSON |
+| Cube | Multiple `read_region()` calls | Aggregate across time/levels |
+| Trajectory | Multiple `read_point()` calls | Iterate over path coordinates |
+| Corridor | `read_region()` + buffer | Sample along path with width |
+
+#### Example: EDR Position Query
+
+```rust
+use grid_processor::{GridDataService, DatasetQuery, BoundingBox};
+
+// EDR handler receives: GET /collections/gfs/position?coords=POINT(-95 35)&parameter-name=TMP
+async fn handle_edr_position(
+    service: &GridDataService,
+    lon: f64,
+    lat: f64,
+    parameter: &str,
+) -> Result<CoverageJSON, Error> {
+    // Build query from EDR request parameters
+    let query = DatasetQuery::forecast("gfs", parameter)
+        .at_level("2 m above ground")
+        .latest();
+    
+    // Use grid-processor for data access
+    let point_value = service.read_point(&query, lon, lat).await?;
+    
+    // EDR layer converts to CoverageJSON (not grid-processor's job)
+    let coverage = CoverageJSON::from_point(
+        lon, lat,
+        point_value.value,
+        &point_value.units,
+        &point_value.reference_time,
+    );
+    
+    Ok(coverage)
+}
+```
+
+#### Example: EDR Area Query
+
+```rust
+// EDR handler: GET /collections/gfs/area?bbox=-100,30,-90,40&parameter-name=TMP
+async fn handle_edr_area(
+    service: &GridDataService,
+    bbox: BoundingBox,
+    parameter: &str,
+) -> Result<CoverageJSON, Error> {
+    let query = DatasetQuery::forecast("gfs", parameter)
+        .at_level("2 m above ground")
+        .latest();
+    
+    // Get grid data - no output_size since we want native resolution
+    let region = service.read_region(&query, &bbox, None).await?;
+    
+    // Convert to CoverageJSON grid coverage
+    let coverage = CoverageJSON::from_grid(
+        &region.data,
+        region.width,
+        region.height,
+        &region.bbox,
+        &region.units,
+    );
+    
+    Ok(coverage)
+}
+```
+
+### WCS (Web Coverage Service)
+
+For WCS GetCoverage requests returning raw grid data:
+
+```rust
+// WCS handler: GetCoverage request
+async fn handle_wcs_getcoverage(
+    service: &GridDataService,
+    coverage_id: &str,  // e.g., "gfs_TMP_2m"
+    bbox: BoundingBox,
+    format: OutputFormat,
+) -> Result<Response, Error> {
+    let (model, parameter, level) = parse_coverage_id(coverage_id)?;
+    
+    let query = DatasetQuery::forecast(model, parameter)
+        .at_level(level)
+        .latest();
+    
+    let region = service.read_region(&query, &bbox, None).await?;
+    
+    // Encode to requested format (GeoTIFF, NetCDF, etc.)
+    match format {
+        OutputFormat::GeoTiff => encode_geotiff(&region),
+        OutputFormat::NetCdf => encode_netcdf(&region),
+        OutputFormat::Zarr => encode_zarr(&region),
+    }
+}
+```
+
+## Model-Specific Configuration
+
+Some models require special handling due to their coordinate systems. This is configured
+in the model YAML files:
+
+```yaml
+# config/models/hrrr.yaml
+model:
+  id: hrrr
+  name: "HRRR - High-Resolution Rapid Refresh"
+
+grid:
+  projection: lambert_conformal
+  requires_full_grid: true  # Cannot do partial bbox reads due to non-linear projection
+  
+  # Lambert Conformal projection parameters
+  projection_params:
+    lat_1: 38.5
+    lat_2: 38.5
+    lat_0: 38.5
+    lon_0: -97.5
+```
+
+| Config Field | Description | Default |
+|--------------|-------------|---------|
+| `requires_full_grid` | If true, always load entire grid (for non-geographic projections) | `false` |
+| `uses_360_longitude` | If true, longitude range is 0-360 instead of -180/180 | auto-detected |
+
 ## See Also
 
 - [Ingester Service](../services/ingester.md) - Uses ZarrWriter for storage

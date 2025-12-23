@@ -288,6 +288,8 @@ async fn warm_single_tile(
     } else {
         // Get style file from layer config registry (single source of truth)
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        // Check if model requires full grid reads (non-geographic projection)
+        let requires_full_grid = state.model_dimensions.requires_full_grid(model);
         
         rendering::render_weather_data_with_level(
             &state.catalog,
@@ -303,6 +305,7 @@ async fn warm_single_tile(
             &style_file,
             Some(style), // style_name
             true, // use_mercator
+            requires_full_grid,
         )
         .await
     };

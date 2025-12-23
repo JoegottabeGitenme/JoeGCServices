@@ -51,6 +51,22 @@ pub enum GridProcessorError {
     /// Interpolation error.
     #[error("interpolation error: {0}")]
     InterpolationError(String),
+    
+    /// Storage connection error.
+    #[error("storage connection error: {0}")]
+    Storage(String),
+    
+    /// Metadata parsing error.
+    #[error("metadata error: {0}")]
+    Metadata(String),
+    
+    /// Catalog query error.
+    #[error("catalog error: {0}")]
+    Catalog(String),
+    
+    /// Dataset not found.
+    #[error("dataset not found: {0}")]
+    NotFound(String),
 }
 
 impl GridProcessorError {

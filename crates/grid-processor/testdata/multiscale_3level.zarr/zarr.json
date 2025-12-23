@@ -1,0 +1,84 @@
+{
+  "zarr_format": 3,
+  "node_type": "group",
+  "attributes": {
+    "multiscales": [
+      {
+        "name": "test_TEST_VAR",
+        "version": "0.5",
+        "axes": [
+          {
+            "name": "y",
+            "type": "space",
+            "unit": "degree"
+          },
+          {
+            "name": "x",
+            "type": "space",
+            "unit": "degree"
+          }
+        ],
+        "datasets": [
+          {
+            "path": "0",
+            "coordinateTransformations": [
+              {
+                "type": "scale",
+                "scale": [
+                  2.8125,
+                  5.625
+                ]
+              }
+            ]
+          },
+          {
+            "path": "1",
+            "coordinateTransformations": [
+              {
+                "type": "scale",
+                "scale": [
+                  5.625,
+                  11.25
+                ]
+              }
+            ]
+          },
+          {
+            "path": "2",
+            "coordinateTransformations": [
+              {
+                "type": "scale",
+                "scale": [
+                  11.25,
+                  22.5
+                ]
+              }
+            ]
+          }
+        ],
+        "type": "mean",
+        "metadata": {
+          "method": "weather-wms pyramid",
+          "description": "Downsampled using 2x2 block aggregation"
+        }
+      }
+    ],
+    "model": "test",
+    "parameter": "TEST_VAR",
+    "level": "surface",
+    "units": "units",
+    "reference_time": "2024-12-22T00:00:00+00:00",
+    "forecast_hour": 0,
+    "bbox": [
+      -180.0,
+      -90.0,
+      180.0,
+      90.0
+    ],
+    "native_resolution": [
+      2.8125,
+      5.625
+    ],
+    "num_levels": 3
+  }
+}
