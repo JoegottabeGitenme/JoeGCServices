@@ -1,4 +1,3 @@
-- scope out creating an API for the grid processor so that we may use it for future EDR work
 - Would like to get different output formats (geotiff, black/white png, etc)
 - how to make EDR work
     - create validation page using lots of AI and pdf files and other specs we can find
@@ -11,7 +10,6 @@
     - grid processor will have it's own pod and cache and processing in the overall system, and can be deployed
       with/without services connected to it
     - need a way to load test gridprocessor without a service, so the API is important here
-- Need a better landing page with some sample queries
 - getFeatureInfo should support arbitrary html output
 - we have a projection crate and also reprojecting logic in the grid processor crate
 - could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or
@@ -49,3 +47,6 @@
 - why are we getting orphaned files constantly?
 - evicting things from chunk cache seems to bring things to a crawl, need to explain how evictions work and how we're
   getting chunk cache entry count
+- downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
+  eachother
+- ingester should be able to handle multiple downloads at once

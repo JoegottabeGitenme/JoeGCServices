@@ -46,7 +46,7 @@ pub async fn render_wind_barbs_tile(
     bbox: [f32; 4],
     forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    use wms_common::tile::{TileBufferConfig, tile_bbox};
     
     // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
@@ -70,13 +70,11 @@ pub async fn render_wind_barbs_tile(
     let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
         load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
     
-    // Determine if we should use expanded rendering
-    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
-        let config = ExpandedTileConfig::tiles_3x3();
-        let expanded_bbox = expanded_tile_bbox(&coord, &config);
-        
-        // Calculate actual expanded dimensions
-        let (exp_w, exp_h) = wms_common::tile::actual_expanded_dimensions(&coord, &config);
+    // Use pixel buffer approach for tile rendering (4x faster than 3x3 expansion)
+    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord {
+        let buffer_config = TileBufferConfig::from_env();
+        let tile_bounds = tile_bbox(&coord);
+        let expanded_bbox = buffer_config.expanded_bbox(&tile_bounds);
         
         (
             [
@@ -85,9 +83,9 @@ pub async fn render_wind_barbs_tile(
                 expanded_bbox.max_x as f32,
                 expanded_bbox.max_y as f32,
             ],
-            exp_w as usize,
-            exp_h as usize,
-            Some((coord, config)),
+            buffer_config.render_width() as usize,
+            buffer_config.render_height() as usize,
+            Some(buffer_config),
         )
     } else {
         (bbox, width as usize, height as usize, None)
@@ -98,7 +96,7 @@ pub async fn render_wind_barbs_tile(
         render_height = render_height,
         bbox_min_lon = render_bbox[0],
         bbox_max_lon = render_bbox[2],
-        expanded = needs_crop.is_some(),
+        buffer_pixels = buffer_config.map(|c| c.buffer_pixels).unwrap_or(0),
         "Rendering wind barbs"
     );
     
@@ -113,19 +111,19 @@ pub async fn render_wind_barbs_tile(
     );
     
     // Render wind barbs with geographic alignment
-    let config = barbs::BarbConfig::default();
+    let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
         &u_resampled,
         &v_resampled,
         render_width,
         render_height,
         render_bbox,
-        &config,
+        &barb_config,
     );
     
-    // Crop to center tile if we used expanded rendering
-    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
-        crop_center_tile(&barb_pixels, render_width as u32, &coord, &tile_config)
+    // Crop to center tile if we used buffer rendering
+    let final_pixels = if let Some(buf_config) = buffer_config {
+        buf_config.crop_to_tile(&barb_pixels)
     } else {
         barb_pixels
     };
@@ -162,7 +160,7 @@ pub async fn render_wind_barbs_tile_with_level(
     forecast_hour: Option<u32>,
     level: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile};
+    use wms_common::tile::{TileBufferConfig, tile_bbox};
     
     // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, level).await?;
@@ -186,13 +184,11 @@ pub async fn render_wind_barbs_tile_with_level(
     let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
         load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
     
-    // Determine if we should use expanded rendering
-    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
-        let config = ExpandedTileConfig::tiles_3x3();
-        let expanded_bbox = expanded_tile_bbox(&coord, &config);
-        
-        // Calculate actual expanded dimensions
-        let (exp_w, exp_h) = wms_common::tile::actual_expanded_dimensions(&coord, &config);
+    // Use pixel buffer approach for tile rendering (4x faster than 3x3 expansion)
+    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord {
+        let buffer_config = TileBufferConfig::from_env();
+        let tile_bounds = tile_bbox(&coord);
+        let expanded_bbox = buffer_config.expanded_bbox(&tile_bounds);
         
         (
             [
@@ -201,9 +197,9 @@ pub async fn render_wind_barbs_tile_with_level(
                 expanded_bbox.max_x as f32,
                 expanded_bbox.max_y as f32,
             ],
-            exp_w as usize,
-            exp_h as usize,
-            Some((coord, config)),
+            buffer_config.render_width() as usize,
+            buffer_config.render_height() as usize,
+            Some(buffer_config),
         )
     } else {
         (bbox, width as usize, height as usize, None)
@@ -214,7 +210,7 @@ pub async fn render_wind_barbs_tile_with_level(
         render_height = render_height,
         bbox_min_lon = render_bbox[0],
         bbox_max_lon = render_bbox[2],
-        expanded = needs_crop.is_some(),
+        buffer_pixels = buffer_config.map(|c| c.buffer_pixels).unwrap_or(0),
         level = ?level,
         "Rendering wind barbs with level"
     );
@@ -230,19 +226,19 @@ pub async fn render_wind_barbs_tile_with_level(
     );
     
     // Render wind barbs with geographic alignment
-    let config = barbs::BarbConfig::default();
+    let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
         &u_resampled,
         &v_resampled,
         render_width,
         render_height,
         render_bbox,
-        &config,
+        &barb_config,
     );
     
-    // Crop to center tile if we used expanded rendering
-    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
-        crop_center_tile(&barb_pixels, render_width as u32, &coord, &tile_config)
+    // Crop to center tile if we used buffer rendering
+    let final_pixels = if let Some(buf_config) = buffer_config {
+        buf_config.crop_to_tile(&barb_pixels)
     } else {
         barb_pixels
     };

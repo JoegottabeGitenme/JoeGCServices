@@ -4,8 +4,48 @@
 
 **Author:** Claude (AI Assistant)  
 **Date:** December 12, 2024  
-**Status:** Proposed  
+**Status:** ✅ IMPLEMENTED (December 23, 2024)  
 **Related:** [GRID_PROCESSOR_IMPLEMENTATION_PLAN.md](./GRID_PROCESSOR_IMPLEMENTATION_PLAN.md)
+
+---
+
+## Implementation Summary (December 23, 2024)
+
+The pixel buffer approach has been implemented, replacing the inefficient 3x3 tile expansion:
+
+### Benchmark Results
+
+| Approach | Render Size | Time | Speedup |
+|----------|-------------|------|---------|
+| No expansion | 256×256 | 1.7 ms | 9.9x (edge artifacts) |
+| **3x3 expansion (old)** | **768×768** | **16.8 ms** | **baseline** |
+| 60px buffer | 376×376 | 4.0 ms | 4.2x faster |
+| **120px buffer (new default)** | **496×496** | **6.9 ms** | **2.4x faster** |
+
+The 120px buffer was chosen as the default because 60px still showed minor edge clipping with 108px wind barbs in some cases.
+
+### Files Changed
+
+1. **`crates/wms-common/src/tile.rs`**
+   - Added `TileBufferConfig` struct with `expanded_bbox()` and `crop_to_tile()` methods
+   - Deprecated `ExpandedTileConfig::tiles_3x3()` in favor of `TileBufferConfig`
+
+2. **`services/wms-api/src/rendering/wind.rs`**
+   - Updated `render_wind_barbs_tile()` to use `TileBufferConfig`
+   - Updated `render_wind_barbs_tile_with_level()` to use `TileBufferConfig`
+
+3. **`services/wms-api/src/rendering/mod.rs`**
+   - Updated `render_numbers_tile_with_buffer()` to use `TileBufferConfig`
+
+4. **`crates/renderer/benches/barbs_benchmarks.rs`**
+   - Added benchmarks for tile expansion comparison
+
+### Configuration
+
+```bash
+# Default is 120px buffer (ensures no clipping for 108px wind barbs)
+TILE_RENDER_BUFFER_PIXELS=120
+```
 
 ---
 

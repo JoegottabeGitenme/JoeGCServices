@@ -527,6 +527,83 @@ let png = create_png_from_precomputed(&indices, w, h, &palette)?;
 | Auto extract | 349 µs | 803 µs | 3.56 ms |
 | **Pre-computed** | **22 µs** | **63 µs** | **210 µs** |
 
+### 4. Tile Buffer for Edge Features
+
+Wind barbs, numbers, and other features that can extend beyond their anchor point use a **pixel buffer** approach to prevent clipping at tile boundaries.
+
+#### The Problem
+
+Features rendered near tile edges can be clipped:
+```
+┌─────────────┬─────────────┐
+│      ↗      │             │
+│         ↗   │←clipped     │  Wind barb cut off at tile edge
+│    ↗        │             │
+└─────────────┴─────────────┘
+```
+
+#### Old Approach: 3x3 Tile Expansion (Slow)
+
+Previously, we rendered a 3x3 grid of tiles (768×768) and cropped to the center tile:
+- **589,824 pixels** rendered
+- **9x the data** fetched
+- **~17ms** per tile
+
+#### New Approach: Pixel Buffer (Fast)
+
+Now we render with a configurable pixel buffer (default 120px):
+```
+         ┌─────────────────────────┐
+         │      120px buffer       │
+         │   ┌─────────────────┐   │
+         │   │                 │   │
+         │   │   256×256 tile  │   │
+         │   │                 │   │
+         │   └─────────────────┘   │
+         │                         │
+         └─────────────────────────┘
+              496×496 render
+```
+
+- **246,016 pixels** rendered (2.4x less than 3x3)
+- **~6.9ms** per tile (**2.4x faster**)
+- No edge clipping artifacts
+
+#### Configuration
+
+```bash
+# Default: 120px buffer (sufficient for 108px wind barbs)
+TILE_RENDER_BUFFER_PIXELS=120
+```
+
+#### Implementation
+
+```rust
+use wms_common::tile::TileBufferConfig;
+
+// Get buffer config (reads TILE_RENDER_BUFFER_PIXELS env var)
+let buffer_config = TileBufferConfig::from_env();
+
+// Expand bbox by buffer amount
+let expanded_bbox = buffer_config.expanded_bbox(&tile_bbox);
+
+// Render at expanded size
+let render_width = buffer_config.render_width();   // 496
+let render_height = buffer_config.render_height(); // 496
+
+// ... render features ...
+
+// Crop to center tile
+let final_pixels = buffer_config.crop_to_tile(&expanded_pixels);
+```
+
+#### Performance Comparison
+
+| Approach | Render Size | Time | Speedup |
+|----------|-------------|------|---------|
+| 3x3 expansion | 768×768 | 16.8 ms | baseline |
+| **120px buffer** | **496×496** | **6.9 ms** | **2.4x faster** |
+
 ### Chunk Size Selection
 
 Zarr chunk size affects read efficiency:

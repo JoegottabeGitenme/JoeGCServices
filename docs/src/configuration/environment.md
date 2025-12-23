@@ -41,6 +41,15 @@ RUST_LOG=info                      # Logging: trace, debug, info, warn, error
 RUST_BACKTRACE=1                   # Enable backtraces
 ```
 
+### Tile Rendering
+```bash
+# Buffer pixels for wind barbs and numbers rendering
+# Prevents edge clipping artifacts at tile boundaries
+TILE_RENDER_BUFFER_PIXELS=120      # Default: 120px (good for 108px barbs)
+                                   # Renders 496x496 and crops to 256x256
+                                   # 2.4x faster than old 3x3 tile expansion
+```
+
 ### Caching
 ```bash
 # L1 (In-Memory) Tile Cache
