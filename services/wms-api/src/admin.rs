@@ -1,7 +1,7 @@
 //! Admin dashboard API endpoints.
 //!
 //! Provides endpoints for monitoring and managing the WMS/ingestion system.
-//! 
+//!
 //! Note: Ingestion is handled by the separate `ingester` service. The `/admin/ingest`
 //! endpoint proxies requests to the ingester service.
 
@@ -126,7 +126,7 @@ pub struct StorageTreeResponse {
 pub struct StorageTreeNode {
     pub name: String,
     pub path: String,
-    pub node_type: String,  // "file" or "directory"
+    pub node_type: String, // "file" or "directory"
     pub size: u64,
     pub children: Option<Vec<StorageTreeNode>>,
     pub file_count: u64,
@@ -318,12 +318,12 @@ pub async fn ingestion_status_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Admin: Getting ingestion status");
-    
+
     let catalog = &state.catalog;
-    
+
     // Get aggregated model stats directly from database
     let model_stats = catalog.get_model_stats().await.unwrap_or_default();
-    
+
     // Convert to API response format
     let mut models: Vec<ModelStatus> = model_stats
         .iter()
@@ -332,15 +332,17 @@ pub async fn ingestion_status_handler(
             name: format!("{} Model", s.model.to_uppercase()),
             status: "active".to_string(),
             enabled: true,
-            last_ingest: s.last_ingest.map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            last_ingest: s
+                .last_ingest
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
             total_files: s.dataset_count,
             parameters: s.parameters.clone(),
         })
         .collect();
-    
+
     // Sort models by name for consistent ordering
     models.sort_by(|a, b| a.id.cmp(&b.id));
-    
+
     // Get detailed storage stats from MinIO (raw vs shredded breakdown)
     let storage_stats = state.storage.detailed_stats().await.unwrap_or_else(|e| {
         warn!(error = %e, "Failed to get detailed storage stats, using defaults");
@@ -354,11 +356,11 @@ pub async fn ingestion_status_handler(
             bucket: "unknown".to_string(),
         }
     });
-    
+
     // Calculate totals from model stats
     let total_datasets: u64 = model_stats.iter().map(|s| s.dataset_count).sum();
     let total_parameters: u64 = model_stats.iter().map(|s| s.parameter_count).sum();
-    
+
     let catalog_summary = CatalogSummary {
         total_datasets,
         total_parameters,
@@ -367,13 +369,16 @@ pub async fn ingestion_status_handler(
         shredded_size_bytes: storage_stats.shredded_size_bytes,
         raw_object_count: storage_stats.raw_object_count,
         shredded_object_count: storage_stats.shredded_object_count,
-        models: models.iter().map(|m| ModelCatalogInfo {
-            model: m.id.clone(),
-            parameter_count: m.parameters.len() as u64,
-            dataset_count: m.total_files,
-        }).collect(),
+        models: models
+            .iter()
+            .map(|m| ModelCatalogInfo {
+                model: m.id.clone(),
+                parameter_count: m.parameters.len() as u64,
+                dataset_count: m.total_files,
+            })
+            .collect(),
     };
-    
+
     let cpu_cores = num_cpus::get();
     let system_info = SystemInfo {
         cache_enabled: true,
@@ -382,13 +387,13 @@ pub async fn ingestion_status_handler(
         cpu_cores,
         worker_threads: cpu_cores, // Default to CPU cores
     };
-    
+
     let response = IngestionStatusResponse {
         models,
         catalog_summary,
         system_info,
     };
-    
+
     Json(response)
 }
 
@@ -398,9 +403,9 @@ pub async fn database_details_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Admin: Getting detailed database stats");
-    
+
     let catalog = &state.catalog;
-    
+
     // Get detailed per-parameter stats
     let param_stats = match catalog.get_detailed_parameter_stats().await {
         Ok(stats) => {
@@ -412,10 +417,11 @@ pub async fn database_details_handler(
             Vec::new()
         }
     };
-    
+
     // Group by model for the response
-    let mut models_map: std::collections::HashMap<String, Vec<ParameterDetail>> = std::collections::HashMap::new();
-    
+    let mut models_map: std::collections::HashMap<String, Vec<ParameterDetail>> =
+        std::collections::HashMap::new();
+
     for stat in &param_stats {
         models_map
             .entry(stat.model.clone())
@@ -428,7 +434,7 @@ pub async fn database_details_handler(
                 total_size_bytes: stat.total_size_bytes,
             });
     }
-    
+
     // Convert to sorted list
     let mut models: Vec<ModelDetail> = models_map
         .into_iter()
@@ -444,13 +450,13 @@ pub async fn database_details_handler(
             }
         })
         .collect();
-    
+
     models.sort_by(|a, b| a.model.cmp(&b.model));
-    
+
     // Get database-level totals
     let total_datasets: u64 = param_stats.iter().map(|s| s.count).sum();
     let total_size: u64 = param_stats.iter().map(|s| s.total_size_bytes).sum();
-    
+
     Json(DatabaseDetailsResponse {
         models,
         total_datasets,
@@ -466,9 +472,9 @@ pub async fn database_datasets_handler(
     Path((model, parameter)): Path<(String, String)>,
 ) -> impl IntoResponse {
     info!("Admin: Getting datasets for {}/{}", model, parameter);
-    
+
     let catalog = &state.catalog;
-    
+
     match catalog.get_datasets_for_parameter(&model, &parameter).await {
         Ok(datasets) => {
             let response: Vec<DatasetInfoResponse> = datasets
@@ -488,61 +494,67 @@ pub async fn database_datasets_handler(
         }
         Err(e) => {
             error!("Failed to get datasets: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get datasets: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get datasets: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
 /// GET /admin/storage/tree - Get MinIO storage as a tree structure
-pub async fn storage_tree_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn storage_tree_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting storage tree");
-    
+
     // List all objects with sizes in MinIO
     let all_objects = match state.storage.list_with_sizes("").await {
         Ok(paths) => paths,
         Err(e) => {
             error!("Failed to list storage: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to list storage: {}", e)).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to list storage: {}", e),
+            )
+                .into_response();
         }
     };
-    
+
     // Build tree structure from paths
     let tree = build_storage_tree(&all_objects);
-    
+
     Json(tree).into_response()
 }
 
 /// Build a tree structure from flat list of paths with sizes
 fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
     use std::collections::HashMap;
-    
+
     // First pass: collect all directories and files
     let mut dir_sizes: HashMap<String, (u64, u64)> = HashMap::new(); // path -> (size, count)
     let mut files: Vec<(String, String, u64)> = Vec::new(); // (dir_path, filename, size)
-    
+
     let mut total_size: u64 = 0;
     let mut total_objects: u64 = 0;
-    
+
     for (path, file_size) in objects {
         total_size += file_size;
         total_objects += 1;
-        
+
         let parts: Vec<&str> = path.split('/').collect();
         if parts.is_empty() {
             continue;
         }
-        
+
         // Track file
         if parts.len() >= 2 {
-            let dir_path = parts[..parts.len()-1].join("/");
-            let filename = parts[parts.len()-1].to_string();
+            let dir_path = parts[..parts.len() - 1].join("/");
+            let filename = parts[parts.len() - 1].to_string();
             files.push((dir_path, filename, *file_size));
         } else {
             files.push(("".to_string(), parts[0].to_string(), *file_size));
         }
-        
+
         // Accumulate sizes for all parent directories
         let mut current = String::new();
         for (i, part) in parts.iter().enumerate() {
@@ -550,7 +562,7 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
                 current.push('/');
             }
             current.push_str(part);
-            
+
             // Only track directories (not the file itself)
             if i < parts.len() - 1 {
                 let entry = dir_sizes.entry(current.clone()).or_insert((0, 0));
@@ -559,7 +571,7 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
             }
         }
     }
-    
+
     // Build tree structure
     fn build_node(
         path: &str,
@@ -568,14 +580,18 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
         files: &[(String, String, u64)],
     ) -> StorageTreeNode {
         let (size, file_count) = dir_sizes.get(path).copied().unwrap_or((0, 0));
-        
+
         // Get immediate children
         let mut children: Vec<StorageTreeNode> = Vec::new();
-        
+
         // Add subdirectories
-        let prefix = if path.is_empty() { String::new() } else { format!("{}/", path) };
+        let prefix = if path.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", path)
+        };
         let mut seen_subdirs: std::collections::HashSet<String> = std::collections::HashSet::new();
-        
+
         for (dir_path, _) in dir_sizes.iter() {
             if dir_path.starts_with(&prefix) {
                 let remainder = &dir_path[prefix.len()..];
@@ -591,7 +607,7 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
                 }
             }
         }
-        
+
         // Add files in this directory
         for (file_dir, filename, fsize) in files {
             if file_dir == path {
@@ -609,16 +625,14 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
                 });
             }
         }
-        
+
         // Sort: directories first, then files, alphabetically
-        children.sort_by(|a, b| {
-            match (&a.node_type[..], &b.node_type[..]) {
-                ("directory", "file") => std::cmp::Ordering::Less,
-                ("file", "directory") => std::cmp::Ordering::Greater,
-                _ => a.name.cmp(&b.name),
-            }
+        children.sort_by(|a, b| match (&a.node_type[..], &b.node_type[..]) {
+            ("directory", "file") => std::cmp::Ordering::Less,
+            ("file", "directory") => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
         });
-        
+
         StorageTreeNode {
             name: name.to_string(),
             path: path.to_string(),
@@ -628,7 +642,7 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
             file_count,
         }
     }
-    
+
     // Build root nodes
     let mut root_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (dir_path, _) in &dir_sizes {
@@ -636,14 +650,14 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
             root_names.insert(root.to_string());
         }
     }
-    
+
     let mut nodes: Vec<StorageTreeNode> = root_names
         .into_iter()
         .map(|name| build_node(&name, &name, &dir_sizes, &files))
         .collect();
-    
+
     nodes.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     StorageTreeResponse {
         nodes,
         total_size,
@@ -653,17 +667,19 @@ fn build_storage_tree(objects: &[(String, u64)]) -> StorageTreeResponse {
 }
 
 /// GET /admin/config/models - List all model configurations
-pub async fn list_models_handler(
-    Extension(_state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn list_models_handler(Extension(_state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Listing model configurations");
-    
+
     // Try to load model configs from YAML
     match load_model_summaries_from_yaml().await {
         Ok(models) => Json(ModelsListResponse { models }).into_response(),
         Err(e) => {
             warn!("Failed to load model configs: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load configs: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load configs: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -674,16 +690,21 @@ pub async fn get_model_config_handler(
     Path(model_id): Path<String>,
 ) -> impl IntoResponse {
     info!("Admin: Getting config for model: {}", model_id);
-    
+
     match load_model_yaml(&model_id).await {
-        Ok(Some(yaml)) => Json(ModelConfigYamlResponse { 
-            id: model_id, 
-            yaml 
-        }).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, format!("Model '{}' not found", model_id)).into_response(),
+        Ok(Some(yaml)) => Json(ModelConfigYamlResponse { id: model_id, yaml }).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            format!("Model '{}' not found", model_id),
+        )
+            .into_response(),
         Err(e) => {
             warn!("Failed to load model config: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load config: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -694,10 +715,10 @@ pub async fn ingestion_log_handler(
     Query(params): Query<IngestionLogQuery>,
 ) -> impl IntoResponse {
     info!("Admin: Getting ingestion log");
-    
+
     let limit = params.limit.unwrap_or(50).min(500);
     let catalog = &state.catalog;
-    
+
     // Get recent ingestions (last 60 minutes by default)
     match catalog.get_recent_ingestions(60).await {
         Ok(datasets) => {
@@ -719,53 +740,56 @@ pub async fn ingestion_log_handler(
                     storage_path: d.storage_path,
                 })
                 .collect();
-            
+
             // Sort by timestamp descending (most recent first)
             entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-            
+
             let total_count = entries.len();
-            Json(IngestionLogResponse { entries, total_count }).into_response()
+            Json(IngestionLogResponse {
+                entries,
+                total_count,
+            })
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to get ingestion log: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get log: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get log: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
 /// GET /api/admin/ingestion/active - Get currently active and recent ingestions
-/// 
+///
 /// Proxies to the ingester service's /status endpoint.
 pub async fn ingestion_active_handler(
     Extension(_state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Admin: Getting active ingestion status from ingester service");
-    
+
     // Get ingester URL from environment
-    let ingester_url = std::env::var("INGESTER_URL")
-        .unwrap_or_else(|_| "http://ingester:8082".to_string());
-    
+    let ingester_url =
+        std::env::var("INGESTER_URL").unwrap_or_else(|_| "http://ingester:8082".to_string());
+
     let client = reqwest::Client::new();
-    
-    match client
-        .get(format!("{}/status", ingester_url))
-        .send()
-        .await
-    {
-        Ok(response) => {
-            match response.json::<serde_json::Value>().await {
-                Ok(status) => Json(status).into_response(),
-                Err(e) => {
-                    warn!(error = %e, "Failed to parse ingester status response");
-                    Json(serde_json::json!({
-                        "active": [],
-                        "recent": [],
-                        "total_completed": 0,
-                        "error": format!("Failed to parse response: {}", e)
-                    })).into_response()
-                }
+
+    match client.get(format!("{}/status", ingester_url)).send().await {
+        Ok(response) => match response.json::<serde_json::Value>().await {
+            Ok(status) => Json(status).into_response(),
+            Err(e) => {
+                warn!(error = %e, "Failed to parse ingester status response");
+                Json(serde_json::json!({
+                    "active": [],
+                    "recent": [],
+                    "total_completed": 0,
+                    "error": format!("Failed to parse response: {}", e)
+                }))
+                .into_response()
             }
-        }
+        },
         Err(e) => {
             warn!(error = %e, "Failed to connect to ingester service for status");
             Json(serde_json::json!({
@@ -773,7 +797,8 @@ pub async fn ingestion_active_handler(
                 "recent": [],
                 "total_completed": 0,
                 "error": format!("Ingester service unavailable: {}", e)
-            })).into_response()
+            }))
+            .into_response()
         }
     }
 }
@@ -784,13 +809,21 @@ pub async fn preview_shred_handler(
     Query(params): Query<ShredPreviewQuery>,
 ) -> impl IntoResponse {
     info!("Admin: Preview shredding for model: {}", params.model);
-    
+
     match build_shred_preview(&params.model).await {
         Ok(Some(preview)) => Json(preview).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, format!("Model '{}' not found", params.model)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            format!("Model '{}' not found", params.model),
+        )
+            .into_response(),
         Err(e) => {
             warn!("Failed to build shred preview: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to build preview: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to build preview: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -802,7 +835,7 @@ pub async fn update_model_config_handler(
     Json(payload): Json<UpdateConfigRequest>,
 ) -> impl IntoResponse {
     info!("Admin: Updating config for model: {}", model_id);
-    
+
     // Validate YAML syntax
     let validation_errors = validate_model_yaml(&payload.yaml);
     if !validation_errors.is_empty() {
@@ -810,29 +843,32 @@ pub async fn update_model_config_handler(
             success: false,
             message: "Validation failed".to_string(),
             validation_errors,
-        }).into_response();
+        })
+        .into_response();
     }
-    
+
     // Save the config
     match save_model_yaml(&model_id, &payload.yaml).await {
         Ok(()) => Json(UpdateConfigResponse {
             success: true,
             message: format!("Configuration for '{}' saved successfully", model_id),
             validation_errors: vec![],
-        }).into_response(),
+        })
+        .into_response(),
         Err(e) => {
             warn!("Failed to save model config: {}", e);
             Json(UpdateConfigResponse {
                 success: false,
                 message: format!("Failed to save: {}", e),
                 validation_errors: vec![],
-            }).into_response()
+            })
+            .into_response()
         }
     }
 }
 
 /// POST /admin/ingest - Proxy ingestion request to ingester service
-/// 
+///
 /// This endpoint is called by the downloader service after successfully
 /// downloading a weather data file. It proxies the request to the dedicated
 /// ingester service which handles GRIB2/NetCDF parsing, Zarr conversion,
@@ -847,13 +883,13 @@ pub async fn ingest_handler(
         model = ?payload.model,
         "Admin: Proxying ingestion request to ingester service"
     );
-    
+
     // Get ingester URL from environment (default to docker-compose service name)
-    let ingester_url = std::env::var("INGESTER_URL")
-        .unwrap_or_else(|_| "http://ingester:8082".to_string());
-    
+    let ingester_url =
+        std::env::var("INGESTER_URL").unwrap_or_else(|_| "http://ingester:8082".to_string());
+
     let client = reqwest::Client::new();
-    
+
     match client
         .post(format!("{}/ingest", ingester_url))
         .json(&payload)
@@ -867,13 +903,19 @@ pub async fn ingest_handler(
                     if status.is_success() && ingest_response.success {
                         // Invalidate capabilities cache when new data is ingested
                         state.capabilities_cache.invalidate().await;
-                        tracing::debug!("Invalidated capabilities cache after successful ingestion");
+                        tracing::debug!(
+                            "Invalidated capabilities cache after successful ingestion"
+                        );
                     }
                     if status.is_success() {
                         (StatusCode::OK, Json(ingest_response)).into_response()
                     } else {
-                        (StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), 
-                         Json(ingest_response)).into_response()
+                        (
+                            StatusCode::from_u16(status.as_u16())
+                                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                            Json(ingest_response),
+                        )
+                            .into_response()
                     }
                 }
                 Err(e) => {
@@ -888,7 +930,8 @@ pub async fn ingest_handler(
                             reference_time: None,
                             parameters: vec![],
                         }),
-                    ).into_response()
+                    )
+                        .into_response()
                 }
             }
         }
@@ -904,7 +947,8 @@ pub async fn ingest_handler(
                     reference_time: None,
                     parameters: vec![],
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -917,18 +961,18 @@ pub async fn ingest_handler(
 async fn load_model_summaries_from_yaml() -> anyhow::Result<Vec<ModelSummary>> {
     use std::fs;
     use std::path::Path;
-    
+
     let models_dir = Path::new("config/models");
     if !models_dir.exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut summaries = Vec::new();
-    
+
     for entry in fs::read_dir(models_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if let Ok(Some(summary)) = load_model_summary(stem).await {
@@ -937,7 +981,7 @@ async fn load_model_summaries_from_yaml() -> anyhow::Result<Vec<ModelSummary>> {
             }
         }
     }
-    
+
     Ok(summaries)
 }
 
@@ -945,21 +989,21 @@ async fn load_model_summaries_from_yaml() -> anyhow::Result<Vec<ModelSummary>> {
 async fn load_model_summary(model_id: &str) -> anyhow::Result<Option<ModelSummary>> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-    
+
     if !config_path.exists() {
         return Ok(None);
     }
-    
+
     let contents = fs::read_to_string(&config_path)?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-    
+
     let model = yaml.get("model");
     let source = yaml.get("source");
     let grid = yaml.get("grid");
     let parameters = yaml.get("parameters");
-    
+
     let summary = ModelSummary {
         id: model_id.to_string(),
         name: model
@@ -987,7 +1031,7 @@ async fn load_model_summary(model_id: &str) -> anyhow::Result<Option<ModelSummar
             .map(|s| s.len())
             .unwrap_or(0),
     };
-    
+
     Ok(Some(summary))
 }
 
@@ -995,13 +1039,13 @@ async fn load_model_summary(model_id: &str) -> anyhow::Result<Option<ModelSummar
 async fn load_model_yaml(model_id: &str) -> anyhow::Result<Option<String>> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-    
+
     if !config_path.exists() {
         return Ok(None);
     }
-    
+
     let contents = fs::read_to_string(&config_path)?;
     Ok(Some(contents))
 }
@@ -1010,15 +1054,15 @@ async fn load_model_yaml(model_id: &str) -> anyhow::Result<Option<String>> {
 async fn save_model_yaml(model_id: &str, yaml_content: &str) -> anyhow::Result<()> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-    
+
     // Create backup of existing file
     if config_path.exists() {
         let backup_path = Path::new("config/models").join(format!("{}.yaml.bak", model_id));
         fs::copy(&config_path, &backup_path)?;
     }
-    
+
     fs::write(&config_path, yaml_content)?;
     Ok(())
 }
@@ -1026,7 +1070,7 @@ async fn save_model_yaml(model_id: &str, yaml_content: &str) -> anyhow::Result<(
 /// Validate YAML content for a model configuration
 fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
     let mut errors = Vec::new();
-    
+
     // Check YAML syntax
     let yaml: serde_yaml::Value = match serde_yaml::from_str(yaml_content) {
         Ok(v) => v,
@@ -1035,7 +1079,7 @@ fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
             return errors;
         }
     };
-    
+
     // Check required sections
     if yaml.get("model").is_none() {
         errors.push("Missing required section: 'model'".to_string());
@@ -1048,7 +1092,7 @@ fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
             errors.push("Missing required field: 'model.name'".to_string());
         }
     }
-    
+
     if yaml.get("source").is_none() {
         errors.push("Missing required section: 'source'".to_string());
     } else {
@@ -1057,7 +1101,7 @@ fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
             errors.push("Missing required field: 'source.type'".to_string());
         }
     }
-    
+
     if yaml.get("grid").is_none() {
         errors.push("Missing required section: 'grid'".to_string());
     } else {
@@ -1066,22 +1110,25 @@ fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
             errors.push("Missing required field: 'grid.projection'".to_string());
         }
     }
-    
+
     if yaml.get("schedule").is_none() {
         errors.push("Missing required section: 'schedule'".to_string());
     }
-    
+
     // Check parameters array
     if let Some(params) = yaml.get("parameters") {
         if let Some(params_seq) = params.as_sequence() {
             for (i, param) in params_seq.iter().enumerate() {
                 if param.get("name").is_none() {
-                    errors.push(format!("Parameter {} missing required field: 'name'", i + 1));
+                    errors.push(format!(
+                        "Parameter {} missing required field: 'name'",
+                        i + 1
+                    ));
                 }
             }
         }
     }
-    
+
     errors
 }
 
@@ -1089,83 +1136,92 @@ fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
 async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPreviewResponse>> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-    
+
     if !config_path.exists() {
         return Ok(None);
     }
-    
+
     let contents = fs::read_to_string(&config_path)?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-    
+
     let model = yaml.get("model");
     let source = yaml.get("source");
-    
+
     let model_name = model
         .and_then(|m| m.get("name"))
         .and_then(|v| v.as_str())
         .unwrap_or(model_id)
         .to_string();
-    
+
     let source_type = source
         .and_then(|s| s.get("type"))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
-    
+
     let mut parameters_to_extract = Vec::new();
     let mut total_extractions = 0;
-    
+
     if let Some(params) = yaml.get("parameters") {
         if let Some(params_seq) = params.as_sequence() {
             for param in params_seq {
-                let name = param.get("name")
+                let name = param
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                
-                let description = param.get("description")
+
+                let description = param
+                    .get("description")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                
-                let style = param.get("style")
+
+                let style = param
+                    .get("style")
                     .and_then(|v| v.as_str())
                     .unwrap_or("default")
                     .to_string();
-                
-                let units = param.get("units")
+
+                let units = param
+                    .get("units")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                
+
                 let mut levels = Vec::new();
-                
+
                 if let Some(levels_val) = param.get("levels") {
                     if let Some(levels_seq) = levels_val.as_sequence() {
                         for level in levels_seq {
-                            let level_type = level.get("type")
+                            let level_type = level
+                                .get("type")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("surface")
                                 .to_string();
-                            
+
                             // Handle single value or array of values
                             if let Some(value) = level.get("value") {
-                                let display = level.get("display")
+                                let display = level
+                                    .get("display")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(&format!("{:?}", value))
                                     .to_string();
-                                
-                                let value_str = value.as_i64()
+
+                                let value_str = value
+                                    .as_i64()
                                     .map(|v| v.to_string())
                                     .or_else(|| value.as_str().map(|s| s.to_string()));
-                                
+
                                 let storage_path = format!(
                                     "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                    model_id, name, display.replace(' ', "_")
+                                    model_id,
+                                    name,
+                                    display.replace(' ', "_")
                                 );
-                                
+
                                 levels.push(ShredLevel {
                                     level_type: level_type.clone(),
                                     value: value_str,
@@ -1175,18 +1231,22 @@ async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPrevi
                                 total_extractions += 1;
                             } else if let Some(values) = level.get("values") {
                                 if let Some(values_seq) = values.as_sequence() {
-                                    let display_template = level.get("display_template")
+                                    let display_template = level
+                                        .get("display_template")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("{value}");
-                                    
+
                                     for val in values_seq {
                                         if let Some(v) = val.as_i64() {
-                                            let display = display_template.replace("{value}", &v.to_string());
+                                            let display =
+                                                display_template.replace("{value}", &v.to_string());
                                             let storage_path = format!(
                                                 "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                                model_id, name, display.replace(' ', "_")
+                                                model_id,
+                                                name,
+                                                display.replace(' ', "_")
                                             );
-                                            
+
                                             levels.push(ShredLevel {
                                                 level_type: level_type.clone(),
                                                 value: Some(v.to_string()),
@@ -1199,16 +1259,19 @@ async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPrevi
                                 }
                             } else {
                                 // Level with no specific value (e.g., surface, MSL)
-                                let display = level.get("display")
+                                let display = level
+                                    .get("display")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(&level_type)
                                     .to_string();
-                                
+
                                 let storage_path = format!(
                                     "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                    model_id, name, display.replace(' ', "_")
+                                    model_id,
+                                    name,
+                                    display.replace(' ', "_")
                                 );
-                                
+
                                 levels.push(ShredLevel {
                                     level_type: level_type.clone(),
                                     value: None,
@@ -1220,7 +1283,7 @@ async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPrevi
                         }
                     }
                 }
-                
+
                 parameters_to_extract.push(ShredParameter {
                     name,
                     description,
@@ -1231,7 +1294,7 @@ async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPrevi
             }
         }
     }
-    
+
     Ok(Some(ShredPreviewResponse {
         model_id: model_id.to_string(),
         model_name,
@@ -1295,50 +1358,52 @@ pub async fn cleanup_status_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Admin: Getting cleanup status");
-    
+
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
     let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
-    
+
     let expired_count = state.catalog.count_expired().await.unwrap_or(0);
-    
+
     // Get list of models from the database
     let models = state.catalog.list_models().await.unwrap_or_default();
-    
+
     let mut model_retentions: Vec<ModelRetentionInfo> = Vec::new();
     let mut purge_preview: Vec<ModelPurgePreview> = Vec::new();
     let mut total_purge_size_bytes: u64 = 0;
-    
+
     let now = Utc::now();
-    
+
     for model in &models {
         let retention_hours = config.get_retention_hours(model);
         let cutoff = now - chrono::Duration::hours(retention_hours as i64);
-        
+
         model_retentions.push(ModelRetentionInfo {
             model: model.clone(),
             retention_hours,
         });
-        
+
         // Get preview of what would be purged
-        let preview = state.catalog
+        let preview = state
+            .catalog
             .preview_model_expiration(model, cutoff)
             .await
             .unwrap_or_default();
-        
+
         // Get oldest dataset time to calculate when next purge will happen
-        let oldest_time = state.catalog
+        let oldest_time = state
+            .catalog
             .get_oldest_dataset_time(model)
             .await
             .ok()
             .flatten();
-        
+
         let (oldest_data, next_purge_in) = if let Some(oldest) = oldest_time {
             let oldest_str = oldest.format("%Y-%m-%d %H:%M UTC").to_string();
-            
+
             // Calculate when the oldest data will be purged
             let purge_time = oldest + chrono::Duration::hours(retention_hours as i64);
             let time_until_purge = purge_time - now;
-            
+
             let next_purge_str = if time_until_purge.num_seconds() <= 0 {
                 Some("Now (next cleanup cycle)".to_string())
             } else if time_until_purge.num_hours() < 1 {
@@ -1348,14 +1413,14 @@ pub async fn cleanup_status_handler(
             } else {
                 Some(format!("{} days", time_until_purge.num_days()))
             };
-            
+
             (Some(oldest_str), next_purge_str)
         } else {
             (None, None)
         };
-        
+
         total_purge_size_bytes += preview.total_size_bytes;
-        
+
         purge_preview.push(ModelPurgePreview {
             model: model.clone(),
             retention_hours,
@@ -1366,7 +1431,7 @@ pub async fn cleanup_status_handler(
             next_purge_in,
         });
     }
-    
+
     // Also add models from config that might not have data yet
     for (model, hours) in &config.model_retentions {
         if !models.contains(model) {
@@ -1376,12 +1441,12 @@ pub async fn cleanup_status_handler(
             });
         }
     }
-    
+
     Json(CleanupStatusResponse {
         enabled: config.enabled,
         interval_secs: config.interval_secs,
         next_run_in_secs: Some(config.interval_secs), // Approximate - could track actual last run
-        last_run: None, // Would need to track this in state
+        last_run: None,                               // Would need to track this in state
         model_retentions,
         purge_preview,
         expired_count,
@@ -1390,27 +1455,23 @@ pub async fn cleanup_status_handler(
 }
 
 /// POST /api/admin/cleanup/run - Manually trigger cleanup
-pub async fn cleanup_run_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn cleanup_run_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Manual cleanup triggered");
-    
+
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
     let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
-    
+
     let cleanup_task = crate::cleanup::CleanupTask::new(state.clone(), config);
-    
+
     match cleanup_task.run_once().await {
-        Ok(stats) => {
-            Json(CleanupRunResponse {
-                success: true,
-                message: "Cleanup completed successfully".to_string(),
-                marked_expired: stats.marked_expired,
-                files_deleted: stats.files_deleted,
-                records_deleted: stats.records_deleted,
-                errors: stats.delete_errors,
-            })
-        }
+        Ok(stats) => Json(CleanupRunResponse {
+            success: true,
+            message: "Cleanup completed successfully".to_string(),
+            marked_expired: stats.marked_expired,
+            files_deleted: stats.files_deleted,
+            records_deleted: stats.records_deleted,
+            errors: stats.delete_errors,
+        }),
         Err(e) => {
             error!(error = %e, "Manual cleanup failed");
             Json(CleanupRunResponse {
@@ -1444,13 +1505,11 @@ pub struct SyncStatusResponse {
 }
 
 /// GET /api/admin/sync/status - Preview sync status (dry run)
-pub async fn sync_status_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn sync_status_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync status (dry run)");
-    
+
     let sync_task = crate::cleanup::SyncTask::new(state.clone());
-    
+
     match sync_task.dry_run().await {
         Ok(stats) => {
             let message = if stats.orphan_db_records == 0 && stats.orphan_minio_objects == 0 {
@@ -1461,7 +1520,7 @@ pub async fn sync_status_handler(
                     stats.orphan_db_records, stats.orphan_minio_objects
                 )
             };
-            
+
             Json(SyncStatusResponse {
                 db_records_checked: stats.db_records_checked,
                 minio_objects_checked: stats.minio_objects_checked,
@@ -1501,44 +1560,43 @@ pub struct SyncPreviewResponse {
 }
 
 /// GET /api/admin/sync/preview - Get detailed list of what will be synced
-pub async fn sync_preview_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn sync_preview_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync preview (detailed orphan list)");
-    
+
     let sync_task = crate::cleanup::SyncTask::new(state.clone());
-    
+
     match sync_task.preview().await {
-        Ok(preview) => {
-            Json(SyncPreviewResponse {
-                orphan_db_paths: preview.orphan_db_paths,
-                orphan_minio_paths: preview.orphan_minio_paths,
-                db_records_checked: preview.db_records_checked,
-                minio_objects_checked: preview.minio_objects_checked,
-            }).into_response()
-        }
+        Ok(preview) => Json(SyncPreviewResponse {
+            orphan_db_paths: preview.orphan_db_paths,
+            orphan_minio_paths: preview.orphan_minio_paths,
+            db_records_checked: preview.db_records_checked,
+            minio_objects_checked: preview.minio_objects_checked,
+        })
+        .into_response(),
         Err(e) => {
             error!(error = %e, "Sync preview failed");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to generate preview: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to generate preview: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
 /// POST /api/admin/sync/run - Run sync and delete orphans
-pub async fn sync_run_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn sync_run_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Running sync to clean up orphans");
-    
+
     let sync_task = crate::cleanup::SyncTask::new(state.clone());
-    
+
     match sync_task.run().await {
         Ok(stats) => {
             let message = format!(
                 "Sync complete: deleted {} orphan DB records and {} orphan MinIO objects",
                 stats.orphan_db_deleted, stats.orphan_minio_deleted
             );
-            
+
             Json(SyncStatusResponse {
                 db_records_checked: stats.db_records_checked,
                 minio_objects_checked: stats.minio_objects_checked,
@@ -1591,8 +1649,8 @@ pub struct ModelConfigSummary {
     pub projection: String,
     pub resolution: Option<String>,
     pub bbox: Option<BBoxInfo>,
-    pub schedule_type: String,  // "forecast" or "observation"
-    pub cycles: Vec<u8>,        // For forecast models
+    pub schedule_type: String, // "forecast" or "observation"
+    pub cycles: Vec<u8>,       // For forecast models
     pub forecast_hours: Option<ForecastHoursInfo>,
     pub poll_interval_secs: u64,
     pub retention_hours: u32,
@@ -1643,12 +1701,16 @@ pub struct StyleInfo {
 /// GET /api/admin/config/full - Get complete configuration for dashboard
 pub async fn full_config_handler() -> impl IntoResponse {
     info!("Admin: Getting full configuration for dashboard");
-    
+
     match load_full_configuration().await {
         Ok(config) => Json(config).into_response(),
         Err(e) => {
             error!(error = %e, "Failed to load full configuration");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load config: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -1656,13 +1718,13 @@ pub async fn full_config_handler() -> impl IntoResponse {
 async fn load_full_configuration() -> anyhow::Result<FullConfigurationResponse> {
     // Load model configurations
     let models = load_all_model_configs().await?;
-    
+
     // Load style configurations
     let styles = load_all_style_configs().await?;
-    
+
     // Load ingestion config
     let ingestion = load_ingestion_config().await?;
-    
+
     Ok(FullConfigurationResponse {
         models,
         styles,
@@ -1673,18 +1735,18 @@ async fn load_full_configuration() -> anyhow::Result<FullConfigurationResponse> 
 async fn load_all_model_configs() -> anyhow::Result<Vec<ModelConfigSummary>> {
     use std::fs;
     use std::path::Path;
-    
+
     let models_dir = Path::new("config/models");
     if !models_dir.exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut configs = Vec::new();
-    
+
     for entry in fs::read_dir(models_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if let Ok(Some(config)) = load_model_config_summary(stem).await {
@@ -1693,26 +1755,26 @@ async fn load_all_model_configs() -> anyhow::Result<Vec<ModelConfigSummary>> {
             }
         }
     }
-    
+
     // Sort by model ID
     configs.sort_by(|a, b| a.id.cmp(&b.id));
-    
+
     Ok(configs)
 }
 
 async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<ModelConfigSummary>> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-    
+
     if !config_path.exists() {
         return Ok(None);
     }
-    
+
     let contents = fs::read_to_string(&config_path)?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-    
+
     let model = yaml.get("model");
     let source = yaml.get("source");
     let grid = yaml.get("grid");
@@ -1720,7 +1782,7 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
     let retention = yaml.get("retention");
     let precaching = yaml.get("precaching");
     let parameters = yaml.get("parameters");
-    
+
     // Determine schedule type
     let schedule_type = schedule
         .and_then(|s| s.get("type"))
@@ -1734,7 +1796,7 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
             }
         })
         .to_string();
-    
+
     // Parse forecast hours if present
     let forecast_hours = schedule
         .and_then(|s| s.get("forecast_hours"))
@@ -1745,41 +1807,50 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
                 step: fh.get("step")?.as_u64()? as u32,
             })
         });
-    
+
     // Parse parameters
     let params_list: Vec<ParameterSummary> = parameters
         .and_then(|p| p.as_sequence())
         .map(|params| {
-            params.iter()
+            params
+                .iter()
                 .filter_map(|param| {
                     let name = param.get("name")?.as_str()?.to_string();
-                    let description = param.get("description")
+                    let description = param
+                        .get("description")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let style = param.get("style")
+                    let style = param
+                        .get("style")
                         .and_then(|v| v.as_str())
                         .unwrap_or("default")
                         .to_string();
-                    let units = param.get("units")
+                    let units = param
+                        .get("units")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    
+
                     // Count levels
-                    let level_count = param.get("levels")
+                    let level_count = param
+                        .get("levels")
                         .and_then(|l| l.as_sequence())
                         .map(|levels| {
-                            levels.iter().map(|level| {
-                                // Count values array if present, otherwise 1
-                                level.get("values")
-                                    .and_then(|v| v.as_sequence())
-                                    .map(|vals| vals.len())
-                                    .unwrap_or(1)
-                            }).sum()
+                            levels
+                                .iter()
+                                .map(|level| {
+                                    // Count values array if present, otherwise 1
+                                    level
+                                        .get("values")
+                                        .and_then(|v| v.as_sequence())
+                                        .map(|vals| vals.len())
+                                        .unwrap_or(1)
+                                })
+                                .sum()
                         })
                         .unwrap_or(0);
-                    
+
                     Some(ParameterSummary {
                         name,
                         description,
@@ -1791,7 +1862,7 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
                 .collect()
         })
         .unwrap_or_default();
-    
+
     let config = ModelConfigSummary {
         id: model_id.to_string(),
         name: model
@@ -1875,25 +1946,25 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
         parameter_count: params_list.len(),
         parameters: params_list,
     };
-    
+
     Ok(Some(config))
 }
 
 async fn load_all_style_configs() -> anyhow::Result<Vec<StyleConfigSummary>> {
     use std::fs;
     use std::path::Path;
-    
+
     let styles_dir = Path::new("config/styles");
     if !styles_dir.exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut configs = Vec::new();
-    
+
     for entry in fs::read_dir(styles_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 // Skip schema example
@@ -1906,51 +1977,58 @@ async fn load_all_style_configs() -> anyhow::Result<Vec<StyleConfigSummary>> {
             }
         }
     }
-    
+
     // Sort by filename
     configs.sort_by(|a, b| a.filename.cmp(&b.filename));
-    
+
     Ok(configs)
 }
 
-async fn load_style_config_summary(path: &std::path::Path) -> anyhow::Result<Option<StyleConfigSummary>> {
+async fn load_style_config_summary(
+    path: &std::path::Path,
+) -> anyhow::Result<Option<StyleConfigSummary>> {
     use std::fs;
-    
+
     let contents = fs::read_to_string(path)?;
     let json: serde_json::Value = serde_json::from_str(&contents)?;
-    
-    let filename = path.file_stem()
+
+    let filename = path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
-    
+
     let metadata = json.get("metadata");
     let styles_obj = json.get("styles");
-    
+
     let mut styles = Vec::new();
-    
+
     if let Some(styles_map) = styles_obj.and_then(|s| s.as_object()) {
         for (id, style) in styles_map {
-            let name = style.get("name")
+            let name = style
+                .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or(id)
                 .to_string();
-            let style_type = style.get("type")
+            let style_type = style
+                .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("gradient")
                 .to_string();
-            let units = style.get("units")
+            let units = style
+                .get("units")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
             let range = style.get("range");
             let range_min = range.and_then(|r| r.get("min")).and_then(|v| v.as_f64());
             let range_max = range.and_then(|r| r.get("max")).and_then(|v| v.as_f64());
-            let stop_count = style.get("stops")
+            let stop_count = style
+                .get("stops")
                 .and_then(|s| s.as_array())
                 .map(|arr| arr.len())
                 .unwrap_or(0);
-            
+
             styles.push(StyleInfo {
                 id: id.clone(),
                 name,
@@ -1962,13 +2040,13 @@ async fn load_style_config_summary(path: &std::path::Path) -> anyhow::Result<Opt
             });
         }
     }
-    
+
     let name = metadata
         .and_then(|m| m.get("name"))
         .and_then(|v| v.as_str())
         .unwrap_or(&filename)
         .to_string();
-    
+
     Ok(Some(StyleConfigSummary {
         filename,
         name,
@@ -1985,19 +2063,19 @@ async fn load_style_config_summary(path: &std::path::Path) -> anyhow::Result<Opt
 async fn load_ingestion_config() -> anyhow::Result<serde_json::Value> {
     use std::fs;
     use std::path::Path;
-    
+
     let config_path = Path::new("config/ingestion.yaml");
-    
+
     if !config_path.exists() {
         return Ok(serde_json::json!({}));
     }
-    
+
     let contents = fs::read_to_string(config_path)?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-    
+
     // Convert YAML to JSON for easier frontend handling
     let json_str = serde_json::to_string(&yaml)?;
     let json: serde_json::Value = serde_json::from_str(&json_str)?;
-    
+
     Ok(json)
 }

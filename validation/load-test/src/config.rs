@@ -16,13 +16,13 @@ pub struct TestConfig {
     #[serde(default)]
     pub warmup_secs: u64,
     #[serde(default)]
-    pub seed: Option<u64>,  // Optional RNG seed for reproducible tests
+    pub seed: Option<u64>, // Optional RNG seed for reproducible tests
     pub layers: Vec<LayerConfig>,
     pub tile_selection: TileSelection,
     #[serde(default)]
     pub time_selection: Option<TimeSelection>,
     #[serde(default)]
-    pub log_requests: bool,  // Log all requests to file for debugging
+    pub log_requests: bool, // Log all requests to file for debugging
 }
 
 /// Layer configuration for testing.
@@ -75,25 +75,25 @@ pub struct BBox {
 pub enum TimeSelection {
     /// Cycle through a list of specific times sequentially
     Sequential {
-        times: Vec<String>,  // ISO 8601 timestamps
+        times: Vec<String>, // ISO 8601 timestamps
     },
     /// Randomly select from a list of times
     Random {
-        times: Vec<String>,  // ISO 8601 timestamps
+        times: Vec<String>, // ISO 8601 timestamps
     },
     /// Query times from WMS GetCapabilities and select sequentially
     QuerySequential {
-        layer: String,  // Layer name to query times from
-        count: usize,   // Number of times to select (e.g., 5 = most recent 5)
+        layer: String, // Layer name to query times from
+        count: usize,  // Number of times to select (e.g., 5 = most recent 5)
         #[serde(default)]
-        order: TimeOrder,  // Order to select times (newest_first or oldest_first)
+        order: TimeOrder, // Order to select times (newest_first or oldest_first)
     },
     /// Query times from WMS GetCapabilities and select randomly
     QueryRandom {
-        layer: String,  // Layer name to query times from
-        count: usize,   // Number of times to select randomly from
+        layer: String, // Layer name to query times from
+        count: usize,  // Number of times to select randomly from
         #[serde(default)]
-        order: TimeOrder,  // Which times to select from (newest_first or oldest_first)
+        order: TimeOrder, // Which times to select from (newest_first or oldest_first)
     },
     /// No time parameter (default behavior)
     None,

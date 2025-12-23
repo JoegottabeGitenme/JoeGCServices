@@ -411,8 +411,14 @@ async fn async_main(args: Args) -> Result<()> {
         )
         // API Documentation (Swagger UI)
         .route("/api/docs", get(handlers::swagger_ui_handler))
-        .route("/api/docs/openapi.yaml", get(handlers::openapi_yaml_handler))
-        .route("/api/docs/openapi.json", get(handlers::openapi_json_handler))
+        .route(
+            "/api/docs/openapi.yaml",
+            get(handlers::openapi_yaml_handler),
+        )
+        .route(
+            "/api/docs/openapi.json",
+            get(handlers::openapi_json_handler),
+        )
         // Load test dashboard
         .route("/loadtest", get(handlers::loadtest_dashboard_handler))
         .route(

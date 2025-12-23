@@ -23,10 +23,10 @@ use zarrs::array::{ArrayBuilder, DataType, FillValue};
 use zarrs::array_subset::ArraySubset;
 use zarrs_filesystem::FilesystemStore;
 
-use crate::types::BoundingBox;
-use crate::writer::{ZarrWriter, ZarrMetadata};
 use crate::config::{GridProcessorConfig, PyramidConfig};
 use crate::downsample::DownsampleMethod;
+use crate::types::BoundingBox;
+use crate::writer::{ZarrMetadata, ZarrWriter};
 
 /// Create test grid data where value at (col, row) = col * 1000 + row.
 /// This pattern makes it easy to verify data integrity after reads.
@@ -134,24 +134,24 @@ pub fn write_multiscale_zarr(
 ) -> Result<ZarrMetadata, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(path)?;
     let data = create_test_grid(width, height);
-    
+
     let config = GridProcessorConfig {
         zarr_chunk_size: chunk_size,
         ..Default::default()
     };
-    
+
     let pyramid_config = PyramidConfig {
         enabled: true,
         min_dimension,
         downscale_factor: 2,
         default_method: DownsampleMethod::Mean,
     };
-    
+
     let store = Arc::new(FilesystemStore::new(path)?);
     let writer = ZarrWriter::new(config);
-    
+
     let reference_time = Utc.with_ymd_and_hms(2024, 12, 22, 0, 0, 0).unwrap();
-    
+
     let result = writer.write_multiscale(
         store,
         "/",
@@ -168,7 +168,7 @@ pub fn write_multiscale_zarr(
         &pyramid_config,
         DownsampleMethod::Mean,
     )?;
-    
+
     Ok(result.zarr_metadata)
 }
 
@@ -183,14 +183,14 @@ pub fn testdata_path(name: &str) -> std::path::PathBuf {
 }
 
 /// Generate all test data files (run manually to regenerate).
-/// 
+///
 /// This is called by `cargo test -- --ignored generate_testdata` or via
 /// the script `scripts/generate_testdata.sh`.
 #[cfg(test)]
 pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
     let testdata = testdata_dir();
     std::fs::create_dir_all(&testdata)?;
-    
+
     // 1. Simple 10x10 grid
     let simple_path = testdata.join("simple_10x10.zarr");
     if simple_path.exists() {
@@ -198,11 +198,13 @@ pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
     }
     write_simple_zarr(
         &simple_path,
-        10, 10, 8,
+        10,
+        10,
+        8,
         &BoundingBox::new(0.0, 0.0, 10.0, 10.0),
     )?;
     println!("Created: simple_10x10.zarr");
-    
+
     // 2. GFS-style grid with 0-360 longitude
     let gfs_path = testdata.join("gfs_style_360.zarr");
     if gfs_path.exists() {
@@ -210,11 +212,13 @@ pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
     }
     write_simple_zarr(
         &gfs_path,
-        36, 18, 16,
+        36,
+        18,
+        16,
         &BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     )?;
     println!("Created: gfs_style_360.zarr");
-    
+
     // 3. Multiscale pyramid (multiple levels based on min_dimension=16)
     let multiscale_path = testdata.join("multiscale_3level.zarr");
     if multiscale_path.exists() {
@@ -222,12 +226,14 @@ pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
     }
     write_multiscale_zarr(
         &multiscale_path,
-        64, 64, 32,
+        64,
+        64,
+        32,
         &BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
         16, // min_dimension - will generate levels until dimension < 16
     )?;
     println!("Created: multiscale_3level.zarr");
-    
+
     // 4. Chunked 100x100 grid (tests chunk boundary handling)
     let chunked_path = testdata.join("chunked_100x100.zarr");
     if chunked_path.exists() {
@@ -235,11 +241,13 @@ pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
     }
     write_simple_zarr(
         &chunked_path,
-        100, 100, 32,
+        100,
+        100,
+        32,
         &BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
     )?;
     println!("Created: chunked_100x100.zarr");
-    
+
     println!("\nAll test data files generated in: {:?}", testdata);
     Ok(())
 }
@@ -252,11 +260,11 @@ mod tests {
     fn test_create_test_grid() {
         let grid = create_test_grid(5, 4);
         assert_eq!(grid.len(), 20);
-        
+
         // Check pattern: value = col * 1000 + row
-        assert_eq!(grid[0], 0.0);   // (0, 0)
+        assert_eq!(grid[0], 0.0); // (0, 0)
         assert_eq!(grid[1], 1000.0); // (1, 0)
-        assert_eq!(grid[5], 1.0);   // (0, 1)
+        assert_eq!(grid[5], 1.0); // (0, 1)
         assert_eq!(grid[6], 1001.0); // (1, 1)
     }
 
@@ -264,10 +272,14 @@ mod tests {
     fn test_create_temperature_grid() {
         let grid = create_temperature_grid(10, 10);
         assert_eq!(grid.len(), 100);
-        
+
         // All values should be between 250K and 310K
         for val in &grid {
-            assert!(*val >= 250.0 && *val <= 310.0, "Temperature out of range: {}", val);
+            assert!(
+                *val >= 250.0 && *val <= 310.0,
+                "Temperature out of range: {}",
+                val
+            );
         }
     }
 

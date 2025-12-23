@@ -120,7 +120,7 @@ impl ValidationStatus {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let timestamp_str = chrono::DateTime::from_timestamp(timestamp as i64, 0)
             .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
             .unwrap_or_else(|| "unknown".to_string());
@@ -138,9 +138,14 @@ impl ValidationStatus {
 
 /// Extract a valid layer and style from WMS capabilities for testing
 async fn get_test_layer_from_capabilities(base_url: &str) -> Option<(String, String)> {
-    let resp = reqwest::get(format!("{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0", base_url)).await.ok()?;
+    let resp = reqwest::get(format!(
+        "{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0",
+        base_url
+    ))
+    .await
+    .ok()?;
     let text = resp.text().await.ok()?;
-    
+
     // Preferred layers in order (gradient style is most reliable)
     let preferred = [
         ("gfs_TMP", "gradient"),
@@ -148,14 +153,14 @@ async fn get_test_layer_from_capabilities(base_url: &str) -> Option<(String, Str
         ("gfs_RH", "gradient"),
         ("mrms_REFL", "standard"),
     ];
-    
+
     for (layer, style) in preferred {
         // Check if layer exists in capabilities
         if text.contains(&format!("<Name>{}</Name>", layer)) {
             return Some((layer.to_string(), style.to_string()));
         }
     }
-    
+
     None
 }
 
@@ -170,7 +175,12 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
         .unwrap_or(("gfs_TMP".to_string(), "gradient".to_string()));
 
     // Check 1: GetCapabilities
-    let capabilities = match reqwest::get(format!("{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0", base_url)).await {
+    let capabilities = match reqwest::get(format!(
+        "{}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0",
+        base_url
+    ))
+    .await
+    {
         Ok(resp) => {
             if resp.status().is_success() {
                 match resp.text().await {
@@ -310,9 +320,14 @@ pub async fn validate_wms(base_url: &str) -> WmsValidation {
 
 /// Extract a valid layer and style from WMTS capabilities for testing
 async fn get_test_layer_from_wmts_capabilities(base_url: &str) -> Option<(String, String)> {
-    let resp = reqwest::get(format!("{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0", base_url)).await.ok()?;
+    let resp = reqwest::get(format!(
+        "{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0",
+        base_url
+    ))
+    .await
+    .ok()?;
     let text = resp.text().await.ok()?;
-    
+
     // Preferred layers in order (gradient style is most reliable)
     let preferred = [
         ("gfs_TMP", "gradient"),
@@ -320,15 +335,16 @@ async fn get_test_layer_from_wmts_capabilities(base_url: &str) -> Option<(String
         ("gfs_RH", "gradient"),
         ("mrms_REFL", "standard"),
     ];
-    
+
     for (layer, style) in preferred {
         // Check if layer exists in capabilities (WMTS uses <ows:Identifier>)
-        if text.contains(&format!("<ows:Identifier>{}</ows:Identifier>", layer)) 
-           || text.contains(&format!("<Identifier>{}</Identifier>", layer)) {
+        if text.contains(&format!("<ows:Identifier>{}</ows:Identifier>", layer))
+            || text.contains(&format!("<Identifier>{}</Identifier>", layer))
+        {
             return Some((layer.to_string(), style.to_string()));
         }
     }
-    
+
     None
 }
 
@@ -340,7 +356,12 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
         .unwrap_or(("gfs_TMP".to_string(), "gradient".to_string()));
 
     // Check 1: GetCapabilities
-    let capabilities = match reqwest::get(format!("{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0", base_url)).await {
+    let capabilities = match reqwest::get(format!(
+        "{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0",
+        base_url
+    ))
+    .await
+    {
         Ok(resp) => {
             if resp.status().is_success() {
                 match resp.text().await {
@@ -361,10 +382,17 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
     };
 
     // Check 2: GetTile REST (use discovered layer/style)
-    let gettile_rest = match reqwest::get(format!("{}/rest/{}/{}/WebMercatorQuad/2/1/1.png", base_url, test_layer, test_style)).await {
+    let gettile_rest = match reqwest::get(format!(
+        "{}/rest/{}/{}/WebMercatorQuad/2/1/1.png",
+        base_url, test_layer, test_style
+    ))
+    .await
+    {
         Ok(resp) => {
             if resp.status().is_success() {
-                let content_type = resp.headers().get("content-type")
+                let content_type = resp
+                    .headers()
+                    .get("content-type")
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 if content_type.contains("image/png") {
@@ -402,7 +430,12 @@ pub async fn validate_wmts(base_url: &str) -> WmtsValidation {
     };
 
     // Check 4: TileMatrixSet
-    let tilematrixset = match reqwest::get(format!("{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0", base_url)).await {
+    let tilematrixset = match reqwest::get(format!(
+        "{}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0",
+        base_url
+    ))
+    .await
+    {
         Ok(resp) => {
             if resp.status().is_success() {
                 match resp.text().await {
@@ -452,10 +485,7 @@ pub async fn run_validation(base_url: &str) -> ValidationStatus {
     let wms_url = format!("{}/wms", base_url);
     let wmts_url = format!("{}/wmts", base_url);
 
-    let (wms, wmts) = tokio::join!(
-        validate_wms(&wms_url),
-        validate_wmts(&wmts_url)
-    );
+    let (wms, wmts) = tokio::join!(validate_wms(&wms_url), validate_wmts(&wmts_url));
 
     ValidationStatus::new(wms, wmts)
 }

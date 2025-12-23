@@ -10,14 +10,14 @@
 //! startup validation focuses on rendering a small set of representative
 //! tiles at various zoom levels to validate the full pipeline.
 
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 use wms_common::TileCoord;
-use serde::Serialize;
 
-use crate::state::AppState;
 use crate::rendering;
+use crate::state::AppState;
 
 /// Configuration for startup validation.
 #[derive(Clone, Debug)]
@@ -50,40 +50,32 @@ impl StartupValidationConfig {
     /// Parse configuration from environment variables.
     pub fn from_env() -> Self {
         use std::env;
-        
+
         fn parse_bool(key: &str, default: bool) -> bool {
             env::var(key)
                 .ok()
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(default)
         }
-        
+
         fn parse_usize(key: &str, default: usize) -> usize {
             env::var(key)
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default)
         }
-        
+
         Self {
             enabled: parse_bool("ENABLE_STARTUP_VALIDATION", true),
             concurrency: parse_usize("STARTUP_VALIDATION_CONCURRENCY", 4),
             fail_on_error: parse_bool("STARTUP_VALIDATION_FAIL_ON_ERROR", false),
             test_zoom_levels: env::var("STARTUP_VALIDATION_ZOOM_LEVELS")
                 .ok()
-                .map(|v| {
-                    v.split(',')
-                        .filter_map(|s| s.trim().parse().ok())
-                        .collect()
-                })
+                .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
                 .unwrap_or_else(|| vec![2, 4, 6]),
             skip_models: env::var("STARTUP_VALIDATION_SKIP_MODELS")
                 .ok()
-                .map(|v| {
-                    v.split(',')
-                        .map(|s| s.trim().to_lowercase())
-                        .collect()
-                })
+                .map(|v| v.split(',').map(|s| s.trim().to_lowercase()).collect())
                 .unwrap_or_default(),
         }
     }
@@ -140,7 +132,7 @@ impl StartupValidator {
     pub fn new(state: Arc<AppState>, config: StartupValidationConfig) -> Self {
         Self { state, config }
     }
-    
+
     /// Run startup validation and return summary.
     pub async fn validate(&self) -> ValidationSummary {
         if !self.config.enabled {
@@ -156,43 +148,49 @@ impl StartupValidator {
                 results: Vec::new(),
             };
         }
-        
+
         let start = Instant::now();
-        
+
         info!(
             concurrency = self.config.concurrency,
             zoom_levels = ?self.config.test_zoom_levels,
             "Starting startup validation"
         );
-        
+
         // Discover available data from catalog
         let available_models = self.discover_available_models().await;
-        
+
         info!(
             available = ?available_models,
             "Discovered available models"
         );
-        
+
         // Define validation targets for each model
         let targets = self.build_validation_targets(&available_models);
-        
+
         // Run validation tests
         let results = self.run_validation_tests(targets).await;
-        
+
         // Build summary
         let passed = results.iter().filter(|r| r.success).count();
-        let failed = results.iter().filter(|r| !r.success && r.error.is_some()).count();
-        let skipped = results.iter().filter(|r| !r.success && r.error.is_none()).count();
-        
+        let failed = results
+            .iter()
+            .filter(|r| !r.success && r.error.is_some())
+            .count();
+        let skipped = results
+            .iter()
+            .filter(|r| !r.success && r.error.is_none())
+            .count();
+
         let all_known_models = ["gfs", "hrrr", "goes16", "goes18", "mrms"];
         let models_missing: Vec<String> = all_known_models
             .iter()
             .filter(|m| !available_models.contains(&m.to_string()))
             .map(|s| s.to_string())
             .collect();
-        
+
         let duration = start.elapsed();
-        
+
         let summary = ValidationSummary {
             total_tests: results.len(),
             passed,
@@ -203,7 +201,7 @@ impl StartupValidator {
             models_missing,
             results,
         };
-        
+
         // Log summary
         if failed > 0 {
             warn!(
@@ -223,14 +221,14 @@ impl StartupValidator {
                 "Startup validation completed successfully"
             );
         }
-        
+
         summary
     }
-    
+
     /// Discover which models have available data in the catalog.
     async fn discover_available_models(&self) -> Vec<String> {
         let mut models = Vec::new();
-        
+
         // Query catalog for available datasets grouped by model
         match self.state.catalog.get_available_models().await {
             Ok(available) => {
@@ -246,13 +244,13 @@ impl StartupValidator {
                 }
             }
         }
-        
+
         // Filter out skipped models
         models.retain(|m| !self.config.skip_models.contains(&m.to_lowercase()));
-        
+
         models
     }
-    
+
     /// Check if a specific model has any data available.
     async fn check_model_has_data(&self, model: &str) -> bool {
         match self.state.catalog.get_latest_dataset(model, None).await {
@@ -264,11 +262,11 @@ impl StartupValidator {
             }
         }
     }
-    
+
     /// Build validation targets based on available models.
     fn build_validation_targets(&self, available_models: &[String]) -> Vec<ValidationTarget> {
         let mut targets = Vec::new();
-        
+
         for model in available_models {
             match model.as_str() {
                 "gfs" => {
@@ -352,31 +350,34 @@ impl StartupValidator {
                 }
             }
         }
-        
+
         targets
     }
-    
+
     /// Run validation tests for all targets.
-    async fn run_validation_tests(&self, targets: Vec<ValidationTarget>) -> Vec<ValidationTestResult> {
+    async fn run_validation_tests(
+        &self,
+        targets: Vec<ValidationTarget>,
+    ) -> Vec<ValidationTestResult> {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.concurrency));
         let mut handles = Vec::new();
-        
+
         for target in targets {
             for &zoom in &self.config.test_zoom_levels {
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let state = self.state.clone();
                 let target = target.clone();
-                
+
                 let handle = tokio::spawn(async move {
                     let result = run_single_validation(&state, &target, zoom).await;
                     drop(permit);
                     result
                 });
-                
+
                 handles.push(handle);
             }
         }
-        
+
         let mut results = Vec::new();
         for handle in handles {
             match handle.await {
@@ -386,7 +387,7 @@ impl StartupValidator {
                 }
             }
         }
-        
+
         results
     }
 }
@@ -399,19 +400,19 @@ async fn run_single_validation(
 ) -> ValidationTestResult {
     let start = Instant::now();
     let layer = format!("{}_{}", target.model, target.parameter);
-    
+
     debug!(
         layer = %layer,
         style = %target.style,
         zoom = zoom,
         "Running validation test"
     );
-    
+
     // Calculate a representative tile for this bbox and zoom
     let center_lon = (target.test_bbox[0] + target.test_bbox[2]) / 2.0;
     let center_lat = (target.test_bbox[1] + target.test_bbox[3]) / 2.0;
     let coord = lat_lon_to_tile(center_lat as f64, center_lon as f64, zoom);
-    
+
     // Get tile bounding box
     let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
     let bbox_array = [
@@ -420,7 +421,7 @@ async fn run_single_validation(
         latlon_bbox.max_x as f32,
         latlon_bbox.max_y as f32,
     ];
-    
+
     // Get default level from layer config for consistent data selection
     let default_level: Option<String> = {
         let configs = state.layer_configs.read().await;
@@ -429,7 +430,7 @@ async fn run_single_validation(
             .and_then(|l| l.default_level())
             .map(|s| s.to_string())
     };
-    
+
     // Render the tile
     let result = if target.parameter == "WIND_BARBS" {
         rendering::render_wind_barbs_tile_with_level(
@@ -440,23 +441,27 @@ async fn run_single_validation(
             256,
             256,
             bbox_array,
-            None, // Use latest forecast hour
+            None,                     // Use latest forecast hour
             default_level.as_deref(), // Use default level
         )
         .await
     } else {
         // Get style file from layer config registry (single source of truth)
-        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(&target.model, &target.parameter);
+        let style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(&target.model, &target.parameter);
         // Check if model requires full grid reads (non-geographic projection)
         let requires_full_grid = state.model_dimensions.requires_full_grid(&target.model);
-        
+
         rendering::render_weather_data_with_level(
             &state.catalog,
             &state.metrics,
             &state.grid_processor_factory,
             &target.model,
             &target.parameter,
-            None, // forecast_hour - use latest
+            None,                     // forecast_hour - use latest
             default_level.as_deref(), // Use default level for consistent data selection
             256,
             256,
@@ -468,19 +473,19 @@ async fn run_single_validation(
         )
         .await
     };
-    
+
     let render_time = start.elapsed();
-    
+
     match result {
         Ok(tile_data) => {
             // Validate PNG format
-            let is_valid_png = tile_data.len() >= 8 && 
-                tile_data[0..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-            
+            let is_valid_png = tile_data.len() >= 8
+                && tile_data[0..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
             if is_valid_png {
                 // Store in cache for warming benefit
                 cache_tile(state, &layer, &target.style, &coord, &tile_data).await;
-                
+
                 info!(
                     layer = %layer,
                     zoom = zoom,
@@ -488,7 +493,7 @@ async fn run_single_validation(
                     render_ms = render_time.as_millis(),
                     "Validation passed"
                 );
-                
+
                 ValidationTestResult {
                     model: target.model.clone(),
                     parameter: target.parameter.clone(),
@@ -506,7 +511,7 @@ async fn run_single_validation(
                     zoom = zoom,
                     "Validation failed: invalid PNG format"
                 );
-                
+
                 ValidationTestResult {
                     model: target.model.clone(),
                     parameter: target.parameter.clone(),
@@ -523,10 +528,10 @@ async fn run_single_validation(
         Err(e) => {
             // Check if this is a "no data" error vs a real failure
             let error_str = e.to_string();
-            let is_no_data = error_str.contains("No data") || 
-                            error_str.contains("not found") ||
-                            error_str.contains("No datasets");
-            
+            let is_no_data = error_str.contains("No data")
+                || error_str.contains("not found")
+                || error_str.contains("No datasets");
+
             if is_no_data {
                 debug!(
                     layer = %layer,
@@ -541,7 +546,7 @@ async fn run_single_validation(
                     "Validation render failed"
                 );
             }
-            
+
             ValidationTestResult {
                 model: target.model.clone(),
                 parameter: target.parameter.clone(),
@@ -567,17 +572,20 @@ async fn cache_tile(
 ) {
     use storage::CacheKey;
     use wms_common::{BoundingBox, CrsCode};
-    
+
     // Build cache key
     let cache_key_str = format!(
         "{}:{}:EPSG:3857:{}_{}_{}:current",
         layer, style, coord.z, coord.x, coord.y
     );
-    
+
     // Store in L1 cache
     let data_bytes = bytes::Bytes::from(data.to_vec());
-    state.tile_memory_cache.set(&cache_key_str, data_bytes, None).await;
-    
+    state
+        .tile_memory_cache
+        .set(&cache_key_str, data_bytes, None)
+        .await;
+
     // Store in L2 cache
     let cache_key = CacheKey::new(
         layer,
@@ -589,7 +597,7 @@ async fn cache_tile(
         None,
         "png",
     );
-    
+
     let mut cache = state.cache.lock().await;
     if let Err(e) = cache.set(&cache_key, data, None).await {
         debug!(error = %e, "Failed to store validation tile in L2 cache");

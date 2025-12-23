@@ -88,16 +88,16 @@ where
     PIXEL_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height * 4;
-        
+
         // Resize if needed (Vec::resize is efficient for growing)
         if buf.len() < size {
             buf.resize(size, 0);
         }
-        
+
         // Clear to transparent (zero) - required for proper alpha handling
         // Only clear the portion we'll use
         buf[..size].fill(0);
-        
+
         f(&mut buf[..size])
     })
 }
@@ -122,7 +122,7 @@ where
     PIXEL_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height * 4;
-        
+
         // Ensure capacity - compute len before mutable borrow
         let current_len = buf.len();
         let current_cap = buf.capacity();
@@ -131,10 +131,10 @@ where
         }
         buf.resize(size, 0);
         buf[..size].fill(0);
-        
+
         // Fill the buffer
         f(&mut buf[..size]);
-        
+
         // Take the buffer and replace with a new one
         // The old buffer becomes the return value
         std::mem::replace(&mut *buf, Vec::with_capacity(optimal_capacity(size)))
@@ -160,12 +160,12 @@ where
     INDEX_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height;
-        
+
         if buf.len() < size {
             buf.resize(size, 0);
         }
         buf[..size].fill(0);
-        
+
         f(&mut buf[..size])
     })
 }
@@ -179,7 +179,7 @@ where
     INDEX_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height;
-        
+
         let current_len = buf.len();
         let current_cap = buf.capacity();
         if current_cap < size {
@@ -187,9 +187,9 @@ where
         }
         buf.resize(size, 0);
         buf[..size].fill(0);
-        
+
         f(&mut buf[..size]);
-        
+
         std::mem::replace(&mut *buf, Vec::with_capacity(optimal_capacity(size)))
     })
 }
@@ -213,12 +213,12 @@ where
     RESAMPLE_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height;
-        
+
         if buf.len() < size {
             buf.resize(size, 0.0);
         }
         buf[..size].fill(0.0);
-        
+
         f(&mut buf[..size])
     })
 }
@@ -232,7 +232,7 @@ where
     RESAMPLE_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         let size = width * height;
-        
+
         let current_len = buf.len();
         let current_cap = buf.capacity();
         if current_cap < size {
@@ -240,9 +240,9 @@ where
         }
         buf.resize(size, 0.0);
         buf[..size].fill(0.0);
-        
+
         f(&mut buf[..size]);
-        
+
         std::mem::replace(&mut *buf, Vec::with_capacity(optimal_capacity(size)))
     })
 }
@@ -258,12 +258,12 @@ where
     PNG_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         buf.clear();
-        
+
         let current_cap = buf.capacity();
         if current_cap < estimated_size {
             buf.reserve(estimated_size - current_cap);
         }
-        
+
         f(&mut buf)
     })
 }
@@ -279,14 +279,14 @@ where
     SCANLINE_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         buf.clear();
-        
+
         // Each scanline: 1 filter byte + width * bytes_per_pixel
         let size = height * (1 + width * bytes_per_pixel);
         let current_cap = buf.capacity();
         if current_cap < size {
             buf.reserve(size - current_cap);
         }
-        
+
         f(&mut buf)
     })
 }
@@ -324,7 +324,7 @@ pub fn get_pool_stats() -> PoolStats {
     let index = INDEX_BUFFER.with(|b| b.borrow().capacity());
     let resample = RESAMPLE_BUFFER.with(|b| b.borrow().capacity() * std::mem::size_of::<f32>());
     let png = PNG_BUFFER.with(|b| b.borrow().capacity());
-    
+
     PoolStats {
         pixel_buffer_capacity: pixel,
         index_buffer_capacity: index,
@@ -355,28 +355,28 @@ pub fn trim_pools() {
             *buf = Vec::with_capacity(TILE_256 * 4);
         }
     });
-    
+
     INDEX_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         if buf.capacity() > TILE_256 {
             *buf = Vec::with_capacity(TILE_256);
         }
     });
-    
+
     RESAMPLE_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         if buf.capacity() > TILE_256 {
             *buf = Vec::with_capacity(TILE_256);
         }
     });
-    
+
     PNG_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         if buf.capacity() > TILE_256 {
             *buf = Vec::with_capacity(TILE_256);
         }
     });
-    
+
     SCANLINE_BUFFER.with(|buf| {
         let mut buf = buf.borrow_mut();
         if buf.capacity() > TILE_256 + 256 {
@@ -398,7 +398,7 @@ mod tests {
             buf[0]
         });
         assert_eq!(result1, 255);
-        
+
         // Second use - should reuse (buffer is cleared)
         let result2 = with_pixel_buffer(256, 256, |buf| {
             // Should be cleared
@@ -414,12 +414,12 @@ mod tests {
         with_pixel_buffer(64, 64, |buf| {
             assert_eq!(buf.len(), 64 * 64 * 4);
         });
-        
+
         // Larger buffer - should resize
         with_pixel_buffer(512, 512, |buf| {
             assert_eq!(buf.len(), 512 * 512 * 4);
         });
-        
+
         // Small buffer again - uses subset of large buffer
         with_pixel_buffer(64, 64, |buf| {
             assert_eq!(buf.len(), 64 * 64 * 4);
@@ -434,7 +434,7 @@ mod tests {
             buf[100]
         });
         assert_eq!(result, 42);
-        
+
         // Should be cleared on next use
         with_index_buffer(256, 256, |buf| {
             assert_eq!(buf[100], 0);
@@ -457,7 +457,7 @@ mod tests {
             buf[0] = 255;
             buf[1] = 128;
         });
-        
+
         assert_eq!(vec.len(), 256 * 256 * 4);
         assert_eq!(vec[0], 255);
         assert_eq!(vec[1], 128);
@@ -468,7 +468,7 @@ mod tests {
         // Trigger some allocations
         with_pixel_buffer(512, 512, |_| {});
         with_index_buffer(256, 256, |_| {});
-        
+
         let stats = get_pool_stats();
         assert!(stats.pixel_buffer_capacity >= 512 * 512 * 4);
         assert!(stats.index_buffer_capacity >= 256 * 256);
@@ -487,14 +487,14 @@ mod tests {
         // Allocate large buffers
         with_pixel_buffer(1024, 1024, |_| {});
         with_index_buffer(1024, 1024, |_| {});
-        
+
         let stats_before = get_pool_stats();
         assert!(stats_before.pixel_buffer_capacity >= 1024 * 1024 * 4);
         assert!(stats_before.index_buffer_capacity >= 1024 * 1024);
-        
+
         // Trim back to defaults
         trim_pools();
-        
+
         let stats_after = get_pool_stats();
         assert_eq!(stats_after.pixel_buffer_capacity, TILE_256 * 4);
         assert_eq!(stats_after.index_buffer_capacity, TILE_256);

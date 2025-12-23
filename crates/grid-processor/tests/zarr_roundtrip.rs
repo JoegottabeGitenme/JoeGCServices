@@ -194,8 +194,14 @@ async fn test_zarr_partial_read() {
     // Verify we got a subset, not the whole grid
     assert!(region.width < width, "Should read partial width");
     assert!(region.height < height, "Should read partial height");
-    assert_eq!(region.width, expected_width, "Width should match expected (with buffer)");
-    assert_eq!(region.height, expected_height, "Height should match expected (with buffer)");
+    assert_eq!(
+        region.width, expected_width,
+        "Width should match expected (with buffer)"
+    );
+    assert_eq!(
+        region.height, expected_height,
+        "Height should match expected (with buffer)"
+    );
 
     // Verify values in the region are correct
     for local_row in 0..region.height {
@@ -258,7 +264,7 @@ async fn test_zarr_read_point() {
     // Note: For a 50x40 grid over 50x40 degrees, resolution is 1 deg/pixel
     // Grid points are at integer lon/lat coordinates
     let test_points = [
-        (0.0, 40.0, 0, 0),   // Top-left corner - exact grid point
+        (0.0, 40.0, 0, 0),    // Top-left corner - exact grid point
         (25.0, 21.0, 25, 19), // Near center - exact grid point
         (49.0, 1.0, 49, 39),  // Near bottom-right - exact grid point
         (10.0, 31.0, 10, 9),  // Another point - exact grid point

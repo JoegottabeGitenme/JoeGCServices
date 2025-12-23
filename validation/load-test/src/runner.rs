@@ -60,14 +60,15 @@ impl LoadRunner {
     pub async fn run(&mut self) -> anyhow::Result<TestResults> {
         // Fetch system configuration from API
         let system_config = self.fetch_system_config().await.ok();
-        
+
         // Resolve dynamic times if using QuerySequential/QueryRandom
         println!("Initializing tile generator...");
         let generator = TileGenerator::new_async(self.config.clone()).await?;
-        
-        let total_duration = Duration::from_secs(self.config.duration_secs + self.config.warmup_secs);
+
+        let total_duration =
+            Duration::from_secs(self.config.duration_secs + self.config.warmup_secs);
         let warmup_duration = Duration::from_secs(self.config.warmup_secs);
-        
+
         println!("Starting load test: {}", self.config.name);
         println!("  Warmup: {}s", self.config.warmup_secs);
         println!("  Test duration: {}s", self.config.duration_secs);
@@ -75,27 +76,51 @@ impl LoadRunner {
         if let Some(rps) = self.config.requests_per_second {
             println!("  Rate limit: {:.1} req/s", rps);
         }
-        
+
         // Display system configuration if available
         if let Some(ref config) = system_config {
             println!();
             println!("System Configuration:");
-            println!("  L1 Cache: {} (size: {}, ttl: {}s)", 
-                if config.l1_cache_enabled { "enabled" } else { "disabled" },
+            println!(
+                "  L1 Cache: {} (size: {}, ttl: {}s)",
+                if config.l1_cache_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
                 config.l1_cache_size,
-                config.l1_cache_ttl_secs);
-            println!("  Chunk Cache: {} (size: {} MB)", 
-                if config.chunk_cache_enabled { "enabled" } else { "disabled" },
-                config.chunk_cache_size_mb);
-            println!("  Prefetch: {} (rings: {}, zoom: {}-{})", 
-                if config.prefetch_enabled { "enabled" } else { "disabled" },
+                config.l1_cache_ttl_secs
+            );
+            println!(
+                "  Chunk Cache: {} (size: {} MB)",
+                if config.chunk_cache_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                config.chunk_cache_size_mb
+            );
+            println!(
+                "  Prefetch: {} (rings: {}, zoom: {}-{})",
+                if config.prefetch_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
                 config.prefetch_rings,
                 config.prefetch_min_zoom,
-                config.prefetch_max_zoom);
-            println!("  Cache Warming: {}", 
-                if config.cache_warming_enabled { "enabled" } else { "disabled" });
+                config.prefetch_max_zoom
+            );
+            println!(
+                "  Cache Warming: {}",
+                if config.cache_warming_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
         }
-        
+
         println!();
 
         // Create progress bar
@@ -111,13 +136,14 @@ impl LoadRunner {
         let metrics = Arc::new(Mutex::new(MetricsCollector::new()));
         let generator = Arc::new(Mutex::new(generator));
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
-        
+
         // Request logging setup
         let request_log: Option<Arc<Mutex<BufWriter<File>>>> = if self.config.log_requests {
             // Ensure results directory exists - use validation/load-test/results if it exists,
             // otherwise create results/ in current directory
-            let results_dir = if std::path::Path::new("validation/load-test/results").exists() 
-                || std::path::Path::new("validation/load-test").exists() {
+            let results_dir = if std::path::Path::new("validation/load-test/results").exists()
+                || std::path::Path::new("validation/load-test").exists()
+            {
                 "validation/load-test/results"
             } else {
                 "results"
@@ -125,23 +151,28 @@ impl LoadRunner {
             std::fs::create_dir_all(results_dir)?;
             // Include scenario name in filename for easier identification
             let scenario_name = self.config.name.replace(' ', "_").to_lowercase();
-            let log_path = format!("{}/{}_{}.jsonl", 
+            let log_path = format!(
+                "{}/{}_{}.jsonl",
                 results_dir,
                 scenario_name,
-                chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+            );
             println!("  Logging requests to: {}", log_path);
             let file = File::create(&log_path)?;
             Some(Arc::new(Mutex::new(BufWriter::new(file))))
         } else {
             None
         };
-        
+
         let start_time = Instant::now();
         let mut _requests_sent = 0u64;
         let mut warmup_complete = false;
 
         // Rate limiting setup
-        let request_interval = self.config.requests_per_second.map(|rps| Duration::from_secs_f64(1.0 / rps));
+        let request_interval = self
+            .config
+            .requests_per_second
+            .map(|rps| Duration::from_secs_f64(1.0 / rps));
         let mut last_request_time = Instant::now();
 
         // Main request loop
@@ -181,7 +212,7 @@ impl LoadRunner {
             // Spawn request task
             tokio::spawn(async move {
                 let result = Self::execute_request_static(&client, &url).await;
-                
+
                 // Record metrics (skip during warmup)
                 if !in_warmup {
                     let mut m = metrics_clone.lock().await;
@@ -194,7 +225,7 @@ impl LoadRunner {
                         m.record_failure();
                         eprintln!("Request returned {}: {}", result.status, url);
                     }
-                    
+
                     // Log request if enabled
                     if let Some(ref log) = request_log_clone {
                         let cache_status = if result.cache_hit { "HIT" } else { "MISS" };
@@ -215,7 +246,7 @@ impl LoadRunner {
                         }
                     }
                 }
-                
+
                 drop(permit);
             });
 
@@ -226,7 +257,11 @@ impl LoadRunner {
                 let test_elapsed = (start_time.elapsed() - warmup_duration).as_secs();
                 pb.set_position(test_elapsed.min(self.config.duration_secs));
             } else {
-                pb.set_message(format!("Warmup ({}/{}s)", start_time.elapsed().as_secs(), self.config.warmup_secs));
+                pb.set_message(format!(
+                    "Warmup ({}/{}s)",
+                    start_time.elapsed().as_secs(),
+                    self.config.warmup_secs
+                ));
             }
 
             // Small yield to prevent tight loop
@@ -244,10 +279,10 @@ impl LoadRunner {
 
         // Generate results
         let m = metrics.lock().await;
-        
+
         // Extract layer names
         let layers = self.config.layers.iter().map(|l| l.name.clone()).collect();
-        
+
         Ok(m.results(
             self.config.name.clone(),
             self.config.name.clone(), // scenario_name same as config_name for now
@@ -256,26 +291,27 @@ impl LoadRunner {
             system_config,
         ))
     }
-    
+
     /// Fetch system configuration from WMS API
     async fn fetch_system_config(&self) -> anyhow::Result<SystemConfig> {
         let config_url = format!("{}/api/config", self.config.base_url);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(&config_url)
             .timeout(Duration::from_secs(5))
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             anyhow::bail!("Failed to fetch system config: HTTP {}", response.status());
         }
-        
+
         let json: serde_json::Value = response.json().await?;
-        
+
         // Parse the config from the API response
         let opts = &json["optimizations"];
-        
+
         Ok(SystemConfig {
             l1_cache_enabled: opts["l1_cache"]["enabled"].as_bool().unwrap_or(false),
             l1_cache_size: opts["l1_cache"]["size"].as_u64().unwrap_or(0) as usize,
@@ -294,11 +330,11 @@ impl LoadRunner {
     /// Execute a single HTTP request (static version for use in spawned tasks).
     async fn execute_request_static(client: &reqwest::Client, url: &str) -> RequestResult {
         let start = Instant::now();
-        
+
         match client.get(url).send().await {
             Ok(response) => {
                 let status = response.status().as_u16();
-                
+
                 // Check for cache hit from X-Cache header
                 let cache_hit = response
                     .headers()
@@ -306,7 +342,7 @@ impl LoadRunner {
                     .and_then(|v| v.to_str().ok())
                     .map(|v| v.to_uppercase().contains("HIT"))
                     .unwrap_or(false);
-                
+
                 // Read response body
                 let bytes = match response.bytes().await {
                     Ok(b) => b.len(),

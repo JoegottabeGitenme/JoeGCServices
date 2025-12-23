@@ -30,7 +30,9 @@ use storage::Catalog;
 use crate::error::{GridProcessorError, Result};
 use crate::factory::GridProcessorFactory;
 use crate::minio_storage::{create_minio_storage, MinioConfig};
-use crate::processor::{GridProcessor, MultiscaleGridProcessorFactory, parse_multiscale_metadata, ZarrGridProcessor};
+use crate::processor::{
+    parse_multiscale_metadata, GridProcessor, MultiscaleGridProcessorFactory, ZarrGridProcessor,
+};
 use crate::query::{DatasetQuery, PointValue, TimeSpecification};
 use crate::types::{BoundingBox, CacheStats, GridMetadata, GridRegion};
 use crate::writer::ZarrMetadata;
@@ -78,14 +80,14 @@ impl GridDataService {
         let factory = GridProcessorFactory::new(minio_config, chunk_cache_size_mb);
         Self { catalog, factory }
     }
-    
+
     /// Create a new GridDataService with a pre-configured factory.
     ///
     /// Useful when you want to share a factory across multiple services.
     pub fn with_factory(catalog: Arc<Catalog>, factory: GridProcessorFactory) -> Self {
         Self { catalog, factory }
     }
-    
+
     /// Read a geographic region for a dataset.
     ///
     /// This is the primary method for tile rendering and area queries.
@@ -115,31 +117,31 @@ impl GridDataService {
         output_size: Option<(usize, usize)>,
     ) -> Result<GridRegion> {
         // Find the dataset in the catalog
-        let entry = self.find_dataset(query).await?
-            .ok_or_else(|| GridProcessorError::NotFound(format!(
+        let entry = self.find_dataset(query).await?.ok_or_else(|| {
+            GridProcessorError::NotFound(format!(
                 "No dataset found for {}/{} with specified time/level",
                 query.model, query.parameter
-            )))?;
-        
+            ))
+        })?;
+
         // Parse Zarr metadata
-        let zarr_json = entry.zarr_metadata.as_ref()
-            .ok_or_else(|| GridProcessorError::Metadata(
-                "Catalog entry missing zarr_metadata".to_string()
-            ))?;
-        
+        let zarr_json = entry.zarr_metadata.as_ref().ok_or_else(|| {
+            GridProcessorError::Metadata("Catalog entry missing zarr_metadata".to_string())
+        })?;
+
         let zarr_meta = ZarrMetadata::from_json(zarr_json)
             .map_err(|e| GridProcessorError::Metadata(e.to_string()))?;
-        
+
         // Build storage path
         let zarr_path = normalize_path(&entry.storage_path);
-        
+
         // Create storage
         let store = create_minio_storage(self.factory.minio_config())
             .map_err(|e| GridProcessorError::Storage(e.to_string()))?;
-        
+
         // Check for multiscale support
         let multiscale_meta = parse_multiscale_metadata(zarr_json);
-        
+
         // Read the region
         if let (Some(ms_meta), Some(out_size)) = (multiscale_meta, output_size) {
             if ms_meta.num_levels() > 1 {
@@ -151,12 +153,12 @@ impl GridDataService {
                     self.factory.chunk_cache(),
                     self.factory.config().clone(),
                 );
-                
+
                 let (region, _level) = ms_factory.read_region_for_output(bbox, out_size).await?;
                 return Ok(region);
             }
         }
-        
+
         // Standard loading (native resolution)
         let level_path = append_level_path(&zarr_path, 0);
         let grid_metadata = GridMetadata::from(&zarr_meta);
@@ -169,7 +171,7 @@ impl GridDataService {
         )?;
         processor.read_region(bbox).await
     }
-    
+
     /// Query a single point value.
     ///
     /// This is used for GetFeatureInfo and EDR Position queries.
@@ -181,36 +183,31 @@ impl GridDataService {
     ///
     /// # Returns
     /// `PointValue` containing the value and metadata
-    pub async fn read_point(
-        &self,
-        query: &DatasetQuery,
-        lon: f64,
-        lat: f64,
-    ) -> Result<PointValue> {
+    pub async fn read_point(&self, query: &DatasetQuery, lon: f64, lat: f64) -> Result<PointValue> {
         // Find the dataset
-        let entry = self.find_dataset(query).await?
-            .ok_or_else(|| GridProcessorError::NotFound(format!(
+        let entry = self.find_dataset(query).await?.ok_or_else(|| {
+            GridProcessorError::NotFound(format!(
                 "No dataset found for {}/{} with specified time/level",
                 query.model, query.parameter
-            )))?;
-        
+            ))
+        })?;
+
         // Parse metadata
-        let zarr_json = entry.zarr_metadata.as_ref()
-            .ok_or_else(|| GridProcessorError::Metadata(
-                "Catalog entry missing zarr_metadata".to_string()
-            ))?;
-        
+        let zarr_json = entry.zarr_metadata.as_ref().ok_or_else(|| {
+            GridProcessorError::Metadata("Catalog entry missing zarr_metadata".to_string())
+        })?;
+
         let zarr_meta = ZarrMetadata::from_json(zarr_json)
             .map_err(|e| GridProcessorError::Metadata(e.to_string()))?;
-        
+
         // Build path and create processor
         let zarr_path = normalize_path(&entry.storage_path);
         let level_path = append_level_path(&zarr_path, 0);
-        
+
         // Create storage
         let store = create_minio_storage(self.factory.minio_config())
             .map_err(|e| GridProcessorError::Storage(e.to_string()))?;
-        
+
         let grid_metadata = GridMetadata::from(&zarr_meta);
         let processor = ZarrGridProcessor::with_metadata(
             store,
@@ -219,10 +216,10 @@ impl GridDataService {
             self.factory.chunk_cache(),
             self.factory.config().clone(),
         )?;
-        
+
         // Query the point
         let value = processor.read_point(lon, lat).await?;
-        
+
         Ok(PointValue {
             value,
             units: zarr_meta.units.clone(),
@@ -233,102 +230,115 @@ impl GridDataService {
             forecast_hour: Some(zarr_meta.forecast_hour),
         })
     }
-    
+
     /// Get metadata for a dataset without loading data.
     ///
     /// Useful for checking dataset availability or getting bounds.
     pub async fn get_metadata(&self, query: &DatasetQuery) -> Result<GridMetadata> {
-        let entry = self.find_dataset(query).await?
-            .ok_or_else(|| GridProcessorError::NotFound(format!(
+        let entry = self.find_dataset(query).await?.ok_or_else(|| {
+            GridProcessorError::NotFound(format!(
                 "No dataset found for {}/{} with specified time/level",
                 query.model, query.parameter
-            )))?;
-        
-        let zarr_json = entry.zarr_metadata.as_ref()
-            .ok_or_else(|| GridProcessorError::Metadata(
-                "Catalog entry missing zarr_metadata".to_string()
-            ))?;
-        
+            ))
+        })?;
+
+        let zarr_json = entry.zarr_metadata.as_ref().ok_or_else(|| {
+            GridProcessorError::Metadata("Catalog entry missing zarr_metadata".to_string())
+        })?;
+
         let zarr_meta = ZarrMetadata::from_json(zarr_json)
             .map_err(|e| GridProcessorError::Metadata(e.to_string()))?;
-        
+
         Ok(GridMetadata::from(&zarr_meta))
     }
-    
+
     /// Get cache statistics for monitoring.
     pub async fn cache_stats(&self) -> CacheStats {
         self.factory.cache_stats().await
     }
-    
+
     /// Clear the chunk cache.
     ///
     /// Returns (entries cleared, bytes freed).
     pub async fn clear_cache(&self) -> (usize, u64) {
         self.factory.clear_chunk_cache().await
     }
-    
+
     /// Get access to the underlying factory.
     ///
     /// Useful for advanced use cases that need direct processor access.
     pub fn factory(&self) -> &GridProcessorFactory {
         &self.factory
     }
-    
+
     // ========================================================================
     // Private helpers
     // ========================================================================
-    
+
     /// Find a dataset in the catalog based on the query.
     async fn find_dataset(&self, query: &DatasetQuery) -> Result<Option<storage::CatalogEntry>> {
         let level = query.level.as_deref();
-        
+
         match &query.time_spec {
             TimeSpecification::Observation { time } => {
                 // For observations, find by time (level not used in find_by_time)
-                self.catalog.find_by_time(&query.model, &query.parameter, *time).await
+                self.catalog
+                    .find_by_time(&query.model, &query.parameter, *time)
+                    .await
                     .map_err(|e| GridProcessorError::Catalog(e.to_string()))
             }
-            
-            TimeSpecification::Forecast { reference_time: _, forecast_hour } => {
+
+            TimeSpecification::Forecast {
+                reference_time: _,
+                forecast_hour,
+            } => {
                 // Note: Current catalog doesn't support filtering by reference_time directly,
                 // so we use the best matching query based on what's available.
                 match (forecast_hour, level) {
-                    (Some(hour), Some(lev)) => {
-                        self.catalog.find_by_forecast_hour_and_level(
-                            &query.model, &query.parameter, *hour, lev
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
-                    (Some(hour), None) => {
-                        self.catalog.find_by_forecast_hour(
-                            &query.model, &query.parameter, *hour
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
-                    (None, Some(lev)) => {
-                        self.catalog.get_latest_run_earliest_forecast_at_level(
-                            &query.model, &query.parameter, lev
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
-                    (None, None) => {
-                        self.catalog.get_latest_run_earliest_forecast(
-                            &query.model, &query.parameter
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
+                    (Some(hour), Some(lev)) => self
+                        .catalog
+                        .find_by_forecast_hour_and_level(&query.model, &query.parameter, *hour, lev)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    (Some(hour), None) => self
+                        .catalog
+                        .find_by_forecast_hour(&query.model, &query.parameter, *hour)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    (None, Some(lev)) => self
+                        .catalog
+                        .get_latest_run_earliest_forecast_at_level(
+                            &query.model,
+                            &query.parameter,
+                            lev,
+                        )
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    (None, None) => self
+                        .catalog
+                        .get_latest_run_earliest_forecast(&query.model, &query.parameter)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
                 }
             }
-            
+
             TimeSpecification::Latest => {
                 // Get latest available data
                 match level {
-                    Some(lev) => {
-                        self.catalog.get_latest_run_earliest_forecast_at_level(
-                            &query.model, &query.parameter, lev
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
-                    None => {
-                        self.catalog.get_latest_run_earliest_forecast(
-                            &query.model, &query.parameter
-                        ).await.map_err(|e| GridProcessorError::Catalog(e.to_string()))
-                    }
+                    Some(lev) => self
+                        .catalog
+                        .get_latest_run_earliest_forecast_at_level(
+                            &query.model,
+                            &query.parameter,
+                            lev,
+                        )
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    None => self
+                        .catalog
+                        .get_latest_run_earliest_forecast(&query.model, &query.parameter)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
                 }
             }
         }
@@ -357,13 +367,19 @@ fn append_level_path(zarr_path: &str, level: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_normalize_path() {
-        assert_eq!(normalize_path("grids/gfs/test.zarr"), "/grids/gfs/test.zarr");
-        assert_eq!(normalize_path("/grids/gfs/test.zarr"), "/grids/gfs/test.zarr");
+        assert_eq!(
+            normalize_path("grids/gfs/test.zarr"),
+            "/grids/gfs/test.zarr"
+        );
+        assert_eq!(
+            normalize_path("/grids/gfs/test.zarr"),
+            "/grids/gfs/test.zarr"
+        );
     }
-    
+
     #[test]
     fn test_append_level_path() {
         assert_eq!(

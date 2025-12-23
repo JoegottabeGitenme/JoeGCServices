@@ -47,7 +47,8 @@ pub fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
 pub fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
     let lon = (x / 20037508.34) * 180.0;
     let lat = (y / 20037508.34) * 180.0;
-    let lat = 180.0 / std::f64::consts::PI * (2.0 * (lat * std::f64::consts::PI / 180.0).exp().atan() - std::f64::consts::PI / 2.0);
+    let lat = 180.0 / std::f64::consts::PI
+        * (2.0 * (lat * std::f64::consts::PI / 180.0).exp().atan() - std::f64::consts::PI / 2.0);
     (lon, lat)
 }
 
@@ -56,7 +57,7 @@ pub fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
 // ============================================================================
 
 /// Dimension parameters for WMS/WMTS requests
-/// 
+///
 /// For observation layers (GOES, MRMS): use `time` (ISO8601 timestamp)
 /// For forecast models (GFS, HRRR): use `run` (ISO8601) + `forecast` (hours)
 #[derive(Debug, Clone, Default)]
@@ -75,29 +76,33 @@ impl DimensionParams {
     /// Parse dimensions based on layer type (observation vs forecast model)
     /// Uses the model dimension registry to determine dimension type.
     /// Returns (forecast_hour, observation_time, reference_time) tuple
-    pub fn parse_for_layer(&self, model: &str, registry: &ModelDimensionRegistry) -> (Option<u32>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) {
+    pub fn parse_for_layer(
+        &self,
+        model: &str,
+        registry: &ModelDimensionRegistry,
+    ) -> (
+        Option<u32>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) {
         let is_observational = registry.is_observation(model);
-        
+
         if is_observational {
             // Observation layers use TIME dimension (ISO8601)
-            let observation_time = self.time.as_ref().and_then(|t| {
-                parse_iso8601_timestamp(t)
-            });
+            let observation_time = self.time.as_ref().and_then(|t| parse_iso8601_timestamp(t));
             (None, observation_time, None)
         } else {
             // Forecast models use RUN + FORECAST dimensions
             let reference_time = self.run.as_ref().and_then(|r| {
                 if r == "latest" {
-                    None  // Will use latest run
+                    None // Will use latest run
                 } else {
                     parse_iso8601_timestamp(r)
                 }
             });
-            
-            let forecast_hour = self.forecast.as_ref().and_then(|f| {
-                f.parse::<u32>().ok()
-            });
-            
+
+            let forecast_hour = self.forecast.as_ref().and_then(|f| f.parse::<u32>().ok());
+
             (forecast_hour, None, reference_time)
         }
     }
@@ -129,16 +134,22 @@ pub fn get_styles_xml_from_file(style_file: &str) -> String {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
                 let mut xml_parts = Vec::new();
-                
+
                 // Find the default style name (style with default: true, or first style)
-                let default_style_name = styles.iter()
-                    .find(|(_, def)| def.get("default").and_then(|d| d.as_bool()).unwrap_or(false))
+                let default_style_name = styles
+                    .iter()
+                    .find(|(_, def)| {
+                        def.get("default")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false)
+                    })
                     .map(|(name, _)| name.clone());
-                
+
                 // Output default style first (WMS convention)
                 if let Some(ref default_name) = default_style_name {
                     if let Some(style_def) = styles.get(default_name) {
-                        let title = style_def.get("name")
+                        let title = style_def
+                            .get("name")
                             .and_then(|n| n.as_str())
                             .unwrap_or(default_name);
                         xml_parts.push(format!(
@@ -147,32 +158,33 @@ pub fn get_styles_xml_from_file(style_file: &str) -> String {
                         ));
                     }
                 }
-                
+
                 // Then output remaining styles
                 for (style_key, style_def) in styles {
                     // Skip if this was the default (already output)
                     if Some(style_key) == default_style_name.as_ref() {
                         continue;
                     }
-                    
+
                     let name = style_key;
-                    let title = style_def.get("name")
+                    let title = style_def
+                        .get("name")
                         .and_then(|n| n.as_str())
                         .unwrap_or(style_key);
-                    
+
                     xml_parts.push(format!(
                         "<Style><Name>{}</Name><Title>{}</Title></Style>",
                         name, title
                     ));
                 }
-                
+
                 if !xml_parts.is_empty() {
                     return xml_parts.join("");
                 }
             }
         }
     }
-    
+
     // Fallback to just default style if file can't be read
     "<Style><Name>default</Name><Title>Default</Title></Style>".to_string()
 }
@@ -184,36 +196,46 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
                 let mut xml_parts = Vec::new();
-                
+
                 // First, find the style marked as default (or use first if none marked)
-                let default_style_name = styles.iter()
-                    .find(|(_, def)| def.get("default").and_then(|d| d.as_bool()).unwrap_or(false))
+                let default_style_name = styles
+                    .iter()
+                    .find(|(_, def)| {
+                        def.get("default")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false)
+                    })
                     .map(|(name, _)| name.as_str())
                     .or_else(|| styles.keys().next().map(|s| s.as_str()));
-                
+
                 for (style_key, style_def) in styles {
                     let identifier = style_key;
-                    let title = style_def.get("name")
+                    let title = style_def
+                        .get("name")
                         .and_then(|n| n.as_str())
                         .unwrap_or(style_key);
-                    
+
                     // Check if this style is the default
                     let is_default = Some(style_key.as_str()) == default_style_name;
-                    let default_attr = if is_default { " isDefault=\"true\"" } else { "" };
-                    
+                    let default_attr = if is_default {
+                        " isDefault=\"true\""
+                    } else {
+                        ""
+                    };
+
                     xml_parts.push(format!(
                         r#"<Style{}><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Style>"#,
                         default_attr, identifier, title
                     ));
                 }
-                
+
                 if !xml_parts.is_empty() {
                     return xml_parts.join("");
                 }
             }
         }
     }
-    
+
     // Fallback to just default style if file can't be read
     r#"<Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>"#.to_string()
 }
@@ -230,31 +252,31 @@ const DEFAULT_JPEG_QUALITY: u8 = 90;
 const DEFAULT_WEBP_QUALITY: f32 = 85.0;
 
 /// Convert PNG image data to JPEG format.
-/// 
+///
 /// Uses quality level from JPEG_QUALITY environment variable, defaulting to 90.
 /// Note: JPEG does not support transparency, so alpha channel is composited
 /// onto a white background.
 pub fn convert_png_to_jpeg(png_data: &[u8]) -> Result<Vec<u8>, String> {
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
-    
+
     // Get quality from environment or use default
     let quality = std::env::var("JPEG_QUALITY")
         .ok()
         .and_then(|v| v.parse::<u8>().ok())
         .unwrap_or(DEFAULT_JPEG_QUALITY)
-        .min(100);  // Cap at 100
-    
+        .min(100); // Cap at 100
+
     // Decode PNG
     let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
         .map_err(|e| format!("Failed to decode PNG: {}", e))?;
-    
+
     // Convert RGBA to RGB by compositing onto white background
     // (JPEG doesn't support transparency)
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
     let mut rgb_img = RgbaImage::new(width, height);
-    
+
     for (x, y, pixel) in rgba.enumerate_pixels() {
         let Rgba([r, g, b, a]) = *pixel;
         let alpha = a as f32 / 255.0;
@@ -264,79 +286,76 @@ pub fn convert_png_to_jpeg(png_data: &[u8]) -> Result<Vec<u8>, String> {
         let new_b = (b as f32 * alpha + 255.0 * (1.0 - alpha)) as u8;
         rgb_img.put_pixel(x, y, Rgba([new_r, new_g, new_b, 255]));
     }
-    
+
     let rgb_img = DynamicImage::ImageRgba8(rgb_img).to_rgb8();
-    
+
     // Encode as JPEG with specified quality
     let mut jpeg_data = Vec::new();
     let mut cursor = Cursor::new(&mut jpeg_data);
-    
+
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
-    encoder.encode(
-        &rgb_img,
-        width,
-        height,
-        image::ColorType::Rgb8,
-    ).map_err(|e| format!("Failed to encode JPEG: {}", e))?;
-    
+    encoder
+        .encode(&rgb_img, width, height, image::ColorType::Rgb8)
+        .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+
     Ok(jpeg_data)
 }
 
 /// Convert PNG image data to WebP format.
-/// 
+///
 /// Uses quality level from WEBP_QUALITY environment variable, defaulting to 85.
 /// WebP supports transparency (unlike JPEG), so alpha channel is preserved.
-/// 
+///
 /// WebP advantages over PNG:
 /// - Typically 25-35% smaller file size
 /// - Faster encoding than zlib-compressed PNG
 /// - Supported by all modern browsers
 pub fn convert_png_to_webp(png_data: &[u8]) -> Result<Vec<u8>, String> {
     use image::ImageFormat;
-    
+
     // Get quality from environment or use default
     let quality = std::env::var("WEBP_QUALITY")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(DEFAULT_WEBP_QUALITY)
         .clamp(0.0, 100.0);
-    
+
     // Decode PNG
     let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
         .map_err(|e| format!("Failed to decode PNG: {}", e))?;
-    
+
     // Get RGBA data
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
-    
+
     // Encode as WebP with transparency support
     let encoder = webp::Encoder::from_rgba(rgba.as_raw(), width, height);
     let webp_data = encoder.encode(quality);
-    
+
     Ok(webp_data.to_vec())
 }
 
 /// Convert PNG image data to lossless WebP format.
-/// 
+///
 /// Lossless WebP preserves exact pixel values while still achieving
 /// significant compression (typically better than PNG).
-/// 
+///
 /// Use this when exact color preservation is critical.
 pub fn convert_png_to_webp_lossless(png_data: &[u8]) -> Result<Vec<u8>, String> {
     use image::ImageFormat;
-    
+
     // Decode PNG
     let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
         .map_err(|e| format!("Failed to decode PNG: {}", e))?;
-    
+
     // Get RGBA data
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
-    
+
     // Encode as lossless WebP
     let encoder = webp::Encoder::from_rgba(rgba.as_raw(), width, height);
     let webp_data = encoder.encode_lossless();
-    
+
     Ok(webp_data.to_vec())
 }
 
@@ -348,39 +367,39 @@ pub fn convert_png_to_webp_lossless(png_data: &[u8]) -> Result<Vec<u8>, String> 
 pub fn generate_placeholder_image(width: u32, height: u32) -> Vec<u8> {
     // Create a simple gray PNG
     let mut data = Vec::new();
-    
+
     // PNG signature
     data.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    
+
     // IHDR chunk
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&(width).to_be_bytes());
     ihdr.extend_from_slice(&(height).to_be_bytes());
-    ihdr.push(8);  // bit depth
-    ihdr.push(0);  // color type (grayscale)
-    ihdr.push(0);  // compression method
-    ihdr.push(0);  // filter method
-    ihdr.push(0);  // interlace method
+    ihdr.push(8); // bit depth
+    ihdr.push(0); // color type (grayscale)
+    ihdr.push(0); // compression method
+    ihdr.push(0); // filter method
+    ihdr.push(0); // interlace method
     write_chunk(&mut data, b"IHDR", &ihdr);
-    
+
     // IDAT chunk (compressed image data)
     let mut raw = Vec::new();
     for _ in 0..height {
-        raw.push(0);  // filter type none
+        raw.push(0); // filter type none
         for _ in 0..width {
-            raw.push(128);  // gray
+            raw.push(128); // gray
         }
     }
-    
+
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     use std::io::Write;
     encoder.write_all(&raw).unwrap();
     let compressed = encoder.finish().unwrap();
     write_chunk(&mut data, b"IDAT", &compressed);
-    
+
     // IEND chunk
     write_chunk(&mut data, b"IEND", &[]);
-    
+
     data
 }
 
@@ -483,7 +502,10 @@ mod tests {
     fn test_generate_placeholder_image() {
         let img = generate_placeholder_image(64, 64);
         // Check PNG signature
-        assert_eq!(&img[0..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &img[0..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
         // Should have reasonable size
         assert!(img.len() > 50);
     }
@@ -515,11 +537,11 @@ mod tests {
     fn test_convert_png_to_webp() {
         // Create a simple 2x2 PNG
         let png_data = generate_placeholder_image(2, 2);
-        
+
         // Convert to WebP
         let result = convert_png_to_webp(&png_data);
         assert!(result.is_ok(), "WebP conversion should succeed");
-        
+
         let webp_data = result.unwrap();
         // WebP magic bytes: RIFF....WEBP
         assert!(webp_data.len() > 12, "WebP should have reasonable size");
@@ -531,11 +553,11 @@ mod tests {
     fn test_convert_png_to_webp_lossless() {
         // Create a simple test PNG
         let png_data = generate_placeholder_image(4, 4);
-        
+
         // Convert to lossless WebP
         let result = convert_png_to_webp_lossless(&png_data);
         assert!(result.is_ok(), "Lossless WebP conversion should succeed");
-        
+
         let webp_data = result.unwrap();
         assert!(webp_data.len() > 12, "WebP should have reasonable size");
         assert_eq!(&webp_data[0..4], b"RIFF", "WebP should start with RIFF");
@@ -546,13 +568,17 @@ mod tests {
     fn test_webp_smaller_than_png() {
         // Create a larger test image where WebP compression benefits should be visible
         let png_data = generate_placeholder_image(64, 64);
-        
+
         let webp_result = convert_png_to_webp(&png_data);
         assert!(webp_result.is_ok());
-        
+
         let webp_data = webp_result.unwrap();
-        println!("PNG size: {} bytes, WebP size: {} bytes", png_data.len(), webp_data.len());
-        
+        println!(
+            "PNG size: {} bytes, WebP size: {} bytes",
+            png_data.len(),
+            webp_data.len()
+        );
+
         // WebP should generally be smaller for this type of image
         // Not a strict requirement as it depends on content, but useful to verify
         assert!(webp_data.len() > 0);

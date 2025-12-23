@@ -36,13 +36,13 @@ use serde::{Deserialize, Serialize};
 pub struct DatasetQuery {
     /// Model identifier (e.g., "gfs", "hrrr", "goes18", "mrms")
     pub model: String,
-    
+
     /// Parameter name (e.g., "TMP", "UGRD", "CMI_C13")
     pub parameter: String,
-    
+
     /// Optional level (e.g., "2 m above ground", "500 mb")
     pub level: Option<String>,
-    
+
     /// Time specification for finding the dataset
     pub time_spec: TimeSpecification,
 }
@@ -59,7 +59,7 @@ pub enum TimeSpecification {
         /// The observation timestamp
         time: DateTime<Utc>,
     },
-    
+
     /// For forecast data (GFS, HRRR): run time + forecast hour.
     Forecast {
         /// Reference/run time. None means use the latest available run.
@@ -67,7 +67,7 @@ pub enum TimeSpecification {
         /// Forecast hour. None means use the earliest available (typically 0).
         forecast_hour: Option<u32>,
     },
-    
+
     /// Get the latest available data regardless of type.
     /// For forecasts: latest run, earliest forecast hour.
     /// For observations: most recent observation.
@@ -97,7 +97,7 @@ impl DatasetQuery {
             time_spec: TimeSpecification::Latest,
         }
     }
-    
+
     /// Create a query for observation data.
     ///
     /// # Arguments
@@ -120,7 +120,7 @@ impl DatasetQuery {
             time_spec: TimeSpecification::Latest,
         }
     }
-    
+
     /// Specify the level for this query.
     ///
     /// # Arguments
@@ -129,7 +129,7 @@ impl DatasetQuery {
         self.level = Some(level.into());
         self
     }
-    
+
     /// Specify the forecast hour for a forecast query.
     ///
     /// # Arguments
@@ -148,7 +148,7 @@ impl DatasetQuery {
         }
         self
     }
-    
+
     /// Specify the reference (run) time for a forecast query.
     ///
     /// # Arguments
@@ -167,7 +167,7 @@ impl DatasetQuery {
         }
         self
     }
-    
+
     /// Specify the observation time for an observation query.
     ///
     /// # Arguments
@@ -176,7 +176,7 @@ impl DatasetQuery {
         self.time_spec = TimeSpecification::Observation { time };
         self
     }
-    
+
     /// Request the latest available data.
     ///
     /// For forecast models: latest run, earliest forecast hour.
@@ -185,17 +185,17 @@ impl DatasetQuery {
         self.time_spec = TimeSpecification::Latest;
         self
     }
-    
+
     /// Check if this query is for observation data.
     pub fn is_observation(&self) -> bool {
         matches!(self.time_spec, TimeSpecification::Observation { .. })
     }
-    
+
     /// Check if this query is for forecast data.
     pub fn is_forecast(&self) -> bool {
         matches!(self.time_spec, TimeSpecification::Forecast { .. })
     }
-    
+
     /// Get the forecast hour if specified.
     pub fn forecast_hour(&self) -> Option<u32> {
         match &self.time_spec {
@@ -203,7 +203,7 @@ impl DatasetQuery {
             _ => None,
         }
     }
-    
+
     /// Get the reference time if specified.
     pub fn reference_time(&self) -> Option<DateTime<Utc>> {
         match &self.time_spec {
@@ -211,7 +211,7 @@ impl DatasetQuery {
             _ => None,
         }
     }
-    
+
     /// Get the observation time if specified.
     pub fn observation_time(&self) -> Option<DateTime<Utc>> {
         match &self.time_spec {
@@ -250,13 +250,13 @@ pub struct PointValue {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    
+
     #[test]
     fn test_forecast_query_builder() {
         let query = DatasetQuery::forecast("gfs", "TMP")
             .at_level("2 m above ground")
             .at_forecast_hour(6);
-        
+
         assert_eq!(query.model, "gfs");
         assert_eq!(query.parameter, "TMP");
         assert_eq!(query.level, Some("2 m above ground".to_string()));
@@ -264,31 +264,30 @@ mod tests {
         assert!(query.is_forecast());
         assert!(!query.is_observation());
     }
-    
+
     #[test]
     fn test_observation_query_builder() {
         let time = Utc.with_ymd_and_hms(2024, 12, 22, 12, 0, 0).unwrap();
-        let query = DatasetQuery::observation("goes18", "CMI_C13")
-            .at_time(time);
-        
+        let query = DatasetQuery::observation("goes18", "CMI_C13").at_time(time);
+
         assert_eq!(query.model, "goes18");
         assert_eq!(query.parameter, "CMI_C13");
         assert_eq!(query.observation_time(), Some(time));
         assert!(query.is_observation());
         assert!(!query.is_forecast());
     }
-    
+
     #[test]
     fn test_latest_query() {
         let query = DatasetQuery::forecast("gfs", "TMP")
             .at_level("surface")
             .latest();
-        
+
         assert!(matches!(query.time_spec, TimeSpecification::Latest));
         assert_eq!(query.forecast_hour(), None);
         assert_eq!(query.reference_time(), None);
     }
-    
+
     #[test]
     fn test_full_forecast_query() {
         let run_time = Utc.with_ymd_and_hms(2024, 12, 22, 0, 0, 0).unwrap();
@@ -296,7 +295,7 @@ mod tests {
             .at_level("entire atmosphere")
             .at_run(run_time)
             .at_forecast_hour(12);
-        
+
         assert_eq!(query.model, "hrrr");
         assert_eq!(query.parameter, "REFC");
         assert_eq!(query.level, Some("entire atmosphere".to_string()));

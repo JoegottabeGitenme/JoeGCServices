@@ -68,7 +68,9 @@ fn bench_generate_contour_levels(c: &mut Criterion) {
             BenchmarkId::new("levels", name),
             &(min, max, interval),
             |b, &(min, max, interval)| {
-                b.iter(|| generate_contour_levels(black_box(min), black_box(max), black_box(interval)));
+                b.iter(|| {
+                    generate_contour_levels(black_box(min), black_box(max), black_box(interval))
+                });
             },
         );
     }
@@ -131,7 +133,10 @@ fn bench_connect_segments(c: &mut Criterion) {
         group.throughput(Throughput::Elements(segments.len() as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("smooth", format!("{}x{}_{}seg", width, height, segments.len())),
+            BenchmarkId::new(
+                "smooth",
+                format!("{}x{}_{}seg", width, height, segments.len()),
+            ),
             &segments,
             |b, segs| {
                 b.iter(|| connect_segments(black_box(segs.clone())));
@@ -360,9 +365,13 @@ fn bench_line_width_impact(c: &mut Criterion) {
             special_levels: vec![],
         };
 
-        group.bench_with_input(BenchmarkId::new("width", line_width), &config, |b, config| {
-            b.iter(|| render_contours(black_box(&data), 256, 256, black_box(config)));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("width", line_width),
+            &config,
+            |b, config| {
+                b.iter(|| render_contours(black_box(&data), 256, 256, black_box(config)));
+            },
+        );
     }
 
     group.finish();

@@ -37,6 +37,85 @@ cargo fmt
 cargo clippy -- -D warnings
 ```
 
+## Testing Guidelines
+
+### Test Organization
+
+Tests are organized following Rust conventions with an emphasis on keeping production code clean:
+
+| Test Type | Location | When to Use |
+|-----------|----------|-------------|
+| **Unit tests (private functions)** | `src/module.rs` inline `#[cfg(test)]` | Testing private internals (<50 lines) |
+| **Unit tests (public API)** | `tests/module_tests.rs` | Testing public interface |
+| **Integration tests** | `tests/integration/*.rs` | Cross-module, end-to-end tests |
+| **Test utilities** | `tests/common/mod.rs` or `test-utils` crate | Shared helpers, fixtures |
+
+### Using the test-utils Crate
+
+The `test-utils` crate provides shared testing infrastructure:
+
+```rust
+use test_utils::{
+    require_test_file,          // Skip test if data file missing
+    assert_approx_eq,           // Floating-point comparison
+    fixtures::bbox,             // Common bounding boxes
+    generators::create_test_grid, // Generate test data
+    temp_test_dir,              // Create temp directory
+};
+
+#[test]
+fn test_something() {
+    // Skip if test data not available
+    let path = require_test_file!("gfs_sample.grib2");
+    
+    // Use approximate comparison for floats
+    assert_approx_eq!(computed, expected, 0.001);
+    
+    // Use common fixtures
+    let bbox = fixtures::bbox::CONUS;
+    
+    // Generate test data
+    let data = create_test_grid(100, 100);
+}
+```
+
+### CI/CD Pipeline
+
+All PRs run automated checks via `.github/workflows/ci.yml`:
+
+| Check | Description | Must Pass |
+|-------|-------------|-----------|
+| **Format** | `cargo fmt --check` | Yes |
+| **Clippy** | `cargo clippy -- -D warnings` | Yes |
+| **Tests** | `cargo test --workspace` | Yes |
+| **Coverage** | `cargo-tarpaulin` (target: 80%) | Reported |
+| **Docs** | `cargo doc --no-deps` | Yes |
+
+### Coverage Target
+
+We target **80% code coverage** across the workspace. Coverage reports are generated automatically on PRs and show per-crate breakdown.
+
+To run coverage locally:
+
+```bash
+# Install tarpaulin
+cargo install cargo-tarpaulin
+
+# Generate coverage report
+cargo tarpaulin --workspace --out html
+
+# Open report
+open tarpaulin-report.html
+```
+
+### Writing Good Tests
+
+1. **Descriptive names**: `test_parse_bbox_invalid_format_returns_error`
+2. **Test both success and error paths**
+3. **Use `#[tokio::test]` for async tests**
+4. **Keep test code out of production files** when possible
+5. **Use fixtures and generators** from `test-utils` for common patterns
+
 ### Local Development (without Kubernetes)
 
 For rapid development iteration without the overhead of Kubernetes:

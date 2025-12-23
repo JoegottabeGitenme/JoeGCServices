@@ -1,13 +1,13 @@
 //! Application metrics collection and reporting.
 
+use grid_processor;
 use metrics::{counter, gauge, histogram};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
 use storage::TileMemoryCacheStats;
-use grid_processor;
+use tokio::sync::RwLock;
 
 /// Metrics collector for the WMS API.
 #[derive(Debug)]
@@ -19,36 +19,36 @@ pub struct MetricsCollector {
     pub cache_misses: AtomicU64,
     pub minio_reads: AtomicU64,
     pub minio_read_bytes: AtomicU64,
-    
+
     /// Render stats
     pub renders_total: AtomicU64,
     pub render_errors: AtomicU64,
-    
+
     /// Timing stats (stored as microseconds for atomic ops)
     render_times: RwLock<TimingStats>,
     minio_times: RwLock<TimingStats>,
-    
+
     /// Per-layer-type timing stats
     layer_type_times: RwLock<HashMap<LayerType, TimingStats>>,
-    
+
     /// Per-data-source parsing stats (for GRIB2 vs NetCDF comparison)
     data_source_parse_times: RwLock<HashMap<String, DataSourceParseStats>>,
-    
+
     /// Detailed pipeline timing stats
     grib_load_times: RwLock<TimingStats>,
     grib_parse_times: RwLock<TimingStats>,
     resample_times: RwLock<TimingStats>,
     png_encode_times: RwLock<TimingStats>,
     cache_lookup_times: RwLock<TimingStats>,
-    
+
     /// Request rate tracking for 1min/5min windows
     wms_rate_tracker: RwLock<RateTracker>,
     wmts_rate_tracker: RwLock<RateTracker>,
     render_rate_tracker: RwLock<RateTracker>,
-    
+
     /// Tile request heatmap for geographic visualization
     tile_heatmap: RwLock<TileRequestHeatmap>,
-    
+
     /// Start time for uptime calculation
     start_time: Instant,
 }
@@ -86,7 +86,7 @@ impl GoesSatellite {
             _ => None,
         }
     }
-    
+
     pub fn label(&self) -> &'static str {
         match self {
             GoesSatellite::Goes16 => "goes16",
@@ -112,7 +112,7 @@ impl WeatherModel {
             _ => None,
         }
     }
-    
+
     pub fn label(&self) -> &'static str {
         match self {
             WeatherModel::Gfs => "gfs",
@@ -120,7 +120,7 @@ impl WeatherModel {
             WeatherModel::Mrms => "mrms",
         }
     }
-    
+
     pub fn display_name(&self) -> &'static str {
         match self {
             WeatherModel::Gfs => "GFS",
@@ -141,7 +141,7 @@ impl DataSourceType {
             other => DataSourceType::Other(other.to_string()),
         }
     }
-    
+
     /// Get a string label for metrics
     pub fn label(&self) -> &str {
         match self {
@@ -152,12 +152,15 @@ impl DataSourceType {
             DataSourceType::Other(name) => name.as_str(),
         }
     }
-    
+
     /// Check if this is a GRIB2 source
     pub fn is_grib2(&self) -> bool {
-        matches!(self, DataSourceType::Grib2Gfs | DataSourceType::Grib2Hrrr | DataSourceType::Grib2Mrms)
+        matches!(
+            self,
+            DataSourceType::Grib2Gfs | DataSourceType::Grib2Hrrr | DataSourceType::Grib2Mrms
+        )
     }
-    
+
     /// Check if this is a NetCDF source
     pub fn is_netcdf(&self) -> bool {
         matches!(self, DataSourceType::NetcdfGoes)
@@ -171,12 +174,12 @@ impl LayerType {
         if style == "isolines" {
             return LayerType::Isolines;
         }
-        
+
         // Wind barb layers
         if layer.contains("WIND_BARBS") || style == "wind_barbs" {
             return LayerType::WindBarbs;
         }
-        
+
         // Everything else is gradient (temperature, pressure, satellite, radar, etc.)
         LayerType::Gradient
     }
@@ -214,11 +217,11 @@ impl DataSourceParseStats {
             self.max_parse_us = duration_us;
         }
     }
-    
+
     pub fn record_cache_hit(&mut self) {
         self.cache_hits += 1;
     }
-    
+
     pub fn avg_parse_ms(&self) -> f64 {
         if self.cache_misses == 0 {
             0.0
@@ -226,7 +229,7 @@ impl DataSourceParseStats {
             (self.total_parse_us as f64 / self.cache_misses as f64) / 1000.0
         }
     }
-    
+
     pub fn cache_hit_rate(&self) -> f64 {
         let total = self.cache_hits + self.cache_misses;
         if total == 0 {
@@ -303,7 +306,7 @@ impl TileRequestHeatmap {
             last_clear: Instant::now(),
         }
     }
-    
+
     /// Record a tile request with its bounding box and cache status
     pub fn record(&mut self, bbox: &[f32; 4], cache_status: TileCacheStatus) {
         // bbox format: [min_lon, min_lat, max_lon, max_lat]
@@ -312,10 +315,13 @@ impl TileRequestHeatmap {
         let min_lat = (bbox[1] * 100.0).round() / 100.0;
         let max_lon = (bbox[2] * 100.0).round() / 100.0;
         let max_lat = (bbox[3] * 100.0).round() / 100.0;
-        
+
         // Key uniquely identifies this tile's bounds
-        let key = format!("{:.2},{:.2},{:.2},{:.2}", min_lon, min_lat, max_lon, max_lat);
-        
+        let key = format!(
+            "{:.2},{:.2},{:.2},{:.2}",
+            min_lon, min_lat, max_lon, max_lat
+        );
+
         // Update or insert cell
         if let Some(cell) = self.cells.get_mut(&key) {
             cell.count += 1;
@@ -330,20 +336,23 @@ impl TileRequestHeatmap {
                 TileCacheStatus::L2Hit => (0, 1, 0),
                 TileCacheStatus::Miss => (0, 0, 1),
             };
-            self.cells.insert(key, TileHeatmapCell {
-                min_lon,
-                min_lat,
-                max_lon,
-                max_lat,
-                count: 1,
-                l1_hits,
-                l2_hits,
-                misses,
-            });
+            self.cells.insert(
+                key,
+                TileHeatmapCell {
+                    min_lon,
+                    min_lat,
+                    max_lon,
+                    max_lat,
+                    count: 1,
+                    l1_hits,
+                    l2_hits,
+                    misses,
+                },
+            );
         }
         // If at max capacity, just ignore new cells (existing cells still get incremented)
     }
-    
+
     /// Get a snapshot of the current heatmap state
     pub fn snapshot(&self) -> TileHeatmapSnapshot {
         let cells: Vec<TileHeatmapCell> = self.cells.values().cloned().collect();
@@ -353,7 +362,7 @@ impl TileRequestHeatmap {
             total_requests,
         }
     }
-    
+
     /// Clear all heatmap data
     pub fn clear(&mut self) {
         self.cells.clear();
@@ -383,38 +392,38 @@ impl RateTracker {
             start,
         }
     }
-    
+
     fn record(&mut self) {
         let now = self.start.elapsed().as_secs();
         self.timestamps.push(now);
-        
+
         // Prune old entries (older than 5 minutes) periodically
         if self.timestamps.len() > 5000 {
             let cutoff = now.saturating_sub(300); // 5 minutes
             self.timestamps.retain(|&t| t >= cutoff);
         }
     }
-    
+
     fn rate_1m(&self) -> f64 {
         let now = self.start.elapsed().as_secs();
         let cutoff = now.saturating_sub(60);
         let count = self.timestamps.iter().filter(|&&t| t >= cutoff).count();
         count as f64 / 60.0 // requests per second
     }
-    
+
     fn rate_5m(&self) -> f64 {
         let now = self.start.elapsed().as_secs();
         let cutoff = now.saturating_sub(300);
         let count = self.timestamps.iter().filter(|&&t| t >= cutoff).count();
         count as f64 / 300.0 // requests per second
     }
-    
+
     fn count_1m(&self) -> u64 {
         let now = self.start.elapsed().as_secs();
         let cutoff = now.saturating_sub(60);
         self.timestamps.iter().filter(|&&t| t >= cutoff).count() as u64
     }
-    
+
     fn count_5m(&self) -> u64 {
         let now = self.start.elapsed().as_secs();
         let cutoff = now.saturating_sub(300);
@@ -443,7 +452,7 @@ impl TimingStats {
             self.max_us = duration_us;
         }
     }
-    
+
     fn avg_ms(&self) -> f64 {
         if self.count == 0 {
             0.0
@@ -451,15 +460,15 @@ impl TimingStats {
             (self.total_us as f64 / self.count as f64) / 1000.0
         }
     }
-    
+
     fn last_ms(&self) -> f64 {
         self.last_us as f64 / 1000.0
     }
-    
+
     fn min_ms(&self) -> f64 {
         self.min_us as f64 / 1000.0
     }
-    
+
     fn max_ms(&self) -> f64 {
         self.max_us as f64 / 1000.0
     }
@@ -493,7 +502,7 @@ impl MetricsCollector {
             start_time,
         }
     }
-    
+
     /// Record a WMS request
     pub fn record_wms_request(&self) {
         self.wms_requests.fetch_add(1, Ordering::Relaxed);
@@ -503,7 +512,7 @@ impl MetricsCollector {
             tracker.record();
         }
     }
-    
+
     /// Record a WMTS request
     pub fn record_wmts_request(&self) {
         self.wmts_requests.fetch_add(1, Ordering::Relaxed);
@@ -513,29 +522,29 @@ impl MetricsCollector {
             tracker.record();
         }
     }
-    
+
     /// Record a cache hit (L2 Redis cache)
     pub async fn record_cache_hit(&self) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
         counter!("cache_hits_total").increment(1);
     }
-    
+
     /// Record a cache miss (L2 Redis cache)
     pub async fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         counter!("cache_misses_total").increment(1);
     }
-    
+
     /// Record L1 cache hit
     pub fn record_l1_cache_hit(&self) {
         counter!("tile_memory_cache_hits_total").increment(1);
     }
-    
+
     /// Record L1 cache miss
     pub fn record_l1_cache_miss(&self) {
         counter!("tile_memory_cache_misses_total").increment(1);
     }
-    
+
     /// Record a tile request location for heatmap visualization
     /// bbox format: [min_lon, min_lat, max_lon, max_lat]
     pub fn record_tile_request_location(&self, bbox: &[f32; 4], cache_status: TileCacheStatus) {
@@ -543,17 +552,17 @@ impl MetricsCollector {
             heatmap.record(bbox, cache_status);
         }
     }
-    
+
     /// Get a snapshot of the tile request heatmap
     pub async fn get_tile_heatmap(&self) -> TileHeatmapSnapshot {
         self.tile_heatmap.read().await.snapshot()
     }
-    
+
     /// Clear the tile request heatmap
     pub async fn clear_tile_heatmap(&self) {
         self.tile_heatmap.write().await.clear();
     }
-    
+
     /// Update L1 cache statistics from TileMemoryCache
     pub fn record_tile_memory_cache_stats(&self, stats: &TileMemoryCacheStats) {
         let hits = stats.hits.load(Ordering::Relaxed);
@@ -564,15 +573,16 @@ impl MetricsCollector {
         } else {
             0.0
         };
-        
+
         gauge!("tile_memory_cache_hits_total").set(hits as f64);
         gauge!("tile_memory_cache_misses_total").set(misses as f64);
         gauge!("tile_memory_cache_hit_rate_percent").set(hit_rate);
-        gauge!("tile_memory_cache_evictions_total").set(stats.evictions.load(Ordering::Relaxed) as f64);
+        gauge!("tile_memory_cache_evictions_total")
+            .set(stats.evictions.load(Ordering::Relaxed) as f64);
         gauge!("tile_memory_cache_expired_total").set(stats.expired.load(Ordering::Relaxed) as f64);
         gauge!("tile_memory_cache_size_bytes").set(stats.size_bytes.load(Ordering::Relaxed) as f64);
     }
-    
+
     /// Record container resource statistics
     pub fn record_container_stats(
         &self,
@@ -590,13 +600,13 @@ impl MetricsCollector {
         gauge!("container_memory_total_bytes").set(memory_total_bytes as f64);
         gauge!("container_memory_percent").set(memory_percent);
         gauge!("process_rss_bytes").set(process_rss_bytes as f64);
-        
+
         // CPU metrics
         gauge!("container_cpu_load_1m").set(cpu_load_1m);
         gauge!("container_cpu_load_5m").set(cpu_load_5m);
         gauge!("container_cpu_load_15m").set(cpu_load_15m);
         gauge!("container_cpu_count").set(cpu_count as f64);
-        
+
         // CPU load percentage (load / cpu_count * 100)
         let cpu_load_percent = if cpu_count > 0 {
             (cpu_load_1m / cpu_count as f64) * 100.0
@@ -605,7 +615,7 @@ impl MetricsCollector {
         };
         gauge!("container_cpu_load_percent").set(cpu_load_percent);
     }
-    
+
     /// Record a MinIO read operation
     pub async fn record_minio_read(&self, bytes: u64, duration_us: u64) {
         self.minio_reads.fetch_add(1, Ordering::Relaxed);
@@ -613,11 +623,11 @@ impl MetricsCollector {
         counter!("minio_reads_total").increment(1);
         counter!("minio_read_bytes_total").increment(bytes);
         histogram!("minio_read_duration_ms").record(duration_us as f64 / 1000.0);
-        
+
         let mut times = self.minio_times.write().await;
         times.record(duration_us);
     }
-    
+
     /// Record a render operation
     pub async fn record_render(&self, duration_us: u64, success: bool) {
         self.renders_total.fetch_add(1, Ordering::Relaxed);
@@ -626,26 +636,34 @@ impl MetricsCollector {
         }
         counter!("renders_total").increment(1);
         histogram!("render_duration_ms").record(duration_us as f64 / 1000.0);
-        
+
         let mut times = self.render_times.write().await;
         times.record(duration_us);
-        
+
         // Track for rate calculation (non-blocking)
         if let Ok(mut tracker) = self.render_rate_tracker.try_write() {
             tracker.record();
         }
     }
-    
+
     /// Record a render operation with layer type classification
-    pub async fn record_render_with_type(&self, duration_us: u64, success: bool, layer_type: LayerType) {
+    pub async fn record_render_with_type(
+        &self,
+        duration_us: u64,
+        success: bool,
+        layer_type: LayerType,
+    ) {
         // Record general render stats
         self.record_render(duration_us, success).await;
-        
+
         // Record layer-type specific stats
         if success {
             let mut layer_times = self.layer_type_times.write().await;
-            layer_times.entry(layer_type).or_insert_with(TimingStats::default).record(duration_us);
-            
+            layer_times
+                .entry(layer_type)
+                .or_insert_with(TimingStats::default)
+                .record(duration_us);
+
             // Record to metrics crate with label
             let type_label = match layer_type {
                 LayerType::Gradient => "gradient",
@@ -657,67 +675,84 @@ impl MetricsCollector {
             counter!("renders_by_type_total", "layer_type" => type_label).increment(1);
         }
     }
-    
+
     /// Record GRIB file load time (from MinIO/cache)
     pub async fn record_grib_load(&self, duration_us: u64) {
         let mut times = self.grib_load_times.write().await;
         times.record(duration_us);
         histogram!("grib_load_duration_ms").record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record GRIB parsing time (decompression + parsing)
     pub async fn record_grib_parse(&self, duration_us: u64) {
         let mut times = self.grib_parse_times.write().await;
         times.record(duration_us);
         histogram!("grib_parse_duration_ms").record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record per-data-source parsing time (for admin dashboard)
     pub async fn record_data_source_parse(&self, source_type: &DataSourceType, duration_us: u64) {
         let label = source_type.label().to_string();
         let mut stats = self.data_source_parse_times.write().await;
-        let entry = stats.entry(label.clone()).or_insert_with(DataSourceParseStats::default);
+        let entry = stats
+            .entry(label.clone())
+            .or_insert_with(DataSourceParseStats::default);
         entry.record_parse(duration_us);
-        
+
         // Also record to prometheus with label
         histogram!("data_source_parse_duration_ms", "source" => label)
             .record(duration_us as f64 / 1000.0);
-        counter!("data_source_parse_total", "source" => source_type.label().to_string()).increment(1);
+        counter!("data_source_parse_total", "source" => source_type.label().to_string())
+            .increment(1);
     }
-    
+
     /// Record a grid cache hit for a data source
     pub async fn record_data_source_cache_hit(&self, source_type: &DataSourceType) {
         let label = source_type.label().to_string();
         let mut stats = self.data_source_parse_times.write().await;
-        let entry = stats.entry(label.clone()).or_insert_with(DataSourceParseStats::default);
+        let entry = stats
+            .entry(label.clone())
+            .or_insert_with(DataSourceParseStats::default);
         entry.record_cache_hit();
-        
+
         counter!("data_source_cache_hits_total", "source" => label).increment(1);
     }
-    
+
     // ==================== GOES-Specific Metrics ====================
-    
+
     /// Record a GOES tile request
     pub fn record_goes_request(&self, satellite: GoesSatellite, band: &str) {
-        counter!("goes_requests_total", 
+        counter!("goes_requests_total",
             "satellite" => satellite.label().to_string(),
             "band" => band.to_string()
-        ).increment(1);
+        )
+        .increment(1);
     }
-    
+
     /// Record GOES file fetch from MinIO
-    pub fn record_goes_fetch(&self, satellite: GoesSatellite, file_size_bytes: u64, duration_us: u64) {
+    pub fn record_goes_fetch(
+        &self,
+        satellite: GoesSatellite,
+        file_size_bytes: u64,
+        duration_us: u64,
+    ) {
         let sat_label = satellite.label().to_string();
         counter!("goes_fetch_total", "satellite" => sat_label.clone()).increment(1);
-        counter!("goes_fetch_bytes_total", "satellite" => sat_label.clone()).increment(file_size_bytes);
+        counter!("goes_fetch_bytes_total", "satellite" => sat_label.clone())
+            .increment(file_size_bytes);
         histogram!("goes_fetch_duration_ms", "satellite" => sat_label.clone())
             .record(duration_us as f64 / 1000.0);
-        histogram!("goes_file_size_bytes", "satellite" => sat_label)
-            .record(file_size_bytes as f64);
+        histogram!("goes_file_size_bytes", "satellite" => sat_label).record(file_size_bytes as f64);
     }
-    
+
     /// Record GOES NetCDF parsing time
-    pub fn record_goes_parse(&self, satellite: GoesSatellite, duration_us: u64, width: u32, height: u32) {
+    pub fn record_goes_parse(
+        &self,
+        satellite: GoesSatellite,
+        duration_us: u64,
+        width: u32,
+        height: u32,
+    ) {
         let sat_label = satellite.label().to_string();
         histogram!("goes_parse_duration_ms", "satellite" => sat_label.clone())
             .record(duration_us as f64 / 1000.0);
@@ -726,84 +761,116 @@ impl MetricsCollector {
         let pixels = (width as u64) * (height as u64);
         gauge!("goes_grid_pixels", "satellite" => sat_label).set(pixels as f64);
     }
-    
+
     /// Record GOES projection/resampling time
-    pub fn record_goes_projection(&self, satellite: GoesSatellite, duration_us: u64, use_lut: bool) {
+    pub fn record_goes_projection(
+        &self,
+        satellite: GoesSatellite,
+        duration_us: u64,
+        use_lut: bool,
+    ) {
         let sat_label = satellite.label().to_string();
         let method = if use_lut { "lut" } else { "compute" };
-        histogram!("goes_projection_duration_ms", 
+        histogram!("goes_projection_duration_ms",
             "satellite" => sat_label,
             "method" => method.to_string()
-        ).record(duration_us as f64 / 1000.0);
+        )
+        .record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record GOES render completion
-    pub fn record_goes_render(&self, satellite: GoesSatellite, band: &str, duration_us: u64, success: bool) {
+    pub fn record_goes_render(
+        &self,
+        satellite: GoesSatellite,
+        band: &str,
+        duration_us: u64,
+        success: bool,
+    ) {
         let sat_label = satellite.label().to_string();
         let band_label = band.to_string();
-        counter!("goes_renders_total", 
+        counter!("goes_renders_total",
             "satellite" => sat_label.clone(),
             "band" => band_label.clone(),
             "success" => success.to_string()
-        ).increment(1);
+        )
+        .increment(1);
         if success {
-            histogram!("goes_render_duration_ms", 
+            histogram!("goes_render_duration_ms",
                 "satellite" => sat_label,
                 "band" => band_label
-            ).record(duration_us as f64 / 1000.0);
+            )
+            .record(duration_us as f64 / 1000.0);
         }
     }
-    
+
     /// Record GOES cache hit (grid data cache)
     pub fn record_goes_cache_hit(&self, satellite: GoesSatellite) {
-        counter!("goes_cache_hits_total", "satellite" => satellite.label().to_string()).increment(1);
+        counter!("goes_cache_hits_total", "satellite" => satellite.label().to_string())
+            .increment(1);
     }
-    
+
     /// Record GOES cache miss (grid data cache)
     pub fn record_goes_cache_miss(&self, satellite: GoesSatellite) {
-        counter!("goes_cache_misses_total", "satellite" => satellite.label().to_string()).increment(1);
+        counter!("goes_cache_misses_total", "satellite" => satellite.label().to_string())
+            .increment(1);
     }
-    
+
     /// Record GOES LUT (look-up table) usage for projection
-    pub fn record_goes_lut_status(&self, satellite: GoesSatellite, loaded: bool, generation_ms: Option<f64>) {
+    pub fn record_goes_lut_status(
+        &self,
+        satellite: GoesSatellite,
+        loaded: bool,
+        generation_ms: Option<f64>,
+    ) {
         let sat_label = satellite.label().to_string();
-        gauge!("goes_lut_loaded", "satellite" => sat_label.clone()).set(if loaded { 1.0 } else { 0.0 });
+        gauge!("goes_lut_loaded", "satellite" => sat_label.clone()).set(if loaded {
+            1.0
+        } else {
+            0.0
+        });
         if let Some(gen_ms) = generation_ms {
             gauge!("goes_lut_generation_ms", "satellite" => sat_label).set(gen_ms);
         }
     }
-    
+
     /// Record GOES ingestion event
-    pub fn record_goes_ingestion(&self, satellite: GoesSatellite, band: &str, file_size_bytes: u64) {
+    pub fn record_goes_ingestion(
+        &self,
+        satellite: GoesSatellite,
+        band: &str,
+        file_size_bytes: u64,
+    ) {
         let sat_label = satellite.label().to_string();
-        counter!("goes_ingestion_total", 
+        counter!("goes_ingestion_total",
             "satellite" => sat_label.clone(),
             "band" => band.to_string()
-        ).increment(1);
+        )
+        .increment(1);
         counter!("goes_ingestion_bytes_total", "satellite" => sat_label).increment(file_size_bytes);
     }
-    
+
     // ==================== Weather Model Metrics (GFS/HRRR/MRMS) ====================
-    
+
     /// Record a weather model tile request
     pub fn record_model_request(&self, model: WeatherModel, parameter: &str) {
-        counter!("model_requests_total", 
+        counter!("model_requests_total",
             "model" => model.label().to_string(),
             "parameter" => parameter.to_string()
-        ).increment(1);
+        )
+        .increment(1);
     }
-    
+
     /// Record weather model file fetch from MinIO
     pub fn record_model_fetch(&self, model: WeatherModel, file_size_bytes: u64, duration_us: u64) {
         let model_label = model.label().to_string();
         counter!("model_fetch_total", "model" => model_label.clone()).increment(1);
-        counter!("model_fetch_bytes_total", "model" => model_label.clone()).increment(file_size_bytes);
+        counter!("model_fetch_bytes_total", "model" => model_label.clone())
+            .increment(file_size_bytes);
         histogram!("model_fetch_duration_ms", "model" => model_label.clone())
             .record(duration_us as f64 / 1000.0);
-        histogram!("model_file_size_bytes", "model" => model_label)
-            .record(file_size_bytes as f64);
+        histogram!("model_file_size_bytes", "model" => model_label).record(file_size_bytes as f64);
     }
-    
+
     /// Record weather model GRIB2 parsing time
     pub fn record_model_parse(&self, model: WeatherModel, duration_us: u64, grid_points: u64) {
         let model_label = model.label().to_string();
@@ -811,89 +878,106 @@ impl MetricsCollector {
             .record(duration_us as f64 / 1000.0);
         gauge!("model_grid_points", "model" => model_label).set(grid_points as f64);
     }
-    
+
     /// Record weather model render completion
-    pub fn record_model_render(&self, model: WeatherModel, parameter: &str, duration_us: u64, success: bool) {
+    pub fn record_model_render(
+        &self,
+        model: WeatherModel,
+        parameter: &str,
+        duration_us: u64,
+        success: bool,
+    ) {
         let model_label = model.label().to_string();
         let param_label = parameter.to_string();
-        counter!("model_renders_total", 
+        counter!("model_renders_total",
             "model" => model_label.clone(),
             "parameter" => param_label.clone(),
             "success" => success.to_string()
-        ).increment(1);
+        )
+        .increment(1);
         if success {
-            histogram!("model_render_duration_ms", 
+            histogram!("model_render_duration_ms",
                 "model" => model_label,
                 "parameter" => param_label
-            ).record(duration_us as f64 / 1000.0);
+            )
+            .record(duration_us as f64 / 1000.0);
         }
     }
-    
+
     /// Record weather model cache hit (GRIB cache)
     pub fn record_model_cache_hit(&self, model: WeatherModel) {
         counter!("model_cache_hits_total", "model" => model.label().to_string()).increment(1);
     }
-    
+
     /// Record weather model cache miss (GRIB cache)
     pub fn record_model_cache_miss(&self, model: WeatherModel) {
         counter!("model_cache_misses_total", "model" => model.label().to_string()).increment(1);
     }
-    
+
     /// Record weather model resampling/projection time
     pub fn record_model_resample(&self, model: WeatherModel, duration_us: u64) {
         histogram!("model_resample_duration_ms", "model" => model.label().to_string())
             .record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record weather model PNG encoding time
     pub fn record_model_png_encode(&self, model: WeatherModel, duration_us: u64) {
         histogram!("model_png_encode_duration_ms", "model" => model.label().to_string())
             .record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record weather model ingestion event
-    pub fn record_model_ingestion(&self, model: WeatherModel, parameter: &str, file_size_bytes: u64, forecast_hour: u32) {
+    pub fn record_model_ingestion(
+        &self,
+        model: WeatherModel,
+        parameter: &str,
+        file_size_bytes: u64,
+        forecast_hour: u32,
+    ) {
         let model_label = model.label().to_string();
-        counter!("model_ingestion_total", 
+        counter!("model_ingestion_total",
             "model" => model_label.clone(),
             "parameter" => parameter.to_string()
-        ).increment(1);
-        counter!("model_ingestion_bytes_total", "model" => model_label.clone()).increment(file_size_bytes);
+        )
+        .increment(1);
+        counter!("model_ingestion_bytes_total", "model" => model_label.clone())
+            .increment(file_size_bytes);
         gauge!("model_latest_forecast_hour", "model" => model_label).set(forecast_hour as f64);
     }
-    
+
     /// Record forecast hour being rendered
     pub fn record_model_forecast_hour(&self, model: WeatherModel, forecast_hour: u32) {
         histogram!("model_forecast_hour_rendered", "model" => model.label().to_string())
             .record(forecast_hour as f64);
     }
-    
+
     /// Record model data age (time since reference time)
     pub fn record_model_data_age(&self, model: WeatherModel, age_minutes: u64) {
-        gauge!("model_data_age_minutes", "model" => model.label().to_string()).set(age_minutes as f64);
+        gauge!("model_data_age_minutes", "model" => model.label().to_string())
+            .set(age_minutes as f64);
     }
-    
+
     /// Record grid resampling time (projection + interpolation)
     pub async fn record_resample(&self, duration_us: u64) {
         let mut times = self.resample_times.write().await;
         times.record(duration_us);
         histogram!("resample_duration_ms").record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record PNG encoding time
     pub async fn record_png_encode(&self, duration_us: u64) {
         let mut times = self.png_encode_times.write().await;
         times.record(duration_us);
         histogram!("png_encode_duration_ms").record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record cache lookup time
     pub async fn record_cache_lookup(&self, duration_us: u64) {
         let mut times = self.cache_lookup_times.write().await;
         times.record(duration_us);
         histogram!("cache_lookup_duration_ms").record(duration_us as f64 / 1000.0);
     }
-    
+
     /// Record Zarr chunk cache statistics (for chunked grid data)
     pub fn record_chunk_cache_stats(&self, stats: &grid_processor::CacheStats) {
         let total = stats.hits + stats.misses;
@@ -903,7 +987,7 @@ impl MetricsCollector {
             0.0
         };
         let memory_mb = stats.memory_bytes as f64 / (1024.0 * 1024.0);
-        
+
         gauge!("chunk_cache_hits_total").set(stats.hits as f64);
         gauge!("chunk_cache_misses_total").set(stats.misses as f64);
         gauge!("chunk_cache_evictions_total").set(stats.evictions as f64);
@@ -912,7 +996,7 @@ impl MetricsCollector {
         gauge!("chunk_cache_memory_mb").set(memory_mb);
         gauge!("chunk_cache_hit_rate_percent").set(hit_rate);
     }
-    
+
     /// Get current metrics snapshot
     pub async fn snapshot(&self) -> MetricsSnapshot {
         let render_times = self.render_times.read().await;
@@ -923,12 +1007,12 @@ impl MetricsCollector {
         let resample_times = self.resample_times.read().await;
         let png_encode_times = self.png_encode_times.read().await;
         let cache_lookup_times = self.cache_lookup_times.read().await;
-        
+
         // Get rate tracking data
         let wms_rate = self.wms_rate_tracker.read().await;
         let wmts_rate = self.wmts_rate_tracker.read().await;
         let render_rate = self.render_rate_tracker.read().await;
-        
+
         let cache_hits = self.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.cache_misses.load(Ordering::Relaxed);
         let cache_total = cache_hits + cache_misses;
@@ -937,42 +1021,48 @@ impl MetricsCollector {
         } else {
             0.0
         };
-        
+
         // Build per-layer-type stats
         let mut layer_type_stats = HashMap::new();
         for (layer_type, stats) in layer_times.iter() {
-            layer_type_stats.insert(*layer_type, LayerTypeStats {
-                count: stats.count,
-                avg_ms: stats.avg_ms(),
-                min_ms: stats.min_ms(),
-                max_ms: stats.max_ms(),
-                last_ms: stats.last_ms(),
-            });
+            layer_type_stats.insert(
+                *layer_type,
+                LayerTypeStats {
+                    count: stats.count,
+                    avg_ms: stats.avg_ms(),
+                    min_ms: stats.min_ms(),
+                    max_ms: stats.max_ms(),
+                    last_ms: stats.last_ms(),
+                },
+            );
         }
-        
+
         // Build per-data-source stats
         let data_source_times = self.data_source_parse_times.read().await;
         let mut data_source_stats = HashMap::new();
         for (source_name, stats) in data_source_times.iter() {
-            data_source_stats.insert(source_name.clone(), DataSourceSnapshotStats {
-                source_type: source_name.clone(),
-                parse_count: stats.parse_count,
-                cache_hits: stats.cache_hits,
-                cache_misses: stats.cache_misses,
-                cache_hit_rate: stats.cache_hit_rate(),
-                avg_parse_ms: stats.avg_parse_ms(),
-                min_parse_ms: stats.min_parse_us as f64 / 1000.0,
-                max_parse_ms: stats.max_parse_us as f64 / 1000.0,
-                last_parse_ms: stats.last_parse_us as f64 / 1000.0,
-            });
+            data_source_stats.insert(
+                source_name.clone(),
+                DataSourceSnapshotStats {
+                    source_type: source_name.clone(),
+                    parse_count: stats.parse_count,
+                    cache_hits: stats.cache_hits,
+                    cache_misses: stats.cache_misses,
+                    cache_hit_rate: stats.cache_hit_rate(),
+                    avg_parse_ms: stats.avg_parse_ms(),
+                    min_parse_ms: stats.min_parse_us as f64 / 1000.0,
+                    max_parse_ms: stats.max_parse_us as f64 / 1000.0,
+                    last_parse_ms: stats.last_parse_us as f64 / 1000.0,
+                },
+            );
         }
-        
+
         MetricsSnapshot {
             uptime_secs: self.start_time.elapsed().as_secs(),
-            
+
             wms_requests: self.wms_requests.load(Ordering::Relaxed),
             wmts_requests: self.wmts_requests.load(Ordering::Relaxed),
-            
+
             // Request rates
             wms_rate_1m: wms_rate.rate_1m(),
             wms_rate_5m: wms_rate.rate_5m(),
@@ -982,16 +1072,16 @@ impl MetricsCollector {
             wmts_rate_5m: wmts_rate.rate_5m(),
             wmts_count_1m: wmts_rate.count_1m(),
             wmts_count_5m: wmts_rate.count_5m(),
-            
+
             cache_hits,
             cache_misses,
             cache_hit_rate,
-            
+
             minio_reads: self.minio_reads.load(Ordering::Relaxed),
             minio_read_bytes: self.minio_read_bytes.load(Ordering::Relaxed),
             minio_avg_ms: minio_times.avg_ms(),
             minio_last_ms: minio_times.last_ms(),
-            
+
             renders_total: self.renders_total.load(Ordering::Relaxed),
             render_errors: self.render_errors.load(Ordering::Relaxed),
             render_avg_ms: render_times.avg_ms(),
@@ -1002,33 +1092,33 @@ impl MetricsCollector {
             render_rate_5m: render_rate.rate_5m(),
             render_count_1m: render_rate.count_1m(),
             render_count_5m: render_rate.count_5m(),
-            
+
             layer_type_stats,
             data_source_stats,
-            
+
             // Pipeline metrics
             grib_load_avg_ms: grib_load_times.avg_ms(),
             grib_load_last_ms: grib_load_times.last_ms(),
             grib_load_count: grib_load_times.count,
-            
+
             grib_parse_avg_ms: grib_parse_times.avg_ms(),
             grib_parse_last_ms: grib_parse_times.last_ms(),
             grib_parse_count: grib_parse_times.count,
-            
+
             resample_avg_ms: resample_times.avg_ms(),
             resample_last_ms: resample_times.last_ms(),
             resample_count: resample_times.count,
-            
+
             png_encode_avg_ms: png_encode_times.avg_ms(),
             png_encode_last_ms: png_encode_times.last_ms(),
             png_encode_count: png_encode_times.count,
-            
+
             cache_lookup_avg_ms: cache_lookup_times.avg_ms(),
             cache_lookup_last_ms: cache_lookup_times.last_ms(),
             cache_lookup_count: cache_lookup_times.count,
         }
     }
-    
+
     /// Reset all counters (useful for testing)
     pub async fn reset(&self) {
         self.wms_requests.store(0, Ordering::Relaxed);
@@ -1039,7 +1129,7 @@ impl MetricsCollector {
         self.minio_read_bytes.store(0, Ordering::Relaxed);
         self.renders_total.store(0, Ordering::Relaxed);
         self.render_errors.store(0, Ordering::Relaxed);
-        
+
         *self.render_times.write().await = TimingStats::default();
         *self.minio_times.write().await = TimingStats::default();
         self.layer_type_times.write().await.clear();
@@ -1062,11 +1152,11 @@ impl Default for MetricsCollector {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
     pub uptime_secs: u64,
-    
+
     // Request counts
     pub wms_requests: u64,
     pub wmts_requests: u64,
-    
+
     // Request rates (requests per second)
     pub wms_rate_1m: f64,
     pub wms_rate_5m: f64,
@@ -1076,18 +1166,18 @@ pub struct MetricsSnapshot {
     pub wmts_rate_5m: f64,
     pub wmts_count_1m: u64,
     pub wmts_count_5m: u64,
-    
+
     // Cache stats
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub cache_hit_rate: f64,
-    
+
     // MinIO stats
     pub minio_reads: u64,
     pub minio_read_bytes: u64,
     pub minio_avg_ms: f64,
     pub minio_last_ms: f64,
-    
+
     // Render stats
     pub renders_total: u64,
     pub render_errors: u64,
@@ -1099,30 +1189,30 @@ pub struct MetricsSnapshot {
     pub render_rate_5m: f64,
     pub render_count_1m: u64,
     pub render_count_5m: u64,
-    
+
     // Per-layer-type stats
     pub layer_type_stats: HashMap<LayerType, LayerTypeStats>,
-    
+
     // Per-data-source parsing stats
     pub data_source_stats: HashMap<String, DataSourceSnapshotStats>,
-    
+
     // Pipeline timing breakdown
     pub grib_load_avg_ms: f64,
     pub grib_load_last_ms: f64,
     pub grib_load_count: u64,
-    
+
     pub grib_parse_avg_ms: f64,
     pub grib_parse_last_ms: f64,
     pub grib_parse_count: u64,
-    
+
     pub resample_avg_ms: f64,
     pub resample_last_ms: f64,
     pub resample_count: u64,
-    
+
     pub png_encode_avg_ms: f64,
     pub png_encode_last_ms: f64,
     pub png_encode_count: u64,
-    
+
     pub cache_lookup_avg_ms: f64,
     pub cache_lookup_last_ms: f64,
     pub cache_lookup_count: u64,
@@ -1163,11 +1253,11 @@ impl Timer {
             start: Instant::now(),
         }
     }
-    
+
     pub fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
     }
-    
+
     pub fn elapsed_ms(&self) -> f64 {
         self.start.elapsed().as_micros() as f64 / 1000.0
     }
@@ -1192,7 +1282,7 @@ impl SystemStats {
     /// Read current process stats from /proc (Linux only).
     pub fn read() -> Self {
         let mut stats = SystemStats::default();
-        
+
         // Read /proc/self/statm for memory info (values are in pages)
         if let Ok(content) = std::fs::read_to_string("/proc/self/statm") {
             let parts: Vec<&str> = content.split_whitespace().collect();
@@ -1203,7 +1293,7 @@ impl SystemStats {
                 stats.memory_used_bytes = resident_pages * page_size;
             }
         }
-        
+
         // Read /proc/meminfo for total system memory
         if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
             for line in content.lines() {
@@ -1217,11 +1307,12 @@ impl SystemStats {
                 }
             }
         }
-        
+
         if stats.memory_total_bytes > 0 {
-            stats.memory_percent = (stats.memory_used_bytes as f64 / stats.memory_total_bytes as f64) * 100.0;
+            stats.memory_percent =
+                (stats.memory_used_bytes as f64 / stats.memory_total_bytes as f64) * 100.0;
         }
-        
+
         // Read /proc/self/stat for thread count
         if let Ok(content) = std::fs::read_to_string("/proc/self/stat") {
             let parts: Vec<&str> = content.split_whitespace().collect();
@@ -1230,7 +1321,7 @@ impl SystemStats {
                 stats.num_threads = parts[19].parse().unwrap_or(0);
             }
         }
-        
+
         stats
     }
 }

@@ -3,13 +3,7 @@
 /// Nearest neighbor interpolation.
 ///
 /// Returns the value of the nearest grid point.
-pub fn nearest_interpolate(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    x: f64,
-    y: f64,
-) -> f32 {
+pub fn nearest_interpolate(data: &[f32], width: usize, height: usize, x: f64, y: f64) -> f32 {
     let col = x.round() as usize;
     let row = y.round() as usize;
 
@@ -23,13 +17,7 @@ pub fn nearest_interpolate(
 /// Bilinear interpolation.
 ///
 /// Smoothly interpolates between the four nearest grid points.
-pub fn bilinear_interpolate(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    x: f64,
-    y: f64,
-) -> f32 {
+pub fn bilinear_interpolate(data: &[f32], width: usize, height: usize, x: f64, y: f64) -> f32 {
     let x0 = x.floor() as usize;
     let y0 = y.floor() as usize;
     let x1 = (x0 + 1).min(width - 1);
@@ -61,13 +49,7 @@ pub fn bilinear_interpolate(
 /// Bicubic interpolation.
 ///
 /// Uses 16 surrounding points for smoother interpolation.
-pub fn cubic_interpolate(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    x: f64,
-    y: f64,
-) -> f32 {
+pub fn cubic_interpolate(data: &[f32], width: usize, height: usize, x: f64, y: f64) -> f32 {
     let xi = x.floor() as i32;
     let yi = y.floor() as i32;
 
@@ -93,17 +75,17 @@ pub fn cubic_interpolate(
     // Cubic interpolation along x for each row
     let mut row_values = [0.0f32; 4];
     for j in 0..4 {
-        row_values[j] = cubic_1d(
-            values[j][0],
-            values[j][1],
-            values[j][2],
-            values[j][3],
-            xf,
-        );
+        row_values[j] = cubic_1d(values[j][0], values[j][1], values[j][2], values[j][3], xf);
     }
 
     // Cubic interpolation along y
-    cubic_1d(row_values[0], row_values[1], row_values[2], row_values[3], yf)
+    cubic_1d(
+        row_values[0],
+        row_values[1],
+        row_values[2],
+        row_values[3],
+        yf,
+    )
 }
 
 /// 1D cubic interpolation using Catmull-Rom spline.
@@ -175,11 +157,7 @@ mod tests {
 
     #[test]
     fn test_nearest_interpolate() {
-        let data: Vec<f32> = vec![
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        ];
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
         assert_eq!(nearest_interpolate(&data, 3, 3, 0.0, 0.0), 1.0);
         assert_eq!(nearest_interpolate(&data, 3, 3, 1.0, 1.0), 5.0);
@@ -189,10 +167,7 @@ mod tests {
 
     #[test]
     fn test_bilinear_interpolate() {
-        let data: Vec<f32> = vec![
-            1.0, 2.0,
-            3.0, 4.0,
-        ];
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
 
         // Corners
         assert_eq!(bilinear_interpolate(&data, 2, 2, 0.0, 0.0), 1.0);
@@ -207,10 +182,7 @@ mod tests {
 
     #[test]
     fn test_bilinear_with_nan() {
-        let data: Vec<f32> = vec![
-            1.0, f32::NAN,
-            3.0, 4.0,
-        ];
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0, 4.0];
 
         // Should return NaN when any corner is NaN
         let result = bilinear_interpolate(&data, 2, 2, 0.5, 0.5);
@@ -219,11 +191,7 @@ mod tests {
 
     #[test]
     fn test_resample_grid() {
-        let data: Vec<f32> = vec![
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        ];
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
         // Upsample to 5x5
         let result = resample_grid(

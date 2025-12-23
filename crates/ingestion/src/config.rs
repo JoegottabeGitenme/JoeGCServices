@@ -35,14 +35,13 @@ pub struct ParameterSpec {
 /// and at which vertical levels.
 pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
     use level_types::*;
-    
+
     vec![
         // Pressure
         ParameterSpec {
             name: "PRMSL",
             levels: vec![(MSL, None)], // Mean sea level pressure
         },
-        
         // Temperature
         ParameterSpec {
             name: "TMP",
@@ -55,7 +54,6 @@ pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
             name: "DPT",
             levels: vec![(HEIGHT_ABOVE_GROUND, Some(2))], // 2m dew point
         },
-        
         // Wind
         ParameterSpec {
             name: "UGRD",
@@ -75,7 +73,6 @@ pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
             name: "GUST",
             levels: vec![(SURFACE, None)], // Surface wind gust
         },
-        
         // Moisture
         ParameterSpec {
             name: "RH",
@@ -88,19 +85,16 @@ pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
             name: "PWAT",
             levels: vec![(ENTIRE_ATMOSPHERE, None)], // Precipitable water
         },
-        
         // Geopotential
         ParameterSpec {
             name: "HGT",
             levels: vec![(ISOBARIC, None)], // Geopotential height
         },
-        
         // Precipitation
         ParameterSpec {
             name: "APCP",
             levels: vec![(SURFACE, None)], // Total precipitation
         },
-        
         // Convective/Stability
         ParameterSpec {
             name: "CAPE",
@@ -110,19 +104,16 @@ pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
             name: "CIN",
             levels: vec![(SURFACE, None)], // Surface-based CIN
         },
-        
         // Cloud cover
         ParameterSpec {
             name: "TCDC",
             levels: vec![(ENTIRE_ATMOSPHERE, None)], // Total cloud cover
         },
-        
         // Visibility
         ParameterSpec {
             name: "VIS",
             levels: vec![(SURFACE, None)], // Surface visibility
         },
-        
         // Radar reflectivity (for models that include it)
         ParameterSpec {
             name: "REFC",
@@ -140,10 +131,11 @@ pub fn target_grib2_parameters() -> Vec<ParameterSpec> {
 /// These are the commonly-used meteorological pressure levels.
 pub fn standard_pressure_levels() -> HashSet<u32> {
     [
-        1000, 975, 950, 925, 900, 850, 800, 750, 700, 650,
-        600, 550, 500, 450, 400, 350, 300, 250, 200, 150,
-        100, 70, 50, 30, 20, 10
-    ].into_iter().collect()
+        1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250,
+        200, 150, 100, 70, 50, 30, 20, 10,
+    ]
+    .into_iter()
+    .collect()
 }
 
 /// Check if a parameter/level combination should be ingested.
@@ -168,17 +160,17 @@ pub fn should_ingest_parameter(
         if param != spec.name {
             return false;
         }
-        
+
         spec.levels.iter().any(|(lt, lv)| {
             if level_type != *lt {
                 return false;
             }
-            
+
             // For isobaric levels, check against pressure levels set
             if level_type == level_types::ISOBARIC {
                 return pressure_levels.contains(&level_value);
             }
-            
+
             // For other levels, check specific value if required
             if let Some(required_value) = lv {
                 level_value == *required_value
@@ -196,33 +188,57 @@ mod tests {
     #[test]
     fn test_target_params_contains_expected() {
         let params = target_grib2_parameters();
-        
+
         // Check essential parameters exist
-        assert!(params.iter().any(|p| p.name == "TMP"), "Should have temperature");
-        assert!(params.iter().any(|p| p.name == "UGRD"), "Should have U-wind");
-        assert!(params.iter().any(|p| p.name == "VGRD"), "Should have V-wind");
+        assert!(
+            params.iter().any(|p| p.name == "TMP"),
+            "Should have temperature"
+        );
+        assert!(
+            params.iter().any(|p| p.name == "UGRD"),
+            "Should have U-wind"
+        );
+        assert!(
+            params.iter().any(|p| p.name == "VGRD"),
+            "Should have V-wind"
+        );
         assert!(params.iter().any(|p| p.name == "CAPE"), "Should have CAPE");
-        assert!(params.iter().any(|p| p.name == "PRMSL"), "Should have pressure");
-        assert!(params.iter().any(|p| p.name == "RH"), "Should have relative humidity");
-        assert!(params.iter().any(|p| p.name == "HGT"), "Should have geopotential height");
+        assert!(
+            params.iter().any(|p| p.name == "PRMSL"),
+            "Should have pressure"
+        );
+        assert!(
+            params.iter().any(|p| p.name == "RH"),
+            "Should have relative humidity"
+        );
+        assert!(
+            params.iter().any(|p| p.name == "HGT"),
+            "Should have geopotential height"
+        );
     }
 
     #[test]
     fn test_target_params_have_valid_levels() {
         let params = target_grib2_parameters();
-        
+
         for param in &params {
-            assert!(!param.levels.is_empty(), "Parameter {} should have at least one level", param.name);
-            
+            assert!(
+                !param.levels.is_empty(),
+                "Parameter {} should have at least one level",
+                param.name
+            );
+
             for (level_type, _) in &param.levels {
                 // Level types should be valid GRIB2 level codes
                 assert!(
-                    *level_type == level_types::SURFACE ||
-                    *level_type == level_types::ISOBARIC ||
-                    *level_type == level_types::MSL ||
-                    *level_type == level_types::HEIGHT_ABOVE_GROUND ||
-                    *level_type == level_types::ENTIRE_ATMOSPHERE,
-                    "Parameter {} has invalid level type: {}", param.name, level_type
+                    *level_type == level_types::SURFACE
+                        || *level_type == level_types::ISOBARIC
+                        || *level_type == level_types::MSL
+                        || *level_type == level_types::HEIGHT_ABOVE_GROUND
+                        || *level_type == level_types::ENTIRE_ATMOSPHERE,
+                    "Parameter {} has invalid level type: {}",
+                    param.name,
+                    level_type
                 );
             }
         }
@@ -231,16 +247,19 @@ mod tests {
     #[test]
     fn test_pressure_levels_contains_standard() {
         let levels = standard_pressure_levels();
-        
+
         // Standard meteorological levels
         assert!(levels.contains(&1000), "Should have 1000 hPa");
         assert!(levels.contains(&850), "Should have 850 hPa");
         assert!(levels.contains(&700), "Should have 700 hPa");
         assert!(levels.contains(&500), "Should have 500 hPa");
         assert!(levels.contains(&300), "Should have 300 hPa");
-        assert!(levels.contains(&250), "Should have 250 hPa (jet stream level)");
+        assert!(
+            levels.contains(&250),
+            "Should have 250 hPa (jet stream level)"
+        );
         assert!(levels.contains(&200), "Should have 200 hPa");
-        
+
         // Non-standard levels should not be present
         assert!(!levels.contains(&999));
         assert!(!levels.contains(&123));
@@ -251,7 +270,10 @@ mod tests {
     fn test_pressure_levels_count() {
         let levels = standard_pressure_levels();
         // Should have a reasonable number of levels (not too few, not too many)
-        assert!(levels.len() >= 20, "Should have at least 20 pressure levels");
+        assert!(
+            levels.len() >= 20,
+            "Should have at least 20 pressure levels"
+        );
         assert!(levels.len() <= 50, "Should have at most 50 pressure levels");
     }
 
@@ -259,74 +281,164 @@ mod tests {
     fn test_should_ingest_2m_temperature() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
+
         // 2m temperature should be ingested
-        assert!(should_ingest_parameter("TMP", level_types::HEIGHT_ABOVE_GROUND, 2, &params, &levels));
-        
+        assert!(should_ingest_parameter(
+            "TMP",
+            level_types::HEIGHT_ABOVE_GROUND,
+            2,
+            &params,
+            &levels
+        ));
+
         // 10m temperature should NOT be ingested (we only want 2m)
-        assert!(!should_ingest_parameter("TMP", level_types::HEIGHT_ABOVE_GROUND, 10, &params, &levels));
+        assert!(!should_ingest_parameter(
+            "TMP",
+            level_types::HEIGHT_ABOVE_GROUND,
+            10,
+            &params,
+            &levels
+        ));
     }
 
     #[test]
     fn test_should_ingest_10m_wind() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
+
         // 10m wind should be ingested
-        assert!(should_ingest_parameter("UGRD", level_types::HEIGHT_ABOVE_GROUND, 10, &params, &levels));
-        assert!(should_ingest_parameter("VGRD", level_types::HEIGHT_ABOVE_GROUND, 10, &params, &levels));
-        
+        assert!(should_ingest_parameter(
+            "UGRD",
+            level_types::HEIGHT_ABOVE_GROUND,
+            10,
+            &params,
+            &levels
+        ));
+        assert!(should_ingest_parameter(
+            "VGRD",
+            level_types::HEIGHT_ABOVE_GROUND,
+            10,
+            &params,
+            &levels
+        ));
+
         // 2m wind should NOT be ingested (we only want 10m)
-        assert!(!should_ingest_parameter("UGRD", level_types::HEIGHT_ABOVE_GROUND, 2, &params, &levels));
+        assert!(!should_ingest_parameter(
+            "UGRD",
+            level_types::HEIGHT_ABOVE_GROUND,
+            2,
+            &params,
+            &levels
+        ));
     }
 
     #[test]
     fn test_should_ingest_isobaric_levels() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
+
         // 500mb temperature should be ingested
-        assert!(should_ingest_parameter("TMP", level_types::ISOBARIC, 500, &params, &levels));
-        
+        assert!(should_ingest_parameter(
+            "TMP",
+            level_types::ISOBARIC,
+            500,
+            &params,
+            &levels
+        ));
+
         // 850mb height should be ingested
-        assert!(should_ingest_parameter("HGT", level_types::ISOBARIC, 850, &params, &levels));
-        
+        assert!(should_ingest_parameter(
+            "HGT",
+            level_types::ISOBARIC,
+            850,
+            &params,
+            &levels
+        ));
+
         // 999mb (non-standard) should NOT be ingested
-        assert!(!should_ingest_parameter("TMP", level_types::ISOBARIC, 999, &params, &levels));
+        assert!(!should_ingest_parameter(
+            "TMP",
+            level_types::ISOBARIC,
+            999,
+            &params,
+            &levels
+        ));
     }
 
     #[test]
     fn test_should_ingest_surface_params() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
+
         // Surface CAPE should be ingested
-        assert!(should_ingest_parameter("CAPE", level_types::SURFACE, 0, &params, &levels));
-        
-        // Surface CIN should be ingested  
-        assert!(should_ingest_parameter("CIN", level_types::SURFACE, 0, &params, &levels));
-        
+        assert!(should_ingest_parameter(
+            "CAPE",
+            level_types::SURFACE,
+            0,
+            &params,
+            &levels
+        ));
+
+        // Surface CIN should be ingested
+        assert!(should_ingest_parameter(
+            "CIN",
+            level_types::SURFACE,
+            0,
+            &params,
+            &levels
+        ));
+
         // Surface visibility should be ingested
-        assert!(should_ingest_parameter("VIS", level_types::SURFACE, 0, &params, &levels));
+        assert!(should_ingest_parameter(
+            "VIS",
+            level_types::SURFACE,
+            0,
+            &params,
+            &levels
+        ));
     }
 
     #[test]
     fn test_should_not_ingest_unknown_parameter() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
-        assert!(!should_ingest_parameter("UNKNOWN", level_types::SURFACE, 0, &params, &levels));
-        assert!(!should_ingest_parameter("FOOBAR", level_types::ISOBARIC, 500, &params, &levels));
-        assert!(!should_ingest_parameter("", level_types::MSL, 0, &params, &levels));
+
+        assert!(!should_ingest_parameter(
+            "UNKNOWN",
+            level_types::SURFACE,
+            0,
+            &params,
+            &levels
+        ));
+        assert!(!should_ingest_parameter(
+            "FOOBAR",
+            level_types::ISOBARIC,
+            500,
+            &params,
+            &levels
+        ));
+        assert!(!should_ingest_parameter(
+            "",
+            level_types::MSL,
+            0,
+            &params,
+            &levels
+        ));
     }
 
     #[test]
     fn test_should_ingest_msl_pressure() {
         let params = target_grib2_parameters();
         let levels = standard_pressure_levels();
-        
+
         // MSLP should be ingested
-        assert!(should_ingest_parameter("PRMSL", level_types::MSL, 0, &params, &levels));
+        assert!(should_ingest_parameter(
+            "PRMSL",
+            level_types::MSL,
+            0,
+            &params,
+            &levels
+        ));
     }
 
     #[test]

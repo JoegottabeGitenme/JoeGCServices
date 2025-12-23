@@ -50,3 +50,4 @@
 - downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
   eachother
 - ingester should be able to handle multiple downloads at once
+- README needs some screenshots and to be more accurate

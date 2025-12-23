@@ -23,15 +23,9 @@ fn render_barbs_3x3_expansion(
     config: &BarbConfig,
 ) -> Vec<u8> {
     // Render at 768x768 (3x3 tiles)
-    let expanded_pixels = render_wind_barbs_aligned(
-        u_data_768,
-        v_data_768,
-        768,
-        768,
-        bbox_768,
-        config,
-    );
-    
+    let expanded_pixels =
+        render_wind_barbs_aligned(u_data_768, v_data_768, 768, 768, bbox_768, config);
+
     // Crop center 256x256 tile
     crop_center_tile(&expanded_pixels, 768, 256)
 }
@@ -45,15 +39,9 @@ fn render_barbs_pixel_buffer(
     config: &BarbConfig,
 ) -> Vec<u8> {
     // Render at 376x376 (256 + 60*2 buffer)
-    let buffered_pixels = render_wind_barbs_aligned(
-        u_data_376,
-        v_data_376,
-        376,
-        376,
-        bbox_376,
-        config,
-    );
-    
+    let buffered_pixels =
+        render_wind_barbs_aligned(u_data_376, v_data_376, 376, 376, bbox_376, config);
+
     // Crop center 256x256 tile (60px offset)
     crop_center_with_buffer(&buffered_pixels, 376, 256, 60)
 }
@@ -62,7 +50,7 @@ fn render_barbs_pixel_buffer(
 fn crop_center_tile(expanded_pixels: &[u8], expanded_width: usize, tile_size: usize) -> Vec<u8> {
     let offset = (expanded_width - tile_size) / 2; // 256 for 768->256
     let mut result = vec![0u8; tile_size * tile_size * 4];
-    
+
     for row in 0..tile_size {
         let src_y = offset + row;
         let src_start = (src_y * expanded_width + offset) * 4;
@@ -70,7 +58,7 @@ fn crop_center_tile(expanded_pixels: &[u8], expanded_width: usize, tile_size: us
         result[dst_start..dst_start + tile_size * 4]
             .copy_from_slice(&expanded_pixels[src_start..src_start + tile_size * 4]);
     }
-    
+
     result
 }
 
@@ -82,7 +70,7 @@ fn crop_center_with_buffer(
     buffer: usize,
 ) -> Vec<u8> {
     let mut result = vec![0u8; tile_size * tile_size * 4];
-    
+
     for row in 0..tile_size {
         let src_y = buffer + row;
         let src_start = (src_y * buffered_width + buffer) * 4;
@@ -90,7 +78,7 @@ fn crop_center_with_buffer(
         result[dst_start..dst_start + tile_size * 4]
             .copy_from_slice(&buffered_pixels[src_start..src_start + tile_size * 4]);
     }
-    
+
     result
 }
 
@@ -246,7 +234,15 @@ fn bench_render_wind_barbs(c: &mut Criterion) {
     let (u_varied, v_varied) = generate_wind_components(256, 256);
     let config = BarbConfig::default();
     group.bench_function("varied_wind_256", |b| {
-        b.iter(|| render_wind_barbs(black_box(&u_varied), black_box(&v_varied), 256, 256, &config));
+        b.iter(|| {
+            render_wind_barbs(
+                black_box(&u_varied),
+                black_box(&v_varied),
+                256,
+                256,
+                &config,
+            )
+        });
     });
 
     group.finish();
@@ -348,19 +344,23 @@ fn bench_wind_speed_distribution(c: &mut Criterion) {
     // Test rendering performance at different wind speeds
     // (Different SVG barb graphics are used for different speeds)
     let speeds = [
-        (0.5, 0.5, "calm"),      // 0 knots barb
-        (5.0, 5.0, "moderate"),  // ~14 knots
-        (15.0, 15.0, "strong"),  // ~42 knots
-        (30.0, 30.0, "gale"),    // ~85 knots
+        (0.5, 0.5, "calm"),     // 0 knots barb
+        (5.0, 5.0, "moderate"), // ~14 knots
+        (15.0, 15.0, "strong"), // ~42 knots
+        (30.0, 30.0, "gale"),   // ~85 knots
     ];
 
     for (u, v, name) in speeds {
         let (u_data, v_data) = generate_uniform_wind(256, 256, u, v);
         let config = BarbConfig::default();
 
-        group.bench_with_input(BenchmarkId::new("speed", name), &(u_data, v_data), |b, (u, v)| {
-            b.iter(|| render_wind_barbs(black_box(u), black_box(v), 256, 256, &config));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("speed", name),
+            &(u_data, v_data),
+            |b, (u, v)| {
+                b.iter(|| render_wind_barbs(black_box(u), black_box(v), 256, 256, &config));
+            },
+        );
     }
 
     group.finish();
@@ -385,17 +385,17 @@ fn bench_tile_expansion_comparison(c: &mut Criterion) {
     // Sample bbox covering a typical tile (e.g., zoom 6 tile over CONUS)
     // Original tile bbox
     let bbox_256: [f32; 4] = [-100.0, 35.0, -94.375, 40.97];
-    
+
     // 3x3 expanded bbox (3x the geographic area)
     let lon_span = bbox_256[2] - bbox_256[0];
     let lat_span = bbox_256[3] - bbox_256[1];
     let bbox_768: [f32; 4] = [
-        bbox_256[0] - lon_span,  // expand left by 1 tile
-        bbox_256[1] - lat_span,  // expand down by 1 tile
-        bbox_256[2] + lon_span,  // expand right by 1 tile
-        bbox_256[3] + lat_span,  // expand up by 1 tile
+        bbox_256[0] - lon_span, // expand left by 1 tile
+        bbox_256[1] - lat_span, // expand down by 1 tile
+        bbox_256[2] + lon_span, // expand right by 1 tile
+        bbox_256[3] + lat_span, // expand up by 1 tile
     ];
-    
+
     // Buffer expanded bbox (60px buffer = 60/256 * tile_span on each side)
     let buffer_ratio = 60.0 / 256.0;
     let lon_buffer = lon_span * buffer_ratio;
@@ -408,7 +408,7 @@ fn bench_tile_expansion_comparison(c: &mut Criterion) {
     ];
 
     let config = BarbConfig {
-        size: 108,  // Default barb size
+        size: 108, // Default barb size
         spacing: 30,
         color: "#000000".to_string(),
     };
@@ -453,8 +453,10 @@ fn bench_tile_expansion_comparison(c: &mut Criterion) {
     });
 
     // Benchmark 4: Just the cropping overhead
-    let expanded_pixels_768 = render_wind_barbs_aligned(&u_768, &v_768, 768, 768, bbox_768, &config);
-    let buffered_pixels_376 = render_wind_barbs_aligned(&u_376, &v_376, 376, 376, bbox_376, &config);
+    let expanded_pixels_768 =
+        render_wind_barbs_aligned(&u_768, &v_768, 768, 768, bbox_768, &config);
+    let buffered_pixels_376 =
+        render_wind_barbs_aligned(&u_376, &v_376, 376, 376, bbox_376, &config);
 
     group.bench_function("crop_3x3_768_to_256", |b| {
         b.iter(|| crop_center_tile(black_box(&expanded_pixels_768), 768, 256));
@@ -546,7 +548,7 @@ fn bench_buffer_size_comparison(c: &mut Criterion) {
     for buffer_px in [30, 45, 60, 80, 100, 120] {
         let render_size = 256 + 2 * buffer_px;
         let (u_data, v_data) = generate_uniform_wind(render_size, render_size, 10.0, 10.0);
-        
+
         let buffer_ratio = buffer_px as f32 / 256.0;
         let lon_buffer = lon_span * buffer_ratio;
         let lat_buffer = lat_span * buffer_ratio;

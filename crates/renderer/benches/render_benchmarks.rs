@@ -3,9 +3,7 @@
 //! Run with: cargo bench --package renderer -- gradient
 //! Or: cargo bench --package renderer --bench render_benchmarks
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use renderer::{gradient, png, style};
 
@@ -62,14 +60,37 @@ fn create_temperature_style() -> style::StyleDefinition {
         style_type: "gradient".to_string(),
         default: true,
         units: Some("K".to_string()),
-        range: Some(style::ValueRange { min: 233.15, max: 313.15 }),
+        range: Some(style::ValueRange {
+            min: 233.15,
+            max: 313.15,
+        }),
         transform: None,
         stops: vec![
-            style::ColorStop { value: 233.15, color: "#1E0082".to_string(), label: Some("-40°C".to_string()) },
-            style::ColorStop { value: 253.15, color: "#0096FF".to_string(), label: Some("-20°C".to_string()) },
-            style::ColorStop { value: 273.15, color: "#96FFC8".to_string(), label: Some("0°C".to_string()) },
-            style::ColorStop { value: 293.15, color: "#FF9600".to_string(), label: Some("20°C".to_string()) },
-            style::ColorStop { value: 313.15, color: "#960000".to_string(), label: Some("40°C".to_string()) },
+            style::ColorStop {
+                value: 233.15,
+                color: "#1E0082".to_string(),
+                label: Some("-40°C".to_string()),
+            },
+            style::ColorStop {
+                value: 253.15,
+                color: "#0096FF".to_string(),
+                label: Some("-20°C".to_string()),
+            },
+            style::ColorStop {
+                value: 273.15,
+                color: "#96FFC8".to_string(),
+                label: Some("0°C".to_string()),
+            },
+            style::ColorStop {
+                value: 293.15,
+                color: "#FF9600".to_string(),
+                label: Some("20°C".to_string()),
+            },
+            style::ColorStop {
+                value: 313.15,
+                color: "#960000".to_string(),
+                label: Some("40°C".to_string()),
+            },
         ],
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
@@ -85,14 +106,37 @@ fn create_wind_speed_style() -> style::StyleDefinition {
         style_type: "gradient".to_string(),
         default: true,
         units: Some("m/s".to_string()),
-        range: Some(style::ValueRange { min: 0.0, max: 40.0 }),
+        range: Some(style::ValueRange {
+            min: 0.0,
+            max: 40.0,
+        }),
         transform: None,
         stops: vec![
-            style::ColorStop { value: 0.0, color: "#C8C8C8".to_string(), label: Some("0".to_string()) },
-            style::ColorStop { value: 10.0, color: "#00C8FF".to_string(), label: Some("10".to_string()) },
-            style::ColorStop { value: 20.0, color: "#FFFF00".to_string(), label: Some("20".to_string()) },
-            style::ColorStop { value: 30.0, color: "#FFA500".to_string(), label: Some("30".to_string()) },
-            style::ColorStop { value: 40.0, color: "#8B0000".to_string(), label: Some("40".to_string()) },
+            style::ColorStop {
+                value: 0.0,
+                color: "#C8C8C8".to_string(),
+                label: Some("0".to_string()),
+            },
+            style::ColorStop {
+                value: 10.0,
+                color: "#00C8FF".to_string(),
+                label: Some("10".to_string()),
+            },
+            style::ColorStop {
+                value: 20.0,
+                color: "#FFFF00".to_string(),
+                label: Some("20".to_string()),
+            },
+            style::ColorStop {
+                value: 30.0,
+                color: "#FFA500".to_string(),
+                label: Some("30".to_string()),
+            },
+            style::ColorStop {
+                value: 40.0,
+                color: "#8B0000".to_string(),
+                label: Some("40".to_string()),
+            },
         ],
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
@@ -108,14 +152,37 @@ fn create_pressure_style() -> style::StyleDefinition {
         style_type: "gradient".to_string(),
         default: true,
         units: Some("hPa".to_string()),
-        range: Some(style::ValueRange { min: 950.0, max: 1050.0 }),
+        range: Some(style::ValueRange {
+            min: 950.0,
+            max: 1050.0,
+        }),
         transform: None,
         stops: vec![
-            style::ColorStop { value: 950.0, color: "#4B0082".to_string(), label: Some("950".to_string()) },
-            style::ColorStop { value: 990.0, color: "#0000FF".to_string(), label: Some("990".to_string()) },
-            style::ColorStop { value: 1010.0, color: "#00FF00".to_string(), label: Some("1010".to_string()) },
-            style::ColorStop { value: 1030.0, color: "#FFFF00".to_string(), label: Some("1030".to_string()) },
-            style::ColorStop { value: 1050.0, color: "#FF0000".to_string(), label: Some("1050".to_string()) },
+            style::ColorStop {
+                value: 950.0,
+                color: "#4B0082".to_string(),
+                label: Some("950".to_string()),
+            },
+            style::ColorStop {
+                value: 990.0,
+                color: "#0000FF".to_string(),
+                label: Some("990".to_string()),
+            },
+            style::ColorStop {
+                value: 1010.0,
+                color: "#00FF00".to_string(),
+                label: Some("1010".to_string()),
+            },
+            style::ColorStop {
+                value: 1030.0,
+                color: "#FFFF00".to_string(),
+                label: Some("1030".to_string()),
+            },
+            style::ColorStop {
+                value: 1050.0,
+                color: "#FF0000".to_string(),
+                label: Some("1050".to_string()),
+            },
         ],
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
@@ -133,12 +200,12 @@ fn bench_resample_grid(c: &mut Criterion) {
     // Common scenarios: source -> destination sizes
     let scenarios = [
         // (src_width, src_height, dst_width, dst_height, name)
-        (1440, 721, 256, 256, "GFS_to_tile"),     // Global GFS to single tile
-        (7000, 3500, 256, 256, "MRMS_to_tile"),   // MRMS CONUS to tile
-        (2500, 1500, 256, 256, "GOES_to_tile"),   // GOES CONUS to tile
-        (256, 256, 512, 512, "upscale_2x"),       // Upscale
-        (512, 512, 256, 256, "downscale_2x"),     // Downscale
-        (1440, 721, 512, 512, "GFS_to_large"),    // Larger output
+        (1440, 721, 256, 256, "GFS_to_tile"), // Global GFS to single tile
+        (7000, 3500, 256, 256, "MRMS_to_tile"), // MRMS CONUS to tile
+        (2500, 1500, 256, 256, "GOES_to_tile"), // GOES CONUS to tile
+        (256, 256, 512, 512, "upscale_2x"),   // Upscale
+        (512, 512, 256, 256, "downscale_2x"), // Downscale
+        (1440, 721, 512, 512, "GFS_to_large"), // Larger output
     ];
 
     for (src_w, src_h, dst_w, dst_h, name) in scenarios {
@@ -146,9 +213,7 @@ fn bench_resample_grid(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((dst_w * dst_h) as u64));
         group.bench_with_input(BenchmarkId::new(name, "bilinear"), &data, |b, data| {
-            b.iter(|| {
-                gradient::resample_grid(black_box(data), src_w, src_h, dst_w, dst_h)
-            });
+            b.iter(|| gradient::resample_grid(black_box(data), src_w, src_h, dst_w, dst_h));
         });
     }
 
@@ -166,10 +231,10 @@ fn bench_subset_grid(c: &mut Criterion) {
     let gfs_data = generate_linear_grid(1440, 721);
 
     let bboxes = [
-        ([-130.0f32, 20.0, -60.0, 55.0], "conus"),        // Continental US
-        ([-180.0f32, -60.0, -60.0, 60.0], "americas"),    // Americas
-        ([0.0f32, 30.0, 50.0, 70.0], "europe"),           // Europe
-        ([-10.0f32, 40.0, 5.0, 50.0], "small_region"),    // Small area
+        ([-130.0f32, 20.0, -60.0, 55.0], "conus"), // Continental US
+        ([-180.0f32, -60.0, -60.0, 60.0], "americas"), // Americas
+        ([0.0f32, 30.0, 50.0, 70.0], "europe"),    // Europe
+        ([-10.0f32, 40.0, 5.0, 50.0], "small_region"), // Small area
     ];
 
     for (bbox, name) in bboxes {
@@ -240,9 +305,7 @@ fn bench_style_rendering(c: &mut Criterion) {
             BenchmarkId::new("temperature_style", format!("{}x{}", width, height)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    style::apply_style_gradient(black_box(data), width, height, &temp_style)
-                });
+                b.iter(|| style::apply_style_gradient(black_box(data), width, height, &temp_style));
             },
         );
     }
@@ -278,9 +341,7 @@ fn bench_render_other_types(c: &mut Criterion) {
     group.throughput(Throughput::Elements((width * height) as u64));
 
     group.bench_function("wind_speed_style", |b| {
-        b.iter(|| {
-            style::apply_style_gradient(black_box(&wind_data), width, height, &wind_style)
-        });
+        b.iter(|| style::apply_style_gradient(black_box(&wind_data), width, height, &wind_style));
     });
 
     group.bench_function("pressure_style", |b| {
@@ -300,7 +361,7 @@ fn bench_render_other_types(c: &mut Criterion) {
 /// This simulates the output of style-based rendering with gradients.
 fn generate_weather_rgba_data(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 4];
-    
+
     // Use a limited palette of ~50 colors (typical for weather gradients)
     for y in 0..height {
         for x in 0..width {
@@ -308,7 +369,7 @@ fn generate_weather_rgba_data(width: usize, height: usize) -> Vec<u8> {
             // Quantize to create limited unique colors
             let temp_normalized = (x as f32 / width as f32 + y as f32 / height as f32) / 2.0;
             let color_idx = (temp_normalized * 50.0) as u8;
-            
+
             // Simple color ramp (blue -> cyan -> green -> yellow -> red)
             let (r, g, b) = match color_idx {
                 0..=10 => (0, 0, 128 + color_idx * 12),
@@ -317,7 +378,7 @@ fn generate_weather_rgba_data(width: usize, height: usize) -> Vec<u8> {
                 31..=40 => ((color_idx - 30) * 25, 255, 0),
                 _ => (255, 255 - (color_idx - 40) * 25, 0),
             };
-            
+
             data[idx] = r;
             data[idx + 1] = g;
             data[idx + 2] = b;
@@ -384,10 +445,12 @@ fn bench_precomputed_palette(c: &mut Criterion) {
 
     let sizes = [(256, 256), (512, 512), (1024, 1024)];
     let temp_style = create_temperature_style();
-    
+
     // Pre-compute the palette (this happens once at startup)
-    let palette = temp_style.compute_palette().expect("Failed to compute palette");
-    
+    let palette = temp_style
+        .compute_palette()
+        .expect("Failed to compute palette");
+
     for (width, height) in sizes {
         // Generate temperature data in Kelvin
         let data: Vec<f32> = generate_linear_grid(width, height)
@@ -419,9 +482,7 @@ fn bench_precomputed_palette(c: &mut Criterion) {
             BenchmarkId::new("rgba_render", format!("{}x{}", width, height)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    style::apply_style_gradient(black_box(data), width, height, &temp_style)
-                });
+                b.iter(|| style::apply_style_gradient(black_box(data), width, height, &temp_style));
             },
         );
     }
@@ -434,7 +495,9 @@ fn bench_precomputed_png_encoding(c: &mut Criterion) {
 
     let sizes = [(256, 256), (512, 512), (1024, 1024)];
     let temp_style = create_temperature_style();
-    let palette = temp_style.compute_palette().expect("Failed to compute palette");
+    let palette = temp_style
+        .compute_palette()
+        .expect("Failed to compute palette");
 
     for (width, height) in sizes {
         // Generate temperature data
@@ -444,8 +507,9 @@ fn bench_precomputed_png_encoding(c: &mut Criterion) {
             .collect();
 
         // Pre-render to indices
-        let indices = style::apply_style_gradient_indexed(&data, width, height, &palette, &temp_style);
-        
+        let indices =
+            style::apply_style_gradient_indexed(&data, width, height, &palette, &temp_style);
+
         // Pre-render to RGBA for comparison
         let rgba = style::apply_style_gradient(&data, width, height, &temp_style);
 
@@ -494,20 +558,16 @@ fn bench_full_pipeline(c: &mut Criterion) {
     // Simulate a complete tile render: resample -> style color map -> PNG encode
     let gfs_data = generate_temperature_grid(1440, 721);
     let temp_style = create_temperature_style();
-    let palette = temp_style.compute_palette().expect("Failed to compute palette");
+    let palette = temp_style
+        .compute_palette()
+        .expect("Failed to compute palette");
 
     group.throughput(Throughput::Elements(256 * 256));
 
     // Full pipeline with RGBA PNG (baseline)
     group.bench_function("temp_256_rgba", |b| {
         b.iter(|| {
-            let resampled = gradient::resample_grid(
-                black_box(&gfs_data),
-                1440,
-                721,
-                256,
-                256,
-            );
+            let resampled = gradient::resample_grid(black_box(&gfs_data), 1440, 721, 256, 256);
             let rgba = style::apply_style_gradient(&resampled, 256, 256, &temp_style);
             png::create_png(&rgba, 256, 256)
         });
@@ -516,13 +576,7 @@ fn bench_full_pipeline(c: &mut Criterion) {
     // Full pipeline with auto PNG (indexed when possible)
     group.bench_function("temp_256_auto", |b| {
         b.iter(|| {
-            let resampled = gradient::resample_grid(
-                black_box(&gfs_data),
-                1440,
-                721,
-                256,
-                256,
-            );
+            let resampled = gradient::resample_grid(black_box(&gfs_data), 1440, 721, 256, 256);
             let rgba = style::apply_style_gradient(&resampled, 256, 256, &temp_style);
             png::create_png_auto(&rgba, 256, 256)
         });
@@ -531,30 +585,19 @@ fn bench_full_pipeline(c: &mut Criterion) {
     // Full pipeline with PRE-COMPUTED palette (fastest path!)
     group.bench_function("temp_256_precomputed", |b| {
         b.iter(|| {
-            let resampled = gradient::resample_grid(
-                black_box(&gfs_data),
-                1440,
-                721,
-                256,
-                256,
-            );
-            let indices = style::apply_style_gradient_indexed(&resampled, 256, 256, &palette, &temp_style);
+            let resampled = gradient::resample_grid(black_box(&gfs_data), 1440, 721, 256, 256);
+            let indices =
+                style::apply_style_gradient_indexed(&resampled, 256, 256, &palette, &temp_style);
             png::create_png_from_precomputed(&indices, 256, 256, &palette)
         });
     });
 
     // Larger tile comparisons
     group.throughput(Throughput::Elements(512 * 512));
-    
+
     group.bench_function("temp_512_rgba", |b| {
         b.iter(|| {
-            let resampled = gradient::resample_grid(
-                black_box(&gfs_data),
-                1440,
-                721,
-                512,
-                512,
-            );
+            let resampled = gradient::resample_grid(black_box(&gfs_data), 1440, 721, 512, 512);
             let rgba = style::apply_style_gradient(&resampled, 512, 512, &temp_style);
             png::create_png(&rgba, 512, 512)
         });
@@ -562,14 +605,9 @@ fn bench_full_pipeline(c: &mut Criterion) {
 
     group.bench_function("temp_512_precomputed", |b| {
         b.iter(|| {
-            let resampled = gradient::resample_grid(
-                black_box(&gfs_data),
-                1440,
-                721,
-                512,
-                512,
-            );
-            let indices = style::apply_style_gradient_indexed(&resampled, 512, 512, &palette, &temp_style);
+            let resampled = gradient::resample_grid(black_box(&gfs_data), 1440, 721, 512, 512);
+            let indices =
+                style::apply_style_gradient_indexed(&resampled, 512, 512, &palette, &temp_style);
             png::create_png_from_precomputed(&indices, 512, 512, &palette)
         });
     });
@@ -582,30 +620,32 @@ fn bench_full_pipeline(c: &mut Criterion) {
 // =============================================================================
 
 /// Benchmark buffer pool performance vs fresh allocations.
-/// 
+///
 /// Buffer pooling is designed to improve p99 latency under high load by
 /// reducing allocator contention. The benefits are most visible under
 /// concurrent access, but we can measure the overhead here.
 fn bench_buffer_pooling(c: &mut Criterion) {
     use renderer::buffer_pool;
-    
+
     let mut group = c.benchmark_group("buffer_pooling");
-    
+
     let sizes = [(256, 256), (512, 512), (1024, 1024)];
     let temp_style = create_temperature_style();
-    let palette = temp_style.compute_palette().expect("Failed to compute palette");
-    
+    let palette = temp_style
+        .compute_palette()
+        .expect("Failed to compute palette");
+
     for (width, height) in sizes {
         let size_name = format!("{}x{}", width, height);
-        
+
         // Generate temperature data
         let data: Vec<f32> = generate_linear_grid(width, height)
             .iter()
             .map(|v| 233.15 + v * 0.8)
             .collect();
-        
+
         group.throughput(Throughput::Elements((width * height) as u64));
-        
+
         // Benchmark: Multiple iterations with buffer pool (simulates reuse)
         group.bench_function(format!("pool_repeated_{}", size_name), |b| {
             b.iter(|| {
@@ -620,7 +660,7 @@ fn bench_buffer_pooling(c: &mut Criterion) {
                 black_box(indices)
             });
         });
-        
+
         // Benchmark: Direct allocation without pool
         group.bench_function(format!("alloc_direct_{}", size_name), |b| {
             b.iter(|| {
@@ -636,18 +676,13 @@ fn bench_buffer_pooling(c: &mut Criterion) {
                 black_box(indices)
             });
         });
-        
+
         // Benchmark: With resampling (tests resample buffer pool)
         let larger_data = generate_temperature_grid(1440, 721);
         group.bench_function(format!("pool_with_resample_{}", size_name), |b| {
             b.iter(|| {
-                let resampled = gradient::resample_grid(
-                    black_box(&larger_data),
-                    1440,
-                    721,
-                    width,
-                    height,
-                );
+                let resampled =
+                    gradient::resample_grid(black_box(&larger_data), 1440, 721, width, height);
                 let indices = style::apply_style_gradient_indexed(
                     &resampled,
                     width,
@@ -659,19 +694,19 @@ fn bench_buffer_pooling(c: &mut Criterion) {
             });
         });
     }
-    
+
     // Benchmark pool stats access (should be very fast)
     group.bench_function("get_pool_stats", |b| {
         // Warm up the pools
         buffer_pool::with_pixel_buffer(256, 256, |_| {});
         buffer_pool::with_index_buffer(256, 256, |_| {});
-        
+
         b.iter(|| {
             let stats = buffer_pool::get_pool_stats();
             black_box(stats)
         });
     });
-    
+
     group.finish();
 }
 

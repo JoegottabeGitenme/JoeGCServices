@@ -15,10 +15,7 @@ impl ResultsReport {
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_header(vec![format!("Load Test Results: {}", results.config_name)]);
 
-        table.add_row(vec![
-            "Duration:",
-            &format!("{:.1}s", results.duration_secs),
-        ]);
+        table.add_row(vec!["Duration:", &format!("{:.1}s", results.duration_secs)]);
         table.add_row(vec![
             "Total Requests:",
             &format!("{}", results.total_requests),

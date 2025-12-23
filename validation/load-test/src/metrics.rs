@@ -63,8 +63,8 @@ impl MetricsCollector {
 
     /// Generate final test results.
     pub fn results(
-        &self, 
-        config_name: String, 
+        &self,
+        config_name: String,
         scenario_name: String,
         layers: Vec<String>,
         concurrency: u32,
@@ -72,7 +72,10 @@ impl MetricsCollector {
     ) -> TestResults {
         let duration = self
             .last_request_time
-            .and_then(|last| self.first_request_time.map(|first| last.duration_since(first)))
+            .and_then(|last| {
+                self.first_request_time
+                    .map(|first| last.duration_since(first))
+            })
             .unwrap_or_default();
 
         let duration_secs = duration.as_secs_f64();
@@ -155,15 +158,15 @@ pub struct TestResults {
     // Throughput
     pub bytes_per_second: f64,
     pub tiles_per_second: f64,
-    
+
     // Test configuration
     pub layers: Vec<String>,
     pub concurrency: u32,
-    
+
     // System configuration at test time
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_config: Option<SystemConfig>,
-    
+
     // Git metadata for tracking code changes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_info: Option<GitInfo>,
@@ -204,7 +207,7 @@ impl GitInfo {
     /// Capture current git repository state
     pub fn capture() -> Option<Self> {
         use std::process::Command;
-        
+
         // Get commit hash
         let commit_hash = Command::new("git")
             .args(["rev-parse", "HEAD"])
@@ -212,9 +215,9 @@ impl GitInfo {
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())?;
-        
+
         let commit_short = commit_hash.chars().take(7).collect();
-        
+
         // Get branch name
         let branch = Command::new("git")
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -223,7 +226,7 @@ impl GitInfo {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         // Get commit message (first line)
         let commit_message = Command::new("git")
             .args(["log", "-1", "--pretty=%s"])
@@ -232,7 +235,7 @@ impl GitInfo {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-        
+
         // Get commit author
         let commit_author = Command::new("git")
             .args(["log", "-1", "--pretty=%an"])
@@ -241,7 +244,7 @@ impl GitInfo {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-        
+
         // Get commit date
         let commit_date = Command::new("git")
             .args(["log", "-1", "--pretty=%ci"])
@@ -250,7 +253,7 @@ impl GitInfo {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-        
+
         // Check if working directory is dirty
         let is_dirty = Command::new("git")
             .args(["status", "--porcelain"])
@@ -258,7 +261,7 @@ impl GitInfo {
             .ok()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        
+
         Some(GitInfo {
             commit_hash,
             commit_short,

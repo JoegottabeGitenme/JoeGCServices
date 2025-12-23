@@ -132,7 +132,9 @@ pub struct ModelLayerConfig {
 impl ModelLayerConfig {
     /// Find a layer by parameter code (case-insensitive)
     pub fn get_layer_by_parameter(&self, parameter: &str) -> Option<&LayerConfig> {
-        self.layers.iter().find(|l| l.parameter.eq_ignore_ascii_case(parameter))
+        self.layers
+            .iter()
+            .find(|l| l.parameter.eq_ignore_ascii_case(parameter))
     }
 
     /// Find a layer by layer ID (case-insensitive)
@@ -244,18 +246,19 @@ impl LayerConfigRegistry {
         registry.reload_from_directory(config_dir);
         registry
     }
-    
+
     /// Reload layer configurations from a directory (hot reload support)
     /// Returns the number of models loaded and total layers
     pub fn reload_from_directory<P: AsRef<Path>>(&mut self, config_dir: P) -> (usize, usize) {
         let layers_dir = config_dir.as_ref().join("layers");
-        
+
         // Set style directory relative to config dir
-        self.style_dir = config_dir.as_ref()
+        self.style_dir = config_dir
+            .as_ref()
             .join("styles")
             .to_string_lossy()
             .to_string();
-        
+
         // Clear existing configs before reload
         self.configs.clear();
 
@@ -288,7 +291,7 @@ impl LayerConfigRegistry {
 
         let models = self.configs.len();
         let layers = self.total_layers();
-        
+
         info!(
             models = models,
             total_layers = layers,
@@ -325,13 +328,17 @@ impl LayerConfigRegistry {
                 title: l.title,
                 abstract_text: l.abstract_text,
                 style_file: l.style_file,
-                units: l.units.map(|u| UnitConfig {
-                    native: u.native.unwrap_or_default(),
-                    display: u.display.unwrap_or_default(),
-                    conversion: u.conversion
-                        .map(|c| UnitConversion::from_str(&c))
-                        .unwrap_or(UnitConversion::None),
-                }).unwrap_or_default(),
+                units: l
+                    .units
+                    .map(|u| UnitConfig {
+                        native: u.native.unwrap_or_default(),
+                        display: u.display.unwrap_or_default(),
+                        conversion: u
+                            .conversion
+                            .map(|c| UnitConversion::from_str(&c))
+                            .unwrap_or(UnitConversion::None),
+                    })
+                    .unwrap_or_default(),
                 levels: l
                     .levels
                     .into_iter()
@@ -381,7 +388,7 @@ impl LayerConfigRegistry {
         if parts.len() < 2 {
             return None;
         }
-        
+
         let model = parts[0];
         self.configs
             .get(model)
@@ -408,18 +415,19 @@ impl LayerConfigRegistry {
     }
 
     /// Get style file path for a model/parameter combination.
-    /// 
+    ///
     /// # Panics
     /// Panics if no layer config is found for the model/parameter combination.
     /// Use `try_get_style_file` if you need to handle missing configs gracefully.
     pub fn get_style_file_for_parameter(&self, model: &str, parameter: &str) -> String {
-        self.try_get_style_file(model, parameter).unwrap_or_else(|| {
-            panic!(
-                "No layer config found for model='{}', parameter='{}'. \
+        self.try_get_style_file(model, parameter)
+            .unwrap_or_else(|| {
+                panic!(
+                    "No layer config found for model='{}', parameter='{}'. \
                  Add this layer to config/layers/{}.yaml or remove it from the catalog.",
-                model, parameter, model
-            )
-        })
+                    model, parameter, model
+                )
+            })
     }
 
     /// Check if a model has layer configs loaded
@@ -438,7 +446,7 @@ impl LayerConfigRegistry {
     }
 
     /// Get display name for a model.
-    /// 
+    ///
     /// # Panics
     /// Panics if no model config is found.
     pub fn get_model_display_name(&self, model: &str) -> String {
@@ -453,28 +461,34 @@ impl LayerConfigRegistry {
 
     /// Try to get display name for a parameter. Returns None if not found.
     pub fn try_get_parameter_display_name(&self, model: &str, parameter: &str) -> Option<String> {
-        self.get_layer_by_param(model, parameter).map(|l| l.title.clone())
+        self.get_layer_by_param(model, parameter)
+            .map(|l| l.title.clone())
     }
 
     /// Get display name for a parameter.
-    /// 
+    ///
     /// # Panics
     /// Panics if no layer config is found for the model/parameter combination.
     pub fn get_parameter_display_name(&self, model: &str, parameter: &str) -> String {
-        self.try_get_parameter_display_name(model, parameter).unwrap_or_else(|| {
-            panic!(
-                "No layer config found for model='{}', parameter='{}'. \
+        self.try_get_parameter_display_name(model, parameter)
+            .unwrap_or_else(|| {
+                panic!(
+                    "No layer config found for model='{}', parameter='{}'. \
                  Add this layer to config/layers/{}.yaml.",
-                model, parameter, model
-            )
-        })
+                    model, parameter, model
+                )
+            })
     }
 
     /// Validate that all parameters in the catalog have layer configs.
     /// Returns a list of (model, parameter) tuples that are missing configs.
-    pub fn find_missing_configs(&self, models: &[String], model_params: &std::collections::HashMap<String, Vec<String>>) -> Vec<(String, String)> {
+    pub fn find_missing_configs(
+        &self,
+        models: &[String],
+        model_params: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Vec<(String, String)> {
         let mut missing = Vec::new();
-        
+
         for model in models {
             if let Some(params) = model_params.get(model) {
                 for param in params {
@@ -488,7 +502,7 @@ impl LayerConfigRegistry {
                 }
             }
         }
-        
+
         missing
     }
 
@@ -500,17 +514,18 @@ impl LayerConfigRegistry {
         model_params: &std::collections::HashMap<String, Vec<String>>,
     ) -> Result<(), String> {
         let missing = self.find_missing_configs(models, model_params);
-        
+
         if missing.is_empty() {
             return Ok(());
         }
-        
+
         // Group by model for better error messages
-        let mut by_model: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let mut by_model: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         for (model, param) in missing {
             by_model.entry(model).or_default().push(param);
         }
-        
+
         let mut error_parts = Vec::new();
         for (model, params) in by_model {
             error_parts.push(format!(
@@ -520,7 +535,7 @@ impl LayerConfigRegistry {
                 model
             ));
         }
-        
+
         Err(format!(
             "Missing layer configurations for the following parameters:\n{}\n\n\
              Each parameter in the catalog must have a layer config that specifies:\n\
@@ -550,7 +565,10 @@ mod tests {
     #[test]
     fn test_unit_conversion_from_str() {
         assert_eq!(UnitConversion::from_str("K_to_C"), UnitConversion::KToC);
-        assert_eq!(UnitConversion::from_str("Pa_to_hPa"), UnitConversion::PaToHPa);
+        assert_eq!(
+            UnitConversion::from_str("Pa_to_hPa"),
+            UnitConversion::PaToHPa
+        );
         assert_eq!(UnitConversion::from_str("m_to_km"), UnitConversion::MToKm);
         assert_eq!(UnitConversion::from_str("unknown"), UnitConversion::None);
     }
@@ -565,9 +583,18 @@ mod tests {
             style_file: "temperature.json".to_string(),
             units: UnitConfig::default(),
             levels: vec![
-                LevelConfig { value: "1000 mb".to_string(), default: false },
-                LevelConfig { value: "2 m above ground".to_string(), default: true },
-                LevelConfig { value: "500 mb".to_string(), default: false },
+                LevelConfig {
+                    value: "1000 mb".to_string(),
+                    default: false,
+                },
+                LevelConfig {
+                    value: "2 m above ground".to_string(),
+                    default: true,
+                },
+                LevelConfig {
+                    value: "500 mb".to_string(),
+                    default: false,
+                },
             ],
             composite: false,
             requires: vec![],

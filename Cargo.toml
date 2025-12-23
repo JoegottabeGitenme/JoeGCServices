@@ -10,6 +10,7 @@ members = [
     "crates/storage",
     "crates/grid-processor",
     "crates/ingestion",
+    "crates/test-utils",
     "services/downloader",
     "services/ingester",
     "services/wms-api",

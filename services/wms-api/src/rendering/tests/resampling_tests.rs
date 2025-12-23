@@ -1,8 +1,8 @@
 //! Tests for resampling functions.
 
 use crate::rendering::resampling::{
-    lat_to_mercator_y, mercator_y_to_lat, bilinear_interpolate,
-    resample_from_geographic, resample_for_mercator,
+    bilinear_interpolate, lat_to_mercator_y, mercator_y_to_lat, resample_for_mercator,
+    resample_from_geographic,
 };
 
 // ============================================================================
@@ -127,9 +127,9 @@ fn test_resample_from_geographic_identity() {
     // Create a simple 4x4 grid
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let bbox = [-180.0f32, -90.0, 180.0, 90.0];
-    
+
     let result = resample_from_geographic(&data, 4, 4, 4, 4, bbox, bbox, false);
-    
+
     // For identity transform, values should be similar (not exact due to pixel center sampling)
     assert_eq!(result.len(), 16);
     // Check corners are approximately correct
@@ -143,9 +143,9 @@ fn test_resample_from_geographic_subset() {
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let data_bbox = [-180.0f32, -90.0, 180.0, 90.0];
     let output_bbox = [-90.0f32, -45.0, 90.0, 45.0];
-    
+
     let result = resample_from_geographic(&data, 4, 4, 4, 4, output_bbox, data_bbox, false);
-    
+
     // Should get valid values for subset
     assert_eq!(result.len(), 16);
     let valid_count = result.iter().filter(|v| !v.is_nan()).count();
@@ -158,9 +158,9 @@ fn test_resample_from_geographic_out_of_bounds() {
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let data_bbox = [0.0f32, 0.0, 10.0, 10.0];
     let output_bbox = [50.0f32, 50.0, 60.0, 60.0]; // Completely outside
-    
+
     let result = resample_from_geographic(&data, 4, 4, 4, 4, output_bbox, data_bbox, false);
-    
+
     // All values should be NaN since output is outside data bounds
     let nan_count = result.iter().filter(|v| v.is_nan()).count();
     assert_eq!(nan_count, 16, "All values should be NaN for out-of-bounds");
@@ -172,9 +172,9 @@ fn test_resample_from_geographic_360_longitude() {
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let data_bbox = [0.0f32, -90.0, 360.0, 90.0];
     let output_bbox = [-90.0f32, -45.0, 0.0, 45.0]; // Western hemisphere
-    
+
     let result = resample_from_geographic(&data, 4, 4, 4, 4, output_bbox, data_bbox, true);
-    
+
     // Should get valid values for western hemisphere from 0-360 grid
     assert_eq!(result.len(), 16);
     let valid_count = result.iter().filter(|v| !v.is_nan()).count();
@@ -194,12 +194,15 @@ fn test_resample_for_mercator_equatorial() {
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let data_bbox = [-180.0f32, -85.0, 180.0, 85.0];
     let output_bbox = [-45.0f32, -20.0, 45.0, 20.0]; // Equatorial region
-    
+
     let result = resample_for_mercator(&data, 4, 4, 4, 4, output_bbox, data_bbox, false);
-    
+
     assert_eq!(result.len(), 16);
     let valid_count = result.iter().filter(|v| !v.is_nan()).count();
-    assert!(valid_count > 0, "Should have valid values in equatorial region");
+    assert!(
+        valid_count > 0,
+        "Should have valid values in equatorial region"
+    );
 }
 
 #[test]
@@ -208,10 +211,13 @@ fn test_resample_for_mercator_high_latitude() {
     let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let data_bbox = [-180.0f32, -85.0, 180.0, 85.0];
     let output_bbox = [-45.0f32, 60.0, 45.0, 80.0]; // High latitude
-    
+
     let result = resample_for_mercator(&data, 4, 4, 4, 4, output_bbox, data_bbox, false);
-    
+
     assert_eq!(result.len(), 16);
     let valid_count = result.iter().filter(|v| !v.is_nan()).count();
-    assert!(valid_count > 0, "Should have valid values at high latitudes");
+    assert!(
+        valid_count > 0,
+        "Should have valid values at high latitudes"
+    );
 }

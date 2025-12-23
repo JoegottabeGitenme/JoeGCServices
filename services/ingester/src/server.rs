@@ -22,7 +22,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use ingestion::{Ingester, IngestOptions, IngestionResult};
+use ingestion::{IngestOptions, Ingester, IngestionResult};
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -191,7 +191,7 @@ async fn ingest_handler(
     Json(request): Json<IngestRequest>,
 ) -> impl IntoResponse {
     let id = Uuid::new_v4().to_string();
-    
+
     info!(
         id = %id,
         file_path = %request.file_path,
@@ -209,7 +209,11 @@ async fn ingest_handler(
     };
 
     // Perform ingestion
-    match state.ingester.ingest_file(&request.file_path, options).await {
+    match state
+        .ingester
+        .ingest_file(&request.file_path, options)
+        .await
+    {
         Ok(result) => {
             info!(
                 id = %id,

@@ -1,6 +1,6 @@
 //! Data retention and cleanup background task.
 //!
-//! This module handles automatic cleanup of expired datasets based on 
+//! This module handles automatic cleanup of expired datasets based on
 //! retention settings in model configuration files.
 
 use anyhow::Result;
@@ -131,7 +131,10 @@ impl CleanupConfig {
 
     /// Get retention hours for a model.
     pub fn get_retention_hours(&self, model: &str) -> u32 {
-        *self.model_retentions.get(model).unwrap_or(&self.default_retention_hours)
+        *self
+            .model_retentions
+            .get(model)
+            .unwrap_or(&self.default_retention_hours)
     }
 }
 
@@ -177,9 +180,12 @@ impl CleanupTask {
 
         // Get storage paths of expired datasets
         let expired_paths = self.state.catalog.get_expired_storage_paths().await?;
-        
+
         if !expired_paths.is_empty() {
-            info!(count = expired_paths.len(), "Deleting expired files from storage");
+            info!(
+                count = expired_paths.len(),
+                "Deleting expired files from storage"
+            );
 
             // Delete files from object storage
             for path in &expired_paths {
@@ -199,11 +205,14 @@ impl CleanupTask {
             let deleted = self.state.catalog.delete_expired().await?;
             stats.records_deleted = deleted;
             info!(count = deleted, "Deleted expired records from database");
-            
+
             // Invalidate capabilities cache when data is deleted
             if deleted > 0 {
                 self.state.capabilities_cache.invalidate().await;
-                tracing::debug!("Invalidated capabilities cache after cleanup deleted {} records", deleted);
+                tracing::debug!(
+                    "Invalidated capabilities cache after cleanup deleted {} records",
+                    deleted
+                );
             }
         }
 
@@ -328,9 +337,10 @@ impl SyncTask {
         minio_paths.extend(raw_paths);
         let grid_paths = self.state.storage.list("grids/").await?;
         minio_paths.extend(grid_paths);
-        
+
         // For Zarr directories, extract the parent .zarr path from individual files
-        let mut minio_path_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut minio_path_set: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for path in &minio_paths {
             if let Some(zarr_idx) = path.find(".zarr/") {
                 let zarr_dir = &path[..zarr_idx + 5];
@@ -352,7 +362,10 @@ impl SyncTask {
         // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
         let orphan_minio_paths: Vec<String> = minio_path_set
             .iter()
-            .filter(|path| (path.starts_with("shredded/") || path.starts_with("grids/")) && !db_path_set.contains(*path))
+            .filter(|path| {
+                (path.starts_with("shredded/") || path.starts_with("grids/"))
+                    && !db_path_set.contains(*path)
+            })
             .cloned()
             .collect();
 
@@ -384,10 +397,11 @@ impl SyncTask {
         minio_paths.extend(raw_paths);
         let grid_paths = self.state.storage.list("grids/").await?;
         minio_paths.extend(grid_paths);
-        
+
         // For Zarr directories, we need to extract the parent .zarr path from individual files
         // e.g., "grids/mrms/123/foo.zarr/c/0/0" -> "grids/mrms/123/foo.zarr"
-        let mut minio_path_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut minio_path_set: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for path in &minio_paths {
             // Check if this is a Zarr file (contains .zarr/ in path)
             if let Some(zarr_idx) = path.find(".zarr/") {
@@ -401,7 +415,11 @@ impl SyncTask {
         }
         stats.minio_objects_checked = minio_paths.len() as u64;
 
-        info!(count = minio_paths.len(), unique_paths = minio_path_set.len(), "Retrieved MinIO objects (shredded + raw + grids)");
+        info!(
+            count = minio_paths.len(),
+            unique_paths = minio_path_set.len(),
+            "Retrieved MinIO objects (shredded + raw + grids)"
+        );
 
         // Step 3: Find orphan DB records (in DB but not in MinIO)
         let orphan_db_paths: Vec<String> = db_paths
@@ -415,7 +433,7 @@ impl SyncTask {
                 count = orphan_db_paths.len(),
                 "Found orphan database records (missing from MinIO)"
             );
-            
+
             if orphan_db_paths.len() <= 20 {
                 for path in &orphan_db_paths {
                     info!(path = %path, "Orphan DB record");
@@ -423,7 +441,12 @@ impl SyncTask {
             }
 
             if delete {
-                match self.state.catalog.delete_orphan_records(&orphan_db_paths).await {
+                match self
+                    .state
+                    .catalog
+                    .delete_orphan_records(&orphan_db_paths)
+                    .await
+                {
                     Ok(deleted) => {
                         stats.orphan_db_deleted = deleted;
                         info!(count = deleted, "Deleted orphan database records");
@@ -442,7 +465,10 @@ impl SyncTask {
         // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
         let orphan_minio_paths: Vec<String> = minio_path_set
             .iter()
-            .filter(|path| (path.starts_with("shredded/") || path.starts_with("grids/")) && !db_path_set.contains(*path))
+            .filter(|path| {
+                (path.starts_with("shredded/") || path.starts_with("grids/"))
+                    && !db_path_set.contains(*path)
+            })
             .cloned()
             .collect();
         stats.orphan_minio_objects = orphan_minio_paths.len() as u64;
@@ -472,7 +498,10 @@ impl SyncTask {
                         }
                     }
                 }
-                info!(count = stats.orphan_minio_deleted, "Deleted orphan MinIO objects");
+                info!(
+                    count = stats.orphan_minio_deleted,
+                    "Deleted orphan MinIO objects"
+                );
             }
         }
 

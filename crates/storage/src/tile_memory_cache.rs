@@ -87,7 +87,7 @@ impl TileMemoryCache {
     pub async fn get(&self, key: &str) -> Option<Bytes> {
         // Try to read from cache
         let mut cache = self.cache.write().await;
-        
+
         if let Some(cached_tile) = cache.get(key) {
             // Check if expired
             if cached_tile.is_expired() {
@@ -97,7 +97,9 @@ impl TileMemoryCache {
                 cache.pop(key);
                 self.stats.expired.fetch_add(1, Ordering::Relaxed);
                 self.stats.misses.fetch_add(1, Ordering::Relaxed);
-                self.stats.size_bytes.fetch_sub(tile_size, Ordering::Relaxed);
+                self.stats
+                    .size_bytes
+                    .fetch_sub(tile_size, Ordering::Relaxed);
                 None
             } else {
                 // Cache hit
@@ -122,7 +124,9 @@ impl TileMemoryCache {
         if cache.len() >= self.capacity {
             if let Some((_, lru_entry)) = cache.peek_lru() {
                 let evicted_size = lru_entry.data.len() as u64;
-                self.stats.size_bytes.fetch_sub(evicted_size, Ordering::Relaxed);
+                self.stats
+                    .size_bytes
+                    .fetch_sub(evicted_size, Ordering::Relaxed);
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
         }
@@ -137,7 +141,9 @@ impl TileMemoryCache {
         cache.put(key.to_string(), cached_tile);
 
         // Update size metric
-        self.stats.size_bytes.fetch_add(tile_size, Ordering::Relaxed);
+        self.stats
+            .size_bytes
+            .fetch_add(tile_size, Ordering::Relaxed);
     }
 
     /// Get current statistics.
@@ -178,7 +184,7 @@ impl TileMemoryCache {
     pub async fn clear(&self) {
         let mut cache = self.cache.write().await;
         cache.clear();
-        
+
         // Reset stats
         self.stats.hits.store(0, Ordering::Relaxed);
         self.stats.misses.store(0, Ordering::Relaxed);
@@ -186,7 +192,7 @@ impl TileMemoryCache {
         self.stats.expired.store(0, Ordering::Relaxed);
         self.stats.size_bytes.store(0, Ordering::Relaxed);
     }
-    
+
     /// Evict a percentage of entries (0.0 to 1.0) using LRU order.
     /// Returns the number of entries evicted.
     ///
@@ -196,7 +202,7 @@ impl TileMemoryCache {
         let entries_to_evict = (cache.len() as f64 * percentage.clamp(0.0, 1.0)) as usize;
         let mut evicted_count = 0;
         let mut bytes_freed = 0u64;
-        
+
         for _ in 0..entries_to_evict {
             if let Some((_, evicted)) = cache.pop_lru() {
                 bytes_freed += evicted.data.len() as u64;
@@ -206,13 +212,15 @@ impl TileMemoryCache {
                 break;
             }
         }
-        
+
         // Subtract freed bytes from size tracking
         if bytes_freed > 0 {
             let current = self.stats.size_bytes.load(Ordering::Relaxed);
-            self.stats.size_bytes.store(current.saturating_sub(bytes_freed), Ordering::Relaxed);
+            self.stats
+                .size_bytes
+                .store(current.saturating_sub(bytes_freed), Ordering::Relaxed);
         }
-        
+
         evicted_count
     }
 }
@@ -224,23 +232,23 @@ mod tests {
     #[tokio::test]
     async fn test_cache_basic_operations() {
         let cache = TileMemoryCache::new(10, 60);
-        
+
         // Test empty cache
         assert!(cache.is_empty().await);
         assert_eq!(cache.len().await, 0);
-        
+
         // Test cache miss
         assert!(cache.get("tile1").await.is_none());
-        
+
         // Test cache set and hit
         let data = Bytes::from("test data");
         cache.set("tile1", data.clone(), None).await;
         assert_eq!(cache.len().await, 1);
-        
+
         let retrieved = cache.get("tile1").await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap(), data);
-        
+
         // Check stats
         let stats = cache.stats();
         assert_eq!(stats.hits.load(Ordering::Relaxed), 1);
@@ -250,19 +258,21 @@ mod tests {
     #[tokio::test]
     async fn test_cache_ttl_expiration() {
         let cache = TileMemoryCache::new(10, 1); // 1 second TTL
-        
+
         let data = Bytes::from("test data");
-        cache.set("tile1", data.clone(), Some(Duration::from_millis(100))).await;
-        
+        cache
+            .set("tile1", data.clone(), Some(Duration::from_millis(100)))
+            .await;
+
         // Should hit immediately
         assert!(cache.get("tile1").await.is_some());
-        
+
         // Wait for expiration
         tokio::time::sleep(Duration::from_millis(150)).await;
-        
+
         // Should be expired now
         assert!(cache.get("tile1").await.is_none());
-        
+
         // Check expired stat
         let stats = cache.stats();
         assert_eq!(stats.expired.load(Ordering::Relaxed), 1);
@@ -271,23 +281,23 @@ mod tests {
     #[tokio::test]
     async fn test_cache_lru_eviction() {
         let cache = TileMemoryCache::new(2, 60); // Capacity of 2
-        
+
         // Fill cache
         cache.set("tile1", Bytes::from("data1"), None).await;
         cache.set("tile2", Bytes::from("data2"), None).await;
         assert_eq!(cache.len().await, 2);
-        
+
         // Add third tile, should evict tile1 (least recently used)
         cache.set("tile3", Bytes::from("data3"), None).await;
         assert_eq!(cache.len().await, 2);
-        
+
         // tile1 should be gone
         assert!(cache.get("tile1").await.is_none());
-        
+
         // tile2 and tile3 should still be there
         assert!(cache.get("tile2").await.is_some());
         assert!(cache.get("tile3").await.is_some());
-        
+
         // Check eviction stat
         let stats = cache.stats();
         assert_eq!(stats.evictions.load(Ordering::Relaxed), 1);
@@ -296,14 +306,14 @@ mod tests {
     #[tokio::test]
     async fn test_cache_clear() {
         let cache = TileMemoryCache::new(10, 60);
-        
+
         cache.set("tile1", Bytes::from("data1"), None).await;
         cache.set("tile2", Bytes::from("data2"), None).await;
         assert_eq!(cache.len().await, 2);
-        
+
         cache.clear().await;
         assert!(cache.is_empty().await);
-        
+
         // Stats should be reset
         let stats = cache.stats();
         assert_eq!(stats.hits.load(Ordering::Relaxed), 0);

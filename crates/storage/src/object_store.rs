@@ -171,12 +171,11 @@ impl ObjectStorage {
     /// Get object metadata (size).
     pub async fn head(&self, path: &str) -> WmsResult<u64> {
         let location = Path::from(path);
-        
-        let meta = self.store
-            .head(&location)
-            .await
-            .map_err(|e| WmsError::StorageError(format!("Failed to get metadata for {}: {}", path, e)))?;
-        
+
+        let meta = self.store.head(&location).await.map_err(|e| {
+            WmsError::StorageError(format!("Failed to get metadata for {}: {}", path, e))
+        })?;
+
         Ok(meta.size as u64)
     }
 

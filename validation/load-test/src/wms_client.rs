@@ -7,21 +7,21 @@ use quick_xml::Reader;
 /// Query available times for a layer from WMS GetCapabilities.
 pub async fn query_layer_times(base_url: &str, layer_name: &str) -> Result<Vec<String>> {
     let url = format!("{}/wms?SERVICE=WMS&REQUEST=GetCapabilities", base_url);
-    
+
     // Fetch GetCapabilities XML
     let response = reqwest::get(&url).await?;
     let xml = response.text().await?;
-    
+
     // Parse times from the XML
     let times = parse_time_dimension(&xml, layer_name)?;
-    
+
     if times.is_empty() {
         return Err(anyhow!(
-            "No TIME dimension found for layer '{}'", 
+            "No TIME dimension found for layer '{}'",
             layer_name
         ));
     }
-    
+
     Ok(times)
 }
 
@@ -29,12 +29,12 @@ pub async fn query_layer_times(base_url: &str, layer_name: &str) -> Result<Vec<S
 fn parse_time_dimension(xml: &str, layer_name: &str) -> Result<Vec<String>> {
     let mut reader = Reader::from_str(xml);
     reader.trim_text(true);
-    
+
     let mut buf = Vec::new();
     let mut in_target_layer = false;
     let mut in_dimension = false;
     let mut dimension_content = String::new();
-    
+
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
@@ -91,13 +91,22 @@ fn parse_time_dimension(xml: &str, layer_name: &str) -> Result<Vec<String>> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow!("XML parsing error at position {}: {:?}", reader.buffer_position(), e)),
+            Err(e) => {
+                return Err(anyhow!(
+                    "XML parsing error at position {}: {:?}",
+                    reader.buffer_position(),
+                    e
+                ))
+            }
             _ => {}
         }
         buf.clear();
     }
-    
-    Err(anyhow!("No TIME dimension found for layer '{}'", layer_name))
+
+    Err(anyhow!(
+        "No TIME dimension found for layer '{}'",
+        layer_name
+    ))
 }
 
 #[cfg(test)]
@@ -113,7 +122,7 @@ mod tests {
     <Dimension name="TIME" units="ISO8601" default="2025-12-02T19:21:00Z">2025-12-02T19:21:00Z,2025-12-02T19:16:00Z,2025-12-02T19:11:00Z</Dimension>
 </Layer>
         "#;
-        
+
         let times = parse_time_dimension(xml, "goes18_CMI_C13").unwrap();
         assert_eq!(times.len(), 3);
         assert_eq!(times[0], "2025-12-02T19:21:00Z");

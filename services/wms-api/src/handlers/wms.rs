@@ -11,18 +11,18 @@ use axum::{
     response::Response,
 };
 use serde::Deserialize;
-use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, instrument, error};
+use std::sync::Arc;
+use tracing::{error, info, instrument};
 
-use crate::state::AppState;
+use super::common::{
+    convert_png_to_jpeg, convert_png_to_webp, get_styles_xml_from_file, mercator_to_wgs84,
+    wms_exception, DimensionParams,
+};
 use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
+use crate::state::AppState;
 use storage::ParameterAvailability;
-use super::common::{
-    wms_exception, mercator_to_wgs84, DimensionParams,
-    get_styles_xml_from_file, convert_png_to_jpeg, convert_png_to_webp,
-};
 
 // ============================================================================
 // WMS Error Types (OGC Exception Codes)
@@ -108,7 +108,10 @@ impl WmsError {
             return WmsError::LayerNotDefined(err);
         }
         // Detect missing data errors (no data available for the requested dimensions)
-        if err.contains("No data found") || err.contains("no data available") || err.contains("Data not available") {
+        if err.contains("No data found")
+            || err.contains("no data available")
+            || err.contains("Data not available")
+        {
             return WmsError::MissingData(err);
         }
         // Default to rendering error
@@ -121,7 +124,10 @@ fn validate_crs(crs: Option<&str>) -> Result<(), WmsError> {
     let crs_str = crs.unwrap_or("EPSG:4326");
     let crs_upper = crs_str.to_uppercase();
 
-    if SUPPORTED_CRS.iter().any(|supported| crs_upper == *supported) {
+    if SUPPORTED_CRS
+        .iter()
+        .any(|supported| crs_upper == *supported)
+    {
         Ok(())
     } else {
         Err(WmsError::InvalidCRS(format!(
@@ -137,7 +143,10 @@ fn validate_format(format: Option<&str>) -> Result<(), WmsError> {
     let format_str = format.unwrap_or("image/png");
     let format_lower = format_str.to_lowercase();
 
-    if SUPPORTED_FORMATS.iter().any(|supported| format_lower == *supported) {
+    if SUPPORTED_FORMATS
+        .iter()
+        .any(|supported| format_lower == *supported)
+    {
         Ok(())
     } else {
         Err(WmsError::InvalidFormat(format!(
@@ -324,7 +333,8 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
                 }
 
                 // Check if data exists for this layer
-                if let Ok(Some(availability)) = state.catalog
+                if let Ok(Some(availability)) = state
+                    .catalog
                     .get_parameter_availability(model_id, &layer.parameter)
                     .await
                 {
@@ -415,7 +425,8 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
 
     // Record bbox for heatmap visualization (parse and convert to WGS84 if needed)
     if let Some(bbox_str) = bbox {
-        let coords: Vec<f64> = bbox_str.split(',')
+        let coords: Vec<f64> = bbox_str
+            .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if coords.len() == 4 {
@@ -423,12 +434,24 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             let bbox_array = if crs_str.contains("3857") {
                 let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
                 let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
-                [min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32]
+                [
+                    min_lon as f32,
+                    min_lat as f32,
+                    max_lon as f32,
+                    max_lat as f32,
+                ]
             } else {
                 // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
-                [coords[1] as f32, coords[0] as f32, coords[3] as f32, coords[2] as f32]
+                [
+                    coords[1] as f32,
+                    coords[0] as f32,
+                    coords[3] as f32,
+                    coords[2] as f32,
+                ]
             };
-            state.metrics.record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
+            state
+                .metrics
+                .record_tile_request_location(&bbox_array, crate::metrics::TileCacheStatus::Miss);
         }
     }
 
@@ -439,10 +462,30 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let render_result = if layer_names.len() == 1 {
         // Single layer - use existing function
         let style = style_names.first().copied().unwrap_or("default");
-        render_weather_data(&state, layer_names[0], style, width, height, bbox, crs, &dimensions).await
+        render_weather_data(
+            &state,
+            layer_names[0],
+            style,
+            width,
+            height,
+            bbox,
+            crs,
+            &dimensions,
+        )
+        .await
     } else {
         // Multiple layers - render each and composite
-        render_multi_layer(&state, &layer_names, &style_names, width, height, bbox, crs, &dimensions).await
+        render_multi_layer(
+            &state,
+            &layer_names,
+            &style_names,
+            width,
+            height,
+            bbox,
+            crs,
+            &dimensions,
+        )
+        .await
     };
 
     // Try to render actual data, return error on failure
@@ -491,11 +534,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                 error = ?e,
                 "WMS GetMap rendering failed"
             );
-            wms_exception(
-                e.code(),
-                &e.message(),
-                e.status_code(),
-            )
+            wms_exception(e.code(), &e.message(), e.status_code())
         }
     }
 }
@@ -505,7 +544,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
 // ============================================================================
 
 async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Response {
-    use wms_protocol::{InfoFormat, FeatureInfoResponse};
+    use wms_protocol::{FeatureInfoResponse, InfoFormat};
 
     // Validate required parameters
     let query_layers = match &params.query_layers {
@@ -565,7 +604,11 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     if i >= width {
         return wms_exception(
             "InvalidPoint",
-            &format!("I parameter value {} is out of range. Must be between 0 and {} (WIDTH-1).", i, width - 1),
+            &format!(
+                "I parameter value {} is out of range. Must be between 0 and {} (WIDTH-1).",
+                i,
+                width - 1
+            ),
             StatusCode::BAD_REQUEST,
         );
     }
@@ -574,33 +617,32 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
     if j >= height {
         return wms_exception(
             "InvalidPoint",
-            &format!("J parameter value {} is out of range. Must be between 0 and {} (HEIGHT-1).", j, height - 1),
+            &format!(
+                "J parameter value {} is out of range. Must be between 0 and {} (HEIGHT-1).",
+                j,
+                height - 1
+            ),
             StatusCode::BAD_REQUEST,
         );
     }
 
     // Parse INFO_FORMAT
     let info_format = match params.info_format.as_deref() {
-        Some(fmt) => {
-            match InfoFormat::from_mime(fmt) {
-                Some(f) => f,
-                None => {
-                    return wms_exception(
+        Some(fmt) => match InfoFormat::from_mime(fmt) {
+            Some(f) => f,
+            None => {
+                return wms_exception(
                         "InvalidFormat",
                         &format!("INFO_FORMAT '{}' is not supported. Supported formats: application/json, text/html, text/xml, text/plain", fmt),
                         StatusCode::BAD_REQUEST,
                     );
-                }
             }
-        }
+        },
         None => InfoFormat::Html, // Default to HTML if not specified
     };
 
     // Parse BBOX
-    let bbox_coords: Result<Vec<f64>, _> = bbox
-        .split(',')
-        .map(|s| s.trim().parse())
-        .collect();
+    let bbox_coords: Result<Vec<f64>, _> = bbox.split(',').map(|s| s.trim().parse()).collect();
 
     let bbox_array = match bbox_coords {
         Ok(coords) if coords.len() == 4 => {
@@ -675,7 +717,10 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         if parts.len() < 2 {
             return wms_exception(
                 "LayerNotDefined",
-                &format!("Layer '{}' is not defined. Layer names must be in format 'model_parameter'.", layer),
+                &format!(
+                    "Layer '{}' is not defined. Layer names must be in format 'model_parameter'.",
+                    layer
+                ),
                 StatusCode::BAD_REQUEST,
             );
         }
@@ -685,7 +730,10 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
         if !valid_models.iter().any(|m| m.to_lowercase() == model) {
             return wms_exception(
                 "LayerNotDefined",
-                &format!("Layer '{}' is not defined. Model '{}' not found.", layer, parts[0]),
+                &format!(
+                    "Layer '{}' is not defined. Model '{}' not found.",
+                    layer, parts[0]
+                ),
                 StatusCode::BAD_REQUEST,
             );
         }
@@ -728,7 +776,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             valid_time,
             effective_elevation.as_deref(),
         )
-            .await
+        .await
         {
             Ok(mut features) => {
                 all_features.append(&mut features);
@@ -743,27 +791,19 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
 
     // Format response based on INFO_FORMAT
     let (body, content_type) = match info_format {
-        InfoFormat::Json => {
-            match response.to_json() {
-                Ok(json) => (json, "application/json"),
-                Err(e) => {
-                    return wms_exception(
-                        "NoApplicableCode",
-                        &format!("JSON encoding failed: {}", e),
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                }
+        InfoFormat::Json => match response.to_json() {
+            Ok(json) => (json, "application/json"),
+            Err(e) => {
+                return wms_exception(
+                    "NoApplicableCode",
+                    &format!("JSON encoding failed: {}", e),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                )
             }
-        }
-        InfoFormat::Html => {
-            (response.to_html(), "text/html")
-        }
-        InfoFormat::Xml => {
-            (response.to_xml(), "text/xml")
-        }
-        InfoFormat::Text => {
-            (response.to_text(), "text/plain")
-        }
+        },
+        InfoFormat::Html => (response.to_html(), "text/html"),
+        InfoFormat::Xml => (response.to_xml(), "text/xml"),
+        InfoFormat::Text => (response.to_text(), "text/plain"),
     };
 
     Response::builder()
@@ -801,7 +841,8 @@ async fn render_weather_data(
     let parameter = parts[1..].join("_").to_uppercase();
 
     // Parse dimensions based on layer type
-    let (forecast_hour, observation_time, _reference_time) = dimensions.parse_for_layer(model, &state.model_dimensions);
+    let (forecast_hour, observation_time, _reference_time) =
+        dimensions.parse_for_layer(model, &state.model_dimensions);
 
     // Get default level if not specified
     let level = match &dimensions.elevation {
@@ -829,8 +870,8 @@ async fn render_weather_data(
             None,
             forecast_hour,
         )
-            .await
-            .map_err(WmsError::from_rendering_error);
+        .await
+        .map_err(WmsError::from_rendering_error);
     }
 
     // Parse BBOX parameter
@@ -850,7 +891,11 @@ async fn render_weather_data(
             )));
         }
 
-        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        let style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, &parameter);
 
         return crate::rendering::render_isolines_tile_with_level(
             &state.catalog,
@@ -867,15 +912,19 @@ async fn render_weather_data(
             level.as_deref(),
             use_mercator,
         )
-            .await
-            .map_err(WmsError::from_rendering_error);
+        .await
+        .map_err(WmsError::from_rendering_error);
     }
 
     // Check if model requires full grid reads (non-geographic projection)
     let requires_full_grid = state.model_dimensions.requires_full_grid(model);
 
     if style == "numbers" {
-        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        let style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, &parameter);
 
         return crate::rendering::render_numbers_tile(
             &state.catalog,
@@ -892,12 +941,16 @@ async fn render_weather_data(
             use_mercator,
             requires_full_grid,
         )
-            .await
-            .map_err(WmsError::from_rendering_error);
+        .await
+        .map_err(WmsError::from_rendering_error);
     }
 
     // Standard rendering
-    let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+    let style_file = state
+        .layer_configs
+        .read()
+        .await
+        .get_style_file_for_parameter(model, &parameter);
 
     crate::rendering::render_weather_data(
         &state.catalog,
@@ -916,8 +969,8 @@ async fn render_weather_data(
         &state.grid_processor_factory,
         requires_full_grid,
     )
-        .await
-        .map_err(WmsError::from_rendering_error)
+    .await
+    .map_err(WmsError::from_rendering_error)
 }
 
 /// Render multiple layers and composite them together
@@ -951,7 +1004,11 @@ async fn render_multi_layer(
         info!(layer = %layer_name, style = %style, layer_index = i, "Rendering layer for multi-layer composite");
 
         // Render this layer
-        match render_weather_data(state, layer_name, style, width, height, bbox, crs, dimensions).await {
+        match render_weather_data(
+            state, layer_name, style, width, height, bbox, crs, dimensions,
+        )
+        .await
+        {
             Ok(png_bytes) => {
                 // Decode the PNG
                 let layer_image = match image::load_from_memory(&png_bytes) {
@@ -982,7 +1039,8 @@ async fn render_multi_layer(
     let mut png_bytes: Vec<u8> = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(Cursor::new(&mut png_bytes));
 
-    composite.write_with_encoder(encoder)
+    composite
+        .write_with_encoder(encoder)
         .map_err(|e| WmsError::RenderingError(format!("Failed to encode composite PNG: {}", e)))?;
 
     Ok(png_bytes)
@@ -1028,7 +1086,8 @@ fn alpha_blend(dst: image::Rgba<u8>, src: image::Rgba<u8>) -> image::Rgba<u8> {
 //TODO do we need to parse bbox for any arbitrary CRS?
 /// Parse a BBOX string into [min_lon, min_lat, max_lon, max_lat]
 fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
-    let coords: Vec<f64> = bbox_str.split(',')
+    let coords: Vec<f64> = bbox_str
+        .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect();
 
@@ -1043,7 +1102,12 @@ fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
             (coords[1], coords[0], coords[3], coords[2])
         };
 
-        Some([min_lon as f32, min_lat as f32, max_lon as f32, max_lat as f32])
+        Some([
+            min_lon as f32,
+            min_lat as f32,
+            max_lon as f32,
+            max_lat as f32,
+        ])
     } else {
         None
     }
@@ -1097,10 +1161,7 @@ fn build_wms_capabilities_xml_v2(
             }
 
             // Build dimensions for this specific layer
-            let dimensions_xml = build_layer_dimensions_xml(
-                availability,
-                is_observational,
-            );
+            let dimensions_xml = build_layer_dimensions_xml(availability, is_observational);
 
             // Get styles from style file
             let style_path = layer_configs.get_style_path(layer);
@@ -1111,11 +1172,20 @@ fn build_wms_capabilities_xml_v2(
 
             let layer_xml = format!(
                 r#"<Layer queryable="1"><Name>{}_{}</Name><Title>{} - {}</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/>{}{}</Layer>"#,
-                model_id, layer.parameter,
-                model_config.display_name, layer.title,
-                west, east, south, north,
-                west, south, east, north,
-                styles_xml, dimensions_xml
+                model_id,
+                layer.parameter,
+                model_config.display_name,
+                layer.title,
+                west,
+                east,
+                south,
+                north,
+                west,
+                south,
+                east,
+                north,
+                styles_xml,
+                dimensions_xml
             );
             layer_xml_parts.push(layer_xml);
         }
@@ -1123,19 +1193,25 @@ fn build_wms_capabilities_xml_v2(
         // Handle WIND_BARBS composite layer
         if let (Some(ugrd), Some(vgrd)) = (ugrd_availability, vgrd_availability) {
             // Find common levels between UGRD and VGRD
-            let common_levels: Vec<String> = ugrd.levels.iter()
+            let common_levels: Vec<String> = ugrd
+                .levels
+                .iter()
                 .filter(|l| vgrd.levels.contains(l))
                 .cloned()
                 .collect();
 
             // Find common times between UGRD and VGRD
-            let common_times: Vec<String> = ugrd.times.iter()
+            let common_times: Vec<String> = ugrd
+                .times
+                .iter()
                 .filter(|t| vgrd.times.contains(t))
                 .cloned()
                 .collect();
 
             // Find common forecast hours
-            let common_forecast_hours: Vec<i32> = ugrd.forecast_hours.iter()
+            let common_forecast_hours: Vec<i32> = ugrd
+                .forecast_hours
+                .iter()
                 .filter(|h| vgrd.forecast_hours.contains(h))
                 .copied()
                 .collect();
@@ -1149,18 +1225,23 @@ fn build_wms_capabilities_xml_v2(
                     bbox: ugrd.bbox.clone(), // Use UGRD bbox (they should be the same)
                 };
 
-                let dimensions_xml = build_layer_dimensions_xml(
-                    &wind_availability,
-                    is_observational,
-                );
+                let dimensions_xml =
+                    build_layer_dimensions_xml(&wind_availability, is_observational);
 
                 let (west, east, south, north) = normalize_bbox(&ugrd.bbox);
 
                 let wind_layer_xml = format!(
                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}</Layer>"#,
-                    model_id, model_config.display_name,
-                    west, east, south, north,
-                    west, south, east, north,
+                    model_id,
+                    model_config.display_name,
+                    west,
+                    east,
+                    south,
+                    north,
+                    west,
+                    south,
+                    east,
+                    north,
                     dimensions_xml
                 );
                 layer_xml_parts.push(wind_layer_xml);
@@ -1217,7 +1298,8 @@ fn build_wms_capabilities_xml_v2(
     </Layer>
   </Capability>
 </WMS_Capabilities>"#,
-        version, model_layers.join("")
+        version,
+        model_layers.join("")
     )
 }
 
@@ -1236,7 +1318,11 @@ fn build_layer_dimensions_xml(
         } else {
             availability.times.join(",")
         };
-        let time_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        let time_default = availability
+            .times
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("latest");
         dimensions.push_str(&format!(
             r#"<Dimension name="TIME" units="ISO8601" default="{}">{}</Dimension>"#,
             time_default, time_values
@@ -1248,12 +1334,21 @@ fn build_layer_dimensions_xml(
         } else {
             availability.times.join(",")
         };
-        let run_default = availability.times.first().map(|s| s.as_str()).unwrap_or("latest");
+        let run_default = availability
+            .times
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("latest");
 
         let forecast_values = if availability.forecast_hours.is_empty() {
             "0".to_string()
         } else {
-            availability.forecast_hours.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",")
+            availability
+                .forecast_hours
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         };
         let forecast_default = availability.forecast_hours.first().unwrap_or(&0);
 
@@ -1288,8 +1383,16 @@ fn normalize_bbox(bbox: &wms_common::BoundingBox) -> (f64, f64, f64, f64) {
     let (west, east) = if bbox.min_x == 0.0 && bbox.max_x == 360.0 {
         (-180.0, 180.0)
     } else {
-        let w = if bbox.min_x > 180.0 { bbox.min_x - 360.0 } else { bbox.min_x };
-        let e = if bbox.max_x > 180.0 { bbox.max_x - 360.0 } else { bbox.max_x };
+        let w = if bbox.min_x > 180.0 {
+            bbox.min_x - 360.0
+        } else {
+            bbox.min_x
+        };
+        let e = if bbox.max_x > 180.0 {
+            bbox.max_x - 360.0
+        } else {
+            bbox.max_x
+        };
         (w, e)
     };
     (west, east, bbox.min_y, bbox.max_y)
@@ -1311,22 +1414,25 @@ mod tests {
         let b = bbox.unwrap();
         // Should be converted to [min_lon, min_lat, max_lon, max_lat]
         assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
-        assert!((b[1] - 30.0).abs() < 0.01);     // min_lat
-        assert!((b[2] - (-80.0)).abs() < 0.01);  // max_lon
-        assert!((b[3] - 50.0).abs() < 0.01);     // max_lat
+        assert!((b[1] - 30.0).abs() < 0.01); // min_lat
+        assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
+        assert!((b[3] - 50.0).abs() < 0.01); // max_lat
     }
 
     #[test]
     fn test_parse_bbox_web_mercator() {
         // Web Mercator: minx, miny, maxx, maxy in meters
-        let bbox = parse_bbox("-13358338.9,3503549.8,-8766409.9,6446275.8", Some("EPSG:3857"));
+        let bbox = parse_bbox(
+            "-13358338.9,3503549.8,-8766409.9,6446275.8",
+            Some("EPSG:3857"),
+        );
         assert!(bbox.is_some());
         let b = bbox.unwrap();
         // Should convert to WGS84 approximately
         assert!(b[0] < -100.0); // min_lon (west coast US)
-        assert!(b[1] > 20.0);   // min_lat
-        assert!(b[2] > -90.0);  // max_lon (east of west coast)
-        assert!(b[3] < 60.0);   // max_lat
+        assert!(b[1] > 20.0); // min_lat
+        assert!(b[2] > -90.0); // max_lon (east of west coast)
+        assert!(b[3] < 60.0); // max_lat
     }
 
     #[test]

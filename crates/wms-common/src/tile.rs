@@ -253,15 +253,15 @@ pub fn tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
 }
 
 /// Convert WorldCRS84Quad tile coordinates to lat/lon bounds.
-/// 
+///
 /// WorldCRS84Quad uses a 2:1 aspect ratio grid:
 /// - matrix_width = 2^(z+1) columns
 /// - matrix_height = 2^z rows
 /// - Linear latitude/longitude mapping (no Mercator projection)
 /// - Top-left origin at (-180, 90)
 pub fn wgs84_tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
-    let n_cols = 2u32.pow(coord.z + 1) as f64;  // 2^(z+1) columns
-    let n_rows = 2u32.pow(coord.z) as f64;      // 2^z rows
+    let n_cols = 2u32.pow(coord.z + 1) as f64; // 2^(z+1) columns
+    let n_rows = 2u32.pow(coord.z) as f64; // 2^z rows
 
     // Longitude spans 360 degrees across all columns
     let lon_min = (coord.x as f64 / n_cols) * 360.0 - 180.0;
@@ -289,7 +289,7 @@ pub fn xyz_to_tms(coord: &TileCoord) -> (u32, u32, u32) {
 
 /// Configuration for expanded tile rendering using full tile expansion.
 /// Used to render a larger area and crop to get seamless tile boundaries.
-/// 
+///
 /// **DEPRECATED**: Prefer `TileBufferConfig` for better performance.
 /// The 3x3 expansion renders 9x the pixels but only uses the center tile.
 /// A 60px buffer achieves similar results at ~4x less cost.
@@ -304,7 +304,7 @@ pub struct ExpandedTileConfig {
 impl Default for ExpandedTileConfig {
     fn default() -> Self {
         Self {
-            expansion: 1,  // 3x3 grid
+            expansion: 1, // 3x3 grid
             tile_size: 256,
         }
     }
@@ -312,16 +312,22 @@ impl Default for ExpandedTileConfig {
 
 impl ExpandedTileConfig {
     /// Create config for 3x3 tile rendering
-    #[deprecated(since = "0.2.0", note = "Use TileBufferConfig::default() instead for 4x better performance")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use TileBufferConfig::default() instead for 4x better performance"
+    )]
     pub fn tiles_3x3() -> Self {
-        Self { expansion: 1, tile_size: 256 }
+        Self {
+            expansion: 1,
+            tile_size: 256,
+        }
     }
-    
+
     /// Get the total size of the expanded render area in pixels
     pub fn expanded_size(&self) -> u32 {
         self.tile_size * (2 * self.expansion + 1)
     }
-    
+
     /// Get the pixel offset where the center tile starts
     pub fn center_offset(&self) -> u32 {
         self.tile_size * self.expansion
@@ -333,26 +339,26 @@ impl ExpandedTileConfig {
 // =============================================================================
 
 /// Configuration for rendering tiles with a pixel buffer margin.
-/// 
+///
 /// The buffer allows features like wind barbs and numbers to have context
 /// beyond the tile edge, preventing clipping artifacts at tile boundaries.
-/// 
+///
 /// This is **~2.4x more efficient** than the 3x3 tile expansion approach:
 /// - 3x3 expansion: renders 768x768 (589,824 pixels) for a 256x256 tile
 /// - 120px buffer: renders 496x496 (246,016 pixels) for a 256x256 tile
-/// 
+///
 /// # Example
 /// ```
 /// use wms_common::tile::TileBufferConfig;
-/// 
+///
 /// // Default 120px buffer (good for 108px wind barbs)
 /// let config = TileBufferConfig::default();
 /// assert_eq!(config.render_width(), 496);
-/// 
+///
 /// // Custom buffer size
 /// let config = TileBufferConfig::new(80, 256);
 /// assert_eq!(config.render_width(), 416);
-/// 
+///
 /// // No buffer (for gradient rendering that doesn't need it)
 /// let config = TileBufferConfig::no_buffer();
 /// assert_eq!(config.render_width(), 256);
@@ -367,7 +373,7 @@ pub struct TileBufferConfig {
 
 impl Default for TileBufferConfig {
     fn default() -> Self {
-        // 120px buffer ensures no clipping for 108px barbs even when 
+        // 120px buffer ensures no clipping for 108px barbs even when
         // barb center is at tile edge and barb points away from tile.
         // Still provides ~2.4x speedup over 3x3 expansion (496² vs 768²)
         Self {
@@ -379,14 +385,17 @@ impl Default for TileBufferConfig {
 
 impl TileBufferConfig {
     /// Create a new buffer configuration.
-    /// 
+    ///
     /// # Arguments
     /// * `buffer_pixels` - Buffer size in pixels on each side
     /// * `tile_size` - Base tile size (typically 256)
     pub fn new(buffer_pixels: u32, tile_size: u32) -> Self {
-        Self { buffer_pixels, tile_size }
+        Self {
+            buffer_pixels,
+            tile_size,
+        }
     }
-    
+
     /// Create from environment variable (TILE_RENDER_BUFFER_PIXELS).
     /// Falls back to 120px if not set.
     pub fn from_env() -> Self {
@@ -394,52 +403,58 @@ impl TileBufferConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(120);
-        
+
         let tile_size = std::env::var("TILE_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(256);
-            
-        Self { buffer_pixels: buffer, tile_size }
+
+        Self {
+            buffer_pixels: buffer,
+            tile_size,
+        }
     }
-    
+
     /// No buffer (for gradient/raster rendering that doesn't need it).
     pub fn no_buffer() -> Self {
-        Self { buffer_pixels: 0, tile_size: 256 }
+        Self {
+            buffer_pixels: 0,
+            tile_size: 256,
+        }
     }
-    
+
     /// Total render width including buffer on both sides.
     pub fn render_width(&self) -> u32 {
         self.tile_size + 2 * self.buffer_pixels
     }
-    
+
     /// Total render height including buffer on both sides.
     pub fn render_height(&self) -> u32 {
         self.tile_size + 2 * self.buffer_pixels
     }
-    
+
     /// Calculate the expanded bounding box for a tile.
-    /// 
+    ///
     /// # Arguments
     /// * `tile_bbox` - The original tile bounding box
-    /// 
+    ///
     /// # Returns
     /// Expanded bounding box with buffer margin added
     pub fn expanded_bbox(&self, tile_bbox: &BoundingBox) -> BoundingBox {
         if self.buffer_pixels == 0 {
             return tile_bbox.clone();
         }
-        
+
         // Calculate degrees per pixel for this tile
         let tile_width_deg = tile_bbox.max_x - tile_bbox.min_x;
         let tile_height_deg = tile_bbox.max_y - tile_bbox.min_y;
         let deg_per_pixel_lon = tile_width_deg / self.tile_size as f64;
         let deg_per_pixel_lat = tile_height_deg / self.tile_size as f64;
-        
+
         // Expand by buffer amount
         let buffer_lon = self.buffer_pixels as f64 * deg_per_pixel_lon;
         let buffer_lat = self.buffer_pixels as f64 * deg_per_pixel_lat;
-        
+
         BoundingBox::new(
             tile_bbox.min_x - buffer_lon,
             tile_bbox.min_y - buffer_lat,
@@ -447,38 +462,38 @@ impl TileBufferConfig {
             tile_bbox.max_y + buffer_lat,
         )
     }
-    
+
     /// Crop the center tile from an expanded RGBA pixel buffer.
-    /// 
+    ///
     /// # Arguments
     /// * `expanded_pixels` - The expanded render (RGBA, 4 bytes per pixel)
-    /// 
+    ///
     /// # Returns
     /// The cropped center tile pixels (RGBA)
     pub fn crop_to_tile(&self, expanded_pixels: &[u8]) -> Vec<u8> {
         if self.buffer_pixels == 0 {
             return expanded_pixels.to_vec();
         }
-        
+
         let render_width = self.render_width() as usize;
         let tile_size = self.tile_size as usize;
         let buffer = self.buffer_pixels as usize;
-        
+
         let mut result = vec![0u8; tile_size * tile_size * 4];
-        
+
         for row in 0..tile_size {
             let src_y = buffer + row;
             let src_start = (src_y * render_width + buffer) * 4;
             let src_end = src_start + tile_size * 4;
-            
+
             let dst_start = row * tile_size * 4;
             let dst_end = dst_start + tile_size * 4;
-            
+
             if src_end <= expanded_pixels.len() {
                 result[dst_start..dst_end].copy_from_slice(&expanded_pixels[src_start..src_end]);
             }
         }
-        
+
         result
     }
 }
@@ -492,10 +507,10 @@ impl TileBufferConfig {
 /// The bounding box in WGS84 coordinates (lat/lon)
 pub fn tile_bbox(coord: &TileCoord) -> BoundingBox {
     let n = 2u32.pow(coord.z) as f64;
-    
+
     let lon_min = coord.x as f64 / n * 360.0 - 180.0;
     let lon_max = (coord.x + 1) as f64 / n * 360.0 - 180.0;
-    
+
     let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * coord.y as f64 / n))
         .sinh()
         .atan()
@@ -504,7 +519,7 @@ pub fn tile_bbox(coord: &TileCoord) -> BoundingBox {
         .sinh()
         .atan()
         .to_degrees();
-    
+
     BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
 }
 
@@ -520,17 +535,17 @@ pub fn tile_bbox(coord: &TileCoord) -> BoundingBox {
 pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> BoundingBox {
     let n = 2u32.pow(coord.z) as f64;
     let expansion = config.expansion;
-    
+
     // Calculate expanded tile range, clamping to valid tile indices
     let x_min = coord.x.saturating_sub(expansion);
     let x_max = (coord.x + expansion + 1).min(2u32.pow(coord.z));
     let y_min = coord.y.saturating_sub(expansion);
     let y_max = (coord.y + expansion + 1).min(2u32.pow(coord.z));
-    
+
     // Convert to lat/lon bounds
     let lon_min = x_min as f64 / n * 360.0 - 180.0;
     let lon_max = x_max as f64 / n * 360.0 - 180.0;
-    
+
     let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * y_min as f64 / n))
         .sinh()
         .atan()
@@ -539,7 +554,7 @@ pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> Bou
         .sinh()
         .atan()
         .to_degrees();
-    
+
     BoundingBox::new(lon_min, lat_min, lon_max, lat_max)
 }
 
@@ -551,18 +566,21 @@ pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> Bou
 ///
 /// # Returns
 /// (x_offset, y_offset, width, height) - The crop region in pixels
-pub fn center_tile_crop_region(coord: &TileCoord, config: &ExpandedTileConfig) -> (u32, u32, u32, u32) {
+pub fn center_tile_crop_region(
+    coord: &TileCoord,
+    config: &ExpandedTileConfig,
+) -> (u32, u32, u32, u32) {
     let expansion = config.expansion;
     let tile_size = config.tile_size;
-    
+
     // Calculate actual expansion used (may be less at edges)
     let actual_x_before = coord.x.min(expansion);
     let actual_y_before = coord.y.min(expansion);
-    
+
     // The center tile starts after the tiles before it
     let x_offset = actual_x_before * tile_size;
     let y_offset = actual_y_before * tile_size;
-    
+
     (x_offset, y_offset, tile_size, tile_size)
 }
 
@@ -578,16 +596,16 @@ pub fn actual_expanded_dimensions(coord: &TileCoord, config: &ExpandedTileConfig
     let expansion = config.expansion;
     let tile_size = config.tile_size;
     let n = 2u32.pow(coord.z);
-    
+
     // Calculate how many tiles we can actually expand to
     let tiles_left = coord.x.min(expansion);
     let tiles_right = (n - 1 - coord.x).min(expansion);
     let tiles_up = coord.y.min(expansion);
     let tiles_down = (n - 1 - coord.y).min(expansion);
-    
+
     let width = (1 + tiles_left + tiles_right) * tile_size;
     let height = (1 + tiles_up + tiles_down) * tile_size;
-    
+
     (width, height)
 }
 
@@ -609,22 +627,22 @@ pub fn crop_center_tile(
 ) -> Vec<u8> {
     let (x_offset, y_offset, _width, _height) = center_tile_crop_region(coord, config);
     let tile_size = config.tile_size as usize;
-    
+
     let mut result = vec![0u8; tile_size * tile_size * 4];
-    
+
     for row in 0..tile_size {
         let src_y = y_offset as usize + row;
         let src_start = (src_y * expanded_width as usize + x_offset as usize) * 4;
         let src_end = src_start + tile_size * 4;
-        
+
         let dst_start = row * tile_size * 4;
         let dst_end = dst_start + tile_size * 4;
-        
+
         if src_end <= expanded_pixels.len() {
             result[dst_start..dst_end].copy_from_slice(&expanded_pixels[src_start..src_end]);
         }
     }
-    
+
     result
 }
 
@@ -656,9 +674,9 @@ mod tests {
     fn test_tile_buffer_config_expanded_bbox() {
         let config = TileBufferConfig::new(50, 256);
         let tile_bbox = BoundingBox::new(-100.0, 35.0, -99.0, 36.0);
-        
+
         let expanded = config.expanded_bbox(&tile_bbox);
-        
+
         // Buffer should add ~0.195° on each side (50/256 * 1°)
         let expected_buffer = 50.0 / 256.0 * 1.0;
         assert!((expanded.min_x - (-100.0 - expected_buffer)).abs() < 0.001);
@@ -671,9 +689,9 @@ mod tests {
     fn test_tile_buffer_config_no_buffer_bbox() {
         let config = TileBufferConfig::no_buffer();
         let tile_bbox = BoundingBox::new(-100.0, 35.0, -99.0, 36.0);
-        
+
         let expanded = config.expanded_bbox(&tile_bbox);
-        
+
         assert_eq!(expanded.min_x, tile_bbox.min_x);
         assert_eq!(expanded.max_x, tile_bbox.max_x);
         assert_eq!(expanded.min_y, tile_bbox.min_y);
@@ -683,29 +701,29 @@ mod tests {
     #[test]
     fn test_tile_buffer_config_crop() {
         let config = TileBufferConfig::new(50, 256);
-        
+
         // Create test pattern: expanded area with distinct border
-        let render_w = config.render_width() as usize;  // 356
+        let render_w = config.render_width() as usize; // 356
         let render_h = config.render_height() as usize; // 356
         let mut expanded = vec![0u8; render_w * render_h * 4];
-        
+
         // Fill center (tile area) with white
         for y in 50..(50 + 256) {
             for x in 50..(50 + 256) {
                 let idx = (y * render_w + x) * 4;
-                expanded[idx] = 255;     // R
+                expanded[idx] = 255; // R
                 expanded[idx + 1] = 255; // G
                 expanded[idx + 2] = 255; // B
                 expanded[idx + 3] = 255; // A
             }
         }
-        
+
         // Crop
         let cropped = config.crop_to_tile(&expanded);
-        
+
         // Verify correct size
         assert_eq!(cropped.len(), 256 * 256 * 4);
-        
+
         // Verify all pixels are white
         for chunk in cropped.chunks(4) {
             assert_eq!(chunk, &[255, 255, 255, 255]);
@@ -716,9 +734,9 @@ mod tests {
     fn test_tile_buffer_config_crop_no_buffer() {
         let config = TileBufferConfig::no_buffer();
         let original = vec![128u8; 256 * 256 * 4];
-        
+
         let cropped = config.crop_to_tile(&original);
-        
+
         assert_eq!(cropped.len(), original.len());
         assert_eq!(cropped, original);
     }

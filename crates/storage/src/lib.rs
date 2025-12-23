@@ -10,7 +10,12 @@ pub mod catalog;
 pub mod object_store;
 pub mod tile_memory_cache;
 
-pub use self::object_store::{ObjectStorage, ObjectStorageConfig, StorageStats, DetailedStorageStats};
+pub use self::object_store::{
+    DetailedStorageStats, ObjectStorage, ObjectStorageConfig, StorageStats,
+};
 pub use cache::{CacheKey, TileCache};
-pub use catalog::{Catalog, CatalogEntry, DatasetInfo, DatasetQuery, ModelStats, ParameterAvailability, ParameterStats, PurgePreview};
+pub use catalog::{
+    Catalog, CatalogEntry, DatasetInfo, DatasetQuery, ModelStats, ParameterAvailability,
+    ParameterStats, PurgePreview,
+};
 pub use tile_memory_cache::{TileMemoryCache, TileMemoryCacheStats};

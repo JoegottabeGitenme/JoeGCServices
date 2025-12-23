@@ -23,11 +23,11 @@ use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use ingestion::{Ingester, IngestOptions};
-use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
+use ingestion::{IngestOptions, Ingester};
 use std::env;
+use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
 
-use server::{IngestionTracker, ServerState, start_server};
+use server::{start_server, IngestionTracker, ServerState};
 
 #[derive(Parser, Debug)]
 #[command(name = "ingester")]
@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
             .unwrap_or(true),
     };
     let storage = Arc::new(ObjectStorage::new(&storage_config)?);
-    
+
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://weather:weather@localhost:5432/weather".to_string());
     let catalog = Catalog::connect(&database_url).await?;

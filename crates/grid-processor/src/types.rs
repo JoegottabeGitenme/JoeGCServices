@@ -95,7 +95,7 @@ impl BoundingBox {
     /// Normalize a request bbox to match a grid's coordinate system.
     /// If the grid uses 0-360 longitude and the request uses -180/180,
     /// convert the request to 0-360.
-    /// 
+    ///
     /// NOTE: This does NOT handle cross-dateline requests properly.
     /// Use `crosses_dateline_on_360_grid()` to check first, and if true,
     /// either load the full grid or split into two requests.
@@ -104,9 +104,17 @@ impl BoundingBox {
             // Grid uses 0-360, request uses -180/180
             // Convert request to 0-360 by adding 360 to negative longitudes
             Self {
-                min_lon: if self.min_lon < 0.0 { self.min_lon + 360.0 } else { self.min_lon },
+                min_lon: if self.min_lon < 0.0 {
+                    self.min_lon + 360.0
+                } else {
+                    self.min_lon
+                },
                 min_lat: self.min_lat,
-                max_lon: if self.max_lon < 0.0 { self.max_lon + 360.0 } else { self.max_lon },
+                max_lon: if self.max_lon < 0.0 {
+                    self.max_lon + 360.0
+                } else {
+                    self.max_lon
+                },
                 max_lat: self.max_lat,
             }
         } else {
@@ -344,13 +352,7 @@ mod tests {
     #[test]
     fn test_grid_region_get() {
         let data: Vec<f32> = (0..9).map(|i| i as f32).collect();
-        let region = GridRegion::new(
-            data,
-            3,
-            3,
-            BoundingBox::new(0.0, 0.0, 3.0, 3.0),
-            (1.0, 1.0),
-        );
+        let region = GridRegion::new(data, 3, 3, BoundingBox::new(0.0, 0.0, 3.0, 3.0), (1.0, 1.0));
 
         assert_eq!(region.get(0, 0), Some(0.0));
         assert_eq!(region.get(2, 2), Some(8.0));

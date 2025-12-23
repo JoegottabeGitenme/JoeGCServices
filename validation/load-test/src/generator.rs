@@ -1,6 +1,6 @@
 //! Tile request URL generation.
 
-use crate::config::{BBox, TestConfig, TileSelection, TimeSelection, TimeOrder};
+use crate::config::{BBox, TestConfig, TileSelection, TimeOrder, TimeSelection};
 use crate::wms_client;
 use rand::prelude::*;
 use std::f64::consts::PI;
@@ -11,8 +11,8 @@ pub struct TileGenerator {
     rng: StdRng,
     _layer_weights: Vec<f64>,
     layer_cumulative: Vec<f64>,
-    time_index: usize,  // For sequential time selection
-    resolved_times: Option<Vec<String>>,  // Times resolved from WMS queries
+    time_index: usize,                   // For sequential time selection
+    resolved_times: Option<Vec<String>>, // Times resolved from WMS queries
 }
 
 impl TileGenerator {
@@ -21,9 +21,13 @@ impl TileGenerator {
     pub async fn new_async(config: TestConfig) -> anyhow::Result<Self> {
         // Resolve times if needed
         let resolved_times = match &config.time_selection {
-            Some(TimeSelection::QuerySequential { layer, count, order }) => {
+            Some(TimeSelection::QuerySequential {
+                layer,
+                count,
+                order,
+            }) => {
                 let mut times = wms_client::query_layer_times(&config.base_url, layer).await?;
-                
+
                 // Order times (WMS returns newest first typically)
                 match order {
                     TimeOrder::NewestFirst => {
@@ -33,7 +37,7 @@ impl TileGenerator {
                         times.reverse();
                     }
                 }
-                
+
                 // TODO: Warn user if fewer times available than requested
                 // This avoids test failures when the system has fewer timesteps ingested
                 // than the scenario expects. Currently we silently use whatever is available.
@@ -45,14 +49,18 @@ impl TileGenerator {
                         times.len(), layer, count
                     );
                 }
-                
+
                 // Take the requested count (or all available if fewer)
                 times.truncate(*count);
                 Some(times)
             }
-            Some(TimeSelection::QueryRandom { layer, count, order }) => {
+            Some(TimeSelection::QueryRandom {
+                layer,
+                count,
+                order,
+            }) => {
                 let mut times = wms_client::query_layer_times(&config.base_url, layer).await?;
-                
+
                 // Order times
                 match order {
                     TimeOrder::NewestFirst => {
@@ -62,7 +70,7 @@ impl TileGenerator {
                         times.reverse();
                     }
                 }
-                
+
                 // TODO: Warn user if fewer times available than requested
                 // This avoids test failures when the system has fewer timesteps ingested
                 // than the scenario expects. Currently we silently use whatever is available.
@@ -72,33 +80,33 @@ impl TileGenerator {
                         times.len(), layer, count
                     );
                 }
-                
+
                 // Take the requested count for the pool to randomly select from (or all available if fewer)
                 times.truncate(*count);
                 Some(times)
             }
             _ => None,
         };
-        
+
         Ok(Self::new_with_times(config, resolved_times))
     }
-    
+
     /// Create a new tile generator (synchronous version).
     pub fn new(config: TestConfig) -> Self {
         Self::new_with_times(config, None)
     }
-    
+
     /// Create a new tile generator with pre-resolved times.
     fn new_with_times(config: TestConfig, resolved_times: Option<Vec<String>>) -> Self {
         // Calculate cumulative weights for weighted random layer selection
         let mut weights: Vec<f64> = config.layers.iter().map(|l| l.weight).collect();
         let total: f64 = weights.iter().sum();
-        
+
         // Normalize weights
         for w in &mut weights {
             *w /= total;
         }
-        
+
         // Calculate cumulative distribution
         let mut cumulative = Vec::with_capacity(weights.len());
         let mut sum = 0.0;
@@ -106,14 +114,14 @@ impl TileGenerator {
             sum += w;
             cumulative.push(sum);
         }
-        
+
         // Use seed if provided for reproducible tests, otherwise use entropy
         let rng = if let Some(seed) = config.seed {
             StdRng::seed_from_u64(seed)
         } else {
             StdRng::from_entropy()
         };
-        
+
         Self {
             config,
             rng,
@@ -128,38 +136,38 @@ impl TileGenerator {
     pub fn next_url(&mut self) -> String {
         self.next_url_with_info().0
     }
-    
+
     /// Generate the next tile request URL with tile info for logging.
     /// Returns (url, (z, x, y, layer_name))
     pub fn next_url_with_info(&mut self) -> (String, (u32, u32, u32, String)) {
         // Select layer index based on weights
         let layer_idx = self.select_layer_index();
-        
+
         // Generate tile coordinates
         let (z, x, y) = self.generate_tile_coords();
-        
+
         // Select time (if temporal testing enabled)
         let time = self.select_time();
-        
+
         // Get layer name
         let layer_name = self.config.layers[layer_idx].name.clone();
-        
+
         // Build WMTS URL
         let url = self.build_wmts_url(layer_idx, z, x, y, time.as_deref());
-        
+
         (url, (z, x, y, layer_name))
     }
 
     /// Select a layer index based on configured weights.
     fn select_layer_index(&mut self) -> usize {
         let r: f64 = self.rng.gen();
-        
+
         for (i, &cum) in self.layer_cumulative.iter().enumerate() {
             if r <= cum {
                 return i;
             }
         }
-        
+
         // Fallback (shouldn't happen)
         0
     }
@@ -170,7 +178,7 @@ impl TileGenerator {
             TileSelection::Random { zoom_range, bbox } => {
                 let (min_z, max_z) = *zoom_range;
                 let z = self.rng.gen_range(min_z..=max_z);
-                
+
                 if let Some(bbox) = bbox {
                     // Generate random tile within bbox
                     let tiles = Self::tiles_in_bbox(bbox, z);
@@ -269,10 +277,17 @@ impl TileGenerator {
     }
 
     /// Build a WMTS GetTile URL.
-    fn build_wmts_url(&self, layer_idx: usize, z: u32, x: u32, y: u32, time: Option<&str>) -> String {
+    fn build_wmts_url(
+        &self,
+        layer_idx: usize,
+        z: u32,
+        x: u32,
+        y: u32,
+        time: Option<&str>,
+    ) -> String {
         let layer = &self.config.layers[layer_idx];
         let style = layer.style.as_deref().unwrap_or("default");
-        
+
         let mut url = format!(
             "{}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER={}&STYLE={}&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX={}&TILEROW={}&TILECOL={}",
             self.config.base_url,
@@ -282,12 +297,12 @@ impl TileGenerator {
             y,
             x
         );
-        
+
         // Add TIME parameter if provided
         if let Some(t) = time {
             url.push_str(&format!("&TIME={}", t));
         }
-        
+
         url
     }
 
@@ -360,7 +375,7 @@ mod tests {
             max_lon: 180.0,
             max_lat: 85.0,
         };
-        
+
         let tiles = TileGenerator::tiles_in_bbox(&bbox, 0);
         assert_eq!(tiles.len(), 1);
         assert_eq!(tiles[0], (0, 0));

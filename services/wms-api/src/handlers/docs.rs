@@ -110,14 +110,14 @@ const SWAGGER_UI_HTML: &str = r#"<!DOCTYPE html>
 </html>"#;
 
 /// Serve the Swagger UI HTML page
-/// 
+///
 /// GET /api/docs
 pub async fn swagger_ui_handler() -> Html<&'static str> {
     Html(SWAGGER_UI_HTML)
 }
 
 /// Serve the OpenAPI YAML specification
-/// 
+///
 /// GET /api/docs/openapi.yaml
 pub async fn openapi_yaml_handler() -> Response {
     (
@@ -129,26 +129,24 @@ pub async fn openapi_yaml_handler() -> Response {
 }
 
 /// Serve the OpenAPI JSON specification (converted from YAML)
-/// 
+///
 /// GET /api/docs/openapi.json
 pub async fn openapi_json_handler() -> Response {
     // Parse YAML and convert to JSON
     match serde_yaml::from_str::<serde_json::Value>(OPENAPI_YAML) {
-        Ok(value) => {
-            match serde_json::to_string_pretty(&value) {
-                Ok(json) => (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, "application/json")],
-                    json,
-                )
-                    .into_response(),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to serialize to JSON: {}", e),
-                )
-                    .into_response(),
-            }
-        }
+        Ok(value) => match serde_json::to_string_pretty(&value) {
+            Ok(json) => (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                json,
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to serialize to JSON: {}", e),
+            )
+                .into_response(),
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to parse OpenAPI YAML: {}", e),

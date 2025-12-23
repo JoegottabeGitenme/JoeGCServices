@@ -110,28 +110,34 @@ mod tests {
 
     fn create_test_tables() -> Grib2Tables {
         let mut tables = Grib2Tables::new();
-        
+
         // Add some parameters
         tables.add_parameter(0, 0, 0, "TMP".to_string());
         tables.add_parameter(0, 2, 2, "UGRD".to_string());
         tables.add_parameter(0, 2, 3, "VGRD".to_string());
         tables.add_parameter(0, 3, 1, "PRMSL".to_string());
         tables.add_parameter(209, 0, 16, "REFL".to_string());
-        
+
         // Add some levels
         tables.add_level(1, LevelDescription::Static("surface".to_string()));
         tables.add_level(100, LevelDescription::Template("{value} mb".to_string()));
         tables.add_level(101, LevelDescription::Static("mean sea level".to_string()));
-        tables.add_level(103, LevelDescription::Template("{value} m above ground".to_string()));
-        tables.add_level(200, LevelDescription::Static("entire atmosphere".to_string()));
-        
+        tables.add_level(
+            103,
+            LevelDescription::Template("{value} m above ground".to_string()),
+        );
+        tables.add_level(
+            200,
+            LevelDescription::Static("entire atmosphere".to_string()),
+        );
+
         tables
     }
 
     #[test]
     fn test_parameter_lookup() {
         let tables = create_test_tables();
-        
+
         assert_eq!(tables.get_parameter_name(0, 0, 0), "TMP");
         assert_eq!(tables.get_parameter_name(0, 2, 2), "UGRD");
         assert_eq!(tables.get_parameter_name(0, 2, 3), "VGRD");
@@ -142,7 +148,7 @@ mod tests {
     #[test]
     fn test_parameter_not_found() {
         let tables = create_test_tables();
-        
+
         // Unknown parameter returns formatted code
         assert_eq!(tables.get_parameter_name(99, 99, 99), "P99_99_99");
         assert_eq!(tables.get_parameter_name(0, 0, 99), "P0_0_99");
@@ -151,7 +157,7 @@ mod tests {
     #[test]
     fn test_level_static_description() {
         let tables = create_test_tables();
-        
+
         assert_eq!(tables.get_level_description(1, 0), "surface");
         assert_eq!(tables.get_level_description(101, 0), "mean sea level");
         assert_eq!(tables.get_level_description(200, 0), "entire atmosphere");
@@ -160,7 +166,7 @@ mod tests {
     #[test]
     fn test_level_template_description() {
         let tables = create_test_tables();
-        
+
         assert_eq!(tables.get_level_description(100, 500), "500 mb");
         assert_eq!(tables.get_level_description(100, 850), "850 mb");
         assert_eq!(tables.get_level_description(103, 2), "2 m above ground");
@@ -170,14 +176,17 @@ mod tests {
     #[test]
     fn test_level_not_found() {
         let tables = create_test_tables();
-        
-        assert_eq!(tables.get_level_description(99, 123), "Level type 99 value 123");
+
+        assert_eq!(
+            tables.get_level_description(99, 123),
+            "Level type 99 value 123"
+        );
     }
 
     #[test]
     fn test_counts() {
         let tables = create_test_tables();
-        
+
         assert_eq!(tables.parameter_count(), 5);
         assert_eq!(tables.level_count(), 5);
         assert!(!tables.is_empty());
@@ -186,11 +195,11 @@ mod tests {
     #[test]
     fn test_empty_tables() {
         let tables = Grib2Tables::new();
-        
+
         assert_eq!(tables.parameter_count(), 0);
         assert_eq!(tables.level_count(), 0);
         assert!(tables.is_empty());
-        
+
         // Should still return formatted fallbacks
         assert_eq!(tables.get_parameter_name(0, 0, 0), "P0_0_0");
         assert_eq!(tables.get_level_description(1, 0), "Level type 1 value 0");

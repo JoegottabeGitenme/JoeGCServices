@@ -20,11 +20,13 @@
 //! If a style file cannot be loaded or doesn't contain the requested style, an error
 //! is returned. This enforces that all layers must have properly configured styles.
 
-use renderer::style::{StyleConfig, apply_style_gradient, apply_style_gradient_indexed, PrecomputedPalette};
+use once_cell::sync::Lazy;
 use renderer::gradient;
+use renderer::style::{
+    apply_style_gradient, apply_style_gradient_indexed, PrecomputedPalette, StyleConfig,
+};
 use std::collections::HashMap;
 use std::sync::RwLock;
-use once_cell::sync::Lazy;
 
 // ============================================================================
 // Pre-computed palette cache
@@ -32,7 +34,7 @@ use once_cell::sync::Lazy;
 
 /// Cache for pre-computed palettes, keyed by (style_file_path, style_name).
 /// Palettes are computed once per style and reused for all subsequent renders.
-static PALETTE_CACHE: Lazy<RwLock<HashMap<(String, String), PrecomputedPalette>>> = 
+static PALETTE_CACHE: Lazy<RwLock<HashMap<(String, String), PrecomputedPalette>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Get or compute a palette for the given style.
@@ -42,7 +44,7 @@ fn get_or_compute_palette(
     config: &StyleConfig,
 ) -> Result<PrecomputedPalette, String> {
     let cache_key = (style_file_path.to_string(), style_name.to_string());
-    
+
     // Try to get from cache first (read lock)
     {
         let cache = PALETTE_CACHE.read().unwrap();
@@ -50,29 +52,34 @@ fn get_or_compute_palette(
             return Ok(palette.clone());
         }
     }
-    
+
     // Not in cache, compute it (write lock)
     let mut cache = PALETTE_CACHE.write().unwrap();
-    
+
     // Double-check after acquiring write lock
     if let Some(palette) = cache.get(&cache_key) {
         return Ok(palette.clone());
     }
-    
+
     // Get the style definition
     let style = if style_name == "default" || style_name.is_empty() {
         config.get_default_style().map(|(_, s)| s)
     } else {
         config.get_style(style_name)
-    }.ok_or_else(|| format!("Style '{}' not found in '{}'", style_name, style_file_path))?;
-    
+    }
+    .ok_or_else(|| format!("Style '{}' not found in '{}'", style_name, style_file_path))?;
+
     // Compute palette
-    let palette = style.compute_palette()
-        .ok_or_else(|| format!("Failed to compute palette for style '{}' in '{}'", style_name, style_file_path))?;
-    
+    let palette = style.compute_palette().ok_or_else(|| {
+        format!(
+            "Failed to compute palette for style '{}' in '{}'",
+            style_name, style_file_path
+        )
+    })?;
+
     // Cache it
     cache.insert(cache_key, palette.clone());
-    
+
     Ok(palette)
 }
 
@@ -160,19 +167,20 @@ pub fn render_with_style_file_indexed(
 ) -> Result<IndexedRenderResult, String> {
     let config = StyleConfig::from_file(style_file_path)
         .map_err(|e| format!("Failed to load style file '{}': {}", style_file_path, e))?;
-    
+
     let effective_style_name = style_name.unwrap_or("default");
-    
+
     // Get or compute the palette (cached)
     let palette = get_or_compute_palette(style_file_path, effective_style_name, &config)?;
-    
+
     // Get the style definition for rendering
     let style = if effective_style_name == "default" {
         config.get_default_style().map(|(_, s)| s)
     } else {
         config.get_style(effective_style_name)
-    }.ok_or_else(|| format!("Style '{}' not found", effective_style_name))?;
-    
+    }
+    .ok_or_else(|| format!("Style '{}' not found", effective_style_name))?;
+
     // Check style type
     if style.style_type != "gradient" && style.style_type != "filled_contour" {
         return Err(format!(
@@ -180,10 +188,10 @@ pub fn render_with_style_file_indexed(
             style.style_type
         ));
     }
-    
+
     // Render to indices
     let indices = apply_style_gradient_indexed(data, width, height, &palette, style);
-    
+
     Ok(IndexedRenderResult { indices, palette })
 }
 
@@ -208,7 +216,7 @@ pub fn render_with_style_file_indexed(
 /// - The style file cannot be loaded
 /// - The requested style name is not found in the file
 /// - The style type is not suitable for gradient rendering
-#[cfg_attr(not(test), allow(dead_code))]  // Used in tests
+#[cfg_attr(not(test), allow(dead_code))] // Used in tests
 pub fn render_with_style_file(
     data: &[f32],
     style_file_path: &str,
@@ -218,7 +226,7 @@ pub fn render_with_style_file(
 ) -> Result<Vec<u8>, String> {
     let config = StyleConfig::from_file(style_file_path)
         .map_err(|e| format!("Failed to load style file '{}': {}", style_file_path, e))?;
-    
+
     // Get requested style or default style
     // When style_name is "default" or None, use the default style from the config
     let style = if let Some(name) = style_name.filter(|n| *n != "default") {
@@ -239,7 +247,7 @@ pub fn render_with_style_file(
             )
         })?
     };
-    
+
     // Check if the style type is "gradient" or similar that we can render
     if style.style_type == "gradient" || style.style_type == "filled_contour" {
         Ok(apply_style_gradient(data, width, height, style))
@@ -292,17 +300,10 @@ fn render_fallback_gradient(
     min_val: f32,
     max_val: f32,
 ) -> Vec<u8> {
-    renderer::gradient::render_grid(
-        data,
-        width,
-        height,
-        min_val,
-        max_val,
-        |norm| {
-            // Generic blue-red gradient (cold to hot)
-            let hue = (1.0 - norm) * 240.0; // Blue (240°) to Red (0°)
-            let rgb = hsv_to_rgb(hue, 1.0, 1.0);
-            gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
-        },
-    )
+    renderer::gradient::render_grid(data, width, height, min_val, max_val, |norm| {
+        // Generic blue-red gradient (cold to hot)
+        let hue = (1.0 - norm) * 240.0; // Blue (240°) to Red (0°)
+        let rgb = hsv_to_rgb(hue, 1.0, 1.0);
+        gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
+    })
 }

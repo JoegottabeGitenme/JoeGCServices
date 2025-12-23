@@ -141,7 +141,10 @@ fn test_grid_coordinate_conversion() {
             // Basic sanity checks
             assert!(ni > 0, "Grid should have columns");
             assert!(nj > 0, "Grid should have rows");
-            assert!(lat_step > 0.0 || lat_step < 0.0, "Lat step should be non-zero");
+            assert!(
+                lat_step > 0.0 || lat_step < 0.0,
+                "Lat step should be non-zero"
+            );
             assert!(lon_step > 0.0, "Lon step should be positive (W to E)");
 
             // Check that total points match unpacked data

@@ -73,7 +73,10 @@ pub enum Grib2Error {
 
     /// Unsupported template
     #[error("Unsupported template {template_number}: {reason}")]
-    UnsupportedTemplate { template_number: u16, reason: String },
+    UnsupportedTemplate {
+        template_number: u16,
+        reason: String,
+    },
 
     /// Data unpacking error
     #[error("Data unpacking failed: {0}")]
@@ -149,7 +152,7 @@ impl Grib2Message {
     }
 
     /// Unpack the grid data values using the external `grib` crate.
-    /// 
+    ///
     /// This method now uses the mature `grib` crate which supports:
     /// - Template 5.0: Simple packing
     /// - Template 5.2: Complex packing
@@ -158,26 +161,31 @@ impl Grib2Message {
     /// - Template 5.15: PNG compression (enabled by default)
     pub fn unpack_data(&self) -> Grib2Result<Vec<f32>> {
         use std::io::Cursor;
-        
+
         // Use the grib crate to parse and decode the message
         let cursor = Cursor::new(self.raw_data.as_ref());
-        let grib_file = grib::from_reader(cursor)
-            .map_err(|e| Grib2Error::UnpackingError(format!("Failed to parse with grib crate: {}", e)))?;
-        
+        let grib_file = grib::from_reader(cursor).map_err(|e| {
+            Grib2Error::UnpackingError(format!("Failed to parse with grib crate: {}", e))
+        })?;
+
         // Get the first (and should be only) submessage and decode immediately
         if let Some((_index, submessage)) = grib_file.iter().next() {
             // Create decoder and dispatch
-            let decoder = grib::Grib2SubmessageDecoder::from(submessage)
-                .map_err(|e| Grib2Error::UnpackingError(format!("Failed to create decoder: {}", e)))?;
-            
-            let values: Vec<f32> = decoder.dispatch()
+            let decoder = grib::Grib2SubmessageDecoder::from(submessage).map_err(|e| {
+                Grib2Error::UnpackingError(format!("Failed to create decoder: {}", e))
+            })?;
+
+            let values: Vec<f32> = decoder
+                .dispatch()
                 .map_err(|e| Grib2Error::UnpackingError(format!("Failed to decode values: {}", e)))?
                 .collect();
-            
+
             return Ok(values);
         }
-        
-        Err(Grib2Error::UnpackingError("No submessage found in GRIB data".to_string()))
+
+        Err(Grib2Error::UnpackingError(
+            "No submessage found in GRIB data".to_string(),
+        ))
     }
 }
 
@@ -234,8 +242,8 @@ impl Grib2Reader {
             ));
         }
 
-        let indicator = sections::parse_indicator(remaining)
-            .map_err(|e| Grib2Error::ParseError {
+        let indicator =
+            sections::parse_indicator(remaining).map_err(|e| Grib2Error::ParseError {
                 offset: message_offset,
                 reason: format!("Failed to parse indicator: {}", e),
             })?;
@@ -261,18 +269,17 @@ impl Grib2Reader {
             })?;
 
         let grid_definition =
-            sections::parse_grid_definition(message_data).map_err(|e| {
-                Grib2Error::ParseError {
-                    offset: message_offset + 16,
-                    reason: format!("Failed to parse grid definition: {}", e),
-                }
+            sections::parse_grid_definition(message_data).map_err(|e| Grib2Error::ParseError {
+                offset: message_offset + 16,
+                reason: format!("Failed to parse grid definition: {}", e),
             })?;
 
-        let product_definition = sections::parse_product_definition(message_data, indicator.discipline, &self.tables)
-            .map_err(|e| Grib2Error::ParseError {
-                offset: message_offset + 16,
-                reason: format!("Failed to parse product definition: {}", e),
-            })?;
+        let product_definition =
+            sections::parse_product_definition(message_data, indicator.discipline, &self.tables)
+                .map_err(|e| Grib2Error::ParseError {
+                    offset: message_offset + 16,
+                    reason: format!("Failed to parse product definition: {}", e),
+                })?;
 
         let data_representation =
             sections::parse_data_representation(message_data).map_err(|e| {
@@ -284,17 +291,14 @@ impl Grib2Reader {
 
         let bitmap = sections::parse_bitmap(message_data).ok();
 
-        let data_section = sections::parse_data_section(message_data).map_err(|e| {
-            Grib2Error::ParseError {
+        let data_section =
+            sections::parse_data_section(message_data).map_err(|e| Grib2Error::ParseError {
                 offset: message_offset + 16,
                 reason: format!("Failed to parse data section: {}", e),
-            }
-        })?;
+            })?;
 
         // Verify end section
-        if message_data.len() < 4
-            || &message_data[message_data.len() - 4..] != b"7777"
-        {
+        if message_data.len() < 4 || &message_data[message_data.len() - 4..] != b"7777" {
             return Err(Grib2Error::InvalidFormat(
                 "Message does not end with '7777'".to_string(),
             ));

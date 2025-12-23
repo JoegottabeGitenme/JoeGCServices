@@ -109,7 +109,7 @@ impl TileCache {
             .query_async(&mut self.conn)
             .await
             .map_err(|e| WmsError::CacheError(format!("Pattern search failed: {}", e)))?;
-        
+
         Ok(keys)
     }
 

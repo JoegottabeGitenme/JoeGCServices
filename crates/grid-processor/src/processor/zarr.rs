@@ -48,11 +48,11 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     ///
     /// # Returns
     /// A new ZarrGridProcessor instance
-    /// 
+    ///
     /// For multiscale (pyramid) stores, this will automatically open level 0 (native resolution).
     pub fn open(storage: S, path: &str, config: GridProcessorConfig) -> Result<Self> {
         let store = Arc::new(storage);
-        
+
         // Try to open as an array first, if that fails try level 0 for pyramid stores
         let array = match Array::open(store.clone(), path) {
             Ok(arr) => arr,
@@ -61,7 +61,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                 let level0_path = format!("{}/0", path.trim_end_matches('/'));
                 Array::open(store, &level0_path).map_err(|e2| {
                     GridProcessorError::open_failed(format!(
-                        "Failed to open as array ({}) or level 0 ({})", e, e2
+                        "Failed to open as array ({}) or level 0 ({})",
+                        e, e2
                     ))
                 })?
             }
@@ -90,7 +91,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     /// Create a processor with pre-populated metadata (for use with catalog-cached metadata).
     ///
     /// This avoids reading metadata from MinIO by using metadata stored in PostgreSQL.
-    /// 
+    ///
     /// For multiscale (pyramid) stores, this will automatically open level 0 (native resolution).
     pub fn with_metadata(
         storage: S,
@@ -107,9 +108,9 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             chunk_shape = ?metadata.chunk_shape,
             "Opening Zarr array with pre-populated metadata"
         );
-        
+
         let store = Arc::new(storage);
-        
+
         // Try to open as an array first
         let array = match Array::open(store.clone(), path) {
             Ok(arr) => arr,
@@ -123,7 +124,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                     error = %e,
                     "Failed to open as array, trying level 0 for pyramid store"
                 );
-                
+
                 Array::open(store, &level0_path).map_err(|e2| {
                     error!(
                         path = %path,
@@ -133,7 +134,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                         "Failed to open Zarr array (tried both root and level 0)"
                     );
                     GridProcessorError::open_failed(format!(
-                        "Failed to open as array ({}) or level 0 ({})", e, e2
+                        "Failed to open as array ({}) or level 0 ({})",
+                        e, e2
                     ))
                 })?
             }
@@ -510,14 +512,14 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             (res_x, res_y),
         ))
     }
-    
+
     /// Read a single value at grid coordinates (used for bilinear interpolation)
     async fn read_single_value(&self, col: usize, row: usize) -> Result<f32> {
         let (grid_w, grid_h) = self.metadata.shape;
         if col >= grid_w || row >= grid_h {
             return Ok(f32::NAN);
         }
-        
+
         let (chunk_w, chunk_h) = self.metadata.chunk_shape;
         let chunk_x = col / chunk_w;
         let chunk_y = row / chunk_h;
@@ -531,7 +533,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let chunk_actual_w = chunk_w.min(grid_w - chunk_start_col);
         let idx = local_row * chunk_actual_w + local_col;
-        
+
         Ok(chunk_data.get(idx).copied().unwrap_or(f32::NAN))
     }
 }
@@ -557,11 +559,11 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
             // grid cell value instead of interpolating with neighbors.
             let (res_x, res_y) = self.metadata.resolution();
             let buffer_cells = 2.0; // 2 cells on each side for safety
-            
+
             // First, normalize the request bbox to the grid's coordinate system
             // (e.g., convert -180/180 to 0/360 if needed)
             let norm_bbox = bbox.normalize_to_grid(&self.metadata.bbox);
-            
+
             // Then apply the buffer and clamp to grid bounds
             let buffered = BoundingBox::new(
                 (norm_bbox.min_lon - res_x * buffer_cells).max(self.metadata.bbox.min_lon),
@@ -610,14 +612,12 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
             .collect();
 
         let chunk_results = futures::future::join_all(chunk_futures).await;
-        
+
         // Collect results, propagating any errors.
         // Note: We use join_all (not try_join_all) to let all fetches complete even if one fails,
         // avoiding wasted work. However, we still fail if ANY chunk is missing since we need
         // all chunks to render a complete tile - partial data would produce incorrect output.
-        let chunk_data: Vec<_> = chunk_results
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?;
+        let chunk_data: Vec<_> = chunk_results.into_iter().collect::<Result<Vec<_>>>()?;
 
         // 3. Assemble chunks into contiguous region
         self.assemble_region(&effective_bbox, &chunks, &chunk_data)
@@ -642,10 +642,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         let dx_frac = grid_x - grid_x.floor();
         let dy_frac = grid_y - grid_y.floor();
         let snap_threshold = 0.01; // 1% of cell size
-        
-        let near_grid_point = (dx_frac < snap_threshold || dx_frac > (1.0 - snap_threshold)) &&
-                              (dy_frac < snap_threshold || dy_frac > (1.0 - snap_threshold));
-        
+
+        let near_grid_point = (dx_frac < snap_threshold || dx_frac > (1.0 - snap_threshold))
+            && (dy_frac < snap_threshold || dy_frac > (1.0 - snap_threshold));
+
         if near_grid_point {
             // Snap to nearest grid point and return exact value
             let col = grid_x.round() as usize;
@@ -664,7 +664,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         // Calculate the four corners for bilinear interpolation
         let x1 = grid_x.floor() as usize;
         let y1 = grid_y.floor() as usize;
-        
+
         // For global grids (like GFS 0-360), wrap x2 around
         let is_global = grid_bbox.max_lon - grid_bbox.min_lon > 359.0;
         let x2 = if is_global && x1 + 1 >= grid_w {
@@ -691,8 +691,15 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
 
         // Check for fill/NaN values
         let fill = self.metadata.fill_value;
-        if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() 
-            || v11 == fill || v21 == fill || v12 == fill || v22 == fill {
+        if v11.is_nan()
+            || v21.is_nan()
+            || v12.is_nan()
+            || v22.is_nan()
+            || v11 == fill
+            || v21 == fill
+            || v12 == fill
+            || v22 == fill
+        {
             // If any corner is missing, fall back to nearest neighbor
             let col = grid_x.round() as usize;
             let row = grid_y.round() as usize;
@@ -750,7 +757,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         }
 
         let value = self.read_single_value(col, row).await?;
-        
+
         // Check for fill value
         let fill = self.metadata.fill_value;
         if value.is_nan() || value == fill {
@@ -831,13 +838,16 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
 
     /// Read a region from a specific pyramid level.
     pub async fn read_region_at_level(&self, level: u32, bbox: &BoundingBox) -> Result<GridRegion> {
-        let level_info = self.multiscale.get_level(level)
-            .ok_or_else(|| GridProcessorError::invalid_metadata(
-                format!("Pyramid level {} not found", level)
-            ))?;
+        let level_info = self.multiscale.get_level(level).ok_or_else(|| {
+            GridProcessorError::invalid_metadata(format!("Pyramid level {} not found", level))
+        })?;
 
         // Construct path to this level's array
-        let level_path = format!("{}/{}", self.base_path.trim_end_matches('/'), level_info.path);
+        let level_path = format!(
+            "{}/{}",
+            self.base_path.trim_end_matches('/'),
+            level_info.path
+        );
 
         // Create GridMetadata for this level
         let level_metadata = self.metadata_for_level(level_info);
@@ -867,10 +877,22 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
     fn metadata_for_level(&self, level: &crate::types::PyramidLevel) -> GridMetadata {
         // Note: level.resolution() returns the resolution at this pyramid level,
         // but GridMetadata calculates resolution from bbox/shape, so we don't need it here
-        
+
         GridMetadata {
-            model: self.multiscale.name.split('_').next().unwrap_or("unknown").to_string(),
-            parameter: self.multiscale.name.split('_').nth(1).unwrap_or("unknown").to_string(),
+            model: self
+                .multiscale
+                .name
+                .split('_')
+                .next()
+                .unwrap_or("unknown")
+                .to_string(),
+            parameter: self
+                .multiscale
+                .name
+                .split('_')
+                .nth(1)
+                .unwrap_or("unknown")
+                .to_string(),
             level: format!("pyramid_level_{}", level.level),
             units: String::new(),
             reference_time: chrono::Utc::now(), // Will be overwritten if available
@@ -896,7 +918,8 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
 
 /// Helper function to parse MultiscaleMetadata from catalog JSON.
 pub fn parse_multiscale_metadata(zarr_json: &serde_json::Value) -> Option<MultiscaleMetadata> {
-    zarr_json.get("multiscale")
+    zarr_json
+        .get("multiscale")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
@@ -915,7 +938,7 @@ mod tests {
             reference_time: chrono::Utc::now(),
             forecast_hour: 0,
             bbox: BoundingBox::new(0.0, -90.0, 360.0, 90.0),
-            shape: (1440, 721),      // 0.25 degree resolution
+            shape: (1440, 721), // 0.25 degree resolution
             chunk_shape: (512, 512),
             num_chunks: (3, 2),
             fill_value: f32::NAN,
