@@ -3,8 +3,3 @@ name = "projection"
 version.workspace = true
 edition.workspace = true
 
-[dependencies]
-wms-common = { path = "../wms-common" }
-nalgebra = { workspace = true }
-num-traits = { workspace = true }
-thiserror = { workspace = true }
