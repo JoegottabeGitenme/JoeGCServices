@@ -109,6 +109,49 @@ RUST_LOG=weather_wms=trace cargo test
 4. Run `cargo test` to test
 5. For Kubernetes: run `./scripts/start.sh --rebuild` to rebuild and redeploy
 
+### Benchmarks
+
+Performance benchmarks run automatically on PRs and pushes to main when these crates change:
+- `crates/renderer/`
+- `crates/grib2-parser/`
+- `crates/projection/`
+- `crates/wms-common/`
+
+**Running benchmarks locally:**
+
+```bash
+# Run all renderer benchmarks
+cargo bench --package renderer
+
+# Run a specific benchmark
+cargo bench --package renderer -- render_tile
+
+# Compare against baseline
+cargo bench --package renderer -- --save-baseline current
+```
+
+**Benchmark history:**
+
+All benchmark results are stored permanently and can be viewed at:
+- **GitHub Pages**: `https://<owner>.github.io/<repo>/dev/bench/`
+
+The CI automatically:
+- Runs benchmarks on relevant code changes
+- Compares against previous results
+- Posts comparison comments on PRs
+- Alerts if performance regresses >10%
+
+**Local comparison scripts:**
+
+```bash
+# Save a baseline
+./scripts/save_benchmark_baseline.sh my-baseline "Description"
+
+# Compare baselines
+./scripts/compare_benchmark_baselines.sh baseline1 baseline2
+./scripts/compare_benchmark_baselines.sh my-baseline --current
+```
+
 ### Database
 
 PostgreSQL is configured via environment variables:
