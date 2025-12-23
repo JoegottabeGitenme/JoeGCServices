@@ -98,11 +98,11 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/hrrr/prod/hrrr.{YYYYMMDD}/conus/h
 
 ### MRMS (Multi-Radar Multi-Sensor)
 
-**Source**: MRMS server (https://mrms.ncep.noaa.gov)
+**Source**: AWS S3 (NOAA Open Data - `noaa-mrms-pds`)
 
-**URL Pattern**:
+**S3 Path Pattern**:
 ```
-https://mrms.ncep.noaa.gov/data/2D/{PRODUCT}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.grib2.gz
+s3://noaa-mrms-pds/CONUS/{PRODUCT}/{YYYYMMDD}/MRMS_{PRODUCT}_{YYYYMMDD}-{HHMMSS}.grib2.gz
 ```
 
 **Products**:
@@ -112,6 +112,19 @@ https://mrms.ncep.noaa.gov/data/2D/{PRODUCT}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.
 **Schedule**: Every 2 minutes  
 **File Size**: ~10-30 MB (compressed)
 
+#### Efficient S3 Discovery
+
+MRMS uses `start_after` to efficiently list only recent files within the lookback period:
+
+```rust
+// Skip to files from the lookback start time
+let start_after = format!(
+    "CONUS/{}/{}/MRMS_{}_{}",
+    product, date_str, product,
+    earliest_time.format("%Y%m%d-%H%M00")
+);
+```
+
 ---
 
 ### GOES-16/18 (Geostationary Satellites)
@@ -120,12 +133,34 @@ https://mrms.ncep.noaa.gov/data/2D/{PRODUCT}/MRMS_{PRODUCT}.{YYYYMMDD}-{HHMMSS}.
 
 **URL Pattern**:
 ```
-https://noaa-goes{SATELLITE}.s3.amazonaws.com/ABI-L2-CMIPF/{YYYY}/{DDD}/{HH}/OR_ABI-L2-CMIPF-M6C{CHANNEL}_G{SATELLITE}_s{START}_e{END}_c{CREATED}.nc
+https://noaa-goes{SATELLITE}.s3.amazonaws.com/ABI-L2-CMIPC/{YYYY}/{DDD}/{HH}/OR_ABI-L2-CMIPC-M6C{CHANNEL}_G{SATELLITE}_s{START}_e{END}_c{CREATED}.nc
 ```
 
 **Channels**: C01-C16 (various wavelengths)  
-**Schedule**: Every 10 minutes (GOES-16) or 5 minutes (GOES-18)  
+**Schedule**: Every 5 minutes (CONUS sector)  
 **File Size**: ~40-60 MB per file
+
+#### Efficient S3 Discovery
+
+GOES files are stored in S3 buckets organized by hour, with files from all 16 channels and both satellites mixed together. To efficiently discover files for a specific band (e.g., C13) without listing all files:
+
+```rust
+// Use S3 start_after to skip directly to target band+satellite
+// Files are sorted lexicographically: C01 < C02 < ... < C13 < C14 ...
+let start_after = format!(
+    "{}/OR_{}-M6C{:02}_G{}_",
+    prefix, product, band, satellite_num
+);
+
+// This jumps directly to files matching the band, avoiding listing C01-C12
+s3_client.list_objects_v2()
+    .prefix(&prefix)
+    .start_after(&start_after)
+    .max_keys(max_results)
+    .send()
+```
+
+This optimization reduces S3 API calls and ensures all timesteps (~12 per hour at 5-minute intervals) are discovered for each configured band.
 
 ## Download Flow
 

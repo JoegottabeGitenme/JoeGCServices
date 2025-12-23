@@ -375,15 +375,27 @@ impl Scheduler {
                 if let Some(product) = param.product.as_ref() {
                     let prefix = format!("CONUS/{}/{}/", product, date_str);
                     
+                    // Calculate start_after to skip to files within lookback period
+                    // MRMS filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
+                    let earliest_time = now - ChronoDuration::minutes(lookback as i64);
+                    let start_after_key = format!(
+                        "CONUS/{}/{}/MRMS_{}_{}",
+                        product,
+                        date_str,
+                        product,
+                        earliest_time.format("%Y%m%d-%H%M00")
+                    );
+                    
                     debug!(
                         model = %model.model.id,
                         prefix = %prefix,
                         product = product,
+                        start_after = %start_after_key,
                         "Listing MRMS files from S3"
                     );
                     
-                    // List recent files from S3 (last 50 files should cover lookback period)
-                    match self.list_s3_files(&model.source.bucket, &prefix, 50).await {
+                    // List recent files from S3 using start_after to skip older files
+                    match self.list_s3_files(&model.source.bucket, &prefix, 50, Some(&start_after_key)).await {
                         Ok(keys) => {
                             info!(
                                 model = %model.model.id,
@@ -477,11 +489,15 @@ impl Scheduler {
             // Format: OR_ABI-L2-CMIPC-M{mode}C{band:02}_G{satellite}_s{start}_e{end}_c{created}.nc
             
             let satellite_num = if model.model.id == "goes16" { "16" } else { "18" };
-            let year = now.year();
-            let doy = now.ordinal(); // Day of year
             
             // Check recent hours (lookback is in minutes, convert to hours)
             let hours_to_check = (lookback / 60).max(1);
+            
+            // Calculate max_results based on lookback period
+            // GOES files are available every 5 minutes, so ~12 files per hour per band
+            // We want to fetch all files within the lookback period
+            let files_per_hour = 12; // ~5 minute intervals
+            let max_results = (files_per_hour * hours_to_check as usize).max(20);
             
             // Get configured bands from source
             let bands = model.source.bands.clone()
@@ -490,29 +506,48 @@ impl Scheduler {
             for hours_ago in 0..hours_to_check {
                 let check_time = now - ChronoDuration::hours(hours_ago as i64);
                 let hour = check_time.hour();
+                let check_doy = check_time.ordinal(); // Handle day boundary
+                let check_year = check_time.year();
                 
                 for band in &bands {
                     // S3 path pattern: ABI-L2-CMIPC/{year}/{day_of_year:03}/{hour:02}/
                     let product = model.source.product.as_deref()
                         .unwrap_or("ABI-L2-CMIPC");
                     
-                    let prefix = format!("{}/{}/{:03}/{:02}/", product, year, doy, hour);
+                    let prefix = format!("{}/{}/{:03}/{:02}/", product, check_year, check_doy, hour);
                     
-                    debug!(
+                    // Use start_after to efficiently skip to files matching this band and satellite
+                    // GOES filenames are lexicographically sorted by band (C01, C02, ..., C13, C14, C15, C16)
+                    // and then by satellite (G16, G18) and timestamp
+                    // Example: OR_ABI-L2-CMIPC-M6C13_G18_s20253570101170...
+                    // We want to start just before our target band+satellite combo
+                    let start_after_key = format!(
+                        "{}OR_{}-M6C{:02}_G{}_",
+                        prefix,
+                        product,
+                        band,
+                        satellite_num
+                    );
+                    
+                    info!(
                         model = %model.model.id,
                         prefix = %prefix,
                         band = band,
-                        "Listing GOES files from S3"
+                        satellite = satellite_num,
+                        start_after = %start_after_key,
+                        max_results = max_results,
+                        "Listing GOES files from S3 with start_after"
                     );
                     
-                    // List files from S3
-                    match self.list_s3_files(&model.source.bucket, &prefix, 20).await {
+                    // List files from S3 using start_after to skip directly to target band
+                    match self.list_s3_files(&model.source.bucket, &prefix, max_results, Some(&start_after_key)).await {
                         Ok(keys) => {
-                            // Filter for the specific band we want
+                            // Filter for the specific band we want (start_after gets us close but we still need to verify)
                             // Filename format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
                             let band_str = format!("C{:02}", band);
                             let sat_str = format!("_G{}_", satellite_num);
                             
+                            let mut found_count = 0;
                             for key in keys {
                                 if key.contains(&band_str) && key.contains(&sat_str) && key.ends_with(".nc") {
                                     // Construct the full S3 URL
@@ -534,8 +569,17 @@ impl Scheduler {
                                     );
                                     
                                     files.push((url, output_filename));
+                                    found_count += 1;
                                 }
                             }
+                            
+                            info!(
+                                model = %model.model.id,
+                                band = band,
+                                hour = hour,
+                                found = found_count,
+                                "GOES files found for band/hour"
+                            );
                         }
                         Err(e) => {
                             warn!(
@@ -580,8 +624,14 @@ impl Scheduler {
     }
 
     /// List files from S3 bucket matching a prefix.
-    /// For MRMS, uses start_after to get recent files since they're sorted alphabetically by timestamp.
-    async fn list_s3_files(&self, bucket: &str, prefix: &str, max_results: usize) -> Result<Vec<String>> {
+    /// Optionally uses start_after to efficiently skip to a specific lexicographic position.
+    async fn list_s3_files(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        max_results: usize,
+        start_after: Option<&str>,
+    ) -> Result<Vec<String>> {
         let s3_client = match &self.s3_client {
             Some(client) => client,
             None => {
@@ -592,26 +642,6 @@ impl Scheduler {
 
         let mut files = Vec::new();
         let mut continuation_token: Option<String> = None;
-        
-        // For MRMS files, we want to start from 1 hour ago to get recent files
-        // MRMS filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
-        let start_after = if prefix.contains("CONUS/") && prefix.contains("/2025") {
-            // Calculate a start_after key that's 1 hour ago
-            let one_hour_ago = Utc::now() - ChronoDuration::hours(1);
-            let timestamp_str = one_hour_ago.format("%Y%m%d-%H0000").to_string();
-            // Build the key like: CONUS/MergedReflectivityQC_00.50/20251202/MRMS_MergedReflectivityQC_00.50_20251202-170000
-            // Extract product name from prefix (e.g., "CONUS/MergedReflectivityQC_00.50/20251202/")
-            let parts: Vec<&str> = prefix.trim_end_matches('/').split('/').collect();
-            if parts.len() >= 3 {
-                let product = parts[1];
-                let date = parts[2];
-                Some(format!("CONUS/{}/{}/MRMS_{}_{}", product, date, product, timestamp_str))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
         loop {
             let mut request = s3_client
@@ -623,12 +653,11 @@ impl Scheduler {
             if let Some(ref token) = continuation_token {
                 request = request.continuation_token(token.clone());
             }
-            
-            if let Some(ref start) = start_after {
+
+            if let Some(start) = start_after {
                 if continuation_token.is_none() {
                     // Only use start_after on the first request
-                    request = request.start_after(start.clone());
-                    info!(start_after = %start, "Using start_after for MRMS S3 listing");
+                    request = request.start_after(start);
                 }
             }
 
