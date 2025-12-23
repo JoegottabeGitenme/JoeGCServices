@@ -601,12 +601,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
             ));
         }
 
-        // 2. Read all needed chunks
-        // Note: For better performance, we could use parallel futures here
-        let mut chunk_data = Vec::with_capacity(chunks.len());
-        for (cx, cy) in &chunks {
-            chunk_data.push(self.read_chunk(*cx, *cy).await?);
-        }
+        // 2. Read all needed chunks in parallel
+        // This significantly reduces latency when multiple chunks are needed
+        // (e.g., 4 chunks @ 50ms each: sequential=200ms, parallel=50ms)
+        let chunk_futures: Vec<_> = chunks
+            .iter()
+            .map(|(cx, cy)| self.read_chunk(*cx, *cy))
+            .collect();
+
+        let chunk_results = futures::future::join_all(chunk_futures).await;
+        
+        // Collect results, propagating any errors
+        let chunk_data: Vec<_> = chunk_results
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
 
         // 3. Assemble chunks into contiguous region
         self.assemble_region(&effective_bbox, &chunks, &chunk_data)
