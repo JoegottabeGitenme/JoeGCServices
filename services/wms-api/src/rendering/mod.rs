@@ -23,6 +23,7 @@ use grid_processor::GridProcessorFactory;
 
 // Re-export functions for tests and internal use
 pub(crate) use colorscales::render_with_style_file;
+pub(crate) use colorscales::{render_with_style_file_indexed, IndexedRenderResult};
 // Note: render_by_parameter is still available for fallback scenarios via direct module access
 
 // Re-export public functions from submodules
@@ -277,20 +278,25 @@ pub async fn render_weather_data(
         metrics.record_model_resample(wm, resample_us);
     }
 
-    // Apply color rendering using style from layer configuration
-    let rgba_data = render_with_style_file(
-        &resampled_data,
-        style_file,
-        style_name,
-        rendered_width,
-        rendered_height,
-    )?;
-
-    // Convert to PNG
+    // Apply color rendering using indexed path for optimal performance
+    // This uses pre-computed palettes and outputs palette indices directly
     let start = Instant::now();
     let png = {
-        renderer::png::create_png(&rgba_data, rendered_width, rendered_height)
-            .map_err(|e| format!("PNG encoding failed: {}", e))?
+        let render_result = render_with_style_file_indexed(
+            &resampled_data,
+            style_file,
+            style_name,
+            rendered_width,
+            rendered_height,
+        )?;
+        
+        // Encode to indexed PNG using pre-computed palette
+        renderer::png::create_png_from_precomputed(
+            &render_result.indices,
+            rendered_width,
+            rendered_height,
+            &render_result.palette,
+        ).map_err(|e| format!("PNG encoding failed: {}", e))?
     };
     let png_duration = start.elapsed();
     metrics.record_png_encode(png_duration.as_micros() as u64).await;

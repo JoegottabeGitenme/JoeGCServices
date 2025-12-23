@@ -296,21 +296,187 @@ fn bench_render_other_types(c: &mut Criterion) {
 // PNG ENCODING BENCHMARKS
 // =============================================================================
 
+/// Generate weather-like RGBA data with limited unique colors.
+/// This simulates the output of style-based rendering with gradients.
+fn generate_weather_rgba_data(width: usize, height: usize) -> Vec<u8> {
+    let mut data = vec![0u8; width * height * 4];
+    
+    // Use a limited palette of ~50 colors (typical for weather gradients)
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 4;
+            // Quantize to create limited unique colors
+            let temp_normalized = (x as f32 / width as f32 + y as f32 / height as f32) / 2.0;
+            let color_idx = (temp_normalized * 50.0) as u8;
+            
+            // Simple color ramp (blue -> cyan -> green -> yellow -> red)
+            let (r, g, b) = match color_idx {
+                0..=10 => (0, 0, 128 + color_idx * 12),
+                11..=20 => (0, (color_idx - 10) * 25, 255),
+                21..=30 => (0, 255, 255 - (color_idx - 20) * 25),
+                31..=40 => ((color_idx - 30) * 25, 255, 0),
+                _ => (255, 255 - (color_idx - 40) * 25, 0),
+            };
+            
+            data[idx] = r;
+            data[idx + 1] = g;
+            data[idx + 2] = b;
+            data[idx + 3] = 255;
+        }
+    }
+    data
+}
+
 fn bench_png_encoding(c: &mut Criterion) {
     let mut group = c.benchmark_group("png_encoding");
 
     let sizes = [(256, 256), (512, 512), (1024, 1024)];
 
+    // Benchmark with random data (many unique colors - RGBA fallback)
     for (width, height) in sizes {
         let rgba_data = generate_rgba_data(width, height);
 
         group.throughput(Throughput::Bytes((width * height * 4) as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("create_png", format!("{}x{}", width, height)),
+            BenchmarkId::new("rgba_random", format!("{}x{}", width, height)),
             &rgba_data,
             |b, data| {
                 b.iter(|| png::create_png(black_box(data), width, height));
+            },
+        );
+    }
+
+    // Benchmark with weather-like data (limited colors - indexed PNG)
+    for (width, height) in sizes {
+        let weather_data = generate_weather_rgba_data(width, height);
+
+        group.throughput(Throughput::Bytes((width * height * 4) as u64));
+
+        // Auto mode (should choose indexed for weather data)
+        group.bench_with_input(
+            BenchmarkId::new("auto_weather", format!("{}x{}", width, height)),
+            &weather_data,
+            |b, data| {
+                b.iter(|| png::create_png_auto(black_box(data), width, height));
+            },
+        );
+
+        // Force RGBA for comparison
+        group.bench_with_input(
+            BenchmarkId::new("rgba_weather", format!("{}x{}", width, height)),
+            &weather_data,
+            |b, data| {
+                b.iter(|| png::create_png(black_box(data), width, height));
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// =============================================================================
+// PRE-COMPUTED PALETTE BENCHMARKS
+// =============================================================================
+
+fn bench_precomputed_palette(c: &mut Criterion) {
+    let mut group = c.benchmark_group("precomputed_palette");
+
+    let sizes = [(256, 256), (512, 512), (1024, 1024)];
+    let temp_style = create_temperature_style();
+    
+    // Pre-compute the palette (this happens once at startup)
+    let palette = temp_style.compute_palette().expect("Failed to compute palette");
+    
+    for (width, height) in sizes {
+        // Generate temperature data in Kelvin
+        let data: Vec<f32> = generate_linear_grid(width, height)
+            .iter()
+            .map(|v| 233.15 + v * 0.8) // Scale to 233K-313K range
+            .collect();
+
+        group.throughput(Throughput::Elements((width * height) as u64));
+
+        // Benchmark: Pre-computed palette (indexed rendering)
+        group.bench_with_input(
+            BenchmarkId::new("indexed_render", format!("{}x{}", width, height)),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    style::apply_style_gradient_indexed(
+                        black_box(data),
+                        width,
+                        height,
+                        &palette,
+                        &temp_style,
+                    )
+                });
+            },
+        );
+
+        // Benchmark: Original RGBA rendering (for comparison)
+        group.bench_with_input(
+            BenchmarkId::new("rgba_render", format!("{}x{}", width, height)),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    style::apply_style_gradient(black_box(data), width, height, &temp_style)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_precomputed_png_encoding(c: &mut Criterion) {
+    let mut group = c.benchmark_group("precomputed_png");
+
+    let sizes = [(256, 256), (512, 512), (1024, 1024)];
+    let temp_style = create_temperature_style();
+    let palette = temp_style.compute_palette().expect("Failed to compute palette");
+
+    for (width, height) in sizes {
+        // Generate temperature data
+        let data: Vec<f32> = generate_linear_grid(width, height)
+            .iter()
+            .map(|v| 233.15 + v * 0.8)
+            .collect();
+
+        // Pre-render to indices
+        let indices = style::apply_style_gradient_indexed(&data, width, height, &palette, &temp_style);
+        
+        // Pre-render to RGBA for comparison
+        let rgba = style::apply_style_gradient(&data, width, height, &temp_style);
+
+        group.throughput(Throughput::Bytes((width * height) as u64));
+
+        // Benchmark: PNG from pre-computed palette (skips palette extraction!)
+        group.bench_with_input(
+            BenchmarkId::new("from_precomputed", format!("{}x{}", width, height)),
+            &indices,
+            |b, indices| {
+                b.iter(|| {
+                    png::create_png_from_precomputed(black_box(indices), width, height, &palette)
+                });
+            },
+        );
+
+        // Benchmark: PNG auto (extracts palette at runtime)
+        group.bench_with_input(
+            BenchmarkId::new("auto_extract", format!("{}x{}", width, height)),
+            &rgba,
+            |b, rgba| {
+                b.iter(|| png::create_png_auto(black_box(rgba), width, height));
+            },
+        );
+
+        // Benchmark: RGBA PNG (no palette, larger file)
+        group.bench_with_input(
+            BenchmarkId::new("rgba_direct", format!("{}x{}", width, height)),
+            &rgba,
+            |b, rgba| {
+                b.iter(|| png::create_png(black_box(rgba), width, height));
             },
         );
     }
@@ -328,12 +494,13 @@ fn bench_full_pipeline(c: &mut Criterion) {
     // Simulate a complete tile render: resample -> style color map -> PNG encode
     let gfs_data = generate_temperature_grid(1440, 721);
     let temp_style = create_temperature_style();
+    let palette = temp_style.compute_palette().expect("Failed to compute palette");
 
     group.throughput(Throughput::Elements(256 * 256));
 
-    group.bench_function("temperature_tile_256x256", |b| {
+    // Full pipeline with RGBA PNG (baseline)
+    group.bench_function("temp_256_rgba", |b| {
         b.iter(|| {
-            // Step 1: Resample from GFS grid to tile size
             let resampled = gradient::resample_grid(
                 black_box(&gfs_data),
                 1440,
@@ -341,17 +508,45 @@ fn bench_full_pipeline(c: &mut Criterion) {
                 256,
                 256,
             );
-
-            // Step 2: Apply style-based color mapping
             let rgba = style::apply_style_gradient(&resampled, 256, 256, &temp_style);
-
-            // Step 3: Encode as PNG
             png::create_png(&rgba, 256, 256)
         });
     });
 
-    // Larger tile
-    group.bench_function("temperature_tile_512x512", |b| {
+    // Full pipeline with auto PNG (indexed when possible)
+    group.bench_function("temp_256_auto", |b| {
+        b.iter(|| {
+            let resampled = gradient::resample_grid(
+                black_box(&gfs_data),
+                1440,
+                721,
+                256,
+                256,
+            );
+            let rgba = style::apply_style_gradient(&resampled, 256, 256, &temp_style);
+            png::create_png_auto(&rgba, 256, 256)
+        });
+    });
+
+    // Full pipeline with PRE-COMPUTED palette (fastest path!)
+    group.bench_function("temp_256_precomputed", |b| {
+        b.iter(|| {
+            let resampled = gradient::resample_grid(
+                black_box(&gfs_data),
+                1440,
+                721,
+                256,
+                256,
+            );
+            let indices = style::apply_style_gradient_indexed(&resampled, 256, 256, &palette, &temp_style);
+            png::create_png_from_precomputed(&indices, 256, 256, &palette)
+        });
+    });
+
+    // Larger tile comparisons
+    group.throughput(Throughput::Elements(512 * 512));
+    
+    group.bench_function("temp_512_rgba", |b| {
         b.iter(|| {
             let resampled = gradient::resample_grid(
                 black_box(&gfs_data),
@@ -362,6 +557,20 @@ fn bench_full_pipeline(c: &mut Criterion) {
             );
             let rgba = style::apply_style_gradient(&resampled, 512, 512, &temp_style);
             png::create_png(&rgba, 512, 512)
+        });
+    });
+
+    group.bench_function("temp_512_precomputed", |b| {
+        b.iter(|| {
+            let resampled = gradient::resample_grid(
+                black_box(&gfs_data),
+                1440,
+                721,
+                512,
+                512,
+            );
+            let indices = style::apply_style_gradient_indexed(&resampled, 512, 512, &palette, &temp_style);
+            png::create_png_from_precomputed(&indices, 512, 512, &palette)
         });
     });
 
@@ -376,6 +585,8 @@ criterion_group!(
     bench_style_rendering,
     bench_render_other_types,
     bench_png_encoding,
+    bench_precomputed_palette,
+    bench_precomputed_png_encoding,
     bench_full_pipeline,
 );
 criterion_main!(benches);

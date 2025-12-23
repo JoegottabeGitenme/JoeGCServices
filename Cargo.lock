@@ -6050,6 +6050,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "netcdf-parser",
  "num_cpus",
+ "once_cell",
  "projection",
  "quick-xml",
  "renderer",

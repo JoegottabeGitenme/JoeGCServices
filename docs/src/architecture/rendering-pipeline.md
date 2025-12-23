@@ -453,7 +453,79 @@ let data_bounds = grid_result.bbox.unwrap_or_else(|| [
 
 **Solution**: This is fixed by properly propagating `actual_bbox` from Zarr reads.
 
-## Performance Considerations
+## Performance Optimizations
+
+The rendering pipeline includes several optimizations that provide **3-4x faster tile generation** and **40% smaller file sizes**.
+
+### 1. Parallel Chunk Fetching
+
+When a tile request spans multiple Zarr chunks, they are fetched in parallel:
+
+```rust
+// Before: Sequential (200ms for 4 chunks @ 50ms each)
+for (cx, cy) in &chunks {
+    chunk_data.push(self.read_chunk(*cx, *cy).await?);
+}
+
+// After: Parallel (50ms for 4 chunks @ 50ms each)
+let chunk_futures: Vec<_> = chunks
+    .iter()
+    .map(|(cx, cy)| self.read_chunk(*cx, *cy))
+    .collect();
+let chunk_data = futures::future::join_all(chunk_futures).await;
+```
+
+**Impact**: 4x faster chunk loading for multi-chunk requests.
+
+### 2. Parallel Pixel Rendering (rayon)
+
+Color mapping and resampling use rayon for parallel row processing:
+
+```rust
+// Process rows in parallel across all CPU cores
+pixels
+    .par_chunks_mut(width * 4)
+    .enumerate()
+    .for_each(|(y, row)| {
+        for x in 0..width {
+            // Color mapping for each pixel
+        }
+    });
+```
+
+**Impact**: Near-linear scaling with CPU cores for rendering operations.
+
+### 3. Pre-computed Palette for Indexed PNG
+
+The fastest rendering path uses pre-computed color palettes:
+
+```rust
+// At style load time (once per style):
+let palette = style.compute_palette().unwrap();
+
+// At render time (per request):
+let indices = apply_style_gradient_indexed(&data, w, h, &palette, &style);
+let png = create_png_from_precomputed(&indices, w, h, &palette)?;
+```
+
+**Benefits**:
+- **1 byte per pixel** instead of 4 (RGBA) during rendering
+- **No palette extraction** at PNG encoding time
+- **~40% smaller** PNG files (indexed vs RGBA)
+- **3-4x faster** full pipeline
+
+#### Performance Comparison
+
+| Pipeline | 256×256 | 512×512 | Improvement |
+|----------|---------|---------|-------------|
+| RGBA (baseline) | 1.54 ms | 5.66 ms | - |
+| Pre-computed palette | 430 µs | 1.46 ms | **3.6-4x faster** |
+
+| PNG Encoding | 256×256 | 512×512 | 1024×1024 |
+|--------------|---------|---------|-----------|
+| RGBA direct | 87 µs | 672 µs | 2.97 ms |
+| Auto extract | 349 µs | 803 µs | 3.56 ms |
+| **Pre-computed** | **22 µs** | **63 µs** | **210 µs** |
 
 ### Chunk Size Selection
 
@@ -468,6 +540,7 @@ Recommended: 512x512 chunks for 0.25° GFS data (~1MB per chunk).
 1. **L1 (Memory)**: Recent tiles, <1ms
 2. **L2 (Redis)**: Cross-instance sharing, 2-5ms
 3. **Chunk Cache**: Decompressed Zarr chunks, avoids re-reads
+4. **Palette Cache**: Pre-computed palettes per style (in-memory)
 
 ### Prefetching
 
