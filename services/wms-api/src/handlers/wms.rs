@@ -21,7 +21,7 @@ use crate::model_config::ModelDimensionRegistry;
 use storage::ParameterAvailability;
 use super::common::{
     wms_exception, mercator_to_wgs84, DimensionParams,
-    get_styles_xml_from_file, convert_png_to_jpeg,
+    get_styles_xml_from_file, convert_png_to_jpeg, convert_png_to_webp,
 };
 
 // ============================================================================
@@ -32,7 +32,7 @@ use super::common::{
 const SUPPORTED_CRS: &[&str] = &["EPSG:4326", "EPSG:3857", "CRS:84"];
 
 /// Supported output formats for GetMap
-const SUPPORTED_FORMATS: &[&str] = &["image/png", "image/jpeg", "image/gif"];
+const SUPPORTED_FORMATS: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 /// WMS rendering errors with OGC-compliant exception codes
 #[derive(Debug)]
@@ -452,13 +452,20 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
 
             // Convert to requested format
             let requested_format = format.unwrap_or("image/png").to_lowercase();
-            let (output_data, content_type) = if requested_format == "image/jpeg" {
-                match convert_png_to_jpeg(&png_data) {
-                    Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
-                    Err(_) => (png_data, "image/png"), // Fallback to PNG on error
+            let (output_data, content_type) = match requested_format.as_str() {
+                "image/jpeg" => {
+                    match convert_png_to_jpeg(&png_data) {
+                        Ok(jpeg_data) => (jpeg_data, "image/jpeg"),
+                        Err(_) => (png_data, "image/png"), // Fallback to PNG on error
+                    }
                 }
-            } else {
-                (png_data, "image/png")
+                "image/webp" => {
+                    match convert_png_to_webp(&png_data) {
+                        Ok(webp_data) => (webp_data, "image/webp"),
+                        Err(_) => (png_data, "image/png"), // Fallback to PNG on error
+                    }
+                }
+                _ => (png_data, "image/png"),
             };
 
             Response::builder()
@@ -1190,6 +1197,7 @@ fn build_wms_capabilities_xml_v2(
       <GetMap>
         <Format>image/png</Format>
         <Format>image/jpeg</Format>
+        <Format>image/webp</Format>
         <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
       </GetMap>
       <GetFeatureInfo>

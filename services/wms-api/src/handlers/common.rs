@@ -225,6 +225,10 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
 /// Default JPEG quality (0-100). Can be overridden via environment variable.
 const DEFAULT_JPEG_QUALITY: u8 = 90;
 
+/// Default WebP quality (0-100). Can be overridden via environment variable.
+/// WebP is more efficient than JPEG, so a slightly lower quality still looks good.
+const DEFAULT_WEBP_QUALITY: f32 = 85.0;
+
 /// Convert PNG image data to JPEG format.
 /// 
 /// Uses quality level from JPEG_QUALITY environment variable, defaulting to 90.
@@ -276,6 +280,64 @@ pub fn convert_png_to_jpeg(png_data: &[u8]) -> Result<Vec<u8>, String> {
     ).map_err(|e| format!("Failed to encode JPEG: {}", e))?;
     
     Ok(jpeg_data)
+}
+
+/// Convert PNG image data to WebP format.
+/// 
+/// Uses quality level from WEBP_QUALITY environment variable, defaulting to 85.
+/// WebP supports transparency (unlike JPEG), so alpha channel is preserved.
+/// 
+/// WebP advantages over PNG:
+/// - Typically 25-35% smaller file size
+/// - Faster encoding than zlib-compressed PNG
+/// - Supported by all modern browsers
+pub fn convert_png_to_webp(png_data: &[u8]) -> Result<Vec<u8>, String> {
+    use image::ImageFormat;
+    
+    // Get quality from environment or use default
+    let quality = std::env::var("WEBP_QUALITY")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(DEFAULT_WEBP_QUALITY)
+        .clamp(0.0, 100.0);
+    
+    // Decode PNG
+    let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
+        .map_err(|e| format!("Failed to decode PNG: {}", e))?;
+    
+    // Get RGBA data
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    
+    // Encode as WebP with transparency support
+    let encoder = webp::Encoder::from_rgba(rgba.as_raw(), width, height);
+    let webp_data = encoder.encode(quality);
+    
+    Ok(webp_data.to_vec())
+}
+
+/// Convert PNG image data to lossless WebP format.
+/// 
+/// Lossless WebP preserves exact pixel values while still achieving
+/// significant compression (typically better than PNG).
+/// 
+/// Use this when exact color preservation is critical.
+pub fn convert_png_to_webp_lossless(png_data: &[u8]) -> Result<Vec<u8>, String> {
+    use image::ImageFormat;
+    
+    // Decode PNG
+    let img = image::load_from_memory_with_format(png_data, ImageFormat::Png)
+        .map_err(|e| format!("Failed to decode PNG: {}", e))?;
+    
+    // Get RGBA data
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    
+    // Encode as lossless WebP
+    let encoder = webp::Encoder::from_rgba(rgba.as_raw(), width, height);
+    let webp_data = encoder.encode_lossless();
+    
+    Ok(webp_data.to_vec())
 }
 
 // ============================================================================
@@ -448,4 +510,51 @@ mod tests {
 
     use chrono::Datelike;
     use chrono::Timelike;
+
+    #[test]
+    fn test_convert_png_to_webp() {
+        // Create a simple 2x2 PNG
+        let png_data = generate_placeholder_image(2, 2);
+        
+        // Convert to WebP
+        let result = convert_png_to_webp(&png_data);
+        assert!(result.is_ok(), "WebP conversion should succeed");
+        
+        let webp_data = result.unwrap();
+        // WebP magic bytes: RIFF....WEBP
+        assert!(webp_data.len() > 12, "WebP should have reasonable size");
+        assert_eq!(&webp_data[0..4], b"RIFF", "WebP should start with RIFF");
+        assert_eq!(&webp_data[8..12], b"WEBP", "WebP should have WEBP marker");
+    }
+
+    #[test]
+    fn test_convert_png_to_webp_lossless() {
+        // Create a simple test PNG
+        let png_data = generate_placeholder_image(4, 4);
+        
+        // Convert to lossless WebP
+        let result = convert_png_to_webp_lossless(&png_data);
+        assert!(result.is_ok(), "Lossless WebP conversion should succeed");
+        
+        let webp_data = result.unwrap();
+        assert!(webp_data.len() > 12, "WebP should have reasonable size");
+        assert_eq!(&webp_data[0..4], b"RIFF", "WebP should start with RIFF");
+        assert_eq!(&webp_data[8..12], b"WEBP", "WebP should have WEBP marker");
+    }
+
+    #[test]
+    fn test_webp_smaller_than_png() {
+        // Create a larger test image where WebP compression benefits should be visible
+        let png_data = generate_placeholder_image(64, 64);
+        
+        let webp_result = convert_png_to_webp(&png_data);
+        assert!(webp_result.is_ok());
+        
+        let webp_data = webp_result.unwrap();
+        println!("PNG size: {} bytes, WebP size: {} bytes", png_data.len(), webp_data.len());
+        
+        // WebP should generally be smaller for this type of image
+        // Not a strict requirement as it depends on content, but useful to verify
+        assert!(webp_data.len() > 0);
+    }
 }

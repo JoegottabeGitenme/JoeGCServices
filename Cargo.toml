@@ -69,6 +69,7 @@ tiny-skia = "0.11"  # raster backend for resvg
 image = "0.24"  # for advanced image operations
 rusttype = "0.9"  # for TrueType font rendering
 imageproc = "0.23"  # for drawing text on images
+webp = "0.3"  # for WebP encoding (smaller files, faster encoding than PNG)
 
 # GRIB2 parsing
 grib = { version = "0.13.5", default-features = false, features = ["png-unpack-with-png-crate"] }  # GRIB2 support with PNG unpacking only
@@ -76,6 +77,9 @@ grib = { version = "0.13.5", default-features = false, features = ["png-unpack-w
 # Math
 nalgebra = "0.32"
 num-traits = "0.2"
+
+# Parallelism
+rayon = "1.10"
 
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }

@@ -227,6 +227,7 @@ const SPEC_REFS = {
     'getmap-version-required': { section: '6.2.3', title: 'Appearance in requests', desc: 'VERSION is mandatory in requests other than GetCapabilities' },
     'getmap-png-format': { section: '7.3.3.7', title: 'FORMAT (PNG)', desc: 'Server shall return image/png with valid PNG magic bytes when FORMAT=image/png' },
     'getmap-jpeg-format': { section: '7.3.3.7', title: 'FORMAT (JPEG)', desc: 'Server shall return image/jpeg with valid JPEG magic bytes when FORMAT=image/jpeg (if supported)' },
+    'getmap-webp-format': { section: '7.3.3.7', title: 'FORMAT (WebP)', desc: 'Server shall return image/webp with valid WebP magic bytes when FORMAT=image/webp (if supported)' },
     
     // GetFeatureInfo
     'gfi-basic-request': { section: '7.4.1', title: 'GetFeatureInfo General', desc: 'Optional operation for queryable layers only' },
@@ -780,6 +781,44 @@ const OGC_TESTS = {
                         return {skipped: 'JPEG format not supported', url};
                     }
                     throw new Error(`Expected Content-Type 'image/jpeg', got '${ct}'`);
+                }
+            },
+            {
+                id: 'getmap-webp-format',
+                desc: 'FORMAT=image/webp returns WebP with correct Content-Type and magic bytes',
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/webp`;
+                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    
+                    // Check HTTP Content-Type header explicitly
+                    if (ct.includes('image/webp')) {
+                        // Verify response is actually a valid WebP by checking magic bytes
+                        // WebP format: RIFF....WEBP
+                        const buffer = await resp.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        const isRiff = bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+                        const isWebp = bytes.length >= 12 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+                        if (isRiff && isWebp) {
+                            return {
+                                format: 'image/webp',
+                                contentType: ct,
+                                size: bytes.length,
+                                validWebpMagic: true,
+                                dimensions,
+                                url
+                            };
+                        }
+                        throw new Error(`Content-Type is image/webp but response is not valid WebP`);
+                    }
+                    // WebP may not be supported - check for proper exception
+                    if (!resp.ok || ct.includes('xml') || ct.includes('text')) {
+                        return {skipped: 'WebP format not supported', url};
+                    }
+                    throw new Error(`Expected Content-Type 'image/webp', got '${ct}'`);
                 }
             }
         ]

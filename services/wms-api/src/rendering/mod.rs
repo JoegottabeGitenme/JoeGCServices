@@ -21,8 +21,8 @@ use tracing::info;
 use crate::metrics::{DataSourceType, MetricsCollector};
 use grid_processor::GridProcessorFactory;
 
-// Re-export functions for tests and internal use
-pub(crate) use colorscales::render_with_style_file;
+// Re-export functions for internal use
+pub(crate) use colorscales::render_with_style_file_indexed;
 // Note: render_by_parameter is still available for fallback scenarios via direct module access
 
 // Re-export public functions from submodules
@@ -277,20 +277,25 @@ pub async fn render_weather_data(
         metrics.record_model_resample(wm, resample_us);
     }
 
-    // Apply color rendering using style from layer configuration
-    let rgba_data = render_with_style_file(
-        &resampled_data,
-        style_file,
-        style_name,
-        rendered_width,
-        rendered_height,
-    )?;
-
-    // Convert to PNG
+    // Apply color rendering using indexed path for optimal performance
+    // This uses pre-computed palettes and outputs palette indices directly
     let start = Instant::now();
     let png = {
-        renderer::png::create_png(&rgba_data, rendered_width, rendered_height)
-            .map_err(|e| format!("PNG encoding failed: {}", e))?
+        let render_result = render_with_style_file_indexed(
+            &resampled_data,
+            style_file,
+            style_name,
+            rendered_width,
+            rendered_height,
+        )?;
+        
+        // Encode to indexed PNG using pre-computed palette
+        renderer::png::create_png_from_precomputed(
+            &render_result.indices,
+            rendered_width,
+            rendered_height,
+            &render_result.palette,
+        ).map_err(|e| format!("PNG encoding failed: {}", e))?
     };
     let png_duration = start.elapsed();
     metrics.record_png_encode(png_duration.as_micros() as u64).await;
@@ -738,7 +743,7 @@ pub async fn render_numbers_tile_with_buffer(
     use_mercator: bool,
     requires_full_grid: bool,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile, actual_expanded_dimensions};
+    use wms_common::tile::{TileBufferConfig, tile_bbox};
     
     // Load style configuration for color mapping
     let style_json = std::fs::read_to_string(style_path)
@@ -782,13 +787,11 @@ pub async fn render_numbers_tile_with_buffer(
         }
     };
 
-    // Determine if we should use expanded rendering
-    let (render_bbox, render_width, render_height, needs_crop) = if let Some(coord) = tile_coord {
-        let config = ExpandedTileConfig::tiles_3x3();
-        let expanded_bbox = expanded_tile_bbox(&coord, &config);
-        
-        // Calculate actual expanded dimensions
-        let (exp_w, exp_h) = actual_expanded_dimensions(&coord, &config);
+    // Use pixel buffer approach for tile rendering (4x faster than 3x3 expansion)
+    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord {
+        let buffer_config = TileBufferConfig::from_env();
+        let tile_bounds = tile_bbox(&coord);
+        let expanded_bbox = buffer_config.expanded_bbox(&tile_bounds);
         
         (
             [
@@ -797,9 +800,9 @@ pub async fn render_numbers_tile_with_buffer(
                 expanded_bbox.max_x as f32,
                 expanded_bbox.max_y as f32,
             ],
-            exp_w as usize,
-            exp_h as usize,
-            Some((coord, config)),
+            buffer_config.render_width() as usize,
+            buffer_config.render_height() as usize,
+            Some((coord, buffer_config)),
         )
     } else {
         (bbox, width as usize, height as usize, None)
@@ -810,7 +813,7 @@ pub async fn render_numbers_tile_with_buffer(
         render_height = render_height,
         bbox_min_lon = render_bbox[0],
         bbox_max_lon = render_bbox[2],
-        expanded = needs_crop.is_some(),
+        buffer_pixels = buffer_config.as_ref().map(|(_, c)| c.buffer_pixels).unwrap_or(0),
         "Rendering numbers tile"
     );
 
@@ -899,7 +902,7 @@ pub async fn render_numbers_tile_with_buffer(
 
     // Render numbers at exact source grid point locations
     // For accurate display, we query the Zarr data directly at each grid point
-    let final_pixels = if let Some((coord, tile_config)) = needs_crop {
+    let final_pixels = if let Some((coord, buf_config)) = buffer_config {
         // Calculate center tile bbox for visibility filtering
         let center_bbox = wms_common::tile::tile_bbox(&coord);
         let visible_bbox = [
@@ -972,8 +975,8 @@ pub async fn render_numbers_tile_with_buffer(
         
         let expanded_pixels = img.into_raw();
         
-        // Crop to center tile
-        crop_center_tile(&expanded_pixels, render_width as u32, &coord, &tile_config)
+        // Crop to center tile using pixel buffer
+        buf_config.crop_to_tile(&expanded_pixels)
     } else {
         // No tile coordinate - fall back to regular rendering
         let numbers_config = NumbersConfig {

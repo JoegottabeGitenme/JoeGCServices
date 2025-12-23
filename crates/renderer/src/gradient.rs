@@ -90,6 +90,10 @@ pub fn subset_grid(
 ///
 /// # Returns
 /// Resampled grid data at the requested resolution
+///
+/// # Performance
+/// Uses rayon for parallel row processing when resampling is needed.
+/// Buffer pooling reduces allocation overhead under high load.
 pub fn resample_grid(
     data: &[f32],
     src_width: usize,
@@ -102,41 +106,58 @@ pub fn resample_grid(
         return data.to_vec();
     }
 
-    let mut output = vec![0.0f32; dst_width * dst_height];
+    // Use buffer pool for the output buffer
+    crate::buffer_pool::take_resample_buffer(dst_width, dst_height, |output| {
+        resample_grid_into(data, src_width, src_height, dst_width, dst_height, output);
+    })
+}
+
+/// Resample grid data into a pre-allocated buffer.
+fn resample_grid_into(
+    data: &[f32],
+    src_width: usize,
+    src_height: usize,
+    dst_width: usize,
+    dst_height: usize,
+    output: &mut [f32],
+) {
+    use rayon::prelude::*;
 
     let x_ratio = (src_width - 1) as f32 / (dst_width - 1) as f32;
     let y_ratio = (src_height - 1) as f32 / (dst_height - 1) as f32;
 
-    for y in 0..dst_height {
-        for x in 0..dst_width {
-            let src_x = x as f32 * x_ratio;
-            let src_y = y as f32 * y_ratio;
-
-            // Bilinear interpolation
-            let x1 = src_x.floor() as usize;
-            let y1 = src_y.floor() as usize;
-            let x2 = (x1 + 1).min(src_width - 1);
-            let y2 = (y1 + 1).min(src_height - 1);
-
-            let dx = src_x - x1 as f32;
-            let dy = src_y - y1 as f32;
-
-            // Get the four surrounding values
-            let v11 = data.get(y1 * src_width + x1).copied().unwrap_or(0.0);
-            let v21 = data.get(y1 * src_width + x2).copied().unwrap_or(0.0);
-            let v12 = data.get(y2 * src_width + x1).copied().unwrap_or(0.0);
-            let v22 = data.get(y2 * src_width + x2).copied().unwrap_or(0.0);
-
-            // Interpolate
-            let v1 = v11 * (1.0 - dx) + v21 * dx;
-            let v2 = v12 * (1.0 - dx) + v22 * dx;
-            let value = v1 * (1.0 - dy) + v2 * dy;
-
-            output[y * dst_width + x] = value;
-        }
-    }
-
+    // Process rows in parallel - each output row depends only on source data (read-only)
     output
+        .par_chunks_mut(dst_width)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_y = y as f32 * y_ratio;
+            let y1 = src_y.floor() as usize;
+            let y2 = (y1 + 1).min(src_height - 1);
+            let dy = src_y - y1 as f32;
+            
+            for x in 0..dst_width {
+                let src_x = x as f32 * x_ratio;
+
+                // Bilinear interpolation
+                let x1 = src_x.floor() as usize;
+                let x2 = (x1 + 1).min(src_width - 1);
+                let dx = src_x - x1 as f32;
+
+                // Get the four surrounding values
+                let v11 = data.get(y1 * src_width + x1).copied().unwrap_or(0.0);
+                let v21 = data.get(y1 * src_width + x2).copied().unwrap_or(0.0);
+                let v12 = data.get(y2 * src_width + x1).copied().unwrap_or(0.0);
+                let v22 = data.get(y2 * src_width + x2).copied().unwrap_or(0.0);
+
+                // Interpolate
+                let v1 = v11 * (1.0 - dx) + v21 * dx;
+                let v2 = v12 * (1.0 - dx) + v22 * dx;
+                let value = v1 * (1.0 - dy) + v2 * dy;
+
+                row[x] = value;
+            }
+        });
 }
 
 /// Color value in RGBA format
@@ -158,62 +179,8 @@ impl Color {
     }
 }
 
-/// Temperature color scale (Celsius)
-/// Maps temperature values to colors
-pub fn temperature_color(temp_celsius: f32) -> Color {
-    // Temperature scale (common weather visualization):
-    // -50°C: Deep purple
-    // -30°C: Blue
-    // 0°C: Cyan
-    // 10°C: Green
-    // 20°C: Yellow
-    // 30°C: Orange
-    // 40°C: Red
-    // 50°C: Dark red
-
-    match temp_celsius {
-        t if t < -50.0 => Color::new(25, 0, 76, 255),     // Deep purple
-        t if t < -30.0 => interpolate_color(
-            Color::new(25, 0, 76, 255),
-            Color::new(0, 0, 255, 255),
-            (t + 50.0) / 20.0,
-        ),
-        t if t < 0.0 => interpolate_color(
-            Color::new(0, 0, 255, 255),
-            Color::new(0, 255, 255, 255),
-            (t + 30.0) / 30.0,
-        ),
-        t if t < 10.0 => interpolate_color(
-            Color::new(0, 255, 255, 255),
-            Color::new(0, 255, 0, 255),
-            (t + 0.0) / 10.0,
-        ),
-        t if t < 20.0 => interpolate_color(
-            Color::new(0, 255, 0, 255),
-            Color::new(255, 255, 0, 255),
-            (t - 10.0) / 10.0,
-        ),
-        t if t < 30.0 => interpolate_color(
-            Color::new(255, 255, 0, 255),
-            Color::new(255, 165, 0, 255),
-            (t - 20.0) / 10.0,
-        ),
-        t if t < 40.0 => interpolate_color(
-            Color::new(255, 165, 0, 255),
-            Color::new(255, 0, 0, 255),
-            (t - 30.0) / 10.0,
-        ),
-        t if t < 50.0 => interpolate_color(
-            Color::new(255, 0, 0, 255),
-            Color::new(139, 0, 0, 255),
-            (t - 40.0) / 10.0,
-        ),
-        _ => Color::new(139, 0, 0, 255), // Dark red
-    }
-}
-
 /// Linear color interpolation
-fn interpolate_color(color1: Color, color2: Color, t: f32) -> Color {
+pub fn interpolate_color(color1: Color, color2: Color, t: f32) -> Color {
     let t = t.max(0.0).min(1.0);
     let t_inv = 1.0 - t;
 
@@ -237,6 +204,11 @@ fn interpolate_color(color1: Color, color2: Color, t: f32) -> Color {
 ///
 /// # Returns
 /// RGBA pixel data (4 bytes per pixel)
+///
+/// # Performance
+/// Uses rayon for parallel row processing. A 256×256 tile has 65,536 pixels,
+/// which are processed across multiple CPU cores for improved throughput.
+/// Buffer pooling reduces allocation overhead under high load.
 pub fn render_grid<F>(
     data: &[f32],
     width: usize,
@@ -246,207 +218,78 @@ pub fn render_grid<F>(
     color_fn: F,
 ) -> Vec<u8>
 where
-    F: Fn(f32) -> Color,
+    F: Fn(f32) -> Color + Sync,
 {
-    let mut pixels = vec![0u8; width * height * 4];
+    // Use buffer pool for the pixel buffer
+    crate::buffer_pool::take_pixel_buffer(width, height, |pixels| {
+        render_grid_into(data, width, height, min_val, max_val, &color_fn, pixels);
+    })
+}
+
+/// Render grid data into a pre-allocated buffer.
+///
+/// Note: `height` is only used for debug validation. The actual row count
+/// is derived from the `pixels` slice length to support partial rendering.
+fn render_grid_into<F>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    min_val: f32,
+    max_val: f32,
+    color_fn: &F,
+    pixels: &mut [u8],
+)
+where
+    F: Fn(f32) -> Color + Sync,
+{
+    use rayon::prelude::*;
+    
+    // Validate buffer size matches expected dimensions
+    debug_assert_eq!(
+        pixels.len(),
+        width * height * 4,
+        "pixel buffer size mismatch: expected {}x{}x4={}, got {}",
+        width, height, width * height * 4, pixels.len()
+    );
     
     let range = max_val - min_val;
     let range = if range.abs() < 0.001 { 1.0 } else { range };
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-            if idx < data.len() {
-                let value = data[idx];
-                
-                // Handle NaN as transparent (for data outside geographic bounds)
-                if value.is_nan() {
-                    let pixel_idx = idx * 4;
-                    pixels[pixel_idx] = 0;     // R
-                    pixels[pixel_idx + 1] = 0; // G
-                    pixels[pixel_idx + 2] = 0; // B
-                    pixels[pixel_idx + 3] = 0; // A (transparent)
-                    continue;
-                }
-                
-                let normalized = (value - min_val) / range;
-                let normalized = normalized.max(0.0).min(1.0);
-                
-                let color = color_fn(normalized);
-                
-                let pixel_idx = idx * 4;
-                pixels[pixel_idx] = color.r;
-                pixels[pixel_idx + 1] = color.g;
-                pixels[pixel_idx + 2] = color.b;
-                pixels[pixel_idx + 3] = color.a;
-            }
-        }
-    }
-
+    // Process rows in parallel - each row is independent
+    // row_bytes = width * 4 (RGBA)
+    let row_bytes = width * 4;
+    
     pixels
-}
-
-/// Render temperature grid data
-pub fn render_temperature(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    min_temp: f32,
-    max_temp: f32,
-) -> Vec<u8> {
-    render_grid(data, width, height, min_temp, max_temp, |norm| {
-        // Convert normalized value (0-1) back to temperature range
-        let temp = min_temp + (max_temp - min_temp) * norm;
-        temperature_color(temp)
-    })
-}
-
-/// Wind speed color scale (m/s)
-/// Maps wind speed values to colors (0-20 m/s range)
-pub fn wind_speed_color(speed_ms: f32) -> Color {
-    // Wind speed scale:
-    // 0 m/s: Calm (light gray)
-    // 5 m/s: Light breeze (light cyan)
-    // 10 m/s: Moderate (yellow)
-    // 15 m/s: Fresh gale (orange)
-    // 20+ m/s: Strong (dark red)
-    
-    match speed_ms {
-        s if s < 0.0 => Color::new(200, 200, 200, 255),    // Calm
-        s if s < 5.0 => interpolate_color(
-            Color::new(200, 200, 200, 255),
-            Color::new(0, 200, 255, 255),
-            s / 5.0,
-        ),
-        s if s < 10.0 => interpolate_color(
-            Color::new(0, 200, 255, 255),
-            Color::new(255, 255, 0, 255),
-            (s - 5.0) / 5.0,
-        ),
-        s if s < 15.0 => interpolate_color(
-            Color::new(255, 255, 0, 255),
-            Color::new(255, 165, 0, 255),
-            (s - 10.0) / 5.0,
-        ),
-        s if s < 20.0 => interpolate_color(
-            Color::new(255, 165, 0, 255),
-            Color::new(139, 0, 0, 255),
-            (s - 15.0) / 5.0,
-        ),
-        _ => Color::new(75, 0, 0, 255),                     // Dark red
-    }
-}
-
-/// Pressure color scale (hPa)
-/// Maps pressure values to colors (950-1050 hPa range)
-pub fn pressure_color(pressure_hpa: f32) -> Color {
-    // Pressure scale:
-    // <970 hPa: Low (purple/blue) - stormy
-    // 970-990 hPa: Below normal (blue)
-    // 990-1010 hPa: Normal (green)
-    // 1010-1030 hPa: Above normal (yellow)
-    // >1030 hPa: High (red)
-    
-    match pressure_hpa {
-        p if p < 970.0 => Color::new(75, 0, 130, 255),      // Indigo (stormy)
-        p if p < 990.0 => interpolate_color(
-            Color::new(75, 0, 130, 255),
-            Color::new(0, 0, 255, 255),
-            (p - 970.0) / 20.0,
-        ),
-        p if p < 1010.0 => interpolate_color(
-            Color::new(0, 0, 255, 255),
-            Color::new(0, 255, 0, 255),
-            (p - 990.0) / 20.0,
-        ),
-        p if p < 1030.0 => interpolate_color(
-            Color::new(0, 255, 0, 255),
-            Color::new(255, 255, 0, 255),
-            (p - 1010.0) / 20.0,
-        ),
-        p if p < 1050.0 => interpolate_color(
-            Color::new(255, 255, 0, 255),
-            Color::new(255, 0, 0, 255),
-            (p - 1030.0) / 20.0,
-        ),
-        _ => Color::new(139, 0, 0, 255),                     // Dark red
-    }
-}
-
-/// Humidity color scale (0-100%)
-/// Maps relative humidity values to colors
-pub fn humidity_color(humidity_percent: f32) -> Color {
-    // Humidity scale:
-    // 0%: Dry (tan)
-    // 25%: Dry-ish (light yellow)
-    // 50%: Moderate (yellow-green)
-    // 75%: Wet (light blue)
-    // 100%: Saturated (dark blue)
-    
-    match humidity_percent {
-        h if h < 0.0 => Color::new(210, 180, 140, 255),     // Tan
-        h if h < 25.0 => interpolate_color(
-            Color::new(210, 180, 140, 255),
-            Color::new(255, 255, 150, 255),
-            h / 25.0,
-        ),
-        h if h < 50.0 => interpolate_color(
-            Color::new(255, 255, 150, 255),
-            Color::new(173, 255, 47, 255),
-            (h - 25.0) / 25.0,
-        ),
-        h if h < 75.0 => interpolate_color(
-            Color::new(173, 255, 47, 255),
-            Color::new(100, 200, 255, 255),
-            (h - 50.0) / 25.0,
-        ),
-        h if h <= 100.0 => interpolate_color(
-            Color::new(100, 200, 255, 255),
-            Color::new(25, 50, 200, 255),
-            (h - 75.0) / 25.0,
-        ),
-        _ => Color::new(25, 50, 200, 255),                   // Dark blue
-    }
-}
-
-/// Render wind speed grid data
-pub fn render_wind_speed(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    min_speed: f32,
-    max_speed: f32,
-) -> Vec<u8> {
-    render_grid(data, width, height, min_speed, max_speed, |norm| {
-        let speed = min_speed + (max_speed - min_speed) * norm;
-        wind_speed_color(speed)
-    })
-}
-
-/// Render pressure grid data
-pub fn render_pressure(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    min_pressure: f32,
-    max_pressure: f32,
-) -> Vec<u8> {
-    render_grid(data, width, height, min_pressure, max_pressure, |norm| {
-        let pressure = min_pressure + (max_pressure - min_pressure) * norm;
-        pressure_color(pressure)
-    })
-}
-
-/// Render humidity grid data
-pub fn render_humidity(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    min_humidity: f32,
-    max_humidity: f32,
-) -> Vec<u8> {
-    render_grid(data, width, height, min_humidity, max_humidity, |norm| {
-        let humidity = min_humidity + (max_humidity - min_humidity) * norm;
-        humidity_color(humidity)
-    })
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let data_row_start = y * width;
+            
+            for x in 0..width {
+                let data_idx = data_row_start + x;
+                let pixel_idx = x * 4;
+                
+                if data_idx < data.len() {
+                    let value = data[data_idx];
+                    
+                    // Handle NaN as transparent (for data outside geographic bounds)
+                    if value.is_nan() {
+                        row[pixel_idx] = 0;     // R
+                        row[pixel_idx + 1] = 0; // G
+                        row[pixel_idx + 2] = 0; // B
+                        row[pixel_idx + 3] = 0; // A (transparent)
+                    } else {
+                        let normalized = (value - min_val) / range;
+                        let normalized = normalized.max(0.0).min(1.0);
+                        
+                        let color = color_fn(normalized);
+                        
+                        row[pixel_idx] = color.r;
+                        row[pixel_idx + 1] = color.g;
+                        row[pixel_idx + 2] = color.b;
+                        row[pixel_idx + 3] = color.a;
+                    }
+                }
+            }
+        });
 }

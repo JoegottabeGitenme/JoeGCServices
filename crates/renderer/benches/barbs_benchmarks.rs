@@ -10,6 +10,90 @@ use renderer::barbs::{
 };
 use renderer::png;
 
+// =============================================================================
+// TILE EXPANSION COMPARISON: 3x3 Tiles vs Pixel Buffer
+// =============================================================================
+
+/// Simulate 3x3 tile expansion approach (current implementation)
+/// Renders 768x768 and crops to center 256x256
+fn render_barbs_3x3_expansion(
+    u_data_768: &[f32],
+    v_data_768: &[f32],
+    bbox_768: [f32; 4],
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Render at 768x768 (3x3 tiles)
+    let expanded_pixels = render_wind_barbs_aligned(
+        u_data_768,
+        v_data_768,
+        768,
+        768,
+        bbox_768,
+        config,
+    );
+    
+    // Crop center 256x256 tile
+    crop_center_tile(&expanded_pixels, 768, 256)
+}
+
+/// Simulate pixel buffer approach (proposed implementation)
+/// Renders 376x376 (256 + 60px buffer on each side) and crops to center 256x256
+fn render_barbs_pixel_buffer(
+    u_data_376: &[f32],
+    v_data_376: &[f32],
+    bbox_376: [f32; 4],
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Render at 376x376 (256 + 60*2 buffer)
+    let buffered_pixels = render_wind_barbs_aligned(
+        u_data_376,
+        v_data_376,
+        376,
+        376,
+        bbox_376,
+        config,
+    );
+    
+    // Crop center 256x256 tile (60px offset)
+    crop_center_with_buffer(&buffered_pixels, 376, 256, 60)
+}
+
+/// Crop center tile from 3x3 expanded render (256px offset in 768px image)
+fn crop_center_tile(expanded_pixels: &[u8], expanded_width: usize, tile_size: usize) -> Vec<u8> {
+    let offset = (expanded_width - tile_size) / 2; // 256 for 768->256
+    let mut result = vec![0u8; tile_size * tile_size * 4];
+    
+    for row in 0..tile_size {
+        let src_y = offset + row;
+        let src_start = (src_y * expanded_width + offset) * 4;
+        let dst_start = row * tile_size * 4;
+        result[dst_start..dst_start + tile_size * 4]
+            .copy_from_slice(&expanded_pixels[src_start..src_start + tile_size * 4]);
+    }
+    
+    result
+}
+
+/// Crop center tile from buffer-expanded render
+fn crop_center_with_buffer(
+    buffered_pixels: &[u8],
+    buffered_width: usize,
+    tile_size: usize,
+    buffer: usize,
+) -> Vec<u8> {
+    let mut result = vec![0u8; tile_size * tile_size * 4];
+    
+    for row in 0..tile_size {
+        let src_y = buffer + row;
+        let src_start = (src_y * buffered_width + buffer) * 4;
+        let dst_start = row * tile_size * 4;
+        result[dst_start..dst_start + tile_size * 4]
+            .copy_from_slice(&buffered_pixels[src_start..src_start + tile_size * 4]);
+    }
+    
+    result
+}
+
 /// Generate U/V wind component grids with realistic patterns.
 fn generate_wind_components(width: usize, height: usize) -> (Vec<f32>, Vec<f32>) {
     let mut rng = rand::thread_rng();
@@ -282,6 +366,212 @@ fn bench_wind_speed_distribution(c: &mut Criterion) {
     group.finish();
 }
 
+// =============================================================================
+// TILE EXPANSION COMPARISON BENCHMARKS
+// =============================================================================
+
+fn bench_tile_expansion_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tile_expansion_comparison");
+    group.sample_size(20);
+
+    // Generate data for different render sizes
+    // 3x3 approach: 768x768 pixels
+    let (u_768, v_768) = generate_uniform_wind(768, 768, 10.0, 10.0);
+    // Buffer approach: 376x376 pixels (256 + 60*2)
+    let (u_376, v_376) = generate_uniform_wind(376, 376, 10.0, 10.0);
+    // No expansion: 256x256 pixels (for baseline)
+    let (u_256, v_256) = generate_uniform_wind(256, 256, 10.0, 10.0);
+
+    // Sample bbox covering a typical tile (e.g., zoom 6 tile over CONUS)
+    // Original tile bbox
+    let bbox_256: [f32; 4] = [-100.0, 35.0, -94.375, 40.97];
+    
+    // 3x3 expanded bbox (3x the geographic area)
+    let lon_span = bbox_256[2] - bbox_256[0];
+    let lat_span = bbox_256[3] - bbox_256[1];
+    let bbox_768: [f32; 4] = [
+        bbox_256[0] - lon_span,  // expand left by 1 tile
+        bbox_256[1] - lat_span,  // expand down by 1 tile
+        bbox_256[2] + lon_span,  // expand right by 1 tile
+        bbox_256[3] + lat_span,  // expand up by 1 tile
+    ];
+    
+    // Buffer expanded bbox (60px buffer = 60/256 * tile_span on each side)
+    let buffer_ratio = 60.0 / 256.0;
+    let lon_buffer = lon_span * buffer_ratio;
+    let lat_buffer = lat_span * buffer_ratio;
+    let bbox_376: [f32; 4] = [
+        bbox_256[0] - lon_buffer,
+        bbox_256[1] - lat_buffer,
+        bbox_256[2] + lon_buffer,
+        bbox_256[3] + lat_buffer,
+    ];
+
+    let config = BarbConfig {
+        size: 108,  // Default barb size
+        spacing: 30,
+        color: "#000000".to_string(),
+    };
+
+    // Benchmark 1: No expansion (baseline, has edge artifacts)
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("no_expansion_256", |b| {
+        b.iter(|| {
+            render_wind_barbs_aligned(
+                black_box(&u_256),
+                black_box(&v_256),
+                256,
+                256,
+                black_box(bbox_256),
+                black_box(&config),
+            )
+        });
+    });
+
+    // Benchmark 2: 3x3 tile expansion (current approach)
+    group.bench_function("3x3_expansion_768", |b| {
+        b.iter(|| {
+            render_barbs_3x3_expansion(
+                black_box(&u_768),
+                black_box(&v_768),
+                black_box(bbox_768),
+                black_box(&config),
+            )
+        });
+    });
+
+    // Benchmark 3: Pixel buffer approach (60px buffer)
+    group.bench_function("pixel_buffer_376", |b| {
+        b.iter(|| {
+            render_barbs_pixel_buffer(
+                black_box(&u_376),
+                black_box(&v_376),
+                black_box(bbox_376),
+                black_box(&config),
+            )
+        });
+    });
+
+    // Benchmark 4: Just the cropping overhead
+    let expanded_pixels_768 = render_wind_barbs_aligned(&u_768, &v_768, 768, 768, bbox_768, &config);
+    let buffered_pixels_376 = render_wind_barbs_aligned(&u_376, &v_376, 376, 376, bbox_376, &config);
+
+    group.bench_function("crop_3x3_768_to_256", |b| {
+        b.iter(|| crop_center_tile(black_box(&expanded_pixels_768), 768, 256));
+    });
+
+    group.bench_function("crop_buffer_376_to_256", |b| {
+        b.iter(|| crop_center_with_buffer(black_box(&buffered_pixels_376), 376, 256, 60));
+    });
+
+    group.finish();
+}
+
+/// Benchmark the full pipeline including PNG encoding for both approaches
+fn bench_tile_expansion_full_pipeline(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tile_expansion_full_pipeline");
+    group.sample_size(20);
+
+    // Generate data
+    let (u_768, v_768) = generate_uniform_wind(768, 768, 10.0, 10.0);
+    let (u_376, v_376) = generate_uniform_wind(376, 376, 10.0, 10.0);
+    let (u_256, v_256) = generate_uniform_wind(256, 256, 10.0, 10.0);
+
+    let bbox_256: [f32; 4] = [-100.0, 35.0, -94.375, 40.97];
+    let lon_span = bbox_256[2] - bbox_256[0];
+    let lat_span = bbox_256[3] - bbox_256[1];
+    let bbox_768: [f32; 4] = [
+        bbox_256[0] - lon_span,
+        bbox_256[1] - lat_span,
+        bbox_256[2] + lon_span,
+        bbox_256[3] + lat_span,
+    ];
+    let buffer_ratio = 60.0 / 256.0;
+    let lon_buffer = lon_span * buffer_ratio;
+    let lat_buffer = lat_span * buffer_ratio;
+    let bbox_376: [f32; 4] = [
+        bbox_256[0] - lon_buffer,
+        bbox_256[1] - lat_buffer,
+        bbox_256[2] + lon_buffer,
+        bbox_256[3] + lat_buffer,
+    ];
+
+    let config = BarbConfig {
+        size: 108,
+        spacing: 30,
+        color: "#000000".to_string(),
+    };
+
+    // Full pipeline: render + crop + PNG encode
+    group.bench_function("full_no_expansion", |b| {
+        b.iter(|| {
+            let pixels = render_wind_barbs_aligned(&u_256, &v_256, 256, 256, bbox_256, &config);
+            png::create_png(&pixels, 256, 256)
+        });
+    });
+
+    group.bench_function("full_3x3_expansion", |b| {
+        b.iter(|| {
+            let pixels = render_barbs_3x3_expansion(&u_768, &v_768, bbox_768, &config);
+            png::create_png(&pixels, 256, 256)
+        });
+    });
+
+    group.bench_function("full_pixel_buffer_60px", |b| {
+        b.iter(|| {
+            let pixels = render_barbs_pixel_buffer(&u_376, &v_376, bbox_376, &config);
+            png::create_png(&pixels, 256, 256)
+        });
+    });
+
+    group.finish();
+}
+
+/// Compare different buffer sizes to find optimal balance
+fn bench_buffer_size_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("buffer_size_comparison");
+    group.sample_size(20);
+
+    let bbox_256: [f32; 4] = [-100.0, 35.0, -94.375, 40.97];
+    let lon_span = bbox_256[2] - bbox_256[0];
+    let lat_span = bbox_256[3] - bbox_256[1];
+
+    let config = BarbConfig {
+        size: 108,
+        spacing: 30,
+        color: "#000000".to_string(),
+    };
+
+    // Test various buffer sizes: 30, 45, 60, 80, 100, 120
+    for buffer_px in [30, 45, 60, 80, 100, 120] {
+        let render_size = 256 + 2 * buffer_px;
+        let (u_data, v_data) = generate_uniform_wind(render_size, render_size, 10.0, 10.0);
+        
+        let buffer_ratio = buffer_px as f32 / 256.0;
+        let lon_buffer = lon_span * buffer_ratio;
+        let lat_buffer = lat_span * buffer_ratio;
+        let bbox_expanded: [f32; 4] = [
+            bbox_256[0] - lon_buffer,
+            bbox_256[1] - lat_buffer,
+            bbox_256[2] + lon_buffer,
+            bbox_256[3] + lat_buffer,
+        ];
+
+        group.bench_with_input(
+            BenchmarkId::new("buffer_px", buffer_px),
+            &(render_size, u_data, v_data, bbox_expanded, buffer_px),
+            |b, (size, u, v, bbox, buf)| {
+                b.iter(|| {
+                    let pixels = render_wind_barbs_aligned(u, v, *size, *size, *bbox, &config);
+                    crop_center_with_buffer(&pixels, *size, 256, *buf)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_uv_to_speed_direction,
@@ -292,5 +582,8 @@ criterion_group!(
     bench_barb_size_impact,
     bench_barb_full_pipeline,
     bench_wind_speed_distribution,
+    bench_tile_expansion_comparison,
+    bench_tile_expansion_full_pipeline,
+    bench_buffer_size_comparison,
 );
 criterion_main!(benches);

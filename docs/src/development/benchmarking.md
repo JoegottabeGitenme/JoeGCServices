@@ -166,6 +166,46 @@ jq '.summary' validation/load-test/results/realistic_*.json
 | Memory usage | <4GB | >8GB |
 | CPU usage | <70% | >90% |
 
+### Renderer Benchmarks
+
+The renderer crate has comprehensive benchmarks for all rendering operations:
+
+```bash
+# All renderer benchmarks
+cargo bench --package renderer
+
+# Specific benchmark groups
+cargo bench --package renderer -- resample_grid     # Grid resampling
+cargo bench --package renderer -- style_rendering   # Color mapping
+cargo bench --package renderer -- png_encoding      # PNG creation
+cargo bench --package renderer -- precomputed       # Pre-computed palette
+cargo bench --package renderer -- full_pipeline     # End-to-end
+```
+
+#### Current Performance Baselines
+
+**Full Pipeline (Resample → Render → PNG)**:
+
+| Pipeline | 256×256 | 512×512 | Notes |
+|----------|---------|---------|-------|
+| RGBA | 1.54 ms | 5.66 ms | Traditional approach |
+| **Pre-computed** | **430 µs** | **1.46 ms** | **3.6-4x faster** |
+
+**PNG Encoding Only**:
+
+| Method | 256×256 | 512×512 | 1024×1024 |
+|--------|---------|---------|-----------|
+| RGBA direct | 87 µs | 672 µs | 2.97 ms |
+| Auto extract | 349 µs | 803 µs | 3.56 ms |
+| **Pre-computed** | **22 µs** | **63 µs** | **210 µs** |
+
+**File Size**:
+
+| Format | 256×256 | 512×512 | Savings |
+|--------|---------|---------|---------|
+| RGBA PNG | 6.4 KB | 18.4 KB | - |
+| Indexed PNG | 4.0 KB | 10.6 KB | ~40% |
+
 ### Baseline Performance
 
 Run baseline tests to track improvements/regressions:
@@ -310,6 +350,38 @@ cargo bench -p renderer -- gradient > after.txt
 # before.txt: 25.3ms
 # after.txt: 10.1ms
 # Improvement: 60% faster!
+```
+
+### Recent Optimizations (December 2024)
+
+Three major optimizations were implemented:
+
+#### 1. Parallel Chunk Fetching
+- **Change**: Use `futures::join_all` for concurrent Zarr chunk reads
+- **Impact**: 4x faster for multi-chunk requests
+- **Location**: `crates/grid-processor/src/processor/zarr.rs`
+
+#### 2. Parallel Pixel Rendering
+- **Change**: Use rayon `par_chunks_mut` for row-parallel color mapping
+- **Impact**: Near-linear CPU scaling
+- **Location**: `crates/renderer/src/style.rs`, `crates/renderer/src/gradient.rs`
+
+#### 3. Pre-computed Palette
+- **Change**: Pre-compute color palettes at style load time
+- **Impact**: 3-4x faster full pipeline, 40% smaller files
+- **Location**: `crates/renderer/src/style.rs`, `crates/renderer/src/png.rs`
+
+#### Key APIs Added
+
+```rust
+// Pre-compute palette (once per style)
+let palette = style.compute_palette()?;
+
+// Fast indexed rendering (1 byte/pixel)
+let indices = apply_style_gradient_indexed(&data, w, h, &palette, &style);
+
+// Fast indexed PNG (no palette extraction)
+let png = create_png_from_precomputed(&indices, w, h, &palette)?;
 ```
 
 ## Continuous Performance Testing

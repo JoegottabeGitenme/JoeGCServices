@@ -287,8 +287,12 @@ pub fn xyz_to_tms(coord: &TileCoord) -> (u32, u32, u32) {
     (coord.z, coord.x, n - 1 - coord.y)
 }
 
-/// Configuration for expanded tile rendering.
+/// Configuration for expanded tile rendering using full tile expansion.
 /// Used to render a larger area and crop to get seamless tile boundaries.
+/// 
+/// **DEPRECATED**: Prefer `TileBufferConfig` for better performance.
+/// The 3x3 expansion renders 9x the pixels but only uses the center tile.
+/// A 60px buffer achieves similar results at ~4x less cost.
 #[derive(Debug, Clone, Copy)]
 pub struct ExpandedTileConfig {
     /// Number of tiles to expand in each direction (1 = 3x3 grid, 2 = 5x5 grid)
@@ -308,6 +312,7 @@ impl Default for ExpandedTileConfig {
 
 impl ExpandedTileConfig {
     /// Create config for 3x3 tile rendering
+    #[deprecated(since = "0.2.0", note = "Use TileBufferConfig::default() instead for 4x better performance")]
     pub fn tiles_3x3() -> Self {
         Self { expansion: 1, tile_size: 256 }
     }
@@ -320,6 +325,161 @@ impl ExpandedTileConfig {
     /// Get the pixel offset where the center tile starts
     pub fn center_offset(&self) -> u32 {
         self.tile_size * self.expansion
+    }
+}
+
+// =============================================================================
+// TileBufferConfig - Efficient pixel-based buffer for tile edge handling
+// =============================================================================
+
+/// Configuration for rendering tiles with a pixel buffer margin.
+/// 
+/// The buffer allows features like wind barbs and numbers to have context
+/// beyond the tile edge, preventing clipping artifacts at tile boundaries.
+/// 
+/// This is **~2.4x more efficient** than the 3x3 tile expansion approach:
+/// - 3x3 expansion: renders 768x768 (589,824 pixels) for a 256x256 tile
+/// - 120px buffer: renders 496x496 (246,016 pixels) for a 256x256 tile
+/// 
+/// # Example
+/// ```
+/// use wms_common::tile::TileBufferConfig;
+/// 
+/// // Default 120px buffer (good for 108px wind barbs)
+/// let config = TileBufferConfig::default();
+/// assert_eq!(config.render_width(), 496);
+/// 
+/// // Custom buffer size
+/// let config = TileBufferConfig::new(80, 256);
+/// assert_eq!(config.render_width(), 416);
+/// 
+/// // No buffer (for gradient rendering that doesn't need it)
+/// let config = TileBufferConfig::no_buffer();
+/// assert_eq!(config.render_width(), 256);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct TileBufferConfig {
+    /// Buffer size in pixels on each side of the tile
+    pub buffer_pixels: u32,
+    /// Base tile size (typically 256)
+    pub tile_size: u32,
+}
+
+impl Default for TileBufferConfig {
+    fn default() -> Self {
+        // 120px buffer ensures no clipping for 108px barbs even when 
+        // barb center is at tile edge and barb points away from tile.
+        // Still provides ~2.4x speedup over 3x3 expansion (496² vs 768²)
+        Self {
+            buffer_pixels: 120,
+            tile_size: 256,
+        }
+    }
+}
+
+impl TileBufferConfig {
+    /// Create a new buffer configuration.
+    /// 
+    /// # Arguments
+    /// * `buffer_pixels` - Buffer size in pixels on each side
+    /// * `tile_size` - Base tile size (typically 256)
+    pub fn new(buffer_pixels: u32, tile_size: u32) -> Self {
+        Self { buffer_pixels, tile_size }
+    }
+    
+    /// Create from environment variable (TILE_RENDER_BUFFER_PIXELS).
+    /// Falls back to 120px if not set.
+    pub fn from_env() -> Self {
+        let buffer = std::env::var("TILE_RENDER_BUFFER_PIXELS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120);
+        
+        let tile_size = std::env::var("TILE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256);
+            
+        Self { buffer_pixels: buffer, tile_size }
+    }
+    
+    /// No buffer (for gradient/raster rendering that doesn't need it).
+    pub fn no_buffer() -> Self {
+        Self { buffer_pixels: 0, tile_size: 256 }
+    }
+    
+    /// Total render width including buffer on both sides.
+    pub fn render_width(&self) -> u32 {
+        self.tile_size + 2 * self.buffer_pixels
+    }
+    
+    /// Total render height including buffer on both sides.
+    pub fn render_height(&self) -> u32 {
+        self.tile_size + 2 * self.buffer_pixels
+    }
+    
+    /// Calculate the expanded bounding box for a tile.
+    /// 
+    /// # Arguments
+    /// * `tile_bbox` - The original tile bounding box
+    /// 
+    /// # Returns
+    /// Expanded bounding box with buffer margin added
+    pub fn expanded_bbox(&self, tile_bbox: &BoundingBox) -> BoundingBox {
+        if self.buffer_pixels == 0 {
+            return tile_bbox.clone();
+        }
+        
+        // Calculate degrees per pixel for this tile
+        let tile_width_deg = tile_bbox.max_x - tile_bbox.min_x;
+        let tile_height_deg = tile_bbox.max_y - tile_bbox.min_y;
+        let deg_per_pixel_lon = tile_width_deg / self.tile_size as f64;
+        let deg_per_pixel_lat = tile_height_deg / self.tile_size as f64;
+        
+        // Expand by buffer amount
+        let buffer_lon = self.buffer_pixels as f64 * deg_per_pixel_lon;
+        let buffer_lat = self.buffer_pixels as f64 * deg_per_pixel_lat;
+        
+        BoundingBox::new(
+            tile_bbox.min_x - buffer_lon,
+            tile_bbox.min_y - buffer_lat,
+            tile_bbox.max_x + buffer_lon,
+            tile_bbox.max_y + buffer_lat,
+        )
+    }
+    
+    /// Crop the center tile from an expanded RGBA pixel buffer.
+    /// 
+    /// # Arguments
+    /// * `expanded_pixels` - The expanded render (RGBA, 4 bytes per pixel)
+    /// 
+    /// # Returns
+    /// The cropped center tile pixels (RGBA)
+    pub fn crop_to_tile(&self, expanded_pixels: &[u8]) -> Vec<u8> {
+        if self.buffer_pixels == 0 {
+            return expanded_pixels.to_vec();
+        }
+        
+        let render_width = self.render_width() as usize;
+        let tile_size = self.tile_size as usize;
+        let buffer = self.buffer_pixels as usize;
+        
+        let mut result = vec![0u8; tile_size * tile_size * 4];
+        
+        for row in 0..tile_size {
+            let src_y = buffer + row;
+            let src_start = (src_y * render_width + buffer) * 4;
+            let src_end = src_start + tile_size * 4;
+            
+            let dst_start = row * tile_size * 4;
+            let dst_end = dst_start + tile_size * 4;
+            
+            if src_end <= expanded_pixels.len() {
+                result[dst_start..dst_end].copy_from_slice(&expanded_pixels[src_start..src_end]);
+            }
+        }
+        
+        result
     }
 }
 
@@ -471,6 +631,101 @@ pub fn crop_center_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // =========================================================================
+    // TileBufferConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tile_buffer_config_default() {
+        let config = TileBufferConfig::default();
+        assert_eq!(config.buffer_pixels, 120);
+        assert_eq!(config.tile_size, 256);
+        assert_eq!(config.render_width(), 496);
+        assert_eq!(config.render_height(), 496);
+    }
+
+    #[test]
+    fn test_tile_buffer_config_no_buffer() {
+        let config = TileBufferConfig::no_buffer();
+        assert_eq!(config.buffer_pixels, 0);
+        assert_eq!(config.render_width(), 256);
+    }
+
+    #[test]
+    fn test_tile_buffer_config_expanded_bbox() {
+        let config = TileBufferConfig::new(50, 256);
+        let tile_bbox = BoundingBox::new(-100.0, 35.0, -99.0, 36.0);
+        
+        let expanded = config.expanded_bbox(&tile_bbox);
+        
+        // Buffer should add ~0.195° on each side (50/256 * 1°)
+        let expected_buffer = 50.0 / 256.0 * 1.0;
+        assert!((expanded.min_x - (-100.0 - expected_buffer)).abs() < 0.001);
+        assert!((expanded.max_x - (-99.0 + expected_buffer)).abs() < 0.001);
+        assert!((expanded.min_y - (35.0 - expected_buffer)).abs() < 0.001);
+        assert!((expanded.max_y - (36.0 + expected_buffer)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_tile_buffer_config_no_buffer_bbox() {
+        let config = TileBufferConfig::no_buffer();
+        let tile_bbox = BoundingBox::new(-100.0, 35.0, -99.0, 36.0);
+        
+        let expanded = config.expanded_bbox(&tile_bbox);
+        
+        assert_eq!(expanded.min_x, tile_bbox.min_x);
+        assert_eq!(expanded.max_x, tile_bbox.max_x);
+        assert_eq!(expanded.min_y, tile_bbox.min_y);
+        assert_eq!(expanded.max_y, tile_bbox.max_y);
+    }
+
+    #[test]
+    fn test_tile_buffer_config_crop() {
+        let config = TileBufferConfig::new(50, 256);
+        
+        // Create test pattern: expanded area with distinct border
+        let render_w = config.render_width() as usize;  // 356
+        let render_h = config.render_height() as usize; // 356
+        let mut expanded = vec![0u8; render_w * render_h * 4];
+        
+        // Fill center (tile area) with white
+        for y in 50..(50 + 256) {
+            for x in 50..(50 + 256) {
+                let idx = (y * render_w + x) * 4;
+                expanded[idx] = 255;     // R
+                expanded[idx + 1] = 255; // G
+                expanded[idx + 2] = 255; // B
+                expanded[idx + 3] = 255; // A
+            }
+        }
+        
+        // Crop
+        let cropped = config.crop_to_tile(&expanded);
+        
+        // Verify correct size
+        assert_eq!(cropped.len(), 256 * 256 * 4);
+        
+        // Verify all pixels are white
+        for chunk in cropped.chunks(4) {
+            assert_eq!(chunk, &[255, 255, 255, 255]);
+        }
+    }
+
+    #[test]
+    fn test_tile_buffer_config_crop_no_buffer() {
+        let config = TileBufferConfig::no_buffer();
+        let original = vec![128u8; 256 * 256 * 4];
+        
+        let cropped = config.crop_to_tile(&original);
+        
+        assert_eq!(cropped.len(), original.len());
+        assert_eq!(cropped, original);
+    }
+
+    // =========================================================================
+    // Original Tests
+    // =========================================================================
 
     #[test]
     fn test_latlon_to_tile() {

@@ -23,8 +23,9 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
+  deployments: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -122,82 +123,366 @@ jobs:
             ${{ runner.os }}-cargo-bench-
             ${{ runner.os }}-cargo-
 
-      - name: Download baseline benchmarks
-        uses: actions/cache@v4
-        with:
-          path: target/criterion
-          key: criterion-${{ runner.os }}-${{ github.base_ref || 'main' }}
-          restore-keys: |
-            criterion-${{ runner.os }}-main
-            criterion-${{ runner.os }}-
-
       - name: Run renderer benchmarks
         if: needs.detect-changes.outputs.renderer == 'true' || needs.detect-changes.outputs.wms-common == 'true' || needs.detect-changes.outputs.projection == 'true'
         run: |
-          echo "## Renderer Benchmarks" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Running benchmarks for: render_benchmarks, barbs_benchmarks, contour_benchmarks" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          # Run benchmarks with JSON output for github-action-benchmark
+          cargo bench --package renderer -- --noplot --save-baseline current 2>&1 | tee renderer_bench.txt
           
-          cargo bench --package renderer 2>&1 | tee renderer_bench.txt
-          
-          # Extract timing info for summary
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E "^(test |Benchmarking|time:)" renderer_bench.txt | head -100 >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          # Also output in a format suitable for parsing
+          # Criterion outputs JSON to target/criterion/<benchmark>/new/estimates.json
 
-      - name: Save benchmark results
-        if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: target/criterion
-          key: criterion-${{ runner.os }}-main-${{ github.sha }}
-
-      - name: Generate benchmark comparison
-        if: github.event_name == 'pull_request'
-        id: bench-compare
+      - name: Convert Criterion output to benchmark format
+        id: convert
         run: |
-          # Install critcmp for comparison
-          cargo install critcmp --force
+          # Create a JSON file in the format expected by github-action-benchmark
+          # We'll parse Criterion's estimates.json files
           
-          # Generate comparison report
-          echo "## Benchmark Comparison" >> comparison.md
-          echo "" >> comparison.md
-          echo "Comparing against baseline (main branch):" >> comparison.md
-          echo "" >> comparison.md
+          cat > parse_criterion.py << 'PYTHON_SCRIPT'
+          import json
+          import os
+          import sys
           
-          if [ -d "target/criterion" ]; then
-            echo '```' >> comparison.md
-            critcmp target/criterion --threshold 5 2>&1 | head -100 >> comparison.md || echo "No baseline to compare against" >> comparison.md
-            echo '```' >> comparison.md
+          results = []
+          criterion_dir = "target/criterion"
+          
+          def find_estimates(path):
+              """Recursively find all estimates.json files"""
+              for root, dirs, files in os.walk(path):
+                  if "estimates.json" in files and "new" in root:
+                      yield os.path.join(root, "estimates.json")
+          
+          def get_benchmark_name(path):
+              """Extract benchmark name from path"""
+              # Path like: target/criterion/goes_pipeline/ir_tile_256x256/new/estimates.json
+              parts = path.replace(criterion_dir + "/", "").split("/")
+              # Remove 'new' and 'estimates.json'
+              name_parts = [p for p in parts if p not in ["new", "estimates.json"]]
+              return "/".join(name_parts)
+          
+          if os.path.exists(criterion_dir):
+              for est_file in find_estimates(criterion_dir):
+                  try:
+                      with open(est_file) as f:
+                          data = json.load(f)
+                      
+                      name = get_benchmark_name(est_file)
+                      mean_ns = data.get("mean", {}).get("point_estimate", 0)
+                      
+                      # Convert to appropriate unit
+                      if mean_ns > 0:
+                          results.append({
+                              "name": name,
+                              "unit": "ns",
+                              "value": mean_ns,
+                              "range": f"± {data.get('mean', {}).get('standard_error', 0):.2f}"
+                          })
+                  except Exception as e:
+                      print(f"Warning: Could not parse {est_file}: {e}", file=sys.stderr)
+          
+          # Sort by name for consistent output
+          results.sort(key=lambda x: x["name"])
+          
+          print(json.dumps(results, indent=2))
+          PYTHON_SCRIPT
+          
+          python3 parse_criterion.py > benchmark_results.json
+          
+          echo "Benchmark results:"
+          cat benchmark_results.json
+
+      - name: Download previous benchmark data from gh-pages
+        id: download-baseline
+        run: |
+          # Try to fetch the benchmark data from gh-pages
+          BENCHMARK_URL="https://raw.githubusercontent.com/${{ github.repository }}/gh-pages/dev/bench/data.js"
+          
+          echo "Fetching baseline from: $BENCHMARK_URL"
+          
+          if curl -fsSL "$BENCHMARK_URL" -o baseline_data.js 2>/dev/null; then
+            # Extract JSON from the JavaScript file (it's in format: window.BENCHMARK_DATA = {...})
+            # The data.js file contains: window.BENCHMARK_DATA = { entries: { "Rust Benchmarks": [...] } }
+            sed 's/^window\.BENCHMARK_DATA = //' baseline_data.js | sed 's/;$//' > baseline_data.json
+            
+            # Extract just the latest benchmark entry for comparison
+            cat > extract_baseline.py << 'PYTHON_SCRIPT'
+          import json
+          import sys
+
+          try:
+              with open('baseline_data.json') as f:
+                  data = json.load(f)
+              
+              # Get the entries for "Rust Benchmarks"
+              entries = data.get('entries', {}).get('Rust Benchmarks', [])
+              
+              if entries:
+                  # Get the most recent entry (last in the array)
+                  latest = entries[-1]
+                  benchmarks = latest.get('benches', [])
+                  
+                  # Create a dict for easy lookup: name -> value
+                  baseline = {b['name']: b['value'] for b in benchmarks}
+                  
+                  with open('baseline_lookup.json', 'w') as f:
+                      json.dump(baseline, f)
+                  
+                  print(f"Found {len(baseline)} baseline benchmarks from commit {latest.get('commit', {}).get('id', 'unknown')[:8]}")
+                  sys.exit(0)
+              else:
+                  print("No baseline entries found")
+                  sys.exit(1)
+          except Exception as e:
+              print(f"Error extracting baseline: {e}")
+              sys.exit(1)
+          PYTHON_SCRIPT
+            
+            if python3 extract_baseline.py; then
+              echo "has_baseline=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_baseline=false" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "No baseline benchmarks found for comparison." >> comparison.md
+            echo "No baseline data found (gh-pages may not exist yet)"
+            echo "has_baseline=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create gh-pages branch if it doesn't exist
+        run: |
+          # Check if gh-pages branch exists on remote
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "gh-pages branch does not exist, creating it..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Save current HEAD
+            CURRENT_SHA=$(git rev-parse HEAD)
+            
+            # Create orphan branch with initial commit
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize gh-pages for benchmark data"
+            git push origin gh-pages
+            
+            # Switch back to the original commit
+            git checkout -f $CURRENT_SHA
+            echo "gh-pages branch created successfully"
+          else
+            echo "gh-pages branch already exists"
+          fi
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Rust Benchmarks
+          tool: 'customSmallerIsBetter'
+          output-file-path: benchmark_results.json
+          # Store benchmark data in gh-pages branch
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          # Only push to gh-pages on main branch
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          # Comment on PRs with comparison
+          comment-on-alert: true
+          comment-always: ${{ github.event_name == 'pull_request' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Alert if performance regresses by more than 10%
+          alert-threshold: '110%'
+          fail-on-alert: false
+          # Summary will be added to the workflow
+          summary-always: true
+
+      - name: Generate benchmark summary with comparison
+        if: always()
+        run: |
+          echo "## 📊 Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show which crates were benchmarked
+          echo "### Crates Benchmarked" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Changed | Benchmarked |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|-------------|" >> $GITHUB_STEP_SUMMARY
+          
+          RENDERER="${{ needs.detect-changes.outputs.renderer }}"
+          GRIB2="${{ needs.detect-changes.outputs.grib2-parser }}"
+          PROJECTION="${{ needs.detect-changes.outputs.projection }}"
+          WMS_COMMON="${{ needs.detect-changes.outputs.wms-common }}"
+          
+          # renderer benchmarks run if renderer, wms-common, or projection changed
+          if [[ "$RENDERER" == "true" || "$WMS_COMMON" == "true" || "$PROJECTION" == "true" ]]; then
+            RENDERER_BENCHED="✅"
+          else
+            RENDERER_BENCHED="❌"
           fi
           
-          cat comparison.md >> $GITHUB_STEP_SUMMARY
+          echo "| renderer | $([[ "$RENDERER" == "true" ]] && echo "✅" || echo "❌") | $RENDERER_BENCHED |" >> $GITHUB_STEP_SUMMARY
+          echo "| grib2-parser | $([[ "$GRIB2" == "true" ]] && echo "✅" || echo "❌") | $([[ "$GRIB2" == "true" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| projection | $([[ "$PROJECTION" == "true" ]] && echo "✅" || echo "❌") | $RENDERER_BENCHED |" >> $GITHUB_STEP_SUMMARY
+          echo "| wms-common | $([[ "$WMS_COMMON" == "true" ]] && echo "✅" || echo "❌") | $RENDERER_BENCHED |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Save for PR comment
-          {
-            echo 'COMPARISON<<EOF'
-            cat comparison.md
-            echo 'EOF'
-          } >> $GITHUB_OUTPUT
+          # Show benchmark results with comparison to baseline
+          if [ -f benchmark_results.json ]; then
+            HAS_BASELINE="${{ steps.download-baseline.outputs.has_baseline }}"
+            
+            if [[ "$HAS_BASELINE" == "true" ]]; then
+              echo "### Benchmark Results (vs Previous)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Benchmark | Current | Previous | Change |" >> $GITHUB_STEP_SUMMARY
+              echo "|-----------|---------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### Benchmark Results" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "> ℹ️ *No baseline data available yet. Comparison will be available after first run on main.*" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Benchmark | Time |" >> $GITHUB_STEP_SUMMARY
+              echo "|-----------|------|" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Parse and format results with comparison
+            cat > format_results.py << 'PYTHON_SCRIPT'
+          import json
+          import os
 
-      - name: Comment on PR with benchmark results
+          def format_time(ns):
+              if ns >= 1_000_000_000:
+                  return f"{ns / 1_000_000_000:.2f} s"
+              elif ns >= 1_000_000:
+                  return f"{ns / 1_000_000:.2f} ms"
+              elif ns >= 1_000:
+                  return f"{ns / 1_000:.2f} µs"
+              else:
+                  return f"{ns:.0f} ns"
+
+          def format_change(current, previous):
+              if previous == 0:
+                  return "N/A"
+              pct = ((current - previous) / previous) * 100
+              if pct < -5:
+                  return f"🟢 {pct:+.1f}%"
+              elif pct > 5:
+                  return f"🔴 {pct:+.1f}%"
+              elif pct > 0:
+                  return f"🟡 {pct:+.1f}%"
+              else:
+                  return f"🟡 {pct:.1f}%"
+
+          # Load current results
+          with open('benchmark_results.json') as f:
+              current_results = json.load(f)
+
+          # Try to load baseline
+          baseline = {}
+          has_baseline = os.path.exists('baseline_lookup.json')
+          if has_baseline:
+              with open('baseline_lookup.json') as f:
+                  baseline = json.load(f)
+
+          # Output results
+          for r in current_results[:25]:  # Limit to 25 rows
+              name = r['name']
+              current_ns = r['value']
+              current_str = format_time(current_ns)
+              
+              if has_baseline:
+                  prev_ns = baseline.get(name, 0)
+                  if prev_ns > 0:
+                      prev_str = format_time(prev_ns)
+                      change_str = format_change(current_ns, prev_ns)
+                  else:
+                      prev_str = "—"
+                      change_str = "🆕 new"
+                  print(f"| {name} | {current_str} | {prev_str} | {change_str} |")
+              else:
+                  print(f"| {name} | {current_str} |")
+
+          if len(current_results) > 25:
+              remaining = len(current_results) - 25
+              if has_baseline:
+                  print(f"| *... and {remaining} more* | | | |")
+              else:
+                  print(f"| *... and {remaining} more* | |")
+          PYTHON_SCRIPT
+            
+            python3 format_results.py >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+            echo "📈 **[View Full Benchmark History](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/dev/bench/)**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Legend</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 🟢 **Faster** (>5% improvement)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🟡 **Similar** (within ±5%)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔴 **Slower** (>5% regression)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🆕 **New** benchmark (no baseline)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR with comparison
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             
-            // Read comparison file if it exists
-            let body = '## Benchmark Results\n\n';
+            const formatTime = (ns) => {
+              if (ns >= 1_000_000_000) return `${(ns / 1_000_000_000).toFixed(2)} s`;
+              if (ns >= 1_000_000) return `${(ns / 1_000_000).toFixed(2)} ms`;
+              if (ns >= 1_000) return `${(ns / 1_000).toFixed(2)} µs`;
+              return `${ns.toFixed(0)} ns`;
+            };
             
-            if (fs.existsSync('comparison.md')) {
-              body += fs.readFileSync('comparison.md', 'utf8');
+            const formatChange = (current, previous) => {
+              if (previous === 0) return 'N/A';
+              const pct = ((current - previous) / previous) * 100;
+              if (pct < -5) return `🟢 ${pct.toFixed(1)}%`;
+              if (pct > 5) return `🔴 +${pct.toFixed(1)}%`;
+              return `🟡 ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+            };
+            
+            let body = '## 📊 Benchmark Results\n\n';
+            
+            // Load current results
+            let currentResults = [];
+            if (fs.existsSync('benchmark_results.json')) {
+              currentResults = JSON.parse(fs.readFileSync('benchmark_results.json', 'utf8'));
             }
             
-            // Add changed crates info
+            // Load baseline if available
+            let baseline = {};
+            let hasBaseline = fs.existsSync('baseline_lookup.json');
+            if (hasBaseline) {
+              baseline = JSON.parse(fs.readFileSync('baseline_lookup.json', 'utf8'));
+            }
+            
+            if (hasBaseline) {
+              body += '| Benchmark | Current | Previous | Change |\n';
+              body += '|-----------|---------|----------|--------|\n';
+              
+              currentResults.slice(0, 20).forEach(r => {
+                const prevNs = baseline[r.name] || 0;
+                const currentStr = formatTime(r.value);
+                const prevStr = prevNs > 0 ? formatTime(prevNs) : '—';
+                const change = prevNs > 0 ? formatChange(r.value, prevNs) : '🆕 new';
+                body += `| ${r.name} | ${currentStr} | ${prevStr} | ${change} |\n`;
+              });
+            } else {
+              body += '> ℹ️ *No baseline data available yet.*\n\n';
+              body += '| Benchmark | Time |\n';
+              body += '|-----------|------|\n';
+              
+              currentResults.slice(0, 20).forEach(r => {
+                body += `| ${r.name} | ${formatTime(r.value)} |\n`;
+              });
+            }
+            
+            if (currentResults.length > 20) {
+              body += `\n*... and ${currentResults.length - 20} more benchmarks*\n`;
+            }
+            
             body += '\n\n### Crates Benchmarked\n';
             body += '| Crate | Changed | Benchmarked |\n';
             body += '|-------|---------|-------------|\n';
@@ -207,7 +492,6 @@ jobs:
             const projection = '${{ needs.detect-changes.outputs.projection }}' === 'true';
             const wmsCommon = '${{ needs.detect-changes.outputs.wms-common }}' === 'true';
             
-            // renderer benchmarks run if renderer, wms-common, or projection changed
             const rendererBenched = renderer || wmsCommon || projection;
             
             body += `| renderer | ${renderer ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
@@ -215,11 +499,12 @@ jobs:
             body += `| projection | ${projection ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
             body += `| wms-common | ${wmsCommon ? '✅' : '❌'} | ${rendererBenched ? '✅' : '❌'} |\n`;
             
-            body += '\n\n<details><summary>How to interpret results</summary>\n\n';
-            body += '- **time:** Lower is better\n';
-            body += '- **thrpt:** Higher is better (throughput)\n';
-            body += '- **Change %:** Negative = improvement, Positive = regression\n';
-            body += '- Threshold for reporting: 5% change\n';
+            body += '\n\n> 📈 [View full benchmark history](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/dev/bench/)\n';
+            body += '\n<details><summary>Legend</summary>\n\n';
+            body += '- 🟢 **Faster** (>5% improvement)\n';
+            body += '- 🟡 **Similar** (within ±5%)\n';
+            body += '- 🔴 **Slower** (>5% regression)\n';
+            body += '- 🆕 **New** benchmark (no baseline)\n';
             body += '\n</details>';
             
             // Find existing comment to update
@@ -231,7 +516,7 @@ jobs:
             
             const botComment = comments.find(comment => 
               comment.user.type === 'Bot' && 
-              comment.body.includes('## Benchmark Results')
+              comment.body.includes('## 📊 Benchmark Results')
             );
             
             if (botComment) {
@@ -258,19 +543,29 @@ jobs:
     steps:
       - name: Summary
         run: |
-          echo "## Benchmark Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Benchmark Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [[ "${{ needs.detect-changes.outputs.any_changed }}" != "true" ]]; then
-            echo "No benchmark-relevant crates were changed. Benchmarks skipped." >> $GITHUB_STEP_SUMMARY
+            echo "⏭️ **No benchmark-relevant crates were changed. Benchmarks skipped.**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Benchmarks run when these paths change:" >> $GITHUB_STEP_SUMMARY
-            echo "- crates/renderer/**" >> $GITHUB_STEP_SUMMARY
-            echo "- crates/grib2-parser/**" >> $GITHUB_STEP_SUMMARY
-            echo "- crates/projection/**" >> $GITHUB_STEP_SUMMARY
-            echo "- crates/wms-common/**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`crates/renderer/**\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`crates/grib2-parser/**\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`crates/projection/**\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`crates/wms-common/**\`" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.benchmark.result }}" == "success" ]]; then
+            echo "✅ **Benchmarks completed successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Results have been:" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              echo "- 📤 Pushed to benchmark history (gh-pages branch)" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "- 📊 Added to the job summary above" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.benchmark.result }}" == "failure" ]]; then
+            echo "❌ **Benchmarks failed!** Check the job logs for details." >> $GITHUB_STEP_SUMMARY
           else
-            echo "Benchmarks completed. See job output for details." >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Benchmark job status: ${{ needs.benchmark.result }}" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -281,3 +576,7 @@ jobs:
           echo "| grib2-parser | ${{ needs.detect-changes.outputs.grib2-parser == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| projection | ${{ needs.detect-changes.outputs.projection == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| wms-common | ${{ needs.detect-changes.outputs.wms-common == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "📈 **[View Benchmark History](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/dev/bench/)**" >> $GITHUB_STEP_SUMMARY
