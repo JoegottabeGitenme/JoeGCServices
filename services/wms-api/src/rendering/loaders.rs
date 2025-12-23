@@ -13,7 +13,7 @@ use storage::CatalogEntry;
 use tracing::{info, debug, error, instrument};
 
 use super::types::GridData;
-use crate::state::GridProcessorFactory;
+use grid_processor::GridProcessorFactory;
 
 // ============================================================================
 // ============================================================================
@@ -30,6 +30,7 @@ use crate::state::GridProcessorFactory;
 /// * `entry` - Catalog entry with zarr_metadata
 /// * `bbox` - Optional bounding box (for partial reads)
 /// * `output_size` - Optional output tile dimensions (for pyramid level selection)
+/// * `requires_full_grid` - If true, always read full grid (for non-geographic projections)
 ///
 /// # Returns
 /// GridData containing the grid values and dimensions
@@ -38,6 +39,7 @@ pub async fn load_grid_data(
     entry: &CatalogEntry,
     bbox: Option<[f32; 4]>,
     output_size: Option<(usize, usize)>,
+    requires_full_grid: bool,
 ) -> Result<GridData, String> {
     // Verify entry has Zarr metadata
     if entry.zarr_metadata.is_none() {
@@ -47,7 +49,7 @@ pub async fn load_grid_data(
         ));
     }
     
-    load_grid_data_from_zarr(factory, entry, bbox, output_size).await
+    load_grid_data_from_zarr(factory, entry, bbox, output_size, requires_full_grid).await
 }
 
 /// Load grid data from a Zarr file stored in MinIO.
@@ -61,6 +63,7 @@ pub async fn load_grid_data(
 /// * `entry` - Catalog entry with zarr_metadata
 /// * `bbox` - Optional bounding box to load (if None, loads full grid)
 /// * `output_size` - Optional output dimensions for pyramid level selection
+/// * `requires_full_grid` - If true, always read full grid (for non-geographic projections)
 ///
 /// # Returns
 /// GridData containing the grid values and dimensions
@@ -75,11 +78,12 @@ pub async fn load_grid_data_from_zarr(
     entry: &CatalogEntry,
     bbox: Option<[f32; 4]>,
     output_size: Option<(usize, usize)>,
+    requires_full_grid: bool,
 ) -> Result<GridData, String> {
     use grid_processor::{
         BoundingBox as GpBoundingBox,
         ZarrMetadata,
-        MinioConfig, create_minio_storage,
+        create_minio_storage,
         MultiscaleGridProcessorFactory, parse_multiscale_metadata,
     };
 
@@ -112,9 +116,9 @@ pub async fn load_grid_data_from_zarr(
         format!("/{}", entry.storage_path)
     };
     
-    // Create MinIO storage using the helper (uses correct object_store version)
-    let minio_config = MinioConfig::from_env();
-    let store = create_minio_storage(&minio_config)
+    // Create MinIO storage using factory's config (avoids re-parsing env vars)
+    let minio_config = factory.minio_config();
+    let store = create_minio_storage(minio_config)
         .map_err(|e| {
             error!(
                 error = %e,
@@ -126,14 +130,13 @@ pub async fn load_grid_data_from_zarr(
         })?;
     
     // Determine bbox to read
-    // For HRRR (Lambert Conformal) and other non-geographic projections,
-    // we must read the full grid because the relationship between grid indices
-    // and geographic coordinates is non-linear. Partial bbox reads only work
-    // for regular lat/lon grids like GFS.
-    let is_geographic_grid = entry.model != "hrrr"; // HRRR uses Lambert Conformal
+    // For non-geographic projections (Lambert Conformal, etc.), we must read the
+    // full grid because the relationship between grid indices and geographic
+    // coordinates is non-linear. Partial bbox reads only work for regular lat/lon grids.
+    // The `requires_full_grid` flag is set in model YAML configs based on projection.
     
     let read_bbox = if let Some(bbox_arr) = bbox {
-        if is_geographic_grid {
+        if !requires_full_grid {
             GpBoundingBox::new(
                 bbox_arr[0] as f64,
                 bbox_arr[1] as f64, 
@@ -362,7 +365,7 @@ pub async fn query_point_from_zarr(
 ) -> Result<Option<f32>, String> {
     use grid_processor::{
         GridProcessor, ZarrGridProcessor, ZarrMetadata,
-        MinioConfig, create_minio_storage,
+        create_minio_storage,
     };
 
     // Parse zarr_metadata from catalog entry
@@ -406,9 +409,9 @@ pub async fn query_point_from_zarr(
         format!("/{}", entry.storage_path)
     };
     
-    // Create MinIO storage
-    let minio_config = MinioConfig::from_env();
-    let store = create_minio_storage(&minio_config)
+    // Create MinIO storage using factory's config
+    let minio_config = factory.minio_config();
+    let store = create_minio_storage(minio_config)
         .map_err(|e| {
             error!(error = %e, "Failed to create MinIO storage");
             format!("Failed to create MinIO storage: {}", e)

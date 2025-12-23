@@ -277,12 +277,16 @@ impl ChunkWarmer {
         ]);
         
         // Read through the normal Zarr path - this populates the chunk cache
+        // Check if model requires full grid reads (non-geographic projection)
+        let requires_full_grid = self.state.model_dimensions.requires_full_grid(&entry.model);
+        
         let start = Instant::now();
         let result = load_grid_data(
             &self.state.grid_processor_factory,
             entry,
             bbox,
             Some(output_size),
+            requires_full_grid,
         ).await?;
         
         let read_duration = start.elapsed();

@@ -1,5 +1,5 @@
-- Would like to get different output formats (geotiff, black/white png, etc)
 - scope out creating an API for the grid processor so that we may use it for future EDR work
+- Would like to get different output formats (geotiff, black/white png, etc)
 - how to make EDR work
     - create validation page using lots of AI and pdf files and other specs we can find
     - test validation page against some other EDR servers

@@ -552,6 +552,9 @@ async fn wmts_get_tile(
         }
     }
     
+    // Check if model requires full grid reads (non-geographic projection)
+    let requires_full_grid = state.model_dimensions.requires_full_grid(model);
+
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
@@ -574,6 +577,7 @@ async fn wmts_get_tile(
             &state.catalog, &state.metrics, &state.grid_processor_factory,
             model, &parameter, Some(coord), 256, 256, bbox_array,
             &style_file, forecast_hour, elevation, true,
+            requires_full_grid,
         ).await
     } else {
         let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
@@ -582,6 +586,7 @@ async fn wmts_get_tile(
             forecast_hour, observation_time, elevation, 256, 256,
             Some(bbox_array), &style_file, Some(style), true,
             &state.grid_processor_factory,
+            requires_full_grid,
         ).await
     };
     
@@ -884,6 +889,9 @@ async fn prefetch_single_tile(
     
     let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
     
+    // Check if model requires full grid reads (non-geographic projection)
+    let requires_full_grid = state.model_dimensions.requires_full_grid(model);
+    
     let result = if parameter == "WIND_BARBS" {
         crate::rendering::render_wind_barbs_tile_with_level(
             &state.catalog, &state.grid_processor_factory,
@@ -900,6 +908,7 @@ async fn prefetch_single_tile(
             &state.catalog, &state.metrics, &state.grid_processor_factory,
             model, &parameter, Some(coord), 256, 256, bbox_array,
             &style_file, None, None, true,
+            requires_full_grid,
         ).await
     } else {
         crate::rendering::render_weather_data(
@@ -907,6 +916,7 @@ async fn prefetch_single_tile(
             None, None, None, 256, 256, Some(bbox_array),
             &style_file, Some(style), true,
             &state.grid_processor_factory,
+            requires_full_grid,
         ).await
     };
     

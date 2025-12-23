@@ -16,7 +16,7 @@ use std::time::Instant;
 use tracing::{debug, info};
 
 use super::resampling::resample_for_model_geographic;
-use crate::state::GridProcessorFactory;
+use grid_processor::GridProcessorFactory;
 
 // ============================================================================
 // Public rendering functions

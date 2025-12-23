@@ -19,7 +19,7 @@ use storage::{Catalog, CatalogEntry};
 use std::time::Instant;
 use tracing::info;
 use crate::metrics::{DataSourceType, MetricsCollector};
-use crate::state::GridProcessorFactory;
+use grid_processor::GridProcessorFactory;
 
 // Re-export functions for tests and internal use
 pub(crate) use colorscales::render_with_style_file;
@@ -50,6 +50,7 @@ pub use isolines::render_isolines_tile_with_level;
 /// - `style_file`: Path to style JSON file (from layer config)
 /// - `style_name`: Optional style name to apply from configuration
 /// - `use_mercator`: Use Web Mercator projection for resampling
+/// - `requires_full_grid`: Force full grid read (for non-geographic projections)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -67,11 +68,13 @@ pub async fn render_weather_data_with_level(
     style_file: &str,
     style_name: Option<&str>,
     use_mercator: bool,
+    requires_full_grid: bool,
 ) -> Result<Vec<u8>, String> {
     render_weather_data(
         catalog, metrics, model, parameter,
         forecast_hour, None, level, width, height, bbox,
         style_file, style_name, use_mercator, grid_processor_factory,
+        requires_full_grid,
     ).await
 }
 
@@ -97,6 +100,7 @@ pub async fn render_weather_data_with_level(
 /// - `style_name`: Optional style name within the file
 /// - `use_mercator`: Use Web Mercator projection
 /// - `grid_processor_factory`: Factory for Zarr-based grid access
+/// - `requires_full_grid`: Force full grid read (for non-geographic projections like Lambert)
 pub async fn render_weather_data(
     catalog: &Catalog,
     metrics: &MetricsCollector,
@@ -112,6 +116,7 @@ pub async fn render_weather_data(
     style_name: Option<&str>,
     use_mercator: bool,
     grid_processor_factory: &GridProcessorFactory,
+    requires_full_grid: bool,
 ) -> Result<Vec<u8>, String> {
     // Record model-specific request
     let render_start = Instant::now();
@@ -192,6 +197,7 @@ pub async fn render_weather_data(
         &entry,
         bbox,
         Some((width as usize, height as usize)),  // Output tile size for pyramid selection
+        requires_full_grid,
     ).await?;
     let load_duration = start.elapsed();
     metrics.record_grib_load(load_duration.as_micros() as u64).await;
@@ -314,6 +320,7 @@ pub async fn render_weather_data(
 /// - `forecast_hour`: Optional forecast hour
 /// - `level`: Optional vertical level
 /// - `use_mercator`: Use Web Mercator projection
+/// - `requires_full_grid`: Force full grid read (for non-geographic projections)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -330,6 +337,7 @@ pub async fn render_numbers_tile(
     forecast_hour: Option<u32>,
     level: Option<&str>,
     use_mercator: bool,
+    requires_full_grid: bool,
 ) -> Result<Vec<u8>, String> {
     // Load style configuration for color mapping
     let style_json = std::fs::read_to_string(style_path)
@@ -379,6 +387,7 @@ pub async fn render_numbers_tile(
         &entry,
         Some(bbox),
         Some((width as usize, height as usize)),  // Output tile size for pyramid selection
+        requires_full_grid,
     ).await?;
     
     let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);
@@ -709,6 +718,7 @@ async fn render_numbers_direct_zarr(
 /// - `forecast_hour`: Optional forecast hour
 /// - `level`: Optional vertical level
 /// - `use_mercator`: Use Web Mercator projection
+/// - `requires_full_grid`: Force full grid read (for non-geographic projections)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -726,6 +736,7 @@ pub async fn render_numbers_tile_with_buffer(
     forecast_hour: Option<u32>,
     level: Option<&str>,
     use_mercator: bool,
+    requires_full_grid: bool,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{ExpandedTileConfig, expanded_tile_bbox, crop_center_tile, actual_expanded_dimensions};
     
@@ -809,6 +820,7 @@ pub async fn render_numbers_tile_with_buffer(
         &entry,
         Some(render_bbox),
         Some((render_width as usize, render_height as usize)),  // Output tile size for pyramid selection
+        requires_full_grid,
     ).await?;
     
     let (grid_data, grid_width, grid_height) = (grid_result.data, grid_result.width, grid_result.height);

@@ -44,6 +44,12 @@ pub struct ModelDimensionConfig {
     pub has_time: bool,
     /// Whether ELEVATION dimension is enabled (vertical levels)
     pub has_elevation: bool,
+    /// Whether this model requires reading the full grid (no partial bbox reads).
+    /// 
+    /// Set to true for models with non-geographic projections (e.g., Lambert Conformal)
+    /// where the relationship between grid indices and geographic coordinates is non-linear.
+    /// For these models, partial bbox reads would produce incorrect results.
+    pub requires_full_grid: bool,
 }
 
 impl Default for ModelDimensionConfig {
@@ -55,6 +61,7 @@ impl Default for ModelDimensionConfig {
             has_forecast: true,
             has_time: false,
             has_elevation: true,
+            requires_full_grid: false,  // Most models support partial reads
         }
     }
 }
@@ -82,6 +89,19 @@ struct YamlModelFile {
     dimensions: Option<YamlDimensionsConfig>,
     #[serde(default)]
     schedule: Option<YamlScheduleConfig>,
+    #[serde(default)]
+    grid: Option<YamlGridConfig>,
+}
+
+/// YAML structure for parsing grid config from model files.
+#[derive(Debug, Deserialize)]
+struct YamlGridConfig {
+    /// Projection type (e.g., "geographic", "lambert_conformal")
+    #[serde(default)]
+    projection: Option<String>,
+    /// Explicit flag to require full grid reads (overrides projection inference)
+    #[serde(default)]
+    requires_full_grid: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,6 +177,23 @@ impl ModelDimensionRegistry {
         
         let model_id = yaml.model.id.clone();
         
+        // Determine if full grid reads are required
+        // Can be set explicitly via grid.requires_full_grid, or inferred from projection
+        let requires_full_grid = if let Some(ref grid) = yaml.grid {
+            // Explicit setting takes precedence
+            grid.requires_full_grid.unwrap_or_else(|| {
+                // Infer from projection type - non-geographic projections require full grid
+                match grid.projection.as_deref() {
+                    Some("lambert_conformal") | Some("polar_stereographic") | 
+                    Some("mercator") | Some("geostationary") => true,
+                    Some("geographic") | Some("lat_lon") | Some("equidistant_cylindrical") => false,
+                    _ => false,  // Default to allowing partial reads
+                }
+            })
+        } else {
+            false
+        };
+        
         // Determine dimension type from explicit config or infer from schedule
         let config = if let Some(dims) = yaml.dimensions {
             // Explicit dimensions config
@@ -175,6 +212,7 @@ impl ModelDimensionRegistry {
                 has_forecast: dims.forecast.unwrap_or(dimension_type.is_forecast()),
                 has_time: dims.time.unwrap_or(dimension_type.is_observation()),
                 has_elevation: dims.elevation.unwrap_or(true),
+                requires_full_grid,
             }
         } else if let Some(schedule) = yaml.schedule {
             // Infer from schedule.type if no explicit dimensions config
@@ -189,10 +227,13 @@ impl ModelDimensionRegistry {
                 has_forecast: dimension_type.is_forecast(),
                 has_time: dimension_type.is_observation(),
                 has_elevation: true,
+                requires_full_grid,
             }
         } else {
             // Default to forecast
-            ModelDimensionConfig::default()
+            let mut config = ModelDimensionConfig::default();
+            config.requires_full_grid = requires_full_grid;
+            config
         };
         
         Some((model_id, config))
@@ -217,6 +258,14 @@ impl ModelDimensionRegistry {
     /// Check if a model is forecast type.
     pub fn is_forecast(&self, model: &str) -> bool {
         self.get_dimension_type(model).is_forecast()
+    }
+    
+    /// Check if a model requires full grid reads (no partial bbox optimization).
+    /// 
+    /// Returns true for models with non-geographic projections where partial
+    /// bbox reads would produce incorrect results.
+    pub fn requires_full_grid(&self, model: &str) -> bool {
+        self.get(model).requires_full_grid
     }
     
     /// Get all registered model IDs.

@@ -16,7 +16,7 @@ use super::types::GoesProjectionParams;
 use super::loaders::{load_grid_data, query_point_from_zarr};
 use super::resampling::bilinear_interpolate;
 use crate::metrics::MetricsCollector;
-use crate::state::GridProcessorFactory;
+use grid_processor::GridProcessorFactory;
 
 // ============================================================================
 // Public query functions
@@ -159,9 +159,10 @@ pub async fn query_point_value(
                     model.starts_with("goes");
     
     // Load and sample grid data from Zarr
+    // For point sampling, we always load full grid (efficient query happens in query_point_from_zarr)
     let value = if is_netcdf {
         // Handle NetCDF (GOES satellite) data via Zarr path
-        let grid_result = load_grid_data(grid_processor_factory, &entry, None, None).await?;
+        let grid_result = load_grid_data(grid_processor_factory, &entry, None, None, true).await?;
         let grid_data = grid_result.data;
         let grid_width = grid_result.width;
         let grid_height = grid_result.height;

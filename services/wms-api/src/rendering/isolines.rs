@@ -17,7 +17,7 @@ use tracing::info;
 
 use super::loaders::load_grid_data;
 use super::resampling::resample_grid_for_bbox;
-use crate::state::GridProcessorFactory;
+use grid_processor::GridProcessorFactory;
 
 /// Render isolines (contour lines) for a single tile with optional level.
 pub async fn render_isolines_tile_with_level(
@@ -76,11 +76,13 @@ pub async fn render_isolines_tile_with_level(
     // Load grid data from Zarr storage
     // Pass None for bbox to get full grid (isolines need global min/max for level generation)
     // Also pass None for output_size since we need full resolution for contour extraction
+    // Always require full grid for isolines regardless of projection
     let grid_result = load_grid_data(
         grid_processor_factory,
         &entry,
         None,  // No bbox subset - we need full grid for contour level calculation
         None,  // No output_size - use native resolution for accurate contours
+        true,  // Force full grid read for isolines
     ).await?;
     
     let grid_data = grid_result.data;
