@@ -3839,6 +3839,7 @@ dependencies = [
  "imageproc",
  "projection",
  "rand 0.8.5",
+ "rayon",
  "resvg",
  "rusttype",
  "serde",

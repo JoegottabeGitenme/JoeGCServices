@@ -1,5 +1,6 @@
 //! Style configuration for weather data rendering.
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -475,6 +476,10 @@ pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
 }
 
 /// Apply style-based color mapping to data
+///
+/// # Performance
+/// Uses rayon for parallel row processing. Each row is processed independently
+/// across multiple CPU cores.
 pub fn apply_style_gradient(
     data: &[f32],
     width: usize,
@@ -496,129 +501,124 @@ pub fn apply_style_gradient(
     let stop_values: Vec<f32> = stops.iter().map(|s| s.value).collect();
     
     // Get the transform from the style
-    let transform = style.transform.as_ref();
+    let transform = style.transform.clone();
     
     // Use range from style if specified, otherwise use stop boundaries
     let min_range = style.range.as_ref().map(|r| r.min).unwrap_or(stop_values[0]);
     let max_range = style.range.as_ref().map(|r| r.max).unwrap_or(stop_values[stop_values.len() - 1]);
     
     // Get out_of_range behavior: "clamp" (default), "transparent", or "extend"
-    let out_of_range = style.out_of_range.as_deref().unwrap_or("clamp");
+    let out_of_range_transparent = style.out_of_range.as_deref() == Some("transparent");
     
-    // Render each pixel
-    for (idx, &raw_value) in data.iter().enumerate() {
-        if idx >= width * height {
-            break;
-        }
-        
-        let pixel_offset = idx * 4;
-        
-        // Handle NaN and common missing values as transparent
-        // MRMS uses -99 and -999, other datasets may use different markers
-        if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
-            pixels[pixel_offset] = 0;     // R
-            pixels[pixel_offset + 1] = 0; // G
-            pixels[pixel_offset + 2] = 0; // B
-            pixels[pixel_offset + 3] = 0; // A (transparent)
-            continue;
-        }
-        
-        // Apply transform to convert to display units (e.g., Pa -> hPa, K -> C)
-        let value = apply_transform(raw_value, transform);
-        
-        // Handle out-of-range values based on style setting
-        if value < min_range {
-            match out_of_range {
-                "transparent" => {
-                    // Make out-of-range values transparent
-                    pixels[pixel_offset] = 0;
-                    pixels[pixel_offset + 1] = 0;
-                    pixels[pixel_offset + 2] = 0;
-                    pixels[pixel_offset + 3] = 0;
-                    continue;
-                }
-                "clamp" | _ => {
-                    // Use first stop's color
-                    if let Some((r, g, b, a)) = colors[0] {
-                        pixels[pixel_offset] = r;
-                        pixels[pixel_offset + 1] = g;
-                        pixels[pixel_offset + 2] = b;
-                        pixels[pixel_offset + 3] = a;
-                    }
-                    continue;
-                }
-            }
-        }
-        
-        if value > max_range {
-            match out_of_range {
-                "transparent" => {
-                    // Make out-of-range values transparent
-                    pixels[pixel_offset] = 0;
-                    pixels[pixel_offset + 1] = 0;
-                    pixels[pixel_offset + 2] = 0;
-                    pixels[pixel_offset + 3] = 0;
-                    continue;
-                }
-                "clamp" | _ => {
-                    // Use last stop's color
-                    if let Some((r, g, b, a)) = colors[colors.len() - 1] {
-                        pixels[pixel_offset] = r;
-                        pixels[pixel_offset + 1] = g;
-                        pixels[pixel_offset + 2] = b;
-                        pixels[pixel_offset + 3] = a;
-                    }
-                    continue;
-                }
-            }
-        }
-        
-        // Find the two surrounding color stops based on actual data value
-        let mut low_idx = 0;
-        let mut high_idx = stop_values.len() - 1;
-        
-        for (i, &stop_val) in stop_values.iter().enumerate() {
-            if stop_val <= value {
-                low_idx = i;
-            }
-            if stop_val >= value && i > 0 {
-                high_idx = i;
-                break;
-            }
-        }
-        
-        // Interpolate color between two stops
-        let (r, g, b, a) = if low_idx == high_idx {
-            match colors[low_idx] {
-                Some((r, g, b, a)) => (r, g, b, a),
-                None => (200, 200, 200, 255),
-            }
-        } else {
-            let low_val = stop_values[low_idx];
-            let high_val = stop_values[high_idx];
-            let t = if (high_val - low_val).abs() < 0.001 {
-                0.0
-            } else {
-                ((value - low_val) / (high_val - low_val)).clamp(0.0, 1.0)
-            };
+    let row_bytes = width * 4;
+    
+    // Process rows in parallel
+    pixels
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let data_row_start = y * width;
             
-            match (colors[low_idx], colors[high_idx]) {
-                (Some((r1, g1, b1, a1)), Some((r2, g2, b2, a2))) => {
-                    let r = (r1 as f32 * (1.0 - t) + r2 as f32 * t) as u8;
-                    let g = (g1 as f32 * (1.0 - t) + g2 as f32 * t) as u8;
-                    let b = (b1 as f32 * (1.0 - t) + b2 as f32 * t) as u8;
-                    let a = (a1 as f32 * (1.0 - t) + a2 as f32 * t) as u8;
-                    (r, g, b, a)
+            for x in 0..width {
+                let data_idx = data_row_start + x;
+                let pixel_idx = x * 4;
+                
+                if data_idx >= data.len() {
+                    break;
                 }
-                _ => (200, 200, 200, 255),
+                
+                let raw_value = data[data_idx];
+                
+                // Handle NaN and common missing values as transparent
+                if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
+                    row[pixel_idx] = 0;
+                    row[pixel_idx + 1] = 0;
+                    row[pixel_idx + 2] = 0;
+                    row[pixel_idx + 3] = 0;
+                    continue;
+                }
+                
+                // Apply transform to convert to display units
+                let value = apply_transform(raw_value, transform.as_ref());
+                
+                // Handle out-of-range values
+                if value < min_range {
+                    if out_of_range_transparent {
+                        row[pixel_idx] = 0;
+                        row[pixel_idx + 1] = 0;
+                        row[pixel_idx + 2] = 0;
+                        row[pixel_idx + 3] = 0;
+                    } else if let Some((r, g, b, a)) = colors[0] {
+                        row[pixel_idx] = r;
+                        row[pixel_idx + 1] = g;
+                        row[pixel_idx + 2] = b;
+                        row[pixel_idx + 3] = a;
+                    }
+                    continue;
+                }
+                
+                if value > max_range {
+                    if out_of_range_transparent {
+                        row[pixel_idx] = 0;
+                        row[pixel_idx + 1] = 0;
+                        row[pixel_idx + 2] = 0;
+                        row[pixel_idx + 3] = 0;
+                    } else if let Some((r, g, b, a)) = colors[colors.len() - 1] {
+                        row[pixel_idx] = r;
+                        row[pixel_idx + 1] = g;
+                        row[pixel_idx + 2] = b;
+                        row[pixel_idx + 3] = a;
+                    }
+                    continue;
+                }
+                
+                // Find the two surrounding color stops
+                let mut low_idx = 0;
+                let mut high_idx = stop_values.len() - 1;
+                
+                for (i, &stop_val) in stop_values.iter().enumerate() {
+                    if stop_val <= value {
+                        low_idx = i;
+                    }
+                    if stop_val >= value && i > 0 {
+                        high_idx = i;
+                        break;
+                    }
+                }
+                
+                // Interpolate color between two stops
+                let (r, g, b, a) = if low_idx == high_idx {
+                    match colors[low_idx] {
+                        Some((r, g, b, a)) => (r, g, b, a),
+                        None => (200, 200, 200, 255),
+                    }
+                } else {
+                    let low_val = stop_values[low_idx];
+                    let high_val = stop_values[high_idx];
+                    let t = if (high_val - low_val).abs() < 0.001 {
+                        0.0
+                    } else {
+                        ((value - low_val) / (high_val - low_val)).clamp(0.0, 1.0)
+                    };
+                    
+                    match (colors[low_idx], colors[high_idx]) {
+                        (Some((r1, g1, b1, a1)), Some((r2, g2, b2, a2))) => {
+                            let r = (r1 as f32 * (1.0 - t) + r2 as f32 * t) as u8;
+                            let g = (g1 as f32 * (1.0 - t) + g2 as f32 * t) as u8;
+                            let b = (b1 as f32 * (1.0 - t) + b2 as f32 * t) as u8;
+                            let a = (a1 as f32 * (1.0 - t) + a2 as f32 * t) as u8;
+                            (r, g, b, a)
+                        }
+                        _ => (200, 200, 200, 255),
+                    }
+                };
+                
+                row[pixel_idx] = r;
+                row[pixel_idx + 1] = g;
+                row[pixel_idx + 2] = b;
+                row[pixel_idx + 3] = a;
             }
-        };
-        
-        pixels[pixel_offset] = r;
-        pixels[pixel_offset + 1] = g;
-        pixels[pixel_offset + 2] = b;
-        pixels[pixel_offset + 3] = a;
-    }
+        });
     
     pixels
 }

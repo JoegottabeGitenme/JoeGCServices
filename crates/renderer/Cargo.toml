@@ -19,6 +19,7 @@ tracing = { workspace = true }
 image = { workspace = true }
 rusttype = { workspace = true }
 imageproc = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 grib2-parser = { path = "../grib2-parser" }

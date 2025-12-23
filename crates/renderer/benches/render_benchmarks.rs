@@ -7,7 +7,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
 };
 use rand::Rng;
-use renderer::{gradient, png};
+use renderer::{gradient, png, style};
 
 /// Generate a test temperature grid with realistic patterns.
 /// Values are in Kelvin (typical surface temps: 220K to 320K).
@@ -52,6 +52,75 @@ fn generate_rgba_data(width: usize, height: usize) -> Vec<u8> {
         chunk[3] = 255; // A (fully opaque)
     }
     data
+}
+
+/// Create a simple temperature style for benchmarking
+fn create_temperature_style() -> style::StyleDefinition {
+    style::StyleDefinition {
+        name: "Temperature".to_string(),
+        description: Some("Temperature gradient".to_string()),
+        style_type: "gradient".to_string(),
+        default: true,
+        units: Some("K".to_string()),
+        range: Some(style::ValueRange { min: 233.15, max: 313.15 }),
+        transform: None,
+        stops: vec![
+            style::ColorStop { value: 233.15, color: "#1E0082".to_string(), label: Some("-40°C".to_string()) },
+            style::ColorStop { value: 253.15, color: "#0096FF".to_string(), label: Some("-20°C".to_string()) },
+            style::ColorStop { value: 273.15, color: "#96FFC8".to_string(), label: Some("0°C".to_string()) },
+            style::ColorStop { value: 293.15, color: "#FF9600".to_string(), label: Some("20°C".to_string()) },
+            style::ColorStop { value: 313.15, color: "#960000".to_string(), label: Some("40°C".to_string()) },
+        ],
+        interpolation: Some("linear".to_string()),
+        out_of_range: Some("clamp".to_string()),
+        legend: None,
+    }
+}
+
+/// Create a simple wind speed style for benchmarking
+fn create_wind_speed_style() -> style::StyleDefinition {
+    style::StyleDefinition {
+        name: "Wind Speed".to_string(),
+        description: Some("Wind speed gradient".to_string()),
+        style_type: "gradient".to_string(),
+        default: true,
+        units: Some("m/s".to_string()),
+        range: Some(style::ValueRange { min: 0.0, max: 40.0 }),
+        transform: None,
+        stops: vec![
+            style::ColorStop { value: 0.0, color: "#C8C8C8".to_string(), label: Some("0".to_string()) },
+            style::ColorStop { value: 10.0, color: "#00C8FF".to_string(), label: Some("10".to_string()) },
+            style::ColorStop { value: 20.0, color: "#FFFF00".to_string(), label: Some("20".to_string()) },
+            style::ColorStop { value: 30.0, color: "#FFA500".to_string(), label: Some("30".to_string()) },
+            style::ColorStop { value: 40.0, color: "#8B0000".to_string(), label: Some("40".to_string()) },
+        ],
+        interpolation: Some("linear".to_string()),
+        out_of_range: Some("clamp".to_string()),
+        legend: None,
+    }
+}
+
+/// Create a simple pressure style for benchmarking
+fn create_pressure_style() -> style::StyleDefinition {
+    style::StyleDefinition {
+        name: "Pressure".to_string(),
+        description: Some("Pressure gradient".to_string()),
+        style_type: "gradient".to_string(),
+        default: true,
+        units: Some("hPa".to_string()),
+        range: Some(style::ValueRange { min: 950.0, max: 1050.0 }),
+        transform: None,
+        stops: vec![
+            style::ColorStop { value: 950.0, color: "#4B0082".to_string(), label: Some("950".to_string()) },
+            style::ColorStop { value: 990.0, color: "#0000FF".to_string(), label: Some("990".to_string()) },
+            style::ColorStop { value: 1010.0, color: "#00FF00".to_string(), label: Some("1010".to_string()) },
+            style::ColorStop { value: 1030.0, color: "#FFFF00".to_string(), label: Some("1030".to_string()) },
+            style::ColorStop { value: 1050.0, color: "#FF0000".to_string(), label: Some("1050".to_string()) },
+        ],
+        interpolation: Some("linear".to_string()),
+        out_of_range: Some("clamp".to_string()),
+        legend: None,
+    }
 }
 
 // =============================================================================
@@ -149,29 +218,30 @@ fn bench_render_grid(c: &mut Criterion) {
 }
 
 // =============================================================================
-// TEMPERATURE RENDERING BENCHMARKS
+// STYLE-BASED RENDERING BENCHMARKS
 // =============================================================================
 
-fn bench_render_temperature(c: &mut Criterion) {
-    let mut group = c.benchmark_group("render_temperature");
+fn bench_style_rendering(c: &mut Criterion) {
+    let mut group = c.benchmark_group("style_rendering");
 
     let sizes = [(256, 256), (512, 512), (1024, 1024)];
+    let temp_style = create_temperature_style();
 
     for (width, height) in sizes {
-        // Generate temperature data in Celsius range
+        // Generate temperature data in Kelvin
         let data: Vec<f32> = generate_linear_grid(width, height)
             .iter()
-            .map(|v| v - 40.0) // Shift to -40 to +60 range
+            .map(|v| 233.15 + v * 0.8) // Scale to 233K-313K range
             .collect();
 
         group.throughput(Throughput::Elements((width * height) as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("celsius", format!("{}x{}", width, height)),
+            BenchmarkId::new("temperature_style", format!("{}x{}", width, height)),
             &data,
             |b, data| {
                 b.iter(|| {
-                    gradient::render_temperature(black_box(data), width, height, -40.0, 60.0)
+                    style::apply_style_gradient(black_box(data), width, height, &temp_style)
                 });
             },
         );
@@ -181,7 +251,7 @@ fn bench_render_temperature(c: &mut Criterion) {
 }
 
 // =============================================================================
-// OTHER RENDER TYPES BENCHMARKS
+// OTHER RENDER TYPES BENCHMARKS (using styles)
 // =============================================================================
 
 fn bench_render_other_types(c: &mut Criterion) {
@@ -202,26 +272,20 @@ fn bench_render_other_types(c: &mut Criterion) {
         .map(|v| 950.0 + v) // Scale to 950-1050 range
         .collect();
 
-    // Humidity (0-100%)
-    let humidity_data = generate_linear_grid(width, height);
+    let wind_style = create_wind_speed_style();
+    let pressure_style = create_pressure_style();
 
     group.throughput(Throughput::Elements((width * height) as u64));
 
-    group.bench_function("wind_speed", |b| {
+    group.bench_function("wind_speed_style", |b| {
         b.iter(|| {
-            gradient::render_wind_speed(black_box(&wind_data), width, height, 0.0, 40.0)
+            style::apply_style_gradient(black_box(&wind_data), width, height, &wind_style)
         });
     });
 
-    group.bench_function("pressure", |b| {
+    group.bench_function("pressure_style", |b| {
         b.iter(|| {
-            gradient::render_pressure(black_box(&pressure_data), width, height, 950.0, 1050.0)
-        });
-    });
-
-    group.bench_function("humidity", |b| {
-        b.iter(|| {
-            gradient::render_humidity(black_box(&humidity_data), width, height, 0.0, 100.0)
+            style::apply_style_gradient(black_box(&pressure_data), width, height, &pressure_style)
         });
     });
 
@@ -261,8 +325,9 @@ fn bench_png_encoding(c: &mut Criterion) {
 fn bench_full_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("full_pipeline");
 
-    // Simulate a complete tile render: resample -> color map -> PNG encode
+    // Simulate a complete tile render: resample -> style color map -> PNG encode
     let gfs_data = generate_temperature_grid(1440, 721);
+    let temp_style = create_temperature_style();
 
     group.throughput(Throughput::Elements(256 * 256));
 
@@ -277,9 +342,8 @@ fn bench_full_pipeline(c: &mut Criterion) {
                 256,
             );
 
-            // Step 2: Convert to Celsius and render
-            let celsius: Vec<f32> = resampled.iter().map(|k| k - 273.15).collect();
-            let rgba = gradient::render_temperature(&celsius, 256, 256, -40.0, 50.0);
+            // Step 2: Apply style-based color mapping
+            let rgba = style::apply_style_gradient(&resampled, 256, 256, &temp_style);
 
             // Step 3: Encode as PNG
             png::create_png(&rgba, 256, 256)
@@ -296,48 +360,8 @@ fn bench_full_pipeline(c: &mut Criterion) {
                 512,
                 512,
             );
-            let celsius: Vec<f32> = resampled.iter().map(|k| k - 273.15).collect();
-            let rgba = gradient::render_temperature(&celsius, 512, 512, -40.0, 50.0);
+            let rgba = style::apply_style_gradient(&resampled, 512, 512, &temp_style);
             png::create_png(&rgba, 512, 512)
-        });
-    });
-
-    group.finish();
-}
-
-// =============================================================================
-// COLOR FUNCTION BENCHMARKS
-// =============================================================================
-
-fn bench_color_functions(c: &mut Criterion) {
-    let mut group = c.benchmark_group("color_functions");
-
-    // Benchmark individual color mapping functions
-    let temps: Vec<f32> = (-50..=50).map(|t| t as f32).collect();
-    let speeds: Vec<f32> = (0..=40).map(|s| s as f32).collect();
-    let pressures: Vec<f32> = (950..=1050).map(|p| p as f32).collect();
-
-    group.bench_function("temperature_color_100", |b| {
-        b.iter(|| {
-            for &t in &temps {
-                black_box(gradient::temperature_color(t));
-            }
-        });
-    });
-
-    group.bench_function("wind_speed_color_40", |b| {
-        b.iter(|| {
-            for &s in &speeds {
-                black_box(gradient::wind_speed_color(s));
-            }
-        });
-    });
-
-    group.bench_function("pressure_color_100", |b| {
-        b.iter(|| {
-            for &p in &pressures {
-                black_box(gradient::pressure_color(p));
-            }
         });
     });
 
@@ -349,10 +373,9 @@ criterion_group!(
     bench_resample_grid,
     bench_subset_grid,
     bench_render_grid,
-    bench_render_temperature,
+    bench_style_rendering,
     bench_render_other_types,
     bench_png_encoding,
     bench_full_pipeline,
-    bench_color_functions,
 );
 criterion_main!(benches);

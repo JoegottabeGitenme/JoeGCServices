@@ -22,7 +22,7 @@ This document outlines potential performance optimizations for the WMS rendering
 | Optimization Area | Current Status | Implementation |
 |-------------------|----------------|----------------|
 | Parallel chunk fetching | ✅ DONE | `futures::future::join_all` in `zarr.rs:604-616` |
-| Parallel pixel rendering | ❌ NOT DONE | No `rayon`, all loops sequential |
+| Parallel pixel rendering | ✅ DONE | `rayon::par_chunks_mut` in `gradient.rs` and `style.rs` |
 | Paletted PNG (8-bit) | ❌ NOT DONE | Custom RGBA encoder (color type 6, 4 bytes/pixel) |
 | WebP support | ❌ NOT DONE | URL parsing exists, no actual encoding |
 | Buffer reuse / pooling | ❌ NOT DONE | Fresh `Vec` allocations per request |
@@ -465,11 +465,12 @@ pub async fn render_metatile(
 
 ### Phase 2: Parallel Rendering (2-3 days)
 
-2. **Add rayon for pixel rendering**
-   - [ ] Add `rayon` to `renderer/Cargo.toml`
-   - [ ] Update `render_grid()` in `gradient.rs`
-   - [ ] Update resampling functions
-   - [ ] Benchmark throughput improvement
+2. **Add rayon for pixel rendering** - COMPLETED (2024-12-23)
+   - [x] Add `rayon` to workspace and `renderer/Cargo.toml`
+   - [x] Update `render_grid()` in `gradient.rs` with `par_chunks_mut`
+   - [x] Update `resample_grid()` in `gradient.rs` with `par_chunks_mut`
+   - [x] Update `apply_style_gradient()` in `style.rs` with `par_chunks_mut`
+   - [ ] Benchmark throughput improvement (optional)
 
 ### Phase 3: PNG Optimization (3-4 days)
 
