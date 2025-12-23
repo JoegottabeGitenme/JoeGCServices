@@ -227,10 +227,13 @@ where
 }
 
 /// Render grid data into a pre-allocated buffer.
+///
+/// Note: `height` is only used for debug validation. The actual row count
+/// is derived from the `pixels` slice length to support partial rendering.
 fn render_grid_into<F>(
     data: &[f32],
     width: usize,
-    _height: usize,
+    height: usize,
     min_val: f32,
     max_val: f32,
     color_fn: &F,
@@ -240,6 +243,14 @@ where
     F: Fn(f32) -> Color + Sync,
 {
     use rayon::prelude::*;
+    
+    // Validate buffer size matches expected dimensions
+    debug_assert_eq!(
+        pixels.len(),
+        width * height * 4,
+        "pixel buffer size mismatch: expected {}x{}x4={}, got {}",
+        width, height, width * height * 4, pixels.len()
+    );
     
     let range = max_val - min_val;
     let range = if range.abs() < 0.001 { 1.0 } else { range };

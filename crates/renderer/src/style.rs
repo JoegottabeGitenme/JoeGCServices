@@ -658,13 +658,21 @@ pub fn apply_style_gradient(
 /// Apply style-based color mapping into a pre-allocated buffer.
 ///
 /// This is the internal implementation that writes to a provided buffer.
+/// Note: `height` is only used for debug validation.
 fn apply_style_gradient_into(
     data: &[f32],
     width: usize,
-    _height: usize,
+    height: usize,
     style: &StyleDefinition,
     pixels: &mut [u8],
 ) {
+    // Validate buffer size matches expected dimensions
+    debug_assert_eq!(
+        pixels.len(),
+        width * height * 4,
+        "pixel buffer size mismatch: expected {}x{}x4={}, got {}",
+        width, height, width * height * 4, pixels.len()
+    );
     
     // Extract color stops and sort by value
     let mut stops = style.stops.clone();
@@ -832,14 +840,23 @@ pub fn apply_style_gradient_indexed(
 }
 
 /// Apply style-based color mapping into a pre-allocated index buffer.
+/// Note: `height` is only used for debug validation.
 fn apply_style_gradient_indexed_into(
     data: &[f32],
     width: usize,
-    _height: usize,
+    height: usize,
     palette: &PrecomputedPalette,
     style: &StyleDefinition,
     indices: &mut [u8],
 ) {
+    // Validate buffer size matches expected dimensions
+    debug_assert_eq!(
+        indices.len(),
+        width * height,
+        "index buffer size mismatch: expected {}x{}={}, got {}",
+        width, height, width * height, indices.len()
+    );
+    
     let transform = style.transform.as_ref();
     let min_value = palette.min_value;
     let max_value = palette.max_value;

@@ -208,6 +208,7 @@ pub fn render_with_style_file_indexed(
 /// - The style file cannot be loaded
 /// - The requested style name is not found in the file
 /// - The style type is not suitable for gradient rendering
+#[cfg_attr(not(test), allow(dead_code))]  // Used in tests
 pub fn render_with_style_file(
     data: &[f32],
     style_file_path: &str,

@@ -611,7 +611,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
 
         let chunk_results = futures::future::join_all(chunk_futures).await;
         
-        // Collect results, propagating any errors
+        // Collect results, propagating any errors.
+        // Note: We use join_all (not try_join_all) to let all fetches complete even if one fails,
+        // avoiding wasted work. However, we still fail if ANY chunk is missing since we need
+        // all chunks to render a complete tile - partial data would produce incorrect output.
         let chunk_data: Vec<_> = chunk_results
             .into_iter()
             .collect::<Result<Vec<_>>>()?;

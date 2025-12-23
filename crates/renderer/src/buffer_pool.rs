@@ -314,16 +314,75 @@ pub struct PoolStats {
     pub index_buffer_capacity: usize,
     pub resample_buffer_capacity: usize,
     pub png_buffer_capacity: usize,
+    /// Total memory used by all buffer pools (bytes)
+    pub total_bytes: usize,
 }
 
 /// Get current buffer pool statistics for this thread.
 pub fn get_pool_stats() -> PoolStats {
+    let pixel = PIXEL_BUFFER.with(|b| b.borrow().capacity());
+    let index = INDEX_BUFFER.with(|b| b.borrow().capacity());
+    let resample = RESAMPLE_BUFFER.with(|b| b.borrow().capacity() * std::mem::size_of::<f32>());
+    let png = PNG_BUFFER.with(|b| b.borrow().capacity());
+    
     PoolStats {
-        pixel_buffer_capacity: PIXEL_BUFFER.with(|b| b.borrow().capacity()),
-        index_buffer_capacity: INDEX_BUFFER.with(|b| b.borrow().capacity()),
-        resample_buffer_capacity: RESAMPLE_BUFFER.with(|b| b.borrow().capacity()),
-        png_buffer_capacity: PNG_BUFFER.with(|b| b.borrow().capacity()),
+        pixel_buffer_capacity: pixel,
+        index_buffer_capacity: index,
+        resample_buffer_capacity: resample / std::mem::size_of::<f32>(), // Store as element count
+        png_buffer_capacity: png,
+        total_bytes: pixel + index + resample + png,
     }
+}
+
+/// Trim buffer pools to their default sizes.
+///
+/// Call this periodically to reclaim memory after handling large tile requests.
+/// This is useful for long-running services where occasional large allocations
+/// (e.g., 1024x1024 tiles) shouldn't permanently inflate memory usage.
+///
+/// # Example
+///
+/// ```ignore
+/// // Periodic cleanup (e.g., every 5 minutes)
+/// if get_pool_stats().total_bytes > 10_000_000 {
+///     trim_pools();
+/// }
+/// ```
+pub fn trim_pools() {
+    PIXEL_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        if buf.capacity() > TILE_256 * 4 {
+            *buf = Vec::with_capacity(TILE_256 * 4);
+        }
+    });
+    
+    INDEX_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        if buf.capacity() > TILE_256 {
+            *buf = Vec::with_capacity(TILE_256);
+        }
+    });
+    
+    RESAMPLE_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        if buf.capacity() > TILE_256 {
+            *buf = Vec::with_capacity(TILE_256);
+        }
+    });
+    
+    PNG_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        if buf.capacity() > TILE_256 {
+            *buf = Vec::with_capacity(TILE_256);
+        }
+    });
+    
+    SCANLINE_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        if buf.capacity() > TILE_256 + 256 {
+            *buf = Vec::with_capacity(TILE_256 + 256);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -421,5 +480,24 @@ mod tests {
         assert_eq!(optimal_capacity(TILE_256), TILE_256);
         assert_eq!(optimal_capacity(TILE_256 + 1), TILE_512);
         assert_eq!(optimal_capacity(TILE_512 + 1), TILE_1024);
+    }
+
+    #[test]
+    fn test_trim_pools() {
+        // Allocate large buffers
+        with_pixel_buffer(1024, 1024, |_| {});
+        with_index_buffer(1024, 1024, |_| {});
+        
+        let stats_before = get_pool_stats();
+        assert!(stats_before.pixel_buffer_capacity >= 1024 * 1024 * 4);
+        assert!(stats_before.index_buffer_capacity >= 1024 * 1024);
+        
+        // Trim back to defaults
+        trim_pools();
+        
+        let stats_after = get_pool_stats();
+        assert_eq!(stats_after.pixel_buffer_capacity, TILE_256 * 4);
+        assert_eq!(stats_after.index_buffer_capacity, TILE_256);
+        assert!(stats_after.total_bytes < stats_before.total_bytes);
     }
 }
