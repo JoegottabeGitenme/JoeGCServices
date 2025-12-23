@@ -652,7 +652,7 @@ curl http://localhost:9000/minio/health/live
 ```
 services/wms-api/src/
 ├── main.rs                 # Entry point, server setup
-├── state.rs                # Application state (connections, config)
+├── state.rs                # Application state (AppState with GridProcessorFactory)
 ├── handlers/               # HTTP request handlers (modular)
 │   ├── mod.rs              # Handler module exports
 │   ├── wms.rs              # WMS GetCapabilities, GetMap, GetFeatureInfo
@@ -666,9 +666,10 @@ services/wms-api/src/
 ├── admin.rs                # Admin API handlers (proxies to ingester for ingestion)
 ├── rendering/              # Tile rendering logic
 │   ├── mod.rs              # Main rendering functions
-│   ├── loaders.rs          # Zarr data loading
+│   ├── loaders.rs          # Zarr data loading via GridProcessorFactory
 │   ├── resampling.rs       # Grid resampling for tiles
 │   └── ...
+├── model_config.rs         # Model dimension/projection config loading
 ├── validation.rs           # Request validation
 ├── warming.rs              # Tile cache warming at startup
 ├── cleanup.rs              # Background cleanup tasks
@@ -678,6 +679,13 @@ services/wms-api/src/
 ├── layer_config.rs         # Layer configuration loading
 └── startup_validation.rs   # Startup health checks
 ```
+
+### Key Components
+
+- **AppState** (`state.rs`): Holds shared resources including `GridProcessorFactory` from the `grid-processor` crate
+- **GridProcessorFactory**: Manages shared Zarr chunk cache and MinIO configuration for efficient data access
+- **ModelDimensionRegistry** (`model_config.rs`): Loads model-specific config like `requires_full_grid` for non-geographic projections
+- **Loaders** (`rendering/loaders.rs`): Uses `GridProcessorFactory` for Zarr data access with automatic projection handling
 
 > **Note**: Ingestion logic has been moved to the `crates/ingestion` library and `services/ingester` service. The `admin.rs` file now proxies ingestion requests to the ingester service.
 
