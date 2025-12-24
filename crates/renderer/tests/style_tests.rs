@@ -421,3 +421,317 @@ fn test_apply_style_gradient_multi_row() {
         "Second pixel should be more red than blue"
     );
 }
+
+// ============================================================================
+// Transform application tests
+// ============================================================================
+
+#[test]
+fn test_apply_transform_none() {
+    let value = 42.0f32;
+    let result = apply_transform(value, None);
+    assert_eq!(result, value);
+}
+
+#[test]
+fn test_apply_transform_scale_only() {
+    use renderer::style::Transform;
+
+    let transform = Transform {
+        transform_type: "linear".to_string(),
+        scale: Some(2.0),
+        offset: None,
+    };
+
+    let result = apply_transform(10.0, Some(&transform));
+    assert!((result - 20.0).abs() < 0.001);
+}
+
+#[test]
+fn test_apply_transform_offset_only() {
+    use renderer::style::Transform;
+
+    let transform = Transform {
+        transform_type: "linear".to_string(),
+        scale: None,
+        offset: Some(-273.15),
+    };
+
+    // With no scale, should default to scale=1.0
+    let result = apply_transform(300.0, Some(&transform));
+    assert!((result - 26.85).abs() < 0.01);
+}
+
+#[test]
+fn test_apply_transform_kelvin_to_celsius() {
+    use renderer::style::Transform;
+
+    // Standard K to C: subtract 273.15
+    let transform = Transform {
+        transform_type: "linear".to_string(),
+        scale: Some(1.0),
+        offset: Some(-273.15),
+    };
+
+    // Freezing point: 273.15 K = 0 C
+    assert!((apply_transform(273.15, Some(&transform)) - 0.0).abs() < 0.01);
+
+    // Boiling point: 373.15 K = 100 C
+    assert!((apply_transform(373.15, Some(&transform)) - 100.0).abs() < 0.01);
+}
+
+#[test]
+fn test_apply_transform_pascals_to_hectopascals() {
+    use renderer::style::Transform;
+
+    // Pa to hPa: divide by 100 (scale = 0.01)
+    let transform = Transform {
+        transform_type: "linear".to_string(),
+        scale: Some(0.01),
+        offset: None,
+    };
+
+    let result = apply_transform(101325.0, Some(&transform));
+    assert!((result - 1013.25).abs() < 0.01);
+}
+
+// ============================================================================
+// Palette size and efficiency tests
+// ============================================================================
+
+#[test]
+fn test_palette_size_reasonable() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "range": {"min": 0.0, "max": 100.0},
+                "stops": [
+                    {"value": 0, "color": "#0000FF"},
+                    {"value": 25, "color": "#00FFFF"},
+                    {"value": 50, "color": "#00FF00"},
+                    {"value": 75, "color": "#FFFF00"},
+                    {"value": 100, "color": "#FF0000"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+    let palette = style.compute_palette().unwrap();
+
+    // Palette should fit in 8-bit PNG (256 colors max)
+    assert!(
+        palette.colors.len() <= 256,
+        "Palette too large for indexed PNG: {} colors",
+        palette.colors.len()
+    );
+
+    // LUT should be 4096 entries
+    assert_eq!(palette.value_to_index.len(), 4096);
+}
+
+#[test]
+fn test_palette_has_transparent() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "range": {"min": 0.0, "max": 100.0},
+                "stops": [
+                    {"value": 0, "color": "#FF0000"},
+                    {"value": 100, "color": "#0000FF"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+    let palette = style.compute_palette().unwrap();
+
+    // First color should be transparent (for NaN values)
+    assert_eq!(
+        palette.colors[0],
+        (0, 0, 0, 0),
+        "Index 0 should be transparent for NaN values"
+    );
+}
+
+// ============================================================================
+// Edge cases for gradient rendering
+// ============================================================================
+
+#[test]
+fn test_gradient_values_at_stops() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "range": {"min": 0.0, "max": 100.0},
+                "stops": [
+                    {"value": 0, "color": "#FF0000"},
+                    {"value": 100, "color": "#0000FF"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Value at first stop should be close to first stop color (red)
+    let rgba = apply_style_gradient(&[0.0], 1, 1, style);
+    assert!(rgba[0] > 200, "Red channel should be high at stop 0");
+    assert!(rgba[2] < 50, "Blue channel should be low at stop 0");
+
+    // Value at last stop should be close to last stop color (blue)
+    let rgba = apply_style_gradient(&[100.0], 1, 1, style);
+    assert!(rgba[0] < 50, "Red channel should be low at stop 100");
+    assert!(rgba[2] > 200, "Blue channel should be high at stop 100");
+}
+
+#[test]
+fn test_gradient_values_out_of_range() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "range": {"min": 0.0, "max": 100.0},
+                "stops": [
+                    {"value": 0, "color": "#000000"},
+                    {"value": 100, "color": "#FFFFFF"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Values below range should clamp
+    let rgba = apply_style_gradient(&[-50.0], 1, 1, style);
+    // Should be clamped to first stop (black-ish)
+    assert!(rgba[0] < 30, "Below-range should clamp to min color");
+
+    // Values above range should clamp
+    let rgba = apply_style_gradient(&[150.0], 1, 1, style);
+    // Should be clamped to last stop (white-ish)
+    assert!(rgba[0] > 220, "Above-range should clamp to max color");
+}
+
+#[test]
+fn test_gradient_missing_value_detection() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "range": {"min": 0.0, "max": 100.0},
+                "stops": [
+                    {"value": 0, "color": "#FF0000"},
+                    {"value": 100, "color": "#0000FF"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Very negative values are sometimes used as missing data markers
+    let rgba = apply_style_gradient(&[-9999.0], 1, 1, style);
+    // Should be treated as transparent (missing data)
+    assert_eq!(rgba[3], 0, "Missing data marker should be transparent");
+}
+
+// ============================================================================
+// Style definition parsing edge cases
+// ============================================================================
+
+#[test]
+fn test_style_without_range() {
+    // Range should be inferred from stops
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "stops": [
+                    {"value": -10, "color": "#0000FF"},
+                    {"value": 30, "color": "#FF0000"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+    let palette = style.compute_palette().unwrap();
+
+    // Range should be inferred from stops
+    assert!((palette.min_value - (-10.0)).abs() < 0.01);
+    assert!((palette.max_value - 30.0).abs() < 0.01);
+}
+
+#[test]
+fn test_style_with_labels() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "stops": [
+                    {"value": 0, "color": "#0000FF", "label": "Cold"},
+                    {"value": 50, "color": "#00FF00", "label": "Mild"},
+                    {"value": 100, "color": "#FF0000", "label": "Hot"}
+                ]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Labels should be parsed
+    assert_eq!(style.stops[0].label.as_deref(), Some("Cold"));
+    assert_eq!(style.stops[1].label.as_deref(), Some("Mild"));
+    assert_eq!(style.stops[2].label.as_deref(), Some("Hot"));
+}
+
+#[test]
+fn test_style_version_parsing() {
+    let json = r##"{
+        "version": "2.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "stops": [{"value": 0, "color": "#000"}, {"value": 1, "color": "#FFF"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    assert_eq!(config.version, "2.0");
+}

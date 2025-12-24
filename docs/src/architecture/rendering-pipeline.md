@@ -1,10 +1,12 @@
 # Rendering Pipeline
 
-This document describes the complete rendering pipeline for Weather WMS, from tile request to PNG output. It covers coordinate transformations, data loading from Zarr storage, and color styling.
+This document describes the complete rendering pipeline for Weather WMS, from tile request to PNG output. It covers
+coordinate transformations, data loading from Zarr storage, and color styling.
 
 ## Overview
 
-The rendering pipeline transforms gridded weather data into styled PNG tiles suitable for web map display. The key challenges are:
+The rendering pipeline transforms gridded weather data into styled PNG tiles suitable for web map display. The key
+challenges are:
 
 1. **Coordinate system transformations** - Converting between tile coordinates, WGS84, and Web Mercator
 2. **Grid coordinate conventions** - Handling 0-360 longitude (GFS) vs -180/180 longitude
@@ -73,6 +75,7 @@ The rendering pipeline transforms gridded weather data into styled PNG tiles sui
 ### 1. Tile Coordinates (XYZ/TMS)
 
 Web map tiles use XYZ coordinates where:
+
 - `z` = zoom level (0 = whole world in one tile)
 - `x` = column (0 at 180°W, increases eastward)
 - `y` = row (0 at ~85°N in XYZ/WMTS convention)
@@ -97,6 +100,7 @@ pub fn tile_to_latlon_bounds(coord: &TileCoord) -> BoundingBox {
 ### 2. WGS84 Geographic Coordinates
 
 Standard lat/lon coordinates:
+
 - Longitude: -180 to 180 (or 0 to 360 for some datasets)
 - Latitude: -90 to 90
 
@@ -104,10 +108,10 @@ Standard lat/lon coordinates:
 
 Different weather models use different longitude conventions:
 
-| Model | Longitude Range | Example |
-|-------|-----------------|---------|
-| GFS   | 0 to 360        | New York at 286°E |
-| HRRR  | -180 to 180     | New York at -74°W |
+| Model | Longitude Range             | Example                |
+|-------|-----------------------------|------------------------|
+| GFS   | 0 to 360                    | New York at 286°E      |
+| HRRR  | -180 to 180                 | New York at -74°W      |
 | GOES  | Native satellite projection | Fixed-grid coordinates |
 
 ## Handling 0-360 Longitude (GFS)
@@ -116,7 +120,10 @@ GFS data uses 0-360 longitude convention, while web maps use -180/180. This requ
 
 ### The `grid_uses_360` Flag
 
-When performing partial Zarr reads, the returned data may have a bounding box that doesn't span >180° (e.g., a small regional subset). This makes it impossible to infer the longitude convention from the data bounds alone. To solve this, the rendering pipeline propagates an explicit `grid_uses_360` flag from the grid metadata through to the resampling functions.
+When performing partial Zarr reads, the returned data may have a bounding box that doesn't span >180° (e.g., a small
+regional _subset). This makes it impossible to infer the longitude convention from the data bounds alone. To solve this,
+the rendering pipeline propagates an explicit `grid_uses_360` flag from the grid metadata through to the resampling
+functions.
 
 ```rust
 // In GridData struct
@@ -180,7 +187,8 @@ pub fn crosses_dateline_on_360_grid(&self, grid_bbox: &BoundingBox) -> bool {
 }
 ```
 
-**When dateline crossing is detected**, the Zarr processor loads the **full grid** rather than attempting a partial read with invalid bounds.
+**When dateline crossing is detected**, the Zarr processor loads the **full grid** rather than attempting a partial read
+with invalid bounds.
 
 ## Zarr Partial Reads
 
@@ -210,7 +218,8 @@ fn chunks_for_bbox(&self, bbox: &BoundingBox) -> Vec<(usize, usize)> {
 
 ### Returning Actual Bounding Box
 
-**Critical**: When loading a partial region, the processor returns the **actual bounding box** of the loaded data, not the requested bbox:
+**Critical**: When loading a partial region, the processor returns the **actual bounding box** of the loaded data, not
+the requested bbox:
 
 ```rust
 // In assemble_region():
@@ -308,12 +317,16 @@ fn resample_for_mercator(
 
 ## Handling the Prime Meridian Wrap Gap
 
-GFS and other global grids using 0-360° longitude have a gap between the last grid column and 360°. For example, GFS 0.25° resolution:
+GFS and other global grids using 0-360° longitude have a gap between the last grid column and 360°. For example, GFS
+0.25° resolution:
+
 - Column 0 = 0°
 - Column 1439 = 359.75°
 - **Gap**: 359.75° to 360° (no data column at exactly 360°)
 
-When rendering tiles near the prime meridian (0° longitude), negative request longitudes (e.g., -0.1°) normalize to values in this gap (359.9°). Without special handling, these pixels would be skipped as "out of bounds," causing a visible vertical line artifact at 0° longitude.
+When rendering tiles near the prime meridian (0° longitude), negative request longitudes (e.g., -0.1°) normalize to
+values in this gap (359.9°). Without special handling, these pixels would be skipped as "out of bounds," causing a
+visible vertical line artifact at 0° longitude.
 
 ### Wrap Gap Solution
 
@@ -374,7 +387,8 @@ Styles define how data values map to colors. Style configurations are stored in 
 
 ### Style Application
 
-**Critical**: Styles use **absolute value ranges**, not per-tile min/max. This ensures consistent colors across tile boundaries.
+**Critical**: Styles use **absolute value ranges**, not per-tile min/max. This ensures consistent colors across tile
+boundaries.
 
 ```rust
 pub fn apply_style_gradient(
@@ -419,6 +433,7 @@ pub fn apply_style_gradient(
 **Cause**: Style lookup failing, falling back to per-tile min/max normalization.
 
 **Solution**: Ensure style name is passed through the rendering pipeline:
+
 ```rust
 // In handlers.rs - WMTS GetTile
 crate::rendering::render_weather_data(
@@ -435,6 +450,7 @@ crate::rendering::render_weather_data(
 **Cause**: Using full grid bbox instead of actual loaded data bbox for partial Zarr reads.
 
 **Solution**: Use the `actual_bbox` returned from Zarr, not `entry.bbox`:
+
 ```rust
 // Use actual bbox from Zarr partial read if available
 let data_bounds = grid_result.bbox.unwrap_or_else(|| [
@@ -455,7 +471,8 @@ let data_bounds = grid_result.bbox.unwrap_or_else(|| [
 
 ## Performance Optimizations
 
-The rendering pipeline includes several optimizations that provide **3-4x faster tile generation** and **40% smaller file sizes**.
+The rendering pipeline includes several optimizations that provide **3-4x faster tile generation** and **40% smaller
+file sizes**.
 
 ### 1. Parallel Chunk Fetching
 
@@ -509,6 +526,7 @@ let png = create_png_from_precomputed(&indices, w, h, &palette)?;
 ```
 
 **Benefits**:
+
 - **1 byte per pixel** instead of 4 (RGBA) during rendering
 - **No palette extraction** at PNG encoding time
 - **~40% smaller** PNG files (indexed vs RGBA)
@@ -516,24 +534,26 @@ let png = create_png_from_precomputed(&indices, w, h, &palette)?;
 
 #### Performance Comparison
 
-| Pipeline | 256×256 | 512×512 | Improvement |
-|----------|---------|---------|-------------|
-| RGBA (baseline) | 1.54 ms | 5.66 ms | - |
-| Pre-computed palette | 430 µs | 1.46 ms | **3.6-4x faster** |
+| Pipeline             | 256×256 | 512×512 | Improvement       |
+|----------------------|---------|---------|-------------------|
+| RGBA (baseline)      | 1.54 ms | 5.66 ms | -                 |
+| Pre-computed palette | 430 µs  | 1.46 ms | **3.6-4x faster** |
 
-| PNG Encoding | 256×256 | 512×512 | 1024×1024 |
-|--------------|---------|---------|-----------|
-| RGBA direct | 87 µs | 672 µs | 2.97 ms |
-| Auto extract | 349 µs | 803 µs | 3.56 ms |
+| PNG Encoding     | 256×256   | 512×512   | 1024×1024  |
+|------------------|-----------|-----------|------------|
+| RGBA direct      | 87 µs     | 672 µs    | 2.97 ms    |
+| Auto extract     | 349 µs    | 803 µs    | 3.56 ms    |
 | **Pre-computed** | **22 µs** | **63 µs** | **210 µs** |
 
 ### 4. Tile Buffer for Edge Features
 
-Wind barbs, numbers, and other features that can extend beyond their anchor point use a **pixel buffer** approach to prevent clipping at tile boundaries.
+Wind barbs, numbers, and other features that can extend beyond their anchor point use a **pixel buffer** approach to
+prevent clipping at tile boundaries.
 
 #### The Problem
 
 Features rendered near tile edges can be clipped:
+
 ```
 ┌─────────────┬─────────────┐
 │      ↗      │             │
@@ -545,6 +565,7 @@ Features rendered near tile edges can be clipped:
 #### Old Approach: 3x3 Tile Expansion (Slow)
 
 Previously, we rendered a 3x3 grid of tiles (768×768) and cropped to the center tile:
+
 - **589,824 pixels** rendered
 - **9x the data** fetched
 - **~17ms** per tile
@@ -552,6 +573,7 @@ Previously, we rendered a 3x3 grid of tiles (768×768) and cropped to the center
 #### New Approach: Pixel Buffer (Fast)
 
 Now we render with a configurable pixel buffer (default 120px):
+
 ```
          ┌─────────────────────────┐
          │      120px buffer       │
@@ -599,14 +621,15 @@ let final_pixels = buffer_config.crop_to_tile(&expanded_pixels);
 
 #### Performance Comparison
 
-| Approach | Render Size | Time | Speedup |
-|----------|-------------|------|---------|
-| 3x3 expansion | 768×768 | 16.8 ms | baseline |
+| Approach         | Render Size | Time       | Speedup         |
+|------------------|-------------|------------|-----------------|
+| 3x3 expansion    | 768×768     | 16.8 ms    | baseline        |
 | **120px buffer** | **496×496** | **6.9 ms** | **2.4x faster** |
 
 ### Chunk Size Selection
 
 Zarr chunk size affects read efficiency:
+
 - **Too small**: Many HTTP requests for partial reads
 - **Too large**: Over-fetching data for small tiles
 
@@ -622,6 +645,7 @@ Recommended: 512x512 chunks for 0.25° GFS data (~1MB per chunk).
 ### Prefetching
 
 When rendering a tile, prefetch neighboring tiles in the likely pan direction:
+
 ```rust
 spawn_tile_prefetch(state, layer, style, coord, rings: 1);
 ```
