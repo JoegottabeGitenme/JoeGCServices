@@ -75,9 +75,9 @@ jobs:
         if: always()
         run: |
           # Count test results
-          PASSED=$(grep -c "^test .* ok$" test_output.txt 2>/dev/null || echo "0")
-          FAILED=$(grep -c "^test .* FAILED$" test_output.txt 2>/dev/null || echo "0")
-          IGNORED=$(grep -c "^test .* ignored$" test_output.txt 2>/dev/null || echo "0")
+          PASSED=$(grep -c '^test .* ok$' test_output.txt 2>/dev/null || echo "0")
+          FAILED=$(grep -c '^test .* FAILED$' test_output.txt 2>/dev/null || echo "0")
+          IGNORED=$(grep -c '^test .* ignored$' test_output.txt 2>/dev/null || echo "0")
           TOTAL=$((PASSED + FAILED + IGNORED))
           
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
