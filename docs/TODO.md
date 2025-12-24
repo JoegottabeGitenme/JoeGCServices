@@ -19,7 +19,6 @@
     - this could be useful for a mobile app
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
 - some of the scripts in the scripts folder could be moved somewhere into validation
-- unit tests for EVERYTHING
 - integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start

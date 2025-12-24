@@ -6,39 +6,42 @@ A Kubernetes-native OGC WMS and WMTS service for meteorological data, written in
 
 This project implements complete OGC Web Map Service (WMS) and Web Map Tile Service (WMTS) for weather data visualization, designed to run on Kubernetes with the following components:
 
-- **Ingester**: Polls NOAA data sources (AWS Open Data, NOMADS) and ingests GRIB2/NetCDF files
-- **Renderer Workers**: Process render jobs from a queue, generating tiles with gradients, contours, and wind barbs
-- **WMS/WMTS API**: HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications
+- **Downloader**: Polls NOAA data sources (AWS Open Data, NOMADS) on a schedule and downloads GRIB2/NetCDF files
+- **Ingester**: Processes downloaded files into Zarr format with multi-resolution pyramids, stores in object storage
+- **WMS/WMTS API**: HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications, with inline rendering of gradients, contours, and wind barbs
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Kubernetes Cluster                             │
-│                                                                             │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐   │
-│  │   Ingress   │────▶│   WMS API   │────▶│      Redis Cluster          │   │
-│  │             │     │   Service   │     │  (tile cache + job queue)   │   │
-│  └─────────────┘     └──────┬──────┘     └─────────────────────────────┘   │
-│                             │                        ▲                      │
-│                             ▼                        │                      │
-│                      ┌─────────────┐                 │                      │
-│                      │  Renderer   │─────────────────┘                      │
-│                      │   Workers   │                                        │
-│                      └──────┬──────┘                                        │
-│                             │                                               │
-│                             ▼                                               │
-│  ┌─────────────┐     ┌─────────────────────────────────────────────────┐   │
-│  │   Ingester  │────▶│              Object Storage (MinIO/S3)          │   │
-│  │             │     └─────────────────────────────────────────────────┘   │
-│  └─────────────┘                                                            │
-│         │            ┌─────────────────────────────────────────────────┐   │
-│         ▼            │              PostgreSQL (Catalog)               │   │
-│  ┌─────────────┐     └─────────────────────────────────────────────────┘   │
-│  │    NOAA     │                                                            │
-│  │   Sources   │                                                            │
-│  └─────────────┘                                                            │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              Kubernetes Cluster                              │
+│                                                                              │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐    │
+│  │   Ingress   │────▶│   WMS API   │────▶│          Redis              │    │
+│  │             │     │  (renders   │     │      (tile cache)           │    │
+│  └─────────────┘     │   inline)   │     └─────────────────────────────┘    │
+│                      └──────┬──────┘                                         │
+│                             │                                                │
+│                      ┌──────┴──────┐                                         │
+│                      │             │                                         │
+│                      ▼             ▼                                         │
+│  ┌─────────────────────────┐  ┌─────────────────────────────────────────┐   │
+│  │  PostgreSQL (Catalog)   │  │       Object Storage (MinIO/S3)         │   │
+│  └─────────────────────────┘  │            (Zarr data)                  │   │
+│              ▲                └─────────────────────────────────────────┘   │
+│              │                             ▲                                 │
+│              │                             │                                 │
+│  ┌───────────┴─┐     ┌─────────────┐       │                                │
+│  │  Downloader │────▶│   Ingester  │───────┘                                │
+│  │  (scheduled)│     │ (GRIB2/NC   │                                        │
+│  └──────┬──────┘     │  to Zarr)   │                                        │
+│         │            └─────────────┘                                         │
+│         ▼                                                                    │
+│  ┌─────────────┐                                                             │
+│  │    NOAA     │                                                             │
+│  │   Sources   │                                                             │
+│  └─────────────┘                                                             │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -51,41 +54,51 @@ This project implements complete OGC Web Map Service (WMS) and Web Map Tile Serv
 - [Helm](https://helm.sh/docs/intro/install/)
 - [Rust](https://rustup.rs/) (for local development)
 
-### Local Development with Minikube
+### Local Development
 
 ```bash
-# Start the complete stack
+# Start with docker-compose (default, fastest)
 ./scripts/start.sh
+
+# Force rebuild of Docker images
+./scripts/start.sh --rebuild
+
+# Clear Redis tile cache (after rendering changes)
+./scripts/start.sh --clear-cache
 
 # Check status
 ./scripts/start.sh --status
 
-# Rebuild and redeploy after code changes
-./scripts/start.sh --rebuild
-
-# Stop the cluster
+# Stop containers
 ./scripts/start.sh --stop
 
 # Clean everything and start fresh
 ./scripts/start.sh --clean
+
+# Full Kubernetes setup with minikube (optional)
+./scripts/start.sh --kubernetes
 ```
 
 ### Access Services
 
-After running the start script:
+After running the start script with docker-compose:
 
 ```bash
+# Dashboard
+open http://localhost:8000
+
 # WMS API
-kubectl port-forward -n weather-wms svc/wms-weather-wms-api 8080:8080
 curl "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"
 
 # MinIO Console (minioadmin/minioadmin)
-kubectl port-forward -n weather-wms svc/minio 9001:9001
 open http://localhost:9001
+```
 
-# PostgreSQL
-kubectl port-forward -n weather-wms svc/postgresql 5432:5432
-psql -h localhost -U weatherwms -d weatherwms
+For Kubernetes deployment, use port-forward:
+
+```bash
+kubectl port-forward -n weather-wms svc/wms-weather-wms-api 8080:8080
+kubectl port-forward -n weather-wms svc/minio 9001:9001
 ```
 
 ## Project Structure
@@ -94,15 +107,24 @@ psql -h localhost -U weatherwms -d weatherwms
 weather-wms/
 ├── crates/                     # Shared library crates
 │   ├── wms-common/            # Common types, errors, utilities
-│   ├── grib2-parser/          # GRIB2 format parser
-│   ├── netcdf-parser/         # NetCDF-3 parser
-│   ├── projection/            # CRS transformations
-│   ├── renderer/              # Image rendering (gradients, contours)
-│   ├── wms-protocol/          # OGC WMS protocol handling
-│   └── storage/               # S3, PostgreSQL, Redis clients
+│   ├── wms-protocol/          # OGC WMS/WMTS protocol handling
+│   ├── grib2-parser/          # GRIB2 format parser (GFS, HRRR, MRMS)
+│   ├── netcdf-parser/         # NetCDF parser (GOES satellite)
+│   ├── grid-processor/        # Zarr V3 data access with chunk caching
+│   ├── ingestion/             # File ingestion logic, Zarr pyramid generation
+│   ├── projection/            # CRS transformations (Geographic, Mercator, Lambert, etc.)
+│   ├── renderer/              # Image rendering (gradients, contours, wind barbs)
+│   ├── storage/               # S3, PostgreSQL, Redis clients
+│   └── test-utils/            # Test utilities and fixtures
 ├── services/                   # Deployable services
-│   ├── ingester/              # Data ingestion service
-│   └── wms-api/               # HTTP API server
+│   ├── downloader/            # Scheduled data downloading from NOAA
+│   ├── ingester/              # GRIB2/NetCDF to Zarr processing
+│   └── wms-api/               # HTTP API server with inline rendering
+├── config/                     # Configuration files
+│   ├── models/                # Model definitions (GFS, HRRR, GOES, MRMS)
+│   ├── layers/                # WMS/WMTS layer definitions
+│   ├── styles/                # Rendering style definitions (JSON)
+│   └── ingestion.yaml         # Global ingestion settings
 ├── deploy/                     # Deployment configurations
 │   └── helm/                  # Helm charts
 │       └── weather-wms/
@@ -112,9 +134,12 @@ weather-wms/
 
 ## Supported Data Sources
 
-- **GFS** (Global Forecast System) - 0.25° global grid
-- **HRRR** (High-Resolution Rapid Refresh) - 3km CONUS grid
-- More models can be added via configuration
+- **GFS** (Global Forecast System) - 0.25° global grid, 384-hour forecasts
+- **HRRR** (High-Resolution Rapid Refresh) - 3km CONUS grid, hourly updates
+- **GOES-16/18** (Geostationary Satellites) - Multi-band imagery (visible, IR, water vapor)
+- **MRMS** (Multi-Radar Multi-Sensor) - 1km precipitation and reflectivity
+
+Additional models can be added via configuration in `config/models/`.
 
 ## WMS/WMTS Capabilities
 
@@ -184,18 +209,45 @@ Transform raw data values before rendering:
 
 ### Pre-built Style Configurations
 
-The `config/styles/` directory contains ready-to-use styles:
+The `config/styles/` directory contains ready-to-use styles for various meteorological parameters:
 
-- `temperature.json` - Temperature gradients (Celsius, Fahrenheit, anomaly)
-- `precipitation.json` - Rain rate, radar reflectivity, accumulated precip
-- `wind.json` - Wind speed, barbs, arrows, gusts
-- `atmospheric.json` - Pressure, humidity, cloud cover, CAPE
+| Category | Styles |
+|----------|--------|
+| Temperature | `temperature.json` - gradients for Celsius, Fahrenheit, anomaly |
+| Precipitation | `precipitation.json`, `precip_rate.json`, `reflectivity.json` |
+| Wind | `wind.json`, `wind_barbs.json` - speed gradients and barb overlays |
+| Atmospheric | `atmospheric.json`, `mslp.json`, `humidity.json`, `cloud.json`, `visibility.json` |
+| Convective | `cape.json`, `cin.json`, `helicity.json`, `lightning.json` |
+| Satellite | `goes_ir.json`, `goes_visible.json` - GOES imagery colormaps |
+| Upper Air | `geopotential.json` - height contours |
+
+See `config/styles/README.md` for the full schema and customization guide.
 
 ## Configuration
 
-See `deploy/helm/weather-wms/values.yaml` for all configuration options.
+### Directory Structure
 
-Key environment variables:
+```
+config/
+├── ingestion.yaml         # Global settings (database, Redis, download behavior)
+├── models/                # Model definitions
+│   ├── gfs.yaml          # GFS: source URLs, schedule, GRIB2 parameter mappings
+│   ├── hrrr.yaml         # HRRR model
+│   ├── goes16.yaml       # GOES-16 satellite bands
+│   ├── goes18.yaml       # GOES-18 satellite bands
+│   └── mrms.yaml         # MRMS radar products
+├── layers/                # WMS/WMTS layer definitions
+│   ├── gfs.yaml          # GFS layers (parameter -> style mappings, levels)
+│   ├── hrrr.yaml         # HRRR layers
+│   └── ...               # Layer configs per model
+└── styles/                # Rendering style definitions (JSON)
+    ├── temperature.json  # Color gradients, contour settings
+    └── ...               # One file per style category
+```
+
+For Kubernetes deployment options, see `deploy/helm/weather-wms/values.yaml`.
+
+### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
