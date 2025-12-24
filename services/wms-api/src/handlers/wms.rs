@@ -2,7 +2,7 @@
 //!
 //! This module handles WMS 1.3.0 protocol requests:
 //! - GetCapabilities: Returns service metadata and available layers
-//! - GetMap: Renders weather data as map images  
+//! - GetMap: Renders weather data as map images
 //! - GetFeatureInfo: Returns data values at a specific point
 
 use axum::{
@@ -419,8 +419,8 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     };
 
     info!(layers = %layers_param, styles = %styles_param, num_layers = layer_names.len(),
-          width = width, height = height, bbox = ?bbox, crs = ?crs, 
-          time = ?dimensions.time, run = ?dimensions.run, forecast = ?dimensions.forecast, 
+          width = width, height = height, bbox = ?bbox, crs = ?crs,
+          time = ?dimensions.time, run = ?dimensions.run, forecast = ?dimensions.forecast,
           elevation = ?dimensions.elevation, "GetMap request");
 
     // Record bbox for heatmap visualization (parse and convert to WGS84 if needed)

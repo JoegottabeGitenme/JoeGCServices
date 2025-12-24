@@ -256,7 +256,7 @@ struct RateTracker {
 pub enum TileCacheStatus {
     /// L1 in-memory cache hit
     L1Hit,
-    /// L2 Redis cache hit  
+    /// L2 Redis cache hit
     L2Hit,
     /// Cache miss - had to render
     Miss,

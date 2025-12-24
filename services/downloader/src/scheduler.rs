@@ -193,7 +193,7 @@ impl Scheduler {
                     match manager.download(&record.url, &record.filename, &state).await {
                         Ok(path) => {
                             info!(url = %record.url, path = %path.display(), "Download complete");
-                            
+
                             // Trigger ingestion immediately for this file
                             if let Some(ref url) = ingester_url {
                                 let file_path = format!("/data/downloads/{}", record.filename);
@@ -222,7 +222,7 @@ impl Scheduler {
                                     }
                                 }
                             }
-                            
+
                             Ok(path)
                         }
                         Err(e) => {

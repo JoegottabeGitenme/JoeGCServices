@@ -43,12 +43,12 @@ cargo clippy -- -D warnings
 
 Tests are organized following Rust conventions with an emphasis on keeping production code clean:
 
-| Test Type | Location | When to Use |
-|-----------|----------|-------------|
-| **Unit tests (private functions)** | `src/module.rs` inline `#[cfg(test)]` | Testing private internals (<50 lines) |
-| **Unit tests (public API)** | `tests/module_tests.rs` | Testing public interface |
-| **Integration tests** | `tests/integration/*.rs` | Cross-module, end-to-end tests |
-| **Test utilities** | `tests/common/mod.rs` or `test-utils` crate | Shared helpers, fixtures |
+| Test Type                          | Location                                    | When to Use                           |
+|------------------------------------|---------------------------------------------|---------------------------------------|
+| **Unit tests (private functions)** | `src/module.rs` inline `#[cfg(test)]`       | Testing private internals (<50 lines) |
+| **Unit tests (public API)**        | `tests/module_tests.rs`                     | Testing public interface              |
+| **Integration tests**              | `tests/integration/*.rs`                    | Cross-module, end-to-end tests        |
+| **Test utilities**                 | `tests/common/mod.rs` or `test-utils` crate | Shared helpers, fixtures              |
 
 ### Using the test-utils Crate
 
@@ -67,13 +67,13 @@ use test_utils::{
 fn test_something() {
     // Skip if test data not available
     let path = require_test_file!("gfs_sample.grib2");
-    
+
     // Use approximate comparison for floats
     assert_approx_eq!(computed, expected, 0.001);
-    
+
     // Use common fixtures
     let bbox = fixtures::bbox::CONUS;
-    
+
     // Generate test data
     let data = create_test_grid(100, 100);
 }
@@ -83,17 +83,18 @@ fn test_something() {
 
 All PRs run automated checks via `.github/workflows/ci.yml`:
 
-| Check | Description | Must Pass |
-|-------|-------------|-----------|
-| **Format** | `cargo fmt --check` | Yes |
-| **Clippy** | `cargo clippy -- -D warnings` | Yes |
-| **Tests** | `cargo test --workspace` | Yes |
-| **Coverage** | `cargo-tarpaulin` (target: 80%) | Reported |
-| **Docs** | `cargo doc --no-deps` | Yes |
+| Check        | Description                     | Must Pass |
+|--------------|---------------------------------|-----------|
+| **Format**   | `cargo fmt --check`             | Yes       |
+| **Clippy**   | `cargo clippy -- -D warnings`   | Yes       |
+| **Tests**    | `cargo test --workspace`        | Yes       |
+| **Coverage** | `cargo-tarpaulin` (target: 80%) | Reported  |
+| **Docs**     | `cargo doc --no-deps`           | Yes       |
 
 ### Coverage Target
 
-We target **80% code coverage** across the workspace. Coverage reports are generated automatically on PRs and show per-crate breakdown.
+We target **80% code coverage** across the workspace. Coverage reports are generated automatically on PRs and show
+per-crate breakdown.
 
 To run coverage locally:
 
@@ -134,6 +135,7 @@ curl "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"
 ```
 
 The `.env` file contains:
+
 - `DATABASE_URL` - PostgreSQL connection (weatherwms/weatherwms)
 - `REDIS_URL` - Redis connection
 - `S3_*` - MinIO credentials (minioadmin/minioadmin)
@@ -191,6 +193,7 @@ RUST_LOG=weather_wms=trace cargo test
 ### Benchmarks
 
 Performance benchmarks run automatically on PRs and pushes to main when these crates change:
+
 - `crates/renderer/`
 - `crates/grib2-parser/`
 - `crates/projection/`
@@ -212,9 +215,11 @@ cargo bench --package renderer -- --save-baseline current
 **Benchmark history:**
 
 All benchmark results are stored permanently and can be viewed at:
+
 - **GitHub Pages**: `https://<owner>.github.io/<repo>/dev/bench/`
 
 The CI automatically:
+
 - Runs benchmarks on relevant code changes
 - Compares against previous results
 - Posts comparison comments on PRs
@@ -271,31 +276,33 @@ redis-cli -h localhost
 ## Architecture
 
 - **crates/**: Shared libraries
-  - `wms-common/`: Common types and utilities
-  - `wms-protocol/`: OGC WMS/WMTS protocol handling
-  - `grib2-parser/`: GRIB2 format parsing
-  - `netcdf-parser/`: NetCDF format parsing
-  - `projection/`: CRS transformations
-  - `renderer/`: Image rendering (gradients, contours, wind barbs)
-  - `storage/`: Database, cache, and object storage clients
+    - `wms-common/`: Common types and utilities
+    - `wms-protocol/`: OGC WMS/WMTS protocol handling
+    - `grib2-parser/`: GRIB2 format parsing
+    - `netcdf-parser/`: NetCDF format parsing
+    - `projection/`: CRS transformations
+    - `renderer/`: Image rendering (gradients, contours, wind barbs)
+    - `storage/`: Database, cache, and object storage clients
 
 - **services/**: Deployable microservices
-  - `wms-api/`: HTTP API server
-  - `ingester/`: Data ingestion from NOAA sources
+    - `wms-api/`: HTTP API server
+    - `ingester/`: Data ingestion from NOAA sources
 
 - **config/**: Configuration files (YAML-based)
-  - `models/`: Model-specific configs (GFS, HRRR, GOES, MRMS)
-  - `parameters/`: GRIB2 parameter tables (WMO, NCEP, MRMS)
-  - `styles/`: Rendering styles (JSON)
-  - `ingestion.yaml`: Global ingestion settings
+    - `models/`: Model-specific configs (GFS, HRRR, GOES, MRMS)
+    - `parameters/`: GRIB2 parameter tables (WMO, NCEP, MRMS)
+    - `styles/`: Rendering styles (JSON)
+    - `ingestion.yaml`: Global ingestion settings
 
 ## Data Ingestion Workflow
 
-The Weather WMS system ingests weather data from public sources (AWS S3), parses GRIB2/NetCDF files, and extracts individual parameters for rendering.
+The Weather WMS system ingests weather data from public sources (AWS S3), parses GRIB2/NetCDF files, and extracts
+individual parameters for rendering.
 
 ### Quick Start: Admin Dashboard
 
 **View ingestion status and configuration:**
+
 ```bash
 # Start services
 docker-compose up
@@ -305,6 +312,7 @@ open http://localhost:8000/admin.html
 ```
 
 The dashboard provides:
+
 - Real-time ingestion status
 - Catalog summary (datasets, storage size)
 - Recent ingestion log
@@ -316,6 +324,7 @@ The dashboard provides:
 All ingestion is configured via YAML files in `config/`:
 
 **Example: Add a new parameter to GFS**
+
 ```bash
 # 1. Edit config file
 vim config/models/gfs.yaml
@@ -335,6 +344,7 @@ docker-compose restart ingester
 ```
 
 **Configuration Files:**
+
 - `config/models/gfs.yaml` - GFS model (global forecast)
 - `config/models/hrrr.yaml` - HRRR model (CONUS high-res)
 - `config/models/goes16.yaml` - GOES-16 satellite
@@ -357,6 +367,7 @@ Download → Parse → Shred → Store
 4. **Store**: Upload to MinIO/S3, catalog in PostgreSQL
 
 **Example: GFS file processing**
+
 ```
 Input:  gfs.t12z.pgrb2.0p25.f006 (486 GRIB2 messages)
 Output: 
@@ -410,13 +421,13 @@ curl -X PUT http://localhost:8080/api/admin/config/models/gfs \
 
 ### Supported Data Models
 
-| Model | Source | Format | Update Freq | Coverage |
-|-------|--------|--------|-------------|----------|
-| **GFS** | NOAA/NCEP | GRIB2 | Every 6 hours | Global |
-| **HRRR** | NOAA/NCEP | GRIB2 | Hourly | CONUS |
+| Model       | Source      | Format | Update Freq    | Coverage         |
+|-------------|-------------|--------|----------------|------------------|
+| **GFS**     | NOAA/NCEP   | GRIB2  | Every 6 hours  | Global           |
+| **HRRR**    | NOAA/NCEP   | GRIB2  | Hourly         | CONUS            |
 | **GOES-16** | NOAA/NESDIS | NetCDF | Every 5-15 min | Eastern Americas |
 | **GOES-18** | NOAA/NESDIS | NetCDF | Every 5-15 min | Western Americas |
-| **MRMS** | NOAA/NSSL | GRIB2 | Every 2 min | CONUS |
+| **MRMS**    | NOAA/NSSL   | GRIB2  | Every 2 min    | CONUS            |
 
 ### Manual Data Ingestion
 
@@ -440,20 +451,23 @@ cargo run --bin ingester
 ```
 
 **See also:**
+
 - [INGESTION.md](INGESTION.md) - Comprehensive ingestion guide
 - [INGESTION_CONSOLIDATION_PLAN.md](INGESTION_CONSOLIDATION_PLAN.md) - Technical design doc
-- [config/models/](config/models/) - Model configuration examples
+- [config/models/](/config/models/) - Model configuration examples
 
 ## Troubleshooting
 
 ### Cargo Lock Version Mismatch
 
 If you see:
+
 ```
 lock file version `4` was found, but this version of Cargo does not understand this lock file
 ```
 
 Update Rust:
+
 ```bash
 rustup update
 ```
@@ -511,10 +525,29 @@ kubectl get events -n weather-wms
 
 ## Contributing
 
-Before submitting PRs:
+### Pre-commit Hook Setup
+
+Set up the pre-commit hook to catch issues before pushing:
+
+```bash
+# Configure git to use the project's hooks directory
+git config core.hooksPath .githooks
+
+# Verify it's set up
+git config core.hooksPath
+# Should output: .githooks
+```
+
+The pre-commit hook automatically:
+
+- Checks code formatting (`cargo fmt --check`)
+- Detects trailing whitespace
+- Runs `cargo check` for compilation errors
+
+### Before Submitting PRs
 
 1. Run `cargo fmt` - code formatting
-2. Run `cargo clippy -- -D warnings` - linting
+2. Run `cargo clippy` - linting
 3. Run `cargo test` - unit tests
 4. Add tests for new functionality
 5. Update documentation as needed
