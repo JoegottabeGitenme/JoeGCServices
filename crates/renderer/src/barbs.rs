@@ -1,6 +1,6 @@
 //! Wind barb rendering using pre-generated SVG assets.
 //!
-//! This module uses SVG wind barbs from https://github.com/qulle/svg-wind-barbs
+//! This module uses SVG wind barbs from <https://github.com/qulle/svg-wind-barbs>
 //! Licensed under BSD 2-Clause License - see assets/wind-barbs/LICENSE
 
 use std::f64::consts::PI;
@@ -190,7 +190,7 @@ pub fn calculate_barb_positions(width: usize, height: usize, spacing: u32) -> Ve
 ///
 /// # Arguments
 /// * `width` - Tile width in pixels
-/// * `height` - Tile height in pixels  
+/// * `height` - Tile height in pixels
 /// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// * `spacing_degrees` - Spacing between barbs in degrees
 ///

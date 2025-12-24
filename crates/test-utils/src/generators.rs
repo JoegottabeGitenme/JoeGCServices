@@ -8,7 +8,7 @@
 /// Each cell value is calculated as: `col * 1000 + row`
 ///
 /// This makes it easy to verify that data is being read/written correctly
-/// by checking that grid[row][col] == col * 1000 + row.
+/// by checking that `grid[row][col] == col * 1000 + row`.
 ///
 /// # Arguments
 ///

@@ -208,7 +208,7 @@ pub fn render_with_style_file_indexed(
 /// * `height` - Output image height in pixels
 ///
 /// # Returns
-/// RGBA pixel data as Vec<u8> (length = width * height * 4), or an error if the style
+/// RGBA pixel data as `Vec<u8>` (length = width * height * 4), or an error if the style
 /// cannot be loaded or is invalid.
 ///
 /// # Errors
@@ -276,7 +276,7 @@ pub fn render_with_style_file(
 /// * `height` - Output image height in pixels
 ///
 /// # Returns
-/// RGBA pixel data as Vec<u8> (length = width * height * 4)
+/// RGBA pixel data as `Vec<u8>` (length = width * height * 4)
 #[allow(dead_code)] // Used in tests
 pub fn render_by_parameter(
     data: &[f32],

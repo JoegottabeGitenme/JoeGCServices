@@ -113,7 +113,7 @@ where
 /// * `f` - Closure that fills the buffer
 ///
 /// # Returns
-/// Owned Vec<u8> with the filled pixel data
+/// Owned `Vec<u8>` with the filled pixel data
 #[inline]
 pub fn take_pixel_buffer<F>(width: usize, height: usize, f: F) -> Vec<u8>
 where

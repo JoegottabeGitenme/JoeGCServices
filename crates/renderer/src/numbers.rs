@@ -35,7 +35,7 @@ impl UnitTransform {
         }
     }
 
-    /// Create from legacy Option<f32> format for backwards compatibility.
+    /// Create from legacy `Option<f32>` format for backwards compatibility.
     /// Positive values are subtraction, negative values indicate division (abs value).
     pub fn from_legacy(offset: Option<f32>) -> Self {
         match offset {
@@ -80,7 +80,7 @@ impl Default for NumbersConfig {
 /// Render numeric values from a grid onto an image
 ///
 /// # Arguments
-/// * `grid` - 2D array of data values [lat][lon]
+/// * `grid` - 2D array of data values \[lat\]\[lon\]
 /// * `width` - Output image width in pixels
 /// * `height` - Output image height in pixels
 /// * `config` - Numbers rendering configuration
@@ -315,9 +315,9 @@ pub struct AlignedNumbersConfig {
 /// geographic coordinates, ensuring consistent positioning across tiles.
 ///
 /// # Arguments
-/// * `grid` - 2D array of data values [lat][lon]
+/// * `grid` - 2D array of data values \[lat\]\[lon\]
 /// * `width` - Output image width in pixels
-/// * `height` - Output image height in pixels  
+/// * `height` - Output image height in pixels
 /// * `config` - Aligned numbers rendering configuration
 ///
 /// # Returns
@@ -515,9 +515,9 @@ pub struct GridPointNumbersConfig {
 /// corresponding to the original data grid points.
 ///
 /// # Arguments
-/// * `grid` - 2D array of resampled data values [y][x] matching render dimensions
+/// * `grid` - 2D array of resampled data values \[y\]\[x\] matching render dimensions
 /// * `width` - Output image width in pixels
-/// * `height` - Output image height in pixels  
+/// * `height` - Output image height in pixels
 /// * `config` - Grid point numbers rendering configuration
 ///
 /// # Returns
