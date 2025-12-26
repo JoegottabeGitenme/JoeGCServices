@@ -57,6 +57,8 @@ pub struct StyleDefinition {
     pub interpolation: Option<String>,
     pub out_of_range: Option<String>,
     pub legend: Option<Legend>,
+    /// Wind barb rendering configuration (for type: "wind_barbs")
+    pub wind: Option<WindBarbStyle>,
 }
 
 /// Color transformation
@@ -88,6 +90,77 @@ pub struct Legend {
     pub ticks: Option<u32>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+/// Wind barb rendering configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WindBarbStyle {
+    /// Grid spacing between barbs in pixels (default: 50)
+    #[serde(default = "default_wind_spacing")]
+    pub spacing: u32,
+    /// Size of the barb icon in pixels (default: 25)
+    #[serde(default = "default_wind_size")]
+    pub size: f32,
+    /// Line width for barb strokes (default: 1.5)
+    #[serde(default = "default_wind_line_width")]
+    pub line_width: f32,
+    /// Color of the barb (hex format, e.g., "#000000")
+    #[serde(default = "default_wind_color")]
+    pub color: String,
+    /// If true, direction indicates where wind comes FROM (meteorological convention)
+    #[serde(default = "default_direction_from")]
+    pub direction_from: bool,
+    /// Wind speed below which to show calm indicator (in display units, typically knots)
+    #[serde(default = "default_calm_threshold")]
+    pub calm_threshold: f32,
+}
+
+fn default_wind_spacing() -> u32 {
+    50
+}
+
+fn default_wind_size() -> f32 {
+    25.0
+}
+
+fn default_wind_line_width() -> f32 {
+    1.5
+}
+
+fn default_wind_color() -> String {
+    "#000000".to_string()
+}
+
+fn default_direction_from() -> bool {
+    true
+}
+
+fn default_calm_threshold() -> f32 {
+    2.5
+}
+
+impl Default for WindBarbStyle {
+    fn default() -> Self {
+        Self {
+            spacing: default_wind_spacing(),
+            size: default_wind_size(),
+            line_width: default_wind_line_width(),
+            color: default_wind_color(),
+            direction_from: default_direction_from(),
+            calm_threshold: default_calm_threshold(),
+        }
+    }
+}
+
+impl WindBarbStyle {
+    /// Convert to BarbConfig for the renderer
+    pub fn to_barb_config(&self) -> crate::barbs::BarbConfig {
+        crate::barbs::BarbConfig {
+            size: self.size as u32,
+            spacing: self.spacing,
+            color: self.color.clone(),
+        }
+    }
 }
 
 impl StyleConfig {
@@ -209,6 +282,24 @@ impl StyleDefinition {
             min_value,
             max_value,
         })
+    }
+
+    /// Get wind barb configuration from this style.
+    ///
+    /// Returns the configured wind barb settings, or defaults if not specified.
+    /// This is only meaningful for styles with `type: "wind_barbs"`.
+    pub fn get_barb_config(&self) -> crate::barbs::BarbConfig {
+        self.wind
+            .as_ref()
+            .map(|w| w.to_barb_config())
+            .unwrap_or_default()
+    }
+
+    /// Get the full wind barb style configuration.
+    ///
+    /// Returns the WindBarbStyle if configured, or default values.
+    pub fn get_wind_style(&self) -> WindBarbStyle {
+        self.wind.clone().unwrap_or_default()
     }
 }
 

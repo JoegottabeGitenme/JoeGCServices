@@ -860,6 +860,13 @@ async fn render_weather_data(
     if parameter == "WIND_BARBS" {
         let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
 
+        // Get wind barbs style file
+        let wind_style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, "WIND_BARBS");
+
         return crate::rendering::render_wind_barbs_layer(
             &state.catalog,
             &state.grid_processor_factory,
@@ -867,8 +874,9 @@ async fn render_weather_data(
             width,
             height,
             parsed_bbox,
-            None,
             forecast_hour,
+            Some(&wind_style_file),
+            None, // Use default style
         )
         .await
         .map_err(WmsError::from_rendering_error);
