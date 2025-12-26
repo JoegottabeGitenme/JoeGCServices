@@ -9,7 +9,9 @@
 # Usage:
 #   ./start.sh              # Start with docker-compose (fast)
 #   ./start.sh --compose    # Start with docker-compose (same as above)
-#   ./start.sh --rebuild    # Force rebuild of Docker images
+#   ./start.sh --dev        # Development mode: debug builds (MUCH faster compilation)
+#   ./start.sh --rebuild    # Force rebuild of Docker images (release)
+#   ./start.sh --rebuild-dev # Force rebuild with debug profile (faster)
 #   ./start.sh --clear-cache # Clear Redis tile cache (after rendering changes)
 #   ./start.sh --kubernetes # Full Kubernetes setup with minikube
 #   ./start.sh --k8s        # Same as --kubernetes
@@ -1377,12 +1379,35 @@ main() {
     check_compose_prerequisites
     start_compose
     ;;
-  --rebuild)
-    log_info "Forcing rebuild of Docker images..."
+  --dev)
+    log_info "Starting in DEVELOPMENT mode (debug builds - faster compilation)..."
+    export CARGO_PROFILE=dev
+    check_compose_prerequisites
     cd "$PROJECT_ROOT"
+    # Force rebuild with dev profile
+    log_info "Building with debug profile (this is MUCH faster than release)..."
     docker-compose build
-    log_success "Docker images rebuilt!"
+    docker-compose up -d
+    log_success "Development stack started with debug builds!"
+    show_compose_access_info
+    log_warn "Note: Debug builds are slower at runtime but compile much faster."
+    log_warn "Use './start.sh' (without --dev) for production-like performance."
+    ;;
+  --rebuild)
+    log_info "Forcing rebuild of Docker images (release profile)..."
+    cd "$PROJECT_ROOT"
+    export CARGO_PROFILE=release
+    docker-compose build
+    log_success "Docker images rebuilt (release)!"
     log_info "Run './start.sh' to start with rebuilt images"
+    ;;
+  --rebuild-dev)
+    log_info "Forcing rebuild of Docker images (dev/debug profile - FAST)..."
+    cd "$PROJECT_ROOT"
+    export CARGO_PROFILE=dev
+    docker-compose build
+    log_success "Docker images rebuilt (debug)!"
+    log_info "Run './start.sh --dev' to start with debug images"
     ;;
   --stop)
     log_info "Stopping services..."
@@ -1443,9 +1468,11 @@ main() {
     echo "Usage: $0 [option]"
     echo ""
     echo "Options:"
-    echo "  (none)         Start with docker-compose (RECOMMENDED - fast)"
-    echo "  --compose      Start with docker-compose"
-    echo "  --rebuild      Force rebuild of Docker images (use after code changes)"
+    echo "  (none)         Start with docker-compose (release builds)"
+    echo "  --compose      Start with docker-compose (same as above)"
+    echo "  --dev          FAST: Start with debug builds (much faster compilation!)"
+    echo "  --rebuild      Force rebuild (release profile)"
+    echo "  --rebuild-dev  Force rebuild (debug profile - FAST)"
     echo "  --clear-cache  Clear Redis tile cache (useful after rendering changes)"
     echo "  --kubernetes   Full Kubernetes setup with minikube (slower)"
     echo "  --k8s          Same as --kubernetes"
@@ -1454,16 +1481,23 @@ main() {
     echo "  --status       Show status of services"
     echo "  --help         Show this help message"
     echo ""
-    echo "NOTE: Images are automatically rebuilt if source code changed since last build"
+    echo "DEVELOPMENT WORKFLOW (FAST):"
+    echo "  1. First time or after major changes:"
+    echo "     ./start.sh --dev"
+    echo "     (Debug builds compile 3-5x faster than release)"
     echo ""
-    echo "RECOMMENDED WORKFLOW:"
-    echo "  1. Run: ./start.sh"
-    echo "     Starts all services (database, cache, storage, API, dashboard)"
+    echo "  2. After code changes:"
+    echo "     ./start.sh --rebuild-dev && ./start.sh --dev"
     echo ""
-    echo "  2. Open your browser:"
-    echo "     http://localhost:8000  (Web Dashboard)"
+    echo "  3. For production-like performance testing:"
+    echo "     ./start.sh --rebuild && ./start.sh"
     echo ""
-    echo "  3. Upload layers and test interactively!"
+    echo "BUILD TIME COMPARISON:"
+    echo "  --rebuild-dev  ~1-2 min (debug, incremental)"
+    echo "  --rebuild      ~5-10 min (release, optimized)"
+    echo ""
+    echo "NOTE: Debug builds are slower at runtime but compile MUCH faster."
+    echo "      Use release builds only when testing performance."
     echo ""
     echo "Services automatically started:"
     echo "  - PostgreSQL (localhost:5432)"
@@ -1471,9 +1505,6 @@ main() {
     echo "  - MinIO S3 (localhost:9000 + UI at 9001)"
     echo "  - WMS API (localhost:8080)"
     echo "  - Web Dashboard (localhost:8000)"
-    echo ""
-    echo "For full Kubernetes setup:"
-    echo "  ./start.sh --kubernetes"
     echo ""
     ;;
   *)

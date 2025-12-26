@@ -74,6 +74,8 @@ services:
     build:
       context: .
       dockerfile: services/wms-api/Dockerfile
+      args:
+        CARGO_PROFILE: ${CARGO_PROFILE:-release}
     env_file:
       - .env
     ports:
@@ -255,6 +257,8 @@ services:
     build:
       context: .
       dockerfile: services/ingester/Dockerfile
+      args:
+        CARGO_PROFILE: ${CARGO_PROFILE:-release}
     env_file:
       - .env
     ports:
@@ -294,6 +298,8 @@ services:
     build:
       context: .
       dockerfile: services/downloader/Dockerfile
+      args:
+        CARGO_PROFILE: ${CARGO_PROFILE:-release}
     env_file:
       - .env
     ports:
