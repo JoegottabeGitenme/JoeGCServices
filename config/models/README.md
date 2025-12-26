@@ -241,15 +241,42 @@ parameters:
   - Categorical data (precipitation type, cloud type)
   - Discrete values that shouldn't be averaged
 
-**Sentinel Value Handling:**
+**Sentinel Value Handling (valid_range):**
 
-Data sources like MRMS use sentinel values (e.g., -999) for missing data. During ingestion, values <= -90 are automatically converted to NaN to ensure proper rendering and pyramid generation. The `valid_range` field documents expected data bounds:
+The `valid_range` field is **required** for every parameter. It defines the bounds for valid data values. During ingestion, values outside this range are automatically converted to NaN:
+
+- Used to filter out sentinel/missing values (e.g., -999, -9999)
+- Enables data quality warnings when significant data is out of range
+- The renderer only needs to handle NaN for transparency
 
 ```yaml
 parameters:
   - name: REFL
-    valid_range: [-30, 80]    # dBZ range; values outside may be missing data
+    valid_range: [-30, 80]    # Values outside this range are converted to NaN
+    
+  - name: TMP
+    valid_range: [150, 350]   # Temperature in Kelvin (~-123°C to 77°C)
+    
+  - name: UGRD
+    valid_range: [-200, 200]  # Wind components can be negative (directional)
 ```
+
+**Common valid_range values by parameter type:**
+
+| Parameter Type | Example Range | Notes |
+|---------------|---------------|-------|
+| Temperature (K) | [150, 350] | ~-123°C to 77°C, covers stratosphere |
+| Wind components | [-200, 200] | Can be negative (directional) |
+| Wind speed/gust | [0, 150] | Always positive (magnitude) |
+| Pressure (Pa) | [85000, 110000] | 850-1100 hPa |
+| Relative humidity | [0, 100] | Percentage |
+| Cloud cover | [0, 100] | Percentage |
+| Reflectivity (dBZ) | [-30, 80] | Radar range |
+| CAPE | [0, 10000] | J/kg |
+| CIN | [-1000, 0] | Typically negative |
+| Visibility (m) | [0, 100000] | 0-100 km |
+| GOES reflectance | [0, 1.5] | Can exceed 1.0 for bright surfaces |
+| GOES IR temp (K) | [180, 350] | Brightness temperature |
 
 ### Storage Paths
 

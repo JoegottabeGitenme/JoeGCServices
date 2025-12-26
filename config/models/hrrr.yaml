@@ -93,6 +93,7 @@ parameters:
     units: Pa
     display_units: hPa
     conversion: Pa_to_hPa
+    valid_range: [85000, 110000]  # 850-1100 hPa
 
   # ==========================================================================
   # Surface & Near-Surface Parameters
@@ -115,6 +116,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [180, 340]  # ~-93°C to 67°C (CONUS range)
 
   # Dew Point Temperature (2m)
   - name: DPT
@@ -133,6 +135,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [180, 320]  # ~-93°C to 47°C
 
   # U-component wind (10m)
   - name: UGRD
@@ -153,6 +156,7 @@ parameters:
         display_template: "{value} mb"
     style: wind
     units: m/s
+    valid_range: [-150, 150]  # Wind components can be negative
 
   # V-component wind (10m)
   - name: VGRD
@@ -173,6 +177,7 @@ parameters:
         display_template: "{value} mb"
     style: wind
     units: m/s
+    valid_range: [-150, 150]  # Wind components can be negative
 
   # Relative Humidity (2m)
   - name: RH
@@ -189,6 +194,7 @@ parameters:
         display: "2 m above ground"
     style: humidity
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Precipitable Water (entire atmosphere)
   - name: PWAT
@@ -205,6 +211,7 @@ parameters:
     style: humidity
     units: kg/m^2
     display_units: mm
+    valid_range: [0, 100]  # 0-100 mm
 
   # Surface wind gust
   - name: GUST
@@ -220,6 +227,7 @@ parameters:
         display: "surface"
     style: wind
     units: m/s
+    valid_range: [0, 100]  # Gusts always positive (magnitude)
 
   # ==========================================================================
   # Radar & Reflectivity
@@ -240,6 +248,7 @@ parameters:
         display: "1000 m above ground"
     style: reflectivity
     units: dBZ
+    valid_range: [-30, 80]  # dBZ range for radar reflectivity
 
   # Echo Top Height
   - name: RETOP
@@ -257,6 +266,7 @@ parameters:
     units: m
     display_units: kft
     conversion: m_to_kft
+    valid_range: [0, 25000]  # 0-25 km echo tops
 
   # ==========================================================================
   # Precipitation Parameters
@@ -278,6 +288,7 @@ parameters:
     units: kg/m^2
     display_units: mm
     accumulation: true
+    valid_range: [0, 500]  # 0-500 mm accumulated
 
   # ==========================================================================
   # Convective/Stability Parameters
@@ -297,6 +308,7 @@ parameters:
         display: "surface"
     style: cape
     units: J/kg
+    valid_range: [0, 10000]  # 0-10000 J/kg
 
   # Convective Inhibition
   - name: CIN
@@ -312,6 +324,7 @@ parameters:
         display: "surface"
     style: cape
     units: J/kg
+    valid_range: [-1000, 0]  # CIN is typically negative
 
   # Updraft Helicity (2-5km layer) - Severe weather/tornado potential
   - name: MXUPHL
@@ -328,6 +341,7 @@ parameters:
         display: "2000-5000 m above ground"
     style: helicity
     units: m^2/s^2
+    valid_range: [-1000, 1000]  # Helicity can be positive or negative
 
   # ==========================================================================
   # Lightning
@@ -347,6 +361,7 @@ parameters:
         display: "entire atmosphere"
     style: lightning
     units: flashes/km^2/min
+    valid_range: [0, 100]  # Lightning density
 
   # ==========================================================================
   # Visibility
@@ -368,6 +383,7 @@ parameters:
     units: m
     display_units: km
     conversion: m_to_km
+    valid_range: [0, 50000]  # 0-50 km visibility
 
   # ==========================================================================
   # Cloud Cover
@@ -387,6 +403,7 @@ parameters:
         display: "entire atmosphere"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Low Cloud Cover
   - name: LCDC
@@ -402,6 +419,7 @@ parameters:
         display: "low cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Middle Cloud Cover
   - name: MCDC
@@ -417,6 +435,7 @@ parameters:
         display: "middle cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # High Cloud Cover
   - name: HCDC
@@ -432,6 +451,7 @@ parameters:
         display: "high cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # ==========================================================================
   # Upper-Air Temperature
@@ -454,6 +474,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [180, 340]  # ~-93°C to 67°C
 
   # Geopotential Height at pressure levels
   - name: HGT
@@ -470,6 +491,7 @@ parameters:
         display_template: "{value} mb"
     style: default
     units: gpm
+    valid_range: [-500, 20000]  # Geopotential height range
 
 # Composite layers
 composites:

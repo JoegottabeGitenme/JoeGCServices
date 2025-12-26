@@ -11,7 +11,7 @@ model:
   id: gfs
   name: "GFS - Global Forecast System"
   description: "NCEP Global Forecast System, 0.25° resolution"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -92,6 +92,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [150, 350]  # ~-123°C to 77°C (covers all Earth temps including stratosphere)
 
   # Temperature at pressure levels
   - name: TMP
@@ -110,6 +111,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [150, 350]  # ~-123°C to 77°C
 
   # Dew Point Temperature (2m)
   - name: DPT
@@ -128,6 +130,7 @@ parameters:
     units: K
     display_units: °C
     conversion: K_to_C
+    valid_range: [150, 330]  # ~-123°C to 57°C (dew point typically lower than temp)
 
   # ==========================================================================
   # Wind Parameters
@@ -152,6 +155,7 @@ parameters:
         display_template: "{value} mb"
     style: wind
     units: m/s
+    valid_range: [-200, 200]  # Wind components can be negative (directional)
 
   # V-component wind at 10m and pressure levels
   - name: VGRD
@@ -172,6 +176,7 @@ parameters:
         display_template: "{value} mb"
     style: wind
     units: m/s
+    valid_range: [-200, 200]  # Wind components can be negative (directional)
 
   # Surface wind gust
   - name: GUST
@@ -187,6 +192,7 @@ parameters:
         display: "surface"
     style: wind
     units: m/s
+    valid_range: [0, 150]  # Gusts are always positive (magnitude)
 
   # ==========================================================================
   # Pressure Parameters
@@ -208,6 +214,7 @@ parameters:
     units: Pa
     display_units: hPa
     conversion: Pa_to_hPa
+    valid_range: [85000, 110000]  # 850-1100 hPa (extreme lows to highs)
 
   # Geopotential height
   - name: HGT
@@ -224,6 +231,7 @@ parameters:
         display_template: "{value} mb"
     style: geopotential
     units: gpm
+    valid_range: [-500, 35000]  # From below sea level to stratosphere
 
   # ==========================================================================
   # Moisture Parameters
@@ -248,6 +256,7 @@ parameters:
         display_template: "{value} mb"
     style: humidity
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Precipitable Water (entire atmosphere column)
   - name: PWAT
@@ -264,6 +273,7 @@ parameters:
     style: humidity
     units: kg/m^2
     display_units: mm
+    valid_range: [0, 100]  # 0-100 mm precipitable water
 
   # ==========================================================================
   # Precipitation Parameters
@@ -285,6 +295,7 @@ parameters:
     units: kg/m^2
     display_units: mm
     accumulation: true
+    valid_range: [0, 1000]  # 0-1000 mm accumulated precip
 
   # Composite Reflectivity
   - name: REFC
@@ -300,6 +311,7 @@ parameters:
         display: "entire atmosphere"
     style: reflectivity
     units: dBZ
+    valid_range: [-30, 80]  # dBZ range for radar reflectivity
 
   # ==========================================================================
   # Convective/Stability Parameters
@@ -319,6 +331,7 @@ parameters:
         display: "surface"
     style: cape
     units: J/kg
+    valid_range: [0, 10000]  # 0-10000 J/kg (extreme CAPE > 5000)
 
   # Convective Inhibition
   - name: CIN
@@ -334,6 +347,7 @@ parameters:
         display: "surface"
     style: cape
     units: J/kg
+    valid_range: [-1000, 0]  # CIN is typically negative (inhibition)
 
   # ==========================================================================
   # Cloud Parameters
@@ -353,6 +367,7 @@ parameters:
         display: "entire atmosphere"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Low Cloud Cover
   - name: LCDC
@@ -368,6 +383,7 @@ parameters:
         display: "low cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # Middle Cloud Cover
   - name: MCDC
@@ -383,6 +399,7 @@ parameters:
         display: "middle cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # High Cloud Cover
   - name: HCDC
@@ -398,6 +415,7 @@ parameters:
         display: "high cloud layer"
     style: cloud
     units: "%"
+    valid_range: [0, 100]  # Percentage 0-100%
 
   # ==========================================================================
   # Visibility
@@ -419,6 +437,7 @@ parameters:
     units: m
     display_units: km
     conversion: m_to_km
+    valid_range: [0, 100000]  # 0-100 km visibility
 
 # Composite layers (derived from multiple parameters)
 composites:

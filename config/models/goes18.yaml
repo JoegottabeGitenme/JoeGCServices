@@ -64,6 +64,7 @@ parameters:
         display: "visible_blue"
     style: goes_visible
     units: "reflectance"
+    valid_range: [0, 1.5]  # Reflectance factor (can exceed 1.0 for bright surfaces)
 
   # Red Visible (0.64µm)  
   - name: CMI_C02
@@ -75,6 +76,7 @@ parameters:
         display: "visible_red"
     style: goes_visible
     units: "reflectance"
+    valid_range: [0, 1.5]  # Reflectance factor
 
   # Upper-Level Water Vapor (6.2µm)
   - name: CMI_C08
@@ -87,6 +89,7 @@ parameters:
     style: goes_ir
     units: "K"
     display_units: "K"
+    valid_range: [180, 350]  # Brightness temperature range
 
   # Clean IR (10.3µm)
   - name: CMI_C13
@@ -99,3 +102,4 @@ parameters:
     style: goes_ir
     units: "K"
     display_units: "K"
+    valid_range: [180, 350]  # Brightness temperature range

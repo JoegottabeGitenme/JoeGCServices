@@ -644,8 +644,8 @@ impl ContourStyle {
     }
 }
 
-/// Common missing value markers for weather data
-const MISSING_VALUE_THRESHOLD: f32 = -90.0;
+// Note: Sentinel value handling is now done during ingestion (see ingestion crate).
+// The renderer only needs to handle NaN values for transparency.
 
 /// Apply a unit transform to a single value
 pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
@@ -766,8 +766,8 @@ fn apply_style_gradient_into(
 
                 let raw_value = data[data_idx];
 
-                // Handle NaN and common missing values as transparent
-                if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
+                // Handle NaN as transparent (sentinel values are converted to NaN during ingestion)
+                if raw_value.is_nan() {
                     row[pixel_idx] = 0;
                     row[pixel_idx + 1] = 0;
                     row[pixel_idx + 2] = 0;
@@ -949,8 +949,9 @@ fn apply_style_gradient_indexed_into(
 
                 let raw_value = data[data_idx];
 
-                // Handle NaN and missing values -> transparent (index 0)
-                if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
+                // Handle NaN -> transparent (index 0)
+                // Sentinel values are converted to NaN during ingestion
+                if raw_value.is_nan() {
                     row[x] = 0;
                     continue;
                 }
