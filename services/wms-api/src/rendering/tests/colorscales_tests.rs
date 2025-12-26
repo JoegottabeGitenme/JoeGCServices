@@ -1,6 +1,6 @@
 //! Tests for colorscales rendering functions.
 
-use crate::rendering::colorscales::{hsv_to_rgb, render_by_parameter, render_with_style_file};
+use crate::rendering::colorscales::{hsv_to_rgb, render_with_style_file};
 
 // ============================================================================
 // HSV to RGB conversion tests
@@ -86,55 +86,6 @@ fn test_hsv_to_rgb_hue_wrapping() {
     assert_eq!(r1, r2);
     assert_eq!(g1, g2);
     assert_eq!(b1, b2);
-}
-
-// ============================================================================
-// render_by_parameter output size tests
-// These tests verify that rendering produces correct output dimensions
-// using the fallback gradient (since no style files are available in test env)
-// ============================================================================
-
-#[test]
-fn test_render_by_parameter_temperature_output_size() {
-    let data = vec![273.15f32; 100]; // 10x10 grid of 0°C
-    let result = render_by_parameter(&data, "TMP", 260.0, 310.0, 10, 10);
-    // RGBA output: 10*10*4 = 400 bytes
-    assert_eq!(result.len(), 400);
-}
-
-#[test]
-fn test_render_by_parameter_wind_output_size() {
-    let data = vec![10.0f32; 100]; // 10x10 grid
-    let result = render_by_parameter(&data, "WIND_SPEED", 0.0, 50.0, 10, 10);
-    assert_eq!(result.len(), 400);
-}
-
-#[test]
-fn test_render_by_parameter_pressure_output_size() {
-    let data = vec![101325.0f32; 100]; // 10x10 grid at ~1013 hPa
-    let result = render_by_parameter(&data, "PRMSL", 98000.0, 104000.0, 10, 10);
-    assert_eq!(result.len(), 400);
-}
-
-#[test]
-fn test_render_by_parameter_reflectivity_output_size() {
-    let data = vec![30.0f32; 100]; // 10x10 grid at 30 dBZ
-    let result = render_by_parameter(&data, "REFL", -10.0, 75.0, 10, 10);
-    assert_eq!(result.len(), 400);
-}
-
-#[test]
-fn test_render_by_parameter_goes_visible_output_size() {
-    let data = vec![0.5f32; 100]; // 10x10 grid at 50% reflectance
-    let result = render_by_parameter(&data, "CMI_C02", 0.0, 1.0, 10, 10);
-    assert_eq!(result.len(), 400);
-}
-
-#[test]
-fn test_render_by_parameter_generic_output_size() {
-    let data = vec![50.0f32; 100]; // 10x10 grid
-    let result = render_by_parameter(&data, "UNKNOWN_PARAM", 0.0, 100.0, 10, 10);
-    assert_eq!(result.len(), 400);
 }
 
 // ============================================================================

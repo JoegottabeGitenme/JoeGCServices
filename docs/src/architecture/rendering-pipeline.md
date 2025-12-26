@@ -426,22 +426,22 @@ pub fn apply_style_gradient(
 
 ## Common Issues and Solutions
 
-### Issue: Solid-Color Tiles
+### Issue: Style Loading Failure at Startup
 
-**Symptom**: Each tile renders as a single solid color instead of showing gradients.
+**Symptom**: Service fails to start with "unable to load style" error.
 
-**Cause**: Style lookup failing, falling back to per-tile min/max normalization.
+**Cause**: The layer configuration references a style file that doesn't exist or is invalid.
 
-**Solution**: Ensure style name is passed through the rendering pipeline:
+**Solution**: Ensure all style files referenced in `config/layers/*.yaml` exist in `config/styles/`:
 
-```rust
-// In handlers.rs - WMTS GetTile
-crate::rendering::render_weather_data(
-    ...
-    Some(style),  // Pass style name, not None!
-    ...
-)
+```yaml
+# config/layers/gfs.yaml
+layers:
+  - parameter: TMP
+    style_file: temperature.json  # Must exist at config/styles/temperature.json
 ```
+
+Style loading failures are **fatal errors** - there is no fallback. This ensures consistent rendering across all tiles.
 
 ### Issue: Tiles Showing Wrong Geographic Data
 
