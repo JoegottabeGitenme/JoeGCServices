@@ -6,12 +6,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use grid_processor::{GridProcessorFactory, MinioConfig};
-use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 use crate::capabilities_cache::CapabilitiesCache;
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
+use grid_processor::{GridProcessorFactory, MinioConfig};
+use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 
 /// Configuration for performance optimizations.
 /// Each optimization can be toggled on/off via environment variables.
@@ -21,26 +21,26 @@ pub struct OptimizationConfig {
     pub l1_cache_enabled: bool,
     pub l1_cache_size: usize,
     pub l1_cache_ttl_secs: u64,
-    
+
     // Zarr Chunk Cache (for chunked Zarr grid data)
     pub chunk_cache_enabled: bool,
     pub chunk_cache_size_mb: usize,
-    
+
     // Prefetch
     pub prefetch_enabled: bool,
     pub prefetch_rings: u32,
     pub prefetch_min_zoom: u32,
     pub prefetch_max_zoom: u32,
-    
+
     // Cache Warming
     pub cache_warming_enabled: bool,
-    
+
     // Memory Pressure Management
     pub memory_pressure_enabled: bool,
-    pub memory_limit_mb: usize,           // Hard limit for total memory (0 = auto-detect from cgroup)
-    pub memory_pressure_threshold: f64,   // Percentage (0.0-1.0) at which to start evicting (default 0.80)
-    pub memory_pressure_target: f64,      // Target percentage after eviction (default 0.70)
-    pub memory_check_interval_secs: u64,  // How often to check memory pressure
+    pub memory_limit_mb: usize, // Hard limit for total memory (0 = auto-detect from cgroup)
+    pub memory_pressure_threshold: f64, // Percentage (0.0-1.0) at which to start evicting (default 0.80)
+    pub memory_pressure_target: f64,    // Target percentage after eviction (default 0.70)
+    pub memory_check_interval_secs: u64, // How often to check memory pressure
 }
 
 impl OptimizationConfig {
@@ -52,48 +52,48 @@ impl OptimizationConfig {
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(default)
         }
-        
+
         fn parse_usize(key: &str, default: usize) -> usize {
             env::var(key)
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default)
         }
-        
+
         fn parse_u64(key: &str, default: u64) -> u64 {
             env::var(key)
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default)
         }
-        
+
         fn parse_u32(key: &str, default: u32) -> u32 {
             env::var(key)
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default)
         }
-        
+
         Self {
             // L1 Cache
             l1_cache_enabled: parse_bool("ENABLE_L1_CACHE", true),
             l1_cache_size: parse_usize("TILE_CACHE_SIZE", 10000),
             l1_cache_ttl_secs: parse_u64("TILE_CACHE_TTL_SECS", 300),
-            
+
             // Zarr Chunk Cache (for chunked Zarr grid data)
             // This caches decompressed chunks from Zarr files for efficient partial reads
             chunk_cache_enabled: parse_bool("ENABLE_CHUNK_CACHE", true),
             chunk_cache_size_mb: parse_usize("CHUNK_CACHE_SIZE_MB", 1024), // Default 1GB
-            
+
             // Prefetch
             prefetch_enabled: parse_bool("ENABLE_PREFETCH", true),
             prefetch_rings: parse_u32("PREFETCH_RINGS", 2),
             prefetch_min_zoom: parse_u32("PREFETCH_MIN_ZOOM", 3),
             prefetch_max_zoom: parse_u32("PREFETCH_MAX_ZOOM", 12),
-            
+
             // Cache Warming
             cache_warming_enabled: parse_bool("ENABLE_CACHE_WARMING", true),
-            
+
             // Memory Pressure Management
             memory_pressure_enabled: parse_bool("ENABLE_MEMORY_PRESSURE", true),
             memory_limit_mb: parse_usize("MEMORY_LIMIT_MB", 0), // 0 = auto-detect
@@ -128,23 +128,24 @@ impl OptimizationConfig {
 pub struct AppState {
     pub catalog: Catalog,
     pub cache: Mutex<TileCache>,
-    pub tile_memory_cache: TileMemoryCache,  // L1 cache for rendered tiles
+    pub tile_memory_cache: TileMemoryCache, // L1 cache for rendered tiles
     pub storage: Arc<ObjectStorage>,
-    pub grid_processor_factory: GridProcessorFactory,  // Factory for Zarr-based grid processors
+    pub grid_processor_factory: GridProcessorFactory, // Factory for Zarr-based grid processors
     pub metrics: Arc<MetricsCollector>,
-    pub prefetch_rings: u32,  // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
-    pub optimization_config: OptimizationConfig,  // Feature flags for optimizations
-    pub chunk_warmer: tokio::sync::RwLock<Option<std::sync::Arc<crate::chunk_warming::ChunkWarmer>>>,  // Chunk cache warmer
-    pub model_dimensions: ModelDimensionRegistry,  // Model dimension configurations (from YAML)
-    pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>,  // Layer configurations (from YAML) - styles, units, levels
-    pub capabilities_cache: CapabilitiesCache,  // Cache for WMS/WMTS capabilities documents
+    pub prefetch_rings: u32, // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
+    pub optimization_config: OptimizationConfig, // Feature flags for optimizations
+    pub chunk_warmer:
+        tokio::sync::RwLock<Option<std::sync::Arc<crate::chunk_warming::ChunkWarmer>>>, // Chunk cache warmer
+    pub model_dimensions: ModelDimensionRegistry, // Model dimension configurations (from YAML)
+    pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>, // Layer configurations (from YAML) - styles, units, levels
+    pub capabilities_cache: CapabilitiesCache, // Cache for WMS/WMTS capabilities documents
 }
 
 impl AppState {
     pub async fn new() -> Result<Self> {
         // Load optimization configuration from environment
         let optimization_config = OptimizationConfig::from_env();
-        
+
         let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
             "postgresql://postgres:postgres@postgres:5432/weatherwms".to_string()
         });
@@ -154,7 +155,7 @@ impl AppState {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(3600); // Default: 1 hour
-        
+
         // Parse connection pool sizes from environment
         let db_pool_size = env::var("DATABASE_POOL_SIZE")
             .ok()
@@ -185,15 +186,13 @@ impl AppState {
 
         // Create L1 in-memory tile cache
         let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
-        
+
         // Create GridProcessorFactory for Zarr-based data access
         // Now using the factory from grid-processor crate which manages MinIO config internally
         let grid_processor_factory = if optimization_config.chunk_cache_enabled {
             let minio_config = MinioConfig::from_env();
-            let factory = GridProcessorFactory::new(
-                minio_config,
-                optimization_config.chunk_cache_size_mb,
-            );
+            let factory =
+                GridProcessorFactory::new(minio_config, optimization_config.chunk_cache_size_mb);
             info!(
                 chunk_cache_size_mb = optimization_config.chunk_cache_size_mb,
                 "GridProcessorFactory initialized with chunk cache"
@@ -212,9 +211,10 @@ impl AppState {
             models = model_dimensions.models().len(),
             "Loaded model dimension configurations"
         );
-        
+
         // Load layer configurations from YAML files (styles, units, levels)
-        let layer_configs = tokio::sync::RwLock::new(LayerConfigRegistry::load_from_directory(&config_dir));
+        let layer_configs =
+            tokio::sync::RwLock::new(LayerConfigRegistry::load_from_directory(&config_dir));
         {
             let configs = layer_configs.read().await;
             info!(

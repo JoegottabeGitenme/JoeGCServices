@@ -2533,6 +2533,7 @@ dependencies = [
  "serde_json",
  "storage",
  "tokio",
+ "tokio-test",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -4932,6 +4933,15 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "test-utils"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tokio",
+ "tokio-test",
 ]
 
 [[package]]

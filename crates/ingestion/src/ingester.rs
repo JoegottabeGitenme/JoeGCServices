@@ -86,8 +86,14 @@ impl Ingester {
             FileType::Grib2Gz => {
                 // Decompress and ingest
                 let decompressed = grib2::decompress_gzip(&data)?;
-                grib2::ingest_grib2(&self.storage, &self.catalog, decompressed, file_path, &options)
-                    .await
+                grib2::ingest_grib2(
+                    &self.storage,
+                    &self.catalog,
+                    decompressed,
+                    file_path,
+                    &options,
+                )
+                .await
             }
             FileType::NetCdf => {
                 netcdf::ingest_netcdf(&self.storage, &self.catalog, data, file_path, &options).await
@@ -106,7 +112,7 @@ impl Ingester {
                         .await;
                     }
                 }
-                
+
                 // Default to GRIB2
                 warn!(
                     file_path = %file_path,
@@ -135,7 +141,14 @@ impl Ingester {
         options: IngestOptions,
     ) -> Result<IngestionResult> {
         let decompressed = grib2::decompress_gzip(&data)?;
-        grib2::ingest_grib2(&self.storage, &self.catalog, decompressed, file_path, &options).await
+        grib2::ingest_grib2(
+            &self.storage,
+            &self.catalog,
+            decompressed,
+            file_path,
+            &options,
+        )
+        .await
     }
 
     /// Ingest NetCDF data directly (GOES satellite).

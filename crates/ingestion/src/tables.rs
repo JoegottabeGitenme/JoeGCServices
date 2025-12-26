@@ -93,12 +93,17 @@ fn load_model_config(
 
             // Get grib2 codes
             if let Some(grib2) = param.get("grib2") {
-                let discipline = grib2.get("discipline").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+                let discipline = grib2
+                    .get("discipline")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u8;
                 let category = grib2.get("category").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
                 let number = grib2.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
                 // Only add if not already seen (first config wins)
-                params.entry((discipline, category, number)).or_insert(name.clone());
+                params
+                    .entry((discipline, category, number))
+                    .or_insert(name.clone());
             }
 
             // Extract level definitions
@@ -106,16 +111,18 @@ fn load_model_config(
                 for level in param_levels {
                     if let Some(level_code) = level.get("level_code").and_then(|v| v.as_u64()) {
                         let level_code = level_code as u8;
-                        
+
                         // Skip if already defined
                         if levels.contains_key(&level_code) {
                             continue;
                         }
 
                         // Get display text - check both "display" and "display_template" fields
-                        let display_text = level.get("display").and_then(|d| d.as_str())
+                        let display_text = level
+                            .get("display")
+                            .and_then(|d| d.as_str())
                             .or_else(|| level.get("display_template").and_then(|d| d.as_str()));
-                        
+
                         if let Some(display) = display_text {
                             let description = if display.contains("{value}") {
                                 LevelDescription::Template(display.to_string())

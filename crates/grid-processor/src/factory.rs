@@ -62,43 +62,43 @@ impl GridProcessorFactory {
         let chunk_cache = Arc::new(RwLock::new(ChunkCache::new(
             chunk_cache_size_mb * 1024 * 1024,
         )));
-        
+
         let config = GridProcessorConfig::from_env();
-        
+
         Self {
             config,
             chunk_cache,
             minio_config,
         }
     }
-    
+
     /// Create a new factory with default MinIO configuration from environment.
     pub fn from_env(chunk_cache_size_mb: usize) -> Self {
         Self::new(MinioConfig::from_env(), chunk_cache_size_mb)
     }
-    
+
     /// Get cache statistics for monitoring.
     pub async fn cache_stats(&self) -> CacheStats {
         self.chunk_cache.read().await.stats()
     }
-    
+
     /// Get the shared chunk cache reference.
     ///
     /// Useful for passing to processors that need direct cache access.
     pub fn chunk_cache(&self) -> Arc<RwLock<ChunkCache>> {
         self.chunk_cache.clone()
     }
-    
+
     /// Get the processor configuration.
     pub fn config(&self) -> &GridProcessorConfig {
         &self.config
     }
-    
+
     /// Get the MinIO configuration.
     pub fn minio_config(&self) -> &MinioConfig {
         &self.minio_config
     }
-    
+
     /// Clear the chunk cache (for hot reload / cache invalidation).
     ///
     /// # Returns
@@ -143,7 +143,7 @@ mod tests {
     use super::*;
     use crate::types::BoundingBox;
     use chrono::{TimeZone, Utc};
-    
+
     fn create_test_zarr_metadata() -> ZarrMetadata {
         ZarrMetadata {
             model: "gfs".to_string(),
@@ -161,12 +161,12 @@ mod tests {
             compression: "blosc".to_string(),
         }
     }
-    
+
     #[test]
     fn test_zarr_metadata_to_grid_metadata() {
         let zarr = create_test_zarr_metadata();
         let grid: GridMetadata = zarr.clone().into();
-        
+
         assert_eq!(grid.model, zarr.model);
         assert_eq!(grid.parameter, zarr.parameter);
         assert_eq!(grid.level, zarr.level);

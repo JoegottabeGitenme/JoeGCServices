@@ -10,9 +10,12 @@
 
 ## Executive Summary
 
-This plan introduces a **Grid Processing Abstraction Layer** between the WMS-API and MinIO storage, using the **Zarr V3 format with sharding** to enable efficient byte-range access to weather grid data. The goal is to dramatically reduce rendering latency by fetching only the chunks needed for a specific tile request, rather than loading entire grid files.
+This plan introduces a **Grid Processing Abstraction Layer** between the WMS-API and MinIO storage, using the **Zarr V3
+format with sharding** to enable efficient byte-range access to weather grid data. The goal is to dramatically reduce
+rendering latency by fetching only the chunks needed for a specific tile request, rather than loading entire grid files.
 
 **Key Benefits:**
+
 - **10-100x reduction** in data transferred from MinIO per request
 - **Standardized format** with industry support (NASA, NOAA, Pangeo)
 - **Future-proof architecture** that cleanly separates data access from rendering
@@ -57,16 +60,17 @@ NOAA S3 → Downloader → Ingester → MinIO (GRIB2/NetCDF) → WMS-API → Cli
 
 ### 1.2 Current Performance Bottlenecks
 
-| Model | File Size | Grid Points | Cache Miss Latency | Bottleneck |
-|-------|-----------|-------------|-------------------|------------|
-| GFS | ~4 MB | 1,037,440 | ~400-600 ms | Full file load |
-| HRRR | ~2-5 MB | ~1.9M | ~400-600 ms | Full file load + projection |
-| GOES | ~2.8 MB | 3.75M | ~600-800 ms | Temp file I/O + projection |
-| MRMS | ~400 KB | 24.5M | ~600 ms | GRIB2 decompression |
+| Model | File Size | Grid Points | Cache Miss Latency | Bottleneck                  |
+|-------|-----------|-------------|--------------------|-----------------------------|
+| GFS   | ~4 MB     | 1,037,440   | ~400-600 ms        | Full file load              |
+| HRRR  | ~2-5 MB   | ~1.9M       | ~400-600 ms        | Full file load + projection |
+| GOES  | ~2.8 MB   | 3.75M       | ~600-800 ms        | Temp file I/O + projection  |
+| MRMS  | ~400 KB   | 24.5M       | ~600 ms            | GRIB2 decompression         |
 
 ### 1.3 The Core Problem
 
-A WMS tile request at zoom level 8 needs approximately **0.01-1%** of the grid data, yet the system loads **100%** of the file. For GFS:
+A WMS tile request at zoom level 8 needs approximately **0.01-1%** of the grid data, yet the system loads **100%** of
+the file. For GFS:
 
 - Tile covers: ~1° × 1° area
 - Grid covers: 360° × 180° area
@@ -166,9 +170,11 @@ NOAA S3 → Downloader → Ingester → [NEW] Convert to Zarr → MinIO (Zarr)
 
 ### 3.1 Why Zarr V3 with Sharding?
 
-Zarr V3 introduced **sharding** (ZEP-2), which solves the "millions of small files" problem by storing multiple chunks in a single file with an index for byte-range access.
+Zarr V3 introduced **sharding** (ZEP-2), which solves the "millions of small files" problem by storing multiple chunks
+in a single file with an index for byte-range access.
 
 **Without sharding:**
+
 ```
 array/
 ├── zarr.json
@@ -179,6 +185,7 @@ array/
 ```
 
 **With sharding:**
+
 ```
 array/
 ├── zarr.json       # Metadata (~500 bytes)
@@ -188,6 +195,7 @@ array/
 ### 3.2 File Structure for Weather Data
 
 **Storage path pattern:**
+
 ```
 grids/{model}/{run_date}/{parameter}_{level}_f{forecast:03}.zarr/
 ├── zarr.json       # Array metadata
@@ -195,6 +203,7 @@ grids/{model}/{run_date}/{parameter}_{level}_f{forecast:03}.zarr/
 ```
 
 **Example for GFS temperature:**
+
 ```
 grids/gfs/20241212_00z/TMP_2m_f006.zarr/
 ├── zarr.json
@@ -207,12 +216,18 @@ grids/gfs/20241212_00z/TMP_2m_f006.zarr/
 {
   "zarr_format": 3,
   "node_type": "array",
-  "shape": [721, 1440],
+  "shape": [
+    721,
+    1440
+  ],
   "data_type": "float32",
   "chunk_grid": {
     "name": "regular",
     "configuration": {
-      "chunk_shape": [512, 512]
+      "chunk_shape": [
+        512,
+        512
+      ]
     }
   },
   "chunk_key_encoding": {
@@ -224,11 +239,18 @@ grids/gfs/20241212_00z/TMP_2m_f006.zarr/
   "codecs": [
     {
       "name": "transpose",
-      "configuration": {"order": [1, 0]}
+      "configuration": {
+        "order": [
+          1,
+          0
+        ]
+      }
     },
     {
       "name": "bytes",
-      "configuration": {"endian": "little"}
+      "configuration": {
+        "endian": "little"
+      }
     },
     {
       "name": "blosc",
@@ -249,7 +271,12 @@ grids/gfs/20241212_00z/TMP_2m_f006.zarr/
     "units": "K",
     "reference_time": "2024-12-12T00:00:00Z",
     "forecast_hour": 6,
-    "bbox": [0.0, -90.0, 360.0, 90.0],
+    "bbox": [
+      0.0,
+      -90.0,
+      360.0,
+      90.0
+    ],
     "projection": "geographic",
     "source_format": "GRIB2"
   }
@@ -266,14 +293,33 @@ For GFS (1440×721 grid with 512×512 chunks = 6 chunks total):
     {
       "name": "sharding_indexed",
       "configuration": {
-        "chunk_shape": [512, 512],
+        "chunk_shape": [
+          512,
+          512
+        ],
         "codecs": [
-          {"name": "bytes"},
-          {"name": "blosc", "configuration": {"cname": "zstd", "clevel": 1, "shuffle": "shuffle"}}
+          {
+            "name": "bytes"
+          },
+          {
+            "name": "blosc",
+            "configuration": {
+              "cname": "zstd",
+              "clevel": 1,
+              "shuffle": "shuffle"
+            }
+          }
         ],
         "index_codecs": [
-          {"name": "bytes", "configuration": {"endian": "little"}},
-          {"name": "crc32c"}
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "crc32c"
+          }
         ],
         "index_location": "end"
       }
@@ -304,11 +350,13 @@ Total: 6 chunks (3 columns × 2 rows)
 ### 3.6 Byte-Range Access Pattern
 
 **Metadata access (zero MinIO requests):**
+
 - `zarr.json` metadata (~500 bytes) → Stored in PostgreSQL catalog at ingestion time
 - Shard index (~100 bytes) → Stored in PostgreSQL catalog at ingestion time
 - **No MinIO requests needed for metadata!** It comes with the catalog query.
 
 **Per-tile request:**
+
 1. Query catalog → Returns dataset entry WITH `zarr_metadata` and `shard_index`
 2. Calculate which chunks intersect the requested bbox (pure arithmetic, ~1μs)
 3. Look up byte offsets in shard index (from catalog, already in memory)
@@ -316,6 +364,7 @@ Total: 6 chunks (3 columns × 2 rows)
 5. Decompress and assemble
 
 **Example request flow:**
+
 ```
 Tile Request: z=8, x=45, y=102
 
@@ -342,7 +391,9 @@ Total MinIO requests: 1 (just the chunk data)
 
 #### Chunk-to-Tile Mapping: Computed, Not Stored
 
-**The mapping from tile (z/x/y) to chunk indices is deterministic and computed on-the-fly** - no pre-computation or database lookup required. The calculation is pure arithmetic (~1 microsecond) and only needs the tile coordinates plus grid metadata (already cached).
+**The mapping from tile (z/x/y) to chunk indices is deterministic and computed on-the-fly** - no pre-computation or
+database lookup required. The calculation is pure arithmetic (~1 microsecond) and only needs the tile coordinates plus
+grid metadata (already cached).
 
 ```rust
 /// Calculate which chunks are needed for a tile request.
@@ -355,23 +406,23 @@ fn chunks_for_tile(
 ) -> Vec<(usize, usize)> {
     // 1. Calculate tile bbox (standard Web Mercator formula) - O(1)
     let tile_bbox = tile_to_bbox(tile);
-    
+
     // 2. Calculate grid resolution
     let lon_per_cell = (grid_bbox.max_lon - grid_bbox.min_lon) / grid_shape.0 as f64;
     let lat_per_cell = (grid_bbox.max_lat - grid_bbox.min_lat) / grid_shape.1 as f64;
-    
+
     // 3. Convert tile bbox to grid cell indices
     let min_col = ((tile_bbox.min_lon - grid_bbox.min_lon) / lon_per_cell).floor() as usize;
     let max_col = ((tile_bbox.max_lon - grid_bbox.min_lon) / lon_per_cell).ceil() as usize;
     let min_row = ((grid_bbox.max_lat - tile_bbox.max_lat) / lat_per_cell).floor() as usize;
     let max_row = ((grid_bbox.max_lat - tile_bbox.min_lat) / lat_per_cell).ceil() as usize;
-    
+
     // 4. Convert grid indices to chunk indices
     let min_chunk_x = min_col / chunk_shape.0;
     let max_chunk_x = (max_col + chunk_shape.0 - 1) / chunk_shape.0;
     let min_chunk_y = min_row / chunk_shape.1;
     let max_chunk_y = (max_row + chunk_shape.1 - 1) / chunk_shape.1;
-    
+
     // 5. Return chunk coordinates (typically 1-4 chunks)
     (min_chunk_y..=max_chunk_y)
         .flat_map(|cy| (min_chunk_x..=max_chunk_x).map(move |cx| (cx, cy)))
@@ -381,14 +432,15 @@ fn chunks_for_tile(
 
 **Why this works without pre-computation:**
 
-| Property | Explanation |
-|----------|-------------|
-| **Deterministic** | Same tile always maps to same chunks - pure math |
-| **Fast** | ~1μs computation, negligible vs network I/O (milliseconds) |
-| **Stateless** | Only needs tile coords + grid metadata (cached in processor) |
-| **No storage needed** | No database tables or lookup files required |
+| Property              | Explanation                                                  |
+|-----------------------|--------------------------------------------------------------|
+| **Deterministic**     | Same tile always maps to same chunks - pure math             |
+| **Fast**              | ~1μs computation, negligible vs network I/O (milliseconds)   |
+| **Stateless**         | Only needs tile coords + grid metadata (cached in processor) |
+| **No storage needed** | No database tables or lookup files required                  |
 
 **Example for GFS:**
+
 ```
 GFS Grid: 1440×721, bbox [0°, -90°, 360°, 90°]
 Chunk size: 512×512
@@ -403,20 +455,22 @@ Most tiles at typical zoom levels (z=4-10) only need 1 chunk.
 At very low zoom (z=0-3), might need 2-4 chunks.
 ```
 
-The `ZarrGridProcessor` caches the grid metadata (bbox, shape, chunk_shape) when opened, so `chunks_for_tile()` requires no I/O - it's essentially free.
+The `ZarrGridProcessor` caches the grid metadata (bbox, shape, chunk_shape) when opened, so `chunks_for_tile()` requires
+no I/O - it's essentially free.
 
 ### 3.7 Compression Analysis
 
 **File size comparison for GFS (1440×721 grid = 4.15 MB uncompressed):**
 
-| Compression | Ratio | Chunk Size (512×512) | Full Grid Size | Decompress Speed |
-|-------------|-------|---------------------|----------------|------------------|
-| None | 1.0x | 1,048 KB | 4,150 KB | N/A |
-| LZ4 | 2.0-2.5x | 420-525 KB | 1,660-2,075 KB | 4,000 MB/s |
-| Zstd L1 | 2.8-3.0x | 350-375 KB | 1,380-1,480 KB | 1,550 MB/s |
-| Blosc+Zstd+Shuffle | 4-5x | 210-260 KB | 830-1,040 KB | 1,400 MB/s |
+| Compression        | Ratio    | Chunk Size (512×512) | Full Grid Size | Decompress Speed |
+|--------------------|----------|----------------------|----------------|------------------|
+| None               | 1.0x     | 1,048 KB             | 4,150 KB       | N/A              |
+| LZ4                | 2.0-2.5x | 420-525 KB           | 1,660-2,075 KB | 4,000 MB/s       |
+| Zstd L1            | 2.8-3.0x | 350-375 KB           | 1,380-1,480 KB | 1,550 MB/s       |
+| Blosc+Zstd+Shuffle | 4-5x     | 210-260 KB           | 830-1,040 KB   | 1,400 MB/s       |
 
-**Recommendation:** Blosc with Zstd and shuffle filter provides the best balance of compression ratio and decompression speed for f32 weather data.
+**Recommendation:** Blosc with Zstd and shuffle filter provides the best balance of compression ratio and decompression
+speed for f32 weather data.
 
 ---
 
@@ -750,13 +804,13 @@ impl<S: AsyncReadableStorage + Send + Sync + 'static> ZarrGridProcessor<S> {
         let start = [chunk_y * chunk_h, chunk_x * chunk_w];
         let shape = [chunk_h, chunk_w];
 
-        let subset = ArraySubset::new_with_start_shape(
+        let _subset = ArraySubset::new_with_start_shape(
             start.map(|x| x as u64).to_vec(),
             shape.map(|x| x as u64).to_vec(),
         )?;
 
         let data: Vec<f32> = self.array
-            .async_retrieve_array_subset_elements(&subset)
+            .async_retrieve_array_subset_elements(&_subset)
             .await
             .map_err(|e| GridProcessorError::ReadFailed(e.to_string()))?;
 
@@ -775,7 +829,7 @@ impl<S: AsyncReadableStorage + Send + Sync + 'static> GridProcessor for ZarrGrid
     async fn read_region(&self, bbox: &BoundingBox) -> Result<GridRegion, GridProcessorError> {
         // 1. Calculate needed chunks
         let chunks = self.chunks_for_bbox(bbox);
-        
+
         tracing::debug!(
             bbox = ?bbox,
             chunks = ?chunks,
@@ -874,7 +928,7 @@ impl ChunkCache {
     pub fn new(memory_limit: usize) -> Self {
         // Estimate max entries (assuming ~1MB per chunk)
         let max_entries = (memory_limit / (512 * 512 * 4)).max(16);
-        
+
         Self {
             cache: LruCache::new(NonZeroUsize::new(max_entries).unwrap()),
             memory_limit,
@@ -947,6 +1001,7 @@ impl ChunkCache {
 ### 5.1 Overview
 
 The ingestion pipeline will be modified to:
+
 1. Parse GRIB2/NetCDF as today (no changes to parsers)
 2. **NEW**: Re-project non-geographic grids to geographic coordinates
 3. **NEW**: Write data in Zarr format instead of storing raw GRIB2
@@ -1000,20 +1055,20 @@ pub fn reproject_to_geographic(
 ) -> Result<(Vec<f32>, usize, usize, BoundingBox), ProjectionError> {
     // 1. Calculate output grid dimensions to match source resolution
     let source_resolution = source_projection.native_resolution();
-    
+
     // 2. Create output grid covering the same area
     let output_bbox = source_projection.geographic_bounds();
     let output_width = ((output_bbox.width()) / source_resolution.0).ceil() as usize;
     let output_height = ((output_bbox.height()) / source_resolution.1).ceil() as usize;
-    
+
     // 3. For each output cell, find corresponding source cell
     let mut output = vec![f32::NAN; output_width * output_height];
-    
+
     for out_y in 0..output_height {
         for out_x in 0..output_width {
             let lon = output_bbox.min_lon + (out_x as f64 + 0.5) * source_resolution.0;
             let lat = output_bbox.max_lat - (out_y as f64 + 0.5) * source_resolution.1;
-            
+
             // Project to source grid coordinates
             if let Some((src_x, src_y)) = source_projection.geographic_to_grid(lon, lat) {
                 let value = match interpolation {
@@ -1031,7 +1086,7 @@ pub fn reproject_to_geographic(
             }
         }
     }
-    
+
     Ok((output, output_width, output_height, output_bbox))
 }
 ```
@@ -1039,6 +1094,7 @@ pub fn reproject_to_geographic(
 ### 5.4 Storage Path Changes
 
 **Before (current):**
+
 ```
 shredded/gfs/20241212_00z/TMP_2m/f006.grib2
 shredded/hrrr/20241212_00z/TMP_2m/f006.grib2
@@ -1046,6 +1102,7 @@ raw/goes16/20241212_00z/CMI_C13_...nc
 ```
 
 **After (new):**
+
 ```
 grids/gfs/20241212_00z/TMP_2m_f006.zarr/zarr.json
 grids/gfs/20241212_00z/TMP_2m_f006.zarr/c/0/0
@@ -1057,16 +1114,20 @@ grids/goes16/20241212_00z/CMI_C13_...zarr/c/0/0
 
 ### 5.5 Catalog Schema Changes
 
-The existing `datasets` table is extended to store Zarr metadata at ingestion time. This eliminates metadata fetches from MinIO entirely - the WMS-API gets everything it needs from the catalog query it already performs.
+The existing `datasets` table is extended to store Zarr metadata at ingestion time. This eliminates metadata fetches
+from MinIO entirely - the WMS-API gets everything it needs from the catalog query it already performs.
 
 ```sql
 -- Existing columns (unchanged)
-model, parameter, level, reference_time, forecast_hour, file_size, 
+model
+, parameter, level, reference_time, forecast_hour, file_size, 
 storage_path, bbox, grid_shape, created_at
 
 -- NEW: Zarr metadata cached at ingestion time
-ALTER TABLE datasets ADD COLUMN zarr_metadata JSONB;
-ALTER TABLE datasets ADD COLUMN shard_index BYTEA;
+ALTER TABLE datasets
+    ADD COLUMN zarr_metadata JSONB;
+ALTER TABLE datasets
+    ADD COLUMN shard_index BYTEA;
 
 -- The zarr_metadata column contains the parsed zarr.json (~500 bytes):
 -- {
@@ -1090,15 +1151,17 @@ ALTER TABLE datasets ADD COLUMN shard_index BYTEA;
 
 **Why store metadata in PostgreSQL?**
 
-| Approach | First Request Latency | Implementation |
-|----------|----------------------|----------------|
-| Fetch from MinIO on demand | +2 HTTP requests | Simple but slower |
-| Cache in Redis | +1 Redis query | Extra infrastructure |
-| **Store in catalog (recommended)** | +0 requests | Already querying catalog! |
+| Approach                           | First Request Latency | Implementation            |
+|------------------------------------|-----------------------|---------------------------|
+| Fetch from MinIO on demand         | +2 HTTP requests      | Simple but slower         |
+| Cache in Redis                     | +1 Redis query        | Extra infrastructure      |
+| **Store in catalog (recommended)** | +0 requests           | Already querying catalog! |
 
-Since every tile request already queries the catalog to find the `storage_path`, we can piggyback the metadata on that same query at zero additional cost. The ingester writes the metadata when it creates the catalog entry.
+Since every tile request already queries the catalog to find the `storage_path`, we can piggyback the metadata on that
+same query at zero additional cost. The ingester writes the metadata when it creates the catalog entry.
 
 **Ingester writes metadata at ingestion time:**
+
 ```rust
 // In ingester, after writing Zarr to MinIO:
 let zarr_metadata = serde_json::json!({
@@ -1112,7 +1175,7 @@ let zarr_metadata = serde_json::json!({
 });
 
 // Read the shard index from the file we just wrote
-let shard_index = read_shard_index_from_file(&zarr_path)?;
+let shard_index = read_shard_index_from_file( & zarr_path) ?;
 
 // Insert into catalog with metadata
 sqlx::query!(
@@ -1121,10 +1184,11 @@ sqlx::query!(
     VALUES ($1, $2, $3, ..., $n, $m)
     "#,
     model, parameter, level, ..., zarr_metadata, shard_index
-).execute(&pool).await?;
+).execute( & pool).await?;
 ```
 
 **WMS-API gets metadata from catalog query:**
+
 ```rust
 // In WMS-API, the existing catalog query now returns metadata too:
 let entry = catalog.find_dataset(model, parameter, forecast_hour).await?;
@@ -1147,19 +1211,19 @@ The WMS-API changes are primarily in how grid data is loaded. The rendering pipe
 // Add to AppState
 pub struct AppState {
     // ... existing fields ...
-    
+
     /// Grid processor factory for Zarr-based data access
     pub grid_processor_factory: Arc<GridProcessorFactory>,
 }
 
 /// Factory for creating grid processors.
-/// 
+///
 /// METADATA STRATEGY:
 /// - Metadata and shard indices come from the PostgreSQL catalog
 ///   (written at ingestion time) - NO MinIO fetches needed!
 /// - Only chunk data is fetched from MinIO via byte-range requests.
 /// - Chunks are LRU-cached with configurable memory limits.
-/// 
+///
 /// Request flow:
 /// 1. Catalog query returns dataset entry WITH zarr_metadata and shard_index
 /// 2. Create processor using metadata from catalog (no MinIO request)
@@ -1176,7 +1240,7 @@ impl GridProcessorFactory {
         let chunk_cache = Arc::new(RwLock::new(
             ChunkCache::new(config.chunk_cache_size_mb * 1024 * 1024)
         ));
-        
+
         Self {
             storage,
             config,
@@ -1185,7 +1249,7 @@ impl GridProcessorFactory {
     }
 
     /// Create a grid processor using metadata from the catalog entry.
-    /// 
+    ///
     /// The CatalogEntry already contains zarr_metadata and shard_index
     /// (written at ingestion time), so NO MinIO requests are needed
     /// to create the processor.
@@ -1193,7 +1257,7 @@ impl GridProcessorFactory {
         // Parse metadata from catalog (already in memory from catalog query)
         let metadata = GridMetadata::from_json(&entry.zarr_metadata)?;
         let shard_index = ShardIndex::from_bytes(&entry.shard_index)?;
-        
+
         // Create processor with metadata from catalog and shared chunk cache
         Ok(Arc::new(ZarrGridProcessor::new(
             self.storage.clone(),
@@ -1203,7 +1267,7 @@ impl GridProcessorFactory {
             self.chunk_cache.clone(),
         )))
     }
-    
+
     /// Get chunk cache statistics for monitoring
     pub async fn cache_stats(&self) -> ChunkCacheStats {
         self.chunk_cache.read().await.stats()
@@ -1213,15 +1277,18 @@ impl GridProcessorFactory {
 
 **Why metadata comes from the catalog, not MinIO:**
 
-| Approach | Requests per Tile | Latency |
-|----------|-------------------|---------|
-| Fetch metadata from MinIO | 2-3 HTTP requests | +10-50ms |
-| Cache metadata in memory | 1st request slower | +0-50ms |
-| **Metadata in catalog (recommended)** | 0 extra requests | +0ms |
+| Approach                              | Requests per Tile  | Latency  |
+|---------------------------------------|--------------------|----------|
+| Fetch metadata from MinIO             | 2-3 HTTP requests  | +10-50ms |
+| Cache metadata in memory              | 1st request slower | +0-50ms  |
+| **Metadata in catalog (recommended)** | 0 extra requests   | +0ms     |
 
-Since we already query the catalog to find the dataset, including `zarr_metadata` and `shard_index` in that query is essentially free. The ingester writes this data when creating the catalog entry, so the WMS-API never needs to fetch it from MinIO.
+Since we already query the catalog to find the dataset, including `zarr_metadata` and `shard_index` in that query is
+essentially free. The ingester writes this data when creating the catalog entry, so the WMS-API never needs to fetch it
+from MinIO.
 
 **CatalogEntry with embedded metadata:**
+
 ```rust
 pub struct CatalogEntry {
     // Existing fields
@@ -1235,7 +1302,7 @@ pub struct CatalogEntry {
     pub bbox: BoundingBox,
     pub grid_shape: (usize, usize),
     pub file_size: u64,
-    
+
     // NEW: Zarr metadata embedded in catalog
     pub zarr_metadata: serde_json::Value,  // ~500 bytes
     pub shard_index: Vec<u8>,              // ~100 bytes
@@ -1243,6 +1310,7 @@ pub struct CatalogEntry {
 ```
 
 **Request flow (zero metadata overhead):**
+
 ```
 1. WMS Request arrives
 2. Query catalog: SELECT * FROM datasets WHERE model=$1 AND parameter=$2 ...
@@ -1269,12 +1337,12 @@ async fn load_grid_region(
         .get_processor(&entry.storage_path)
         .await
         .map_err(|e| RenderError::DataLoadFailed(e.to_string()))?;
-    
+
     // Read just the region we need
     let region = processor.read_region(bbox)
         .await
         .map_err(|e| RenderError::DataLoadFailed(e.to_string()))?;
-    
+
     Ok(region)
 }
 
@@ -1288,7 +1356,7 @@ async fn render_tile_with_zarr(
 ) -> Result<Vec<u8>, RenderError> {
     // 1. Load only the grid region we need
     let region = load_grid_region(state, entry, tile_bbox).await?;
-    
+
     // 2. Resample to output size (existing logic)
     let resampled = resample_grid(
         &region.data,
@@ -1298,13 +1366,13 @@ async fn render_tile_with_zarr(
         output_size.1,
         state.config.interpolation,
     );
-    
+
     // 3. Apply color scale (existing logic)
     let rgba = apply_style(&resampled, style);
-    
+
     // 4. Encode PNG (existing logic)
     let png = encode_png(&rgba, output_size.0, output_size.1)?;
-    
+
     Ok(png)
 }
 ```
@@ -1322,10 +1390,10 @@ async fn get_feature_info(
     let processor = state.grid_processor_factory
         .get_processor(&entry.storage_path)
         .await?;
-    
+
     // Read single point - efficient with chunk cache
     let value = processor.read_point(lon, lat).await?;
-    
+
     Ok(value.map(|v| FeatureInfo {
         value: v,
         units: processor.metadata().units.clone(),
@@ -1380,18 +1448,20 @@ GRID_INTERPOLATION=bilinear        # Interpolation method (default: bilinear)
 
 #### Chunk Size Flexibility
 
-**Zarr V3 does NOT require chunk sizes to be powers of 2.** Any positive integer is valid. The `zarrs` crate follows the Zarr specification without additional constraints.
+**Zarr V3 does NOT require chunk sizes to be powers of 2.** Any positive integer is valid. The `zarrs` crate follows the
+Zarr specification without additional constraints.
 
-| Chunk Size | Uncompressed (f32) | Valid? | Notes |
-|------------|-------------------|--------|-------|
-| `512×512` | 1 MB | ✓ | Default, good balance |
-| `500×500` | ~1 MB | ✓ | Works fine |
-| `721×1440` | ~4 MB | ✓ | Entire GFS grid as one chunk |
-| `1000×1000` | ~4 MB | ✓ | Larger chunks, fewer fetches |
-| `256×256` | 256 KB | ✓ | Finer granularity |
-| `100×100` | 40 KB | ✓ | Valid but small (more I/O overhead) |
+| Chunk Size  | Uncompressed (f32) | Valid? | Notes                               |
+|-------------|--------------------|--------|-------------------------------------|
+| `512×512`   | 1 MB               | ✓      | Default, good balance               |
+| `500×500`   | ~1 MB              | ✓      | Works fine                          |
+| `721×1440`  | ~4 MB              | ✓      | Entire GFS grid as one chunk        |
+| `1000×1000` | ~4 MB              | ✓      | Larger chunks, fewer fetches        |
+| `256×256`   | 256 KB             | ✓      | Finer granularity                   |
+| `100×100`   | 40 KB              | ✓      | Valid but small (more I/O overhead) |
 
 **Chunk size selection guidelines:**
+
 - **Target ~1MB+ uncompressed** - Amortizes I/O overhead
 - **Match access patterns** - Chunk along dimensions you'll slice
 - **No power-of-2 requirement** - Choose what makes sense for your data
@@ -1456,7 +1526,8 @@ Note: Metadata caching is automatic via PostgreSQL catalog.
 
 ### 8.1 Overview
 
-This is a **hard cutover** migration. The system will be shut down, data re-ingested in the new format, and brought back up.
+This is a **hard cutover** migration. The system will be shut down, data re-ingested in the new format, and brought back
+up.
 
 ### 8.2 Pre-Migration Checklist
 
@@ -1563,28 +1634,28 @@ mod tests {
     // Test BoundingBox operations
     #[test]
     fn test_bbox_intersects() { ... }
-    
+
     // Test chunk calculation
     #[test]
     fn test_chunks_for_bbox_single_chunk() { ... }
-    
+
     #[test]
     fn test_chunks_for_bbox_multiple_chunks() { ... }
-    
+
     #[test]
     fn test_chunks_for_bbox_edge_cases() { ... }
-    
+
     // Test interpolation
     #[test]
     fn test_bilinear_interpolation() { ... }
-    
+
     #[test]
     fn test_nearest_interpolation_preserves_values() { ... }
-    
+
     // Test chunk cache
     #[test]
     fn test_chunk_cache_lru_eviction() { ... }
-    
+
     #[test]
     fn test_chunk_cache_memory_limit() { ... }
 }
@@ -1599,18 +1670,18 @@ mod tests {
 async fn test_zarr_roundtrip() {
     // 1. Create test grid data
     let data = generate_test_grid(1440, 721);
-    
+
     // 2. Write to Zarr
     let temp_dir = tempdir()?;
     ZarrWriter::write(&temp_dir, "test.zarr", &data, 1440, 721, &config).await?;
-    
+
     // 3. Read back via GridProcessor
     let processor = ZarrGridProcessor::open(&temp_dir, "test.zarr", config).await?;
-    
+
     // 4. Verify full grid read
     let region = processor.read_region(&full_bbox).await?;
     assert_eq!(region.data.len(), data.len());
-    
+
     // 5. Verify partial read
     let small_bbox = BoundingBox::new(0.0, 0.0, 10.0, 10.0);
     let partial = processor.read_region(&small_bbox).await?;
@@ -1621,12 +1692,12 @@ async fn test_zarr_roundtrip() {
 async fn test_read_point_accuracy() {
     // Verify GetFeatureInfo accuracy within tolerance
     let processor = create_test_processor().await;
-    
+
     for (lon, lat, expected) in test_points {
         let value = processor.read_point(lon, lat).await?.unwrap();
-        assert!((value - expected).abs() < 0.1, 
-            "Value at ({}, {}) was {}, expected {} (±0.1)",
-            lon, lat, value, expected);
+        assert!((value - expected).abs() < 0.1,
+                "Value at ({}, {}) was {}, expected {} (±0.1)",
+                lon, lat, value, expected);
     }
 }
 ```
@@ -1649,8 +1720,8 @@ tests:
     expect:
       status: 200
       content_type: image/png
-      dimensions: [256, 256]
-      
+      dimensions: [ 256, 256 ]
+
   - name: gfs_getfeatureinfo
     request:
       type: wms_getfeatureinfo
@@ -1659,7 +1730,7 @@ tests:
       lat: 35.0
     expect:
       status: 200
-      value_range: [250, 320]  # Valid temperature range in K
+      value_range: [ 250, 320 ]  # Valid temperature range in K
 ```
 
 ### 9.4 Performance Tests
@@ -1683,7 +1754,7 @@ phases:
       - chunk_cache_hits
       - chunk_cache_misses
       - request_latency_p99
-      
+
   - name: warm_cache
     duration: 60s
     requests:
@@ -1704,19 +1775,19 @@ phases:
 fn test_data_accuracy_vs_original() {
     // 1. Load original GRIB2
     let grib_data = load_grib2("testdata/gfs.grib2");
-    
+
     // 2. Convert to Zarr
     let zarr_data = convert_to_zarr(&grib_data);
-    
+
     // 3. Compare all values
     for (i, (orig, zarr)) in grib_data.iter().zip(zarr_data.iter()).enumerate() {
         if orig.is_nan() && zarr.is_nan() {
             continue;
         }
         let diff = (orig - zarr).abs();
-        assert!(diff < 0.001, 
-            "Value mismatch at index {}: original={}, zarr={}, diff={}",
-            i, orig, zarr, diff);
+        assert!(diff < 0.001,
+                "Value mismatch at index {}: original={}, zarr={}, diff={}",
+                i, orig, zarr, diff);
     }
 }
 
@@ -1729,12 +1800,12 @@ fn test_getfeatureinfo_accuracy() {
         (-95.0, 35.0, 288.5, 0.1),  // Temperature in K
         (-100.0, 40.0, 285.2, 0.1),
     ];
-    
+
     for (lon, lat, expected, tolerance) in test_cases {
         let value = processor.read_point(lon, lat).await?.unwrap();
         assert!((value - expected).abs() <= tolerance,
-            "GetFeatureInfo at ({}, {}) returned {}, expected {} ±{}",
-            lon, lat, value, expected, tolerance);
+                "GetFeatureInfo at ({}, {}) returned {}, expected {} ±{}",
+                lon, lat, value, expected, tolerance);
     }
 }
 ```
@@ -1747,11 +1818,11 @@ fn test_getfeatureinfo_accuracy() {
 
 After GFS is working, extend to other models:
 
-| Model | Projection | Notes |
-|-------|------------|-------|
-| **HRRR** | Lambert Conformal | Re-project to geographic, ~3km resolution |
-| **GOES** | Geostationary | Re-project to geographic, preserve resolution |
-| **MRMS** | Geographic | Direct chunking, very large grid (7000×3500) |
+| Model    | Projection        | Notes                                         |
+|----------|-------------------|-----------------------------------------------|
+| **HRRR** | Lambert Conformal | Re-project to geographic, ~3km resolution     |
+| **GOES** | Geostationary     | Re-project to geographic, preserve resolution |
+| **MRMS** | Geographic        | Direct chunking, very large grid (7000×3500)  |
 
 ### 10.2 Time Dimension
 
@@ -1767,6 +1838,7 @@ Future:  grids/gfs/20241212_00z/TMP_2m.zarr  (with time dimension)
 ```
 
 Benefits:
+
 - Single file per parameter per model run
 - Efficient time-series queries
 - Better for animations
@@ -1804,27 +1876,30 @@ hrrr_chunk_cache_hit_rate
 
 ### 11.1 Technical Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| `zarrs` crate bugs | Low | High | Pin version, test thoroughly, have fallback plan |
-| Re-projection accuracy | Medium | Medium | Validate against reference data, document tolerance |
-| Memory pressure from chunk cache | Medium | Medium | Implement eviction, integrate with existing memory management |
-| MinIO byte-range performance | Low | Medium | Test with production-like data volumes |
-| Migration takes longer than expected | Medium | Low | Plan for extended downtime window |
+| Risk                                 | Likelihood | Impact | Mitigation                                                    |
+|--------------------------------------|------------|--------|---------------------------------------------------------------|
+| `zarrs` crate bugs                   | Low        | High   | Pin version, test thoroughly, have fallback plan              |
+| Re-projection accuracy               | Medium     | Medium | Validate against reference data, document tolerance           |
+| Memory pressure from chunk cache     | Medium     | Medium | Implement eviction, integrate with existing memory management |
+| MinIO byte-range performance         | Low        | Medium | Test with production-like data volumes                        |
+| Migration takes longer than expected | Medium     | Low    | Plan for extended downtime window                             |
 
 ### 11.2 Mitigation Strategies
 
 **For `zarrs` crate issues:**
+
 - Pin to specific version in Cargo.toml
 - Write comprehensive tests against edge cases
 - Keep original GRIB2 parsing code (but don't use in production)
 
 **For accuracy concerns:**
+
 - Implement validation suite comparing Zarr output to original
 - Document interpolation method and expected tolerance
 - Provide "nearest neighbor" option for exact value preservation
 
 **For memory issues:**
+
 - Chunk cache has hard memory limit
 - Integrate with existing memory pressure management
 - Add metrics for early warning
@@ -1838,6 +1913,7 @@ hrrr_chunk_cache_hit_rate
 **Goal:** Create the `grid-processor` crate with Zarr reading capability.
 
 **Tasks:**
+
 1. Create crate structure and Cargo.toml
 2. Implement core types (BoundingBox, GridRegion, GridMetadata)
 3. Implement GridProcessor trait
@@ -1852,6 +1928,7 @@ hrrr_chunk_cache_hit_rate
 **Goal:** Enable ingestion pipeline to output Zarr format.
 
 **Tasks:**
+
 1. Implement ZarrWriter
 2. Add re-projection utilities (for future HRRR/GOES)
 3. Modify ingester to call ZarrWriter after parsing
@@ -1865,6 +1942,7 @@ hrrr_chunk_cache_hit_rate
 **Goal:** Connect WMS-API to use GridProcessor for data access.
 
 **Tasks:**
+
 1. Add GridProcessorFactory to AppState
 2. Replace `load_grid_data()` with GridProcessor calls
 3. Update GetFeatureInfo handler
@@ -1879,6 +1957,7 @@ hrrr_chunk_cache_hit_rate
 **Goal:** Migrate production system to new format.
 
 **Tasks:**
+
 1. Update documentation
 2. Prepare migration scripts
 3. Execute migration on staging
@@ -1892,7 +1971,8 @@ hrrr_chunk_cache_hit_rate
 
 ## Summary
 
-This plan transforms Weather WMS from loading entire grid files to efficiently fetching only the chunks needed for each request. Key points:
+This plan transforms Weather WMS from loading entire grid files to efficiently fetching only the chunks needed for each
+request. Key points:
 
 1. **Zarr V3 with sharding** provides industry-standard, single-file chunked storage
 2. **GridProcessor abstraction** cleanly separates data access from rendering
@@ -1901,6 +1981,7 @@ This plan transforms Weather WMS from loading entire grid files to efficiently f
 5. **Hard cutover migration** ensures clean transition without legacy format support
 
 Expected outcomes:
+
 - **10-100x reduction** in data transferred per request
 - **Faster cold-cache response times** (fetch 1-4 chunks instead of entire file)
 - **Better cache efficiency** (chunks shared across tiles)
@@ -1910,15 +1991,15 @@ Expected outcomes:
 
 ## Appendix A: Key Decisions Summary
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| File format | Zarr V3 with sharding | Industry standard, excellent Rust support, single-file storage |
-| Chunk size | 512×512 | Balance between granularity and overhead, tunable later |
-| Compression | Blosc + Zstd + Shuffle | Best compression ratio for f32 data with fast decompression |
-| Projection strategy | Pre-project to geographic | Simpler WMS rendering, acceptable accuracy tradeoff |
-| Interpolation | Bilinear (configurable) | Smooth results within ±0.1° tolerance |
-| Chunk metadata | In-file (cached by processor) | Self-contained files, no database schema changes |
-| Migration | Hard cutover | Clean transition, no legacy format complexity |
+| Decision            | Choice                        | Rationale                                                      |
+|---------------------|-------------------------------|----------------------------------------------------------------|
+| File format         | Zarr V3 with sharding         | Industry standard, excellent Rust support, single-file storage |
+| Chunk size          | 512×512                       | Balance between granularity and overhead, tunable later        |
+| Compression         | Blosc + Zstd + Shuffle        | Best compression ratio for f32 data with fast decompression    |
+| Projection strategy | Pre-project to geographic     | Simpler WMS rendering, acceptable accuracy tradeoff            |
+| Interpolation       | Bilinear (configurable)       | Smooth results within ±0.1° tolerance                          |
+| Chunk metadata      | In-file (cached by processor) | Self-contained files, no database schema changes               |
+| Migration           | Hard cutover                  | Clean transition, no legacy format complexity                  |
 
 ---
 

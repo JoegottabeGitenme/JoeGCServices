@@ -69,8 +69,8 @@ mod tests {
 
         // A point that should be off Earth (large scan angle)
         let result = proj.to_geographic(0.5, 0.5); // ~28 degrees
-        // This might or might not be visible depending on exact geometry
-        // The important thing is it doesn't panic
+                                                   // This might or might not be visible depending on exact geometry
+                                                   // The important thing is it doesn't panic
         println!("Off-earth test result: {:?}", result);
     }
 }

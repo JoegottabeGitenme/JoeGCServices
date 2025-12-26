@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use wms_common::TileCoord;
 
-use crate::state::AppState;
 use crate::rendering;
+use crate::state::AppState;
 
 /// Cache warming configuration.
 #[derive(Clone, Debug)]
@@ -59,14 +59,14 @@ impl CacheWarmer {
     pub fn new(state: Arc<AppState>, config: WarmingConfig) -> Self {
         Self { state, config }
     }
-    
+
     /// Run initial cache warming at startup.
     pub async fn warm_startup(&self) {
         if !self.config.enabled {
             info!("Cache warming disabled");
             return;
         }
-        
+
         info!(
             max_zoom = self.config.max_zoom,
             layers = self.config.layers.len(),
@@ -74,37 +74,37 @@ impl CacheWarmer {
             concurrency = self.config.concurrency,
             "Starting cache warming"
         );
-        
+
         let start = Instant::now();
-        
+
         // Generate all tiles to warm
         let tiles = self.generate_warming_tiles();
         let total_tiles = tiles.len();
-        
+
         info!(total_tiles = total_tiles, "Generated warming tile list");
-        
+
         // Process with limited concurrency using semaphore
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.concurrency));
         let mut handles = Vec::new();
-        
+
         for (layer, style, coord, hour) in tiles {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let state = self.state.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let result = warm_single_tile(&state, &layer, &style, coord, hour).await;
                 drop(permit); // Release permit
                 result
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Collect results
         let mut success = 0;
         let mut cached = 0;
         let mut failed = 0;
-        
+
         for handle in handles {
             match handle.await {
                 Ok(WarmResult::Rendered) => success += 1,
@@ -115,7 +115,7 @@ impl CacheWarmer {
                     failed += 1;
                 }
             }
-            
+
             // Log progress every 100 tiles
             let completed = success + cached + failed;
             if completed % 100 == 0 {
@@ -128,10 +128,10 @@ impl CacheWarmer {
                 );
             }
         }
-        
+
         let duration = start.elapsed();
         let tiles_per_sec = total_tiles as f64 / duration.as_secs_f64();
-        
+
         info!(
             duration_secs = duration.as_secs(),
             duration_ms = duration.as_millis(),
@@ -143,11 +143,11 @@ impl CacheWarmer {
             "Cache warming complete"
         );
     }
-    
+
     /// Generate list of all tiles to warm.
     fn generate_warming_tiles(&self) -> Vec<(String, String, TileCoord, u32)> {
         let mut tiles = Vec::new();
-        
+
         for layer in &self.config.layers {
             for hour in &self.config.forecast_hours {
                 for z in 0..=self.config.max_zoom {
@@ -165,7 +165,7 @@ impl CacheWarmer {
                 }
             }
         }
-        
+
         tiles
     }
 }
@@ -180,10 +180,10 @@ async fn warm_single_tile(
 ) -> WarmResult {
     use storage::CacheKey;
     use wms_common::{BoundingBox, CrsCode};
-    
+
     // Build cache key with time dimension
     let dimension_suffix = Some(format!("t{}", forecast_hour));
-    
+
     let cache_key = CacheKey::new(
         layer,
         style,
@@ -194,7 +194,7 @@ async fn warm_single_tile(
         dimension_suffix.clone(),
         "png",
     );
-    
+
     // Build string key for L1 cache
     let cache_key_str = format!(
         "{}:{}:EPSG:3857:{}_{}_{}:{}",
@@ -205,13 +205,13 @@ async fn warm_single_tile(
         coord.y,
         dimension_suffix.as_deref().unwrap_or("current")
     );
-    
+
     // Check if already in L1 cache
     if state.tile_memory_cache.get(&cache_key_str).await.is_some() {
         debug!(layer = %layer, z = coord.z, x = coord.x, y = coord.y, "Already in L1 cache");
         return WarmResult::AlreadyCached;
     }
-    
+
     // Check if already in L2 cache
     {
         let mut cache = state.cache.lock().await;
@@ -220,10 +220,10 @@ async fn warm_single_tile(
             return WarmResult::AlreadyCached;
         }
     }
-    
+
     // Not cached - render the tile
     debug!(layer = %layer, z = coord.z, x = coord.x, y = coord.y, hour = forecast_hour, "Rendering tile for warming");
-    
+
     // Get tile bounding box
     let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
     let bbox_array = [
@@ -232,17 +232,17 @@ async fn warm_single_tile(
         latlon_bbox.max_x as f32,
         latlon_bbox.max_y as f32,
     ];
-    
+
     // Parse layer name (format: "model_parameter")
     let parts: Vec<&str> = layer.split('_').collect();
     if parts.len() < 2 {
         return WarmResult::Failed("Invalid layer format".to_string());
     }
-    
+
     let model = parts[0];
     // Uppercase parameter to match database storage
     let parameter = parts[1..].join("_").to_uppercase();
-    
+
     // Get default level from layer config for consistent data selection
     let default_level: Option<String> = {
         let configs = state.layer_configs.read().await;
@@ -251,7 +251,7 @@ async fn warm_single_tile(
             .and_then(|l| l.default_level())
             .map(|s| s.to_string())
     };
-    
+
     // Render the tile based on layer type
     let result = if parameter == "WIND_BARBS" {
         rendering::render_wind_barbs_tile_with_level(
@@ -267,7 +267,8 @@ async fn warm_single_tile(
         )
         .await
     } else if style == "isolines" {
-        let style_config_dir = std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
+        let style_config_dir =
+            std::env::var("STYLE_CONFIG_DIR").unwrap_or_else(|_| "./config/styles".to_string());
         let style_file = format!("{}/temperature.json", style_config_dir);
         rendering::render_isolines_tile_with_level(
             &state.catalog,
@@ -279,18 +280,22 @@ async fn warm_single_tile(
             256,
             bbox_array,
             &style_file,
-            "isolines",  // style name within the file
+            "isolines", // style name within the file
             Some(forecast_hour),
             default_level.as_deref(), // Use default level
-            true, // use_mercator
+            true,                     // use_mercator
         )
         .await
     } else {
         // Get style file from layer config registry (single source of truth)
-        let style_file = state.layer_configs.read().await.get_style_file_for_parameter(model, &parameter);
+        let style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, &parameter);
         // Check if model requires full grid reads (non-geographic projection)
         let requires_full_grid = state.model_dimensions.requires_full_grid(model);
-        
+
         rendering::render_weather_data_with_level(
             &state.catalog,
             &state.metrics,
@@ -304,18 +309,21 @@ async fn warm_single_tile(
             Some(bbox_array),
             &style_file,
             Some(style), // style_name
-            true, // use_mercator
+            true,        // use_mercator
             requires_full_grid,
         )
         .await
     };
-    
+
     match result {
         Ok(tile_data) => {
             // Store in L1 cache
             let data_bytes = bytes::Bytes::from(tile_data.clone());
-            state.tile_memory_cache.set(&cache_key_str, data_bytes, None).await;
-            
+            state
+                .tile_memory_cache
+                .set(&cache_key_str, data_bytes, None)
+                .await;
+
             // Store in L2 cache
             {
                 let mut cache = state.cache.lock().await;
@@ -323,7 +331,7 @@ async fn warm_single_tile(
                     warn!(error = %e, layer = %layer, "Failed to store in L2 cache");
                 }
             }
-            
+
             debug!(layer = %layer, z = coord.z, x = coord.x, y = coord.y, "Tile warmed successfully");
             WarmResult::Rendered
         }

@@ -1,0 +1,309 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, feature/automated-testing ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Fast checks - format and clippy
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: |
+          # Run clippy with allowed lints for common patterns in this codebase
+          # This still catches actual errors and important warnings
+          cargo clippy --workspace --all-targets -- \
+            -A clippy::too_many_arguments \
+            -A clippy::type_complexity \
+            -A clippy::manual_find \
+            -A clippy::field_reassign_with_default \
+            -A clippy::clone_on_copy \
+            -A clippy::manual_is_multiple_of \
+            -W clippy::all
+
+  # Build and test with coverage
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Run tests
+        run: cargo test --workspace --no-fail-fast -- --nocapture 2>&1 | tee test_output.txt
+
+      - name: Parse test results
+        id: test_results
+        if: always()
+        run: |
+          # Count test results - use grep with wc for more reliable counting
+          PASSED=$(grep -E '^test .+ \.\.\. ok$' test_output.txt | wc -l | tr -d ' ')
+          FAILED=$(grep -E '^test .+ \.\.\. FAILED$' test_output.txt | wc -l | tr -d ' ')
+          IGNORED=$(grep -E '^test .+ \.\.\. ignored$' test_output.txt | wc -l | tr -d ' ')
+          
+          # Ensure values are valid integers
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          IGNORED=${IGNORED:-0}
+          TOTAL=$((PASSED + FAILED + IGNORED))
+          
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "ignored=$IGNORED" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| :white_check_mark: Passed | ${{ steps.test_results.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :x: Failed | ${{ steps.test_results.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :fast_forward: Ignored | ${{ steps.test_results.outputs.ignored }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | ${{ steps.test_results.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Code coverage with tarpaulin
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install cargo-tarpaulin
+        run: |
+          cargo install cargo-tarpaulin --version 0.27.3
+
+      - name: Generate coverage
+        run: |
+          cargo tarpaulin --workspace \
+            --out xml --out json \
+            --exclude-files "*/tests/*" "*/benches/*" "*/examples/*" \
+            --ignore-tests \
+            --timeout 300 \
+            --skip-clean \
+            2>&1 | tee coverage_output.txt
+
+      - name: Parse coverage results
+        id: coverage
+        run: |
+          # Extract coverage percentage from tarpaulin output
+          COVERAGE=$(grep -oP '\d+\.\d+% coverage' coverage_output.txt | tail -1 | grep -oP '\d+\.\d+' || echo "0")
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          
+          # Determine status based on 80% threshold
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+            echo "status=passing" >> $GITHUB_OUTPUT
+            echo "emoji=:white_check_mark:" >> $GITHUB_OUTPUT
+          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then
+            echo "status=warning" >> $GITHUB_OUTPUT
+            echo "emoji=:warning:" >> $GITHUB_OUTPUT
+          else
+            echo "status=low" >> $GITHUB_OUTPUT
+            echo "emoji=:x:" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Parse per-crate coverage
+        id: crate_coverage
+        run: |
+          # Parse JSON output for per-crate breakdown
+          cat > parse_coverage.py << 'PYTHON_SCRIPT'
+          import json
+          import sys
+          
+          try:
+              with open('tarpaulin-report.json') as f:
+                  data = json.load(f)
+          
+              # Group by crate
+              crates = {}
+              for file_path, file_data in data.get('files', {}).items():
+                  # Extract crate name from path
+                  parts = file_path.split('/')
+                  if 'crates' in parts:
+                      idx = parts.index('crates')
+                      if idx + 1 < len(parts):
+                          crate_name = parts[idx + 1]
+                      else:
+                          continue
+                  elif 'services' in parts:
+                      idx = parts.index('services')
+                      if idx + 1 < len(parts):
+                          crate_name = parts[idx + 1]
+                      else:
+                          continue
+                  else:
+                      continue
+          
+                  if crate_name not in crates:
+                      crates[crate_name] = {'covered': 0, 'coverable': 0}
+          
+                  crates[crate_name]['covered'] += file_data.get('covered', 0)
+                  crates[crate_name]['coverable'] += file_data.get('coverable', 0)
+          
+              # Calculate percentages and output
+              results = []
+              for name, data in sorted(crates.items()):
+                  if data['coverable'] > 0:
+                      pct = (data['covered'] / data['coverable']) * 100
+                      emoji = ":white_check_mark:" if pct >= 80 else (":warning:" if pct >= 60 else ":x:")
+                      results.append(f"| {name} | {pct:.1f}% | {emoji} |")
+          
+              print('\n'.join(results))
+          except Exception as e:
+              print(f"Error parsing coverage: {e}", file=sys.stderr)
+              sys.exit(0)  # Don't fail the workflow
+          PYTHON_SCRIPT
+          
+          python3 parse_coverage.py > crate_coverage.txt 2>/dev/null || echo "| (parsing failed) | - | - |" > crate_coverage.txt
+
+      - name: Coverage Summary
+        if: always()
+        run: |
+          echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall: ${{ steps.coverage.outputs.percentage }}%** ${{ steps.coverage.outputs.emoji }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Target: 80%" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Per-Crate Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Coverage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          cat crate_coverage.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Coverage Legend</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- :white_check_mark: **Good** (>= 80%)" >> $GITHUB_STEP_SUMMARY
+          echo "- :warning: **Needs Improvement** (60-79%)" >> $GITHUB_STEP_SUMMARY
+          echo "- :x: **Low** (< 60%)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            cobertura.xml
+            tarpaulin-report.json
+          retention-days: 30
+
+  # Documentation build check
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # Summary job
+  ci-status:
+    name: CI Status
+    needs: [ lint, test, coverage, docs ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.lint.result }}" == "success" ]]; then
+            echo "| Lint | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Lint | :x: ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.test.result }}" == "success" ]]; then
+            echo "| Test | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Test | :x: ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.coverage.result }}" == "success" ]]; then
+            echo "| Coverage | :white_check_mark: Generated |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Coverage | :x: ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.docs.result }}" == "success" ]]; then
+            echo "| Docs | :white_check_mark: Built |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Docs | :x: ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if any job failed
+        if: contains(needs.*.result, 'failure')
+        run: exit 1

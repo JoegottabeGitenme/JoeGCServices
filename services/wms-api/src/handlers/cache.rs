@@ -1,30 +1,23 @@
 //! Cache management and configuration reload handlers.
 
-use axum::{
-    extract::Extension,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
-use std::sync::Arc;
+use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tracing::{info, instrument};
 
 use crate::state::AppState;
 
 /// POST /api/cache/clear - Clear all in-memory caches
 #[instrument(skip(state))]
-pub async fn cache_clear_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn cache_clear_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Clearing all caches");
-    
+
     // Clear L1 tile cache
     state.tile_memory_cache.clear().await;
-    
+
     // Clear chunk cache
     state.grid_processor_factory.clear_chunk_cache().await;
-    
+
     (StatusCode::OK, "All caches cleared")
 }
 
@@ -35,7 +28,7 @@ pub async fn cache_list_handler(
 ) -> Json<serde_json::Value> {
     let l1_stats = state.tile_memory_cache.stats();
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
-    
+
     Json(serde_json::json!({
         "l1_cache": {
             "size_bytes": l1_stats.size_bytes.load(Ordering::Relaxed),
@@ -57,17 +50,18 @@ pub async fn config_reload_layers_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Reloading layer configurations");
-    
+
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
     let layer_config_dir = format!("{}/layers", config_dir);
-    
-    let new_registry = crate::layer_config::LayerConfigRegistry::load_from_directory(&layer_config_dir);
+
+    let new_registry =
+        crate::layer_config::LayerConfigRegistry::load_from_directory(&layer_config_dir);
     let mut configs = state.layer_configs.write().await;
     *configs = new_registry;
-    
+
     // Invalidate capabilities cache when layer configs change
     state.capabilities_cache.invalidate().await;
-    
+
     info!("Layer configurations reloaded successfully");
     (StatusCode::OK, "Layer configurations reloaded")
 }
@@ -78,32 +72,31 @@ pub async fn config_reload_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     info!("Full configuration reload");
-    
+
     // Reload layer configs
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
     let layer_config_dir = format!("{}/layers", config_dir);
-    
-    let new_registry = crate::layer_config::LayerConfigRegistry::load_from_directory(&layer_config_dir);
+
+    let new_registry =
+        crate::layer_config::LayerConfigRegistry::load_from_directory(&layer_config_dir);
     let mut configs = state.layer_configs.write().await;
     *configs = new_registry;
-    
+
     // Clear caches
     state.tile_memory_cache.clear().await;
     state.grid_processor_factory.clear_chunk_cache().await;
-    
+
     // Invalidate capabilities cache when config changes
     state.capabilities_cache.invalidate().await;
-    
+
     (StatusCode::OK, "Configuration reloaded and caches cleared")
 }
 
 /// GET /api/config - Show current optimization settings
 #[instrument(skip(state))]
-pub async fn config_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn config_handler(Extension(state): Extension<Arc<AppState>>) -> Json<serde_json::Value> {
     let config = &state.optimization_config;
-    
+
     Json(serde_json::json!({
         "l1_cache": {
             "enabled": config.l1_cache_enabled,

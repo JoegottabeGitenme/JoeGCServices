@@ -124,8 +124,18 @@ mod tests {
         assert_eq!(output.len(), width * height);
 
         // Bbox should be valid
-        assert!(bbox.min_lon < bbox.max_lon, "min_lon ({}) should be < max_lon ({})", bbox.min_lon, bbox.max_lon);
-        assert!(bbox.min_lat < bbox.max_lat, "min_lat ({}) should be < max_lat ({})", bbox.min_lat, bbox.max_lat);
+        assert!(
+            bbox.min_lon < bbox.max_lon,
+            "min_lon ({}) should be < max_lon ({})",
+            bbox.min_lon,
+            bbox.max_lon
+        );
+        assert!(
+            bbox.min_lat < bbox.max_lat,
+            "min_lat ({}) should be < max_lat ({})",
+            bbox.min_lat,
+            bbox.max_lat
+        );
     }
 
     #[test]

@@ -3,8 +3,6 @@
 //! Creates minimal synthetic GRIB2 files for testing the parser.
 //! The generated files have valid structure but minimal data.
 
-
-
 /// Build a minimal GRIB2 message with the specified parameters
 pub struct Grib2Builder {
     discipline: u8,
@@ -14,14 +12,14 @@ pub struct Grib2Builder {
     day: u8,
     hour: u8,
     // Grid definition
-    ni: u32,       // columns
-    nj: u32,       // rows
-    la1: i32,      // first lat (microdegrees)
-    lo1: i32,      // first lon (microdegrees)
-    la2: i32,      // last lat (microdegrees)
-    lo2: i32,      // last lon (microdegrees)
-    di: u32,       // lon increment (microdegrees)
-    dj: u32,       // lat increment (microdegrees)
+    ni: u32,  // columns
+    nj: u32,  // rows
+    la1: i32, // first lat (microdegrees)
+    lo1: i32, // first lon (microdegrees)
+    la2: i32, // last lat (microdegrees)
+    lo2: i32, // last lon (microdegrees)
+    di: u32,  // lon increment (microdegrees)
+    dj: u32,  // lat increment (microdegrees)
     scanning_mode: u8,
     // Product definition
     param_category: u8,
@@ -48,12 +46,12 @@ impl Grib2Builder {
             hour: 12,
             ni,
             nj,
-            la1: 45_000_000,   // 45.0°N (microdegrees)
-            lo1: 230_000_000,  // 230.0°E = -130°W (microdegrees, 0-360 range)
-            la2: 35_000_000,   // 35.0°N
-            lo2: 240_000_000,  // 240.0°E = -120°W
-            di: 1_000_000,     // 1.0° increment
-            dj: 1_000_000,     // 1.0° increment
+            la1: 45_000_000,           // 45.0°N (microdegrees)
+            lo1: 230_000_000,          // 230.0°E = -130°W (microdegrees, 0-360 range)
+            la2: 35_000_000,           // 35.0°N
+            lo2: 240_000_000,          // 240.0°E = -120°W
+            di: 1_000_000,             // 1.0° increment
+            dj: 1_000_000,             // 1.0° increment
             scanning_mode: 0b01000000, // +i, -j, i consecutive
             param_category: 0,
             param_number: 0, // TMP
@@ -78,12 +76,12 @@ impl Grib2Builder {
             hour: 12,
             ni,
             nj,
-            la1: 54_995_000,   // 54.995°N (microdegrees)
-            lo1: 230_005_000,  // 230.005°E = -129.995°W
-            la2: 40_005_000,   // 40.005°N
-            lo2: 249_995_000,  // 249.995°E = -110.005°W
-            di: 10_000,        // 0.01° increment
-            dj: 10_000,        // 0.01° increment
+            la1: 54_995_000,           // 54.995°N (microdegrees)
+            lo1: 230_005_000,          // 230.005°E = -129.995°W
+            la2: 40_005_000,           // 40.005°N
+            lo2: 249_995_000,          // 249.995°E = -110.005°W
+            di: 10_000,                // 0.01° increment
+            dj: 10_000,                // 0.01° increment
             scanning_mode: 0b01000000, // +i, -j, i consecutive
             param_category: 0,
             param_number: 16, // MergedReflectivityQC (REFL)
@@ -196,9 +194,9 @@ impl Grib2Builder {
 
         section.extend_from_slice(&self.center.to_be_bytes());
         section.extend_from_slice(&0u16.to_be_bytes()); // Sub-center
-        section.push(2);  // Master table version
-        section.push(1);  // Local table version
-        section.push(1);  // Significance of reference time (start of forecast)
+        section.push(2); // Master table version
+        section.push(1); // Local table version
+        section.push(1); // Significance of reference time (start of forecast)
 
         // Reference time
         section.extend_from_slice(&self.year.to_be_bytes());
@@ -284,7 +282,7 @@ impl Grib2Builder {
         section.extend_from_slice(&self.level_value.to_be_bytes()); // Scaled value
 
         section.push(255); // Type of second fixed surface (none)
-        section.push(0);   // Scale factor
+        section.push(0); // Scale factor
         section.extend_from_slice(&0u32.to_be_bytes()); // Scaled value
 
         section
@@ -297,10 +295,12 @@ impl Grib2Builder {
         let num_data_points = self.ni * self.nj;
 
         // Calculate packing parameters
-        let (min_val, max_val) = self.data_values.iter().fold(
-            (f32::INFINITY, f32::NEG_INFINITY),
-            |(min, max), &v| (min.min(v), max.max(v)),
-        );
+        let (min_val, max_val) = self
+            .data_values
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
 
         let reference_value = min_val;
         let range = max_val - min_val;
@@ -363,10 +363,12 @@ impl Grib2Builder {
     }
 
     fn pack_simple(&self) -> Vec<u8> {
-        let (min_val, max_val) = self.data_values.iter().fold(
-            (f32::INFINITY, f32::NEG_INFINITY),
-            |(min, max), &v| (min.min(v), max.max(v)),
-        );
+        let (min_val, max_val) = self
+            .data_values
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
 
         let range = max_val - min_val;
 
@@ -441,7 +443,10 @@ mod tests {
         tables.add_parameter(0, 0, 0, "TMP".to_string());
         let tables = Arc::new(tables);
         let mut reader = Grib2Reader::new(Bytes::from(data), tables);
-        let msg = reader.next_message().expect("Should parse").expect("Should have message");
+        let msg = reader
+            .next_message()
+            .expect("Should parse")
+            .expect("Should have message");
 
         assert_eq!(msg.parameter(), "TMP");
         assert_eq!(msg.identification.center, 7); // NCEP
@@ -459,13 +464,16 @@ mod tests {
 
         // Create a simple gradient from 0 to 100
         let data = Grib2Builder::new_gfs()
-            .with_grid(10, 1)  // 10 points in a row
+            .with_grid(10, 1) // 10 points in a row
             .with_gradient(0.0, 100.0)
             .build();
-        
+
         let tables = Arc::new(Grib2Tables::new());
         let mut reader = Grib2Reader::new(Bytes::from(data), tables);
-        let msg = reader.next_message().expect("Should parse").expect("Should have message");
+        let msg = reader
+            .next_message()
+            .expect("Should parse")
+            .expect("Should have message");
 
         // Use our own unpack_simple (the grib crate doesn't handle our synthetic files correctly)
         let our_values = grib2_parser::unpack_simple(
@@ -476,9 +484,10 @@ mod tests {
             msg.data_representation.binary_scale_factor,
             msg.data_representation.decimal_scale_factor,
             None,
-        ).expect("Our unpack should work");
+        )
+        .expect("Our unpack should work");
         let values: Vec<f32> = our_values.iter().map(|v| v.unwrap_or(f32::NAN)).collect();
-        
+
         assert_eq!(values.len(), 10);
 
         // Check first and last values (with some tolerance for quantization)
@@ -486,12 +495,23 @@ mod tests {
         let last = values[9];
 
         // First value should be close to 0
-        assert!(first.abs() < 2.0, "First value {} should be close to 0", first);
+        assert!(
+            first.abs() < 2.0,
+            "First value {} should be close to 0",
+            first
+        );
         // Last value should be close to 90 (our gradient goes 0-100 with n values, so last = 90)
-        assert!((last - 90.0).abs() < 2.0, "Last value {} should be close to 90", last);
+        assert!(
+            (last - 90.0).abs() < 2.0,
+            "Last value {} should be close to 90",
+            last
+        );
         // Values should be monotonically increasing
         for i in 1..values.len() {
-            assert!(values[i] >= values[i-1], "Values should be monotonically increasing");
+            assert!(
+                values[i] >= values[i - 1],
+                "Values should be monotonically increasing"
+            );
         }
     }
 
@@ -502,13 +522,14 @@ mod tests {
         use std::sync::Arc;
 
         // Create MRMS-like data with a gradient
-        let data = Grib2Builder::new_mrms()
-            .with_gradient(-10.0, 60.0)
-            .build();
+        let data = Grib2Builder::new_mrms().with_gradient(-10.0, 60.0).build();
 
         let tables = Arc::new(Grib2Tables::new());
         let mut reader = Grib2Reader::new(Bytes::from(data), tables);
-        let msg = reader.next_message().expect("Should parse").expect("Should have message");
+        let msg = reader
+            .next_message()
+            .expect("Should parse")
+            .expect("Should have message");
 
         // Use our own unpack_simple (the grib crate doesn't handle our synthetic files correctly)
         let our_values = grib2_parser::unpack_simple(
@@ -519,15 +540,16 @@ mod tests {
             msg.data_representation.binary_scale_factor,
             msg.data_representation.decimal_scale_factor,
             None,
-        ).expect("Our unpack should work");
+        )
+        .expect("Our unpack should work");
         let values: Vec<f32> = our_values.iter().map(|v| v.unwrap_or(f32::NAN)).collect();
-        
+
         let min_val = values.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
 
         println!("MRMS gradient test - min: {}, max: {}", min_val, max_val);
         println!("First 10 values: {:?}", &values[..10.min(values.len())]);
-        
+
         // Check that the range is approximately correct
         // Note: gradient from -10 to 60, but last value is at (n-1)/n * range
         assert!(min_val < 0.0, "Min value {} should be negative", min_val);

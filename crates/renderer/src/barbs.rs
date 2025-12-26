@@ -1,6 +1,6 @@
 //! Wind barb rendering using pre-generated SVG assets.
 //!
-//! This module uses SVG wind barbs from https://github.com/qulle/svg-wind-barbs
+//! This module uses SVG wind barbs from <https://github.com/qulle/svg-wind-barbs>
 //! Licensed under BSD 2-Clause License - see assets/wind-barbs/LICENSE
 
 use std::f64::consts::PI;
@@ -123,10 +123,10 @@ impl Default for BarbConfig {
 pub fn uv_to_speed_direction(u: f32, v: f32) -> (f64, f64) {
     let u = u as f64;
     let v = v as f64;
-    
+
     // Calculate wind speed using Pythagorean theorem
     let speed = (u * u + v * v).sqrt();
-    
+
     // Calculate direction FROM which wind blows
     // In meteorological convention:
     // - 0° = wind from North (V < 0, U = 0)
@@ -134,12 +134,12 @@ pub fn uv_to_speed_direction(u: f32, v: f32) -> (f64, f64) {
     // - 180° = wind from South (V > 0, U = 0)
     // - 270° = wind from West (U > 0, V = 0)
     let mut direction = (-v).atan2(-u);
-    
+
     // Normalize to [0, 2π)
     if direction < 0.0 {
         direction += 2.0 * PI;
     }
-    
+
     (speed, direction)
 }
 
@@ -157,24 +157,21 @@ fn select_barb_svg(speed_ms: f64) -> &'static str {
 /// Get SVG content for a specific wind barb
 fn get_barb_svg_content(speed_ms: f64) -> Option<&'static str> {
     let knots = select_barb_svg(speed_ms);
-    WIND_BARB_SVGS.iter()
+    WIND_BARB_SVGS
+        .iter()
         .find(|(k, _)| *k == knots)
         .map(|(_, svg)| *svg)
 }
 
 /// Calculate positions for wind barbs on a grid with decimation
-pub fn calculate_barb_positions(
-    width: usize,
-    height: usize,
-    spacing: u32,
-) -> Vec<(usize, usize)> {
+pub fn calculate_barb_positions(width: usize, height: usize, spacing: u32) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
     let spacing = spacing as usize;
-    
+
     // Start from spacing/2 to center the grid
     let offset_x = spacing / 2;
     let offset_y = spacing / 2;
-    
+
     let mut y = offset_y;
     while y < height {
         let mut x = offset_x;
@@ -184,16 +181,16 @@ pub fn calculate_barb_positions(
         }
         y += spacing;
     }
-    
+
     positions
 }
 
 /// Calculate positions for wind barbs based on global geographic grid
 /// This ensures barbs align across tile boundaries
-/// 
+///
 /// # Arguments
 /// * `width` - Tile width in pixels
-/// * `height` - Tile height in pixels  
+/// * `height` - Tile height in pixels
 /// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// * `spacing_degrees` - Spacing between barbs in degrees
 ///
@@ -206,16 +203,16 @@ pub fn calculate_barb_positions_geographic(
     spacing_degrees: f32,
 ) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
-    
+
     let [min_lon, min_lat, max_lon, max_lat] = bbox;
     let lon_range = max_lon - min_lon;
     let lat_range = max_lat - min_lat;
-    
+
     // Calculate the first barb position that aligns to the global grid
     // Round down to nearest multiple of spacing_degrees
     let first_lon = (min_lon / spacing_degrees).floor() * spacing_degrees;
     let first_lat = (min_lat / spacing_degrees).floor() * spacing_degrees;
-    
+
     // Iterate through global grid positions that fall within this tile
     // Use inclusive min bounds and exclusive max bounds to prevent
     // duplicate barbs at tile boundaries (each barb belongs to one tile only)
@@ -229,7 +226,7 @@ pub fn calculate_barb_positions_geographic(
                 // Convert geographic position to pixel position
                 let x = ((lon - min_lon) / lon_range * width as f32) as usize;
                 let y = ((max_lat - lat) / lat_range * height as f32) as usize; // Y is inverted
-                
+
                 // Ensure within bounds
                 if x < width && y < height {
                     positions.push((x, y));
@@ -239,7 +236,7 @@ pub fn calculate_barb_positions_geographic(
         }
         lat += spacing_degrees;
     }
-    
+
     positions
 }
 
@@ -263,10 +260,10 @@ pub fn render_wind_barbs(
 ) -> Vec<u8> {
     // Create transparent RGBA canvas
     let mut canvas = vec![0u8; width * height * 4];
-    
+
     // Calculate barb positions
     let positions = calculate_barb_positions(width, height, config.spacing);
-    
+
     // Render barb at each position
     for (x, y) in positions {
         // Get index in the data grid
@@ -274,18 +271,18 @@ pub fn render_wind_barbs(
         if idx >= u_data.len() || idx >= v_data.len() {
             continue;
         }
-        
+
         let u = u_data[idx];
         let v = v_data[idx];
-        
+
         // Skip invalid data
         if u.is_nan() || v.is_nan() {
             continue;
         }
-        
+
         // Convert U/V to speed and direction
         let (speed_ms, direction_rad) = uv_to_speed_direction(u, v);
-        
+
         // Get appropriate SVG for this wind speed
         if let Some(svg_content) = get_barb_svg_content(speed_ms) {
             // Render the SVG barb at this position with rotation
@@ -301,7 +298,7 @@ pub fn render_wind_barbs(
             );
         }
     }
-    
+
     canvas
 }
 
@@ -327,20 +324,20 @@ pub fn render_wind_barbs_aligned(
 ) -> Vec<u8> {
     // Create transparent RGBA canvas
     let mut canvas = vec![0u8; width * height * 4];
-    
+
     // For geographic alignment, we want consistent spacing in degrees
     // that results in reasonable pixel spacing on screen.
     // Calculate degrees per pixel and multiply by desired pixel spacing
     let lon_range = bbox[2] - bbox[0];
     let degrees_per_pixel = lon_range / width as f32;
-    
+
     // Use the configured spacing (in pixels) to determine degree spacing
     // This gives us consistent density based on config
     let spacing_degrees = degrees_per_pixel * config.spacing as f32;
-    
+
     // Calculate barb positions using global geographic grid
     let positions = calculate_barb_positions_geographic(width, height, bbox, spacing_degrees);
-    
+
     // Render barb at each position
     for (x, y) in positions {
         // Get index in the data grid
@@ -348,18 +345,18 @@ pub fn render_wind_barbs_aligned(
         if idx >= u_data.len() || idx >= v_data.len() {
             continue;
         }
-        
+
         let u = u_data[idx];
         let v = v_data[idx];
-        
+
         // Skip invalid data
         if u.is_nan() || v.is_nan() {
             continue;
         }
-        
+
         // Convert U/V to speed and direction
         let (speed_ms, direction_rad) = uv_to_speed_direction(u, v);
-        
+
         // Get appropriate SVG for this wind speed
         if let Some(svg_content) = get_barb_svg_content(speed_ms) {
             // Render the SVG barb at this position with rotation
@@ -375,7 +372,7 @@ pub fn render_wind_barbs_aligned(
             );
         }
     }
-    
+
     canvas
 }
 
@@ -396,35 +393,35 @@ fn render_barb_at_position(
         Ok(t) => t,
         Err(_) => return, // Skip on parse error
     };
-    
+
     // Calculate size for rendering
     let size = config.size;
-    
+
     // Create a pixmap for the SVG
     let mut pixmap = match tiny_skia::Pixmap::new(size, size) {
         Some(p) => p,
         None => return,
     };
-    
+
     // Get SVG original size (wind barb SVGs are 250x250)
     let svg_size = tree.size();
     let svg_width = svg_size.width();
     let svg_height = svg_size.height();
-    
+
     // Calculate scale to fit SVG into our pixmap
     let scale = (size as f32 / svg_width).min(size as f32 / svg_height);
-    
+
     // Center of output pixmap
     let center = size as f32 / 2.0;
     // Center of SVG (in SVG coordinates)
     let svg_center = svg_width / 2.0;
-    
+
     // Convert direction from radians to degrees
     // SVG barbs point upward (North) by default
     // direction_rad is in math convention (0=East, π/2=North, π=West, 3π/2=South)
     // Adjust by -90 degrees since SVG points up but our 0 is East
     let angle_deg = ((direction_rad - PI / 2.0) * 180.0 / PI) as f32;
-    
+
     // Build transform to:
     // 1. Move SVG center to origin
     // 2. Rotate around origin
@@ -434,19 +431,19 @@ fn render_barb_at_position(
     //
     // With post_* operations applied left-to-right, we build:
     // point -> translate(-svg_center) -> rotate -> translate(svg_center) -> scale -> translate(offset)
-    
+
     let scaled_offset = center - (svg_center * scale);
-    
+
     let transform = tiny_skia::Transform::identity()
-        .post_translate(-svg_center, -svg_center)  // Move SVG center to origin
-        .post_rotate(angle_deg)                     // Rotate around origin
-        .post_translate(svg_center, svg_center)    // Move back
-        .post_scale(scale, scale)                   // Scale down
+        .post_translate(-svg_center, -svg_center) // Move SVG center to origin
+        .post_rotate(angle_deg) // Rotate around origin
+        .post_translate(svg_center, svg_center) // Move back
+        .post_scale(scale, scale) // Scale down
         .post_translate(scaled_offset, scaled_offset); // Center in pixmap
-    
+
     // Render the SVG tree onto the pixmap
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    
+
     // Composite the pixmap onto the main canvas
     composite_barb_onto_canvas(
         canvas,
@@ -470,26 +467,26 @@ fn composite_barb_onto_canvas(
     size: usize,
 ) {
     let half_size = size / 2;
-    
+
     // Calculate bounds
     let start_x = center_x.saturating_sub(half_size);
     let start_y = center_y.saturating_sub(half_size);
-    
+
     // Use actual pixmap dimensions for correct indexing
     let pixmap_width = pixmap.width() as usize;
     let pixmap_height = pixmap.height() as usize;
-    
+
     // Composite each pixel
     for py in 0..pixmap_height.min(size) {
         for px in 0..pixmap_width.min(size) {
             let canvas_x = start_x + px;
             let canvas_y = start_y + py;
-            
+
             // Check bounds
             if canvas_x >= canvas_width || canvas_y >= canvas_height {
                 continue;
             }
-            
+
             // Get pixel from source pixmap (RGBA premultiplied)
             // Use pixmap_width for correct row stride
             let src_idx = (py * pixmap_width + px) * 4;
@@ -497,37 +494,40 @@ fn composite_barb_onto_canvas(
             if src_idx + 3 >= src_data.len() {
                 continue;
             }
-            
+
             let src_r = src_data[src_idx];
             let src_g = src_data[src_idx + 1];
             let src_b = src_data[src_idx + 2];
             let src_a = src_data[src_idx + 3];
-            
+
             // Skip fully transparent pixels
             if src_a == 0 {
                 continue;
             }
-            
+
             // Get destination pixel
             let dst_idx = (canvas_y * canvas_width + canvas_x) * 4;
-            
+
             // Alpha blending (source-over compositing)
             let dst_r = canvas[dst_idx];
             let dst_g = canvas[dst_idx + 1];
             let dst_b = canvas[dst_idx + 2];
             let dst_a = canvas[dst_idx + 3];
-            
+
             let src_a_f = src_a as f32 / 255.0;
             let dst_a_f = dst_a as f32 / 255.0;
-            
+
             // Premultiply alpha for proper blending
             let out_a = src_a_f + dst_a_f * (1.0 - src_a_f);
-            
+
             if out_a > 0.0 {
-                let out_r = ((src_r as f32 * src_a_f + dst_r as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
-                let out_g = ((src_g as f32 * src_a_f + dst_g as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
-                let out_b = ((src_b as f32 * src_a_f + dst_b as f32 * dst_a_f * (1.0 - src_a_f)) / out_a) as u8;
-                
+                let out_r = ((src_r as f32 * src_a_f + dst_r as f32 * dst_a_f * (1.0 - src_a_f))
+                    / out_a) as u8;
+                let out_g = ((src_g as f32 * src_a_f + dst_g as f32 * dst_a_f * (1.0 - src_a_f))
+                    / out_a) as u8;
+                let out_b = ((src_b as f32 * src_a_f + dst_b as f32 * dst_a_f * (1.0 - src_a_f))
+                    / out_a) as u8;
+
                 canvas[dst_idx] = out_r;
                 canvas[dst_idx + 1] = out_g;
                 canvas[dst_idx + 2] = out_b;
@@ -547,7 +547,10 @@ mod tests {
         // atan2(10, 0) = π/2 (90 degrees in math convention, pointing up)
         let (speed, dir) = uv_to_speed_direction(0.0, -10.0);
         assert!((speed - 10.0).abs() < 0.01, "Speed should be 10 m/s");
-        assert!((dir - PI / 2.0).abs() < 0.1, "Direction should be ~π/2 (North in math convention)");
+        assert!(
+            (dir - PI / 2.0).abs() < 0.1,
+            "Direction should be ~π/2 (North in math convention)"
+        );
     }
 
     #[test]
@@ -556,7 +559,10 @@ mod tests {
         // atan2(0, 10) = 0 (0 degrees in math convention, pointing right)
         let (speed, dir) = uv_to_speed_direction(-10.0, 0.0);
         assert!((speed - 10.0).abs() < 0.01, "Speed should be 10 m/s");
-        assert!((dir - 0.0).abs() < 0.1, "Direction should be ~0 (East in math convention)");
+        assert!(
+            (dir - 0.0).abs() < 0.1,
+            "Direction should be ~0 (East in math convention)"
+        );
     }
 
     #[test]
@@ -573,7 +579,7 @@ mod tests {
     fn test_calculate_barb_positions() {
         let positions = calculate_barb_positions(200, 200, 50);
         assert!(!positions.is_empty(), "Should generate some positions");
-        
+
         // Check that positions are reasonably spaced
         if positions.len() >= 2 {
             let spacing = positions[1].0 - positions[0].0;
@@ -586,7 +592,7 @@ mod tests {
         let u_data = vec![5.0; 100 * 100];
         let v_data = vec![5.0; 100 * 100];
         let config = BarbConfig::default();
-        
+
         let canvas = render_wind_barbs(&u_data, &v_data, 100, 100, &config);
         assert_eq!(canvas.len(), 100 * 100 * 4, "Canvas should be correct size");
     }

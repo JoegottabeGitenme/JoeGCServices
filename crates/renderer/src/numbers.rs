@@ -34,8 +34,8 @@ impl UnitTransform {
             Self::Linear { scale, offset } => value * scale + offset,
         }
     }
-    
-    /// Create from legacy Option<f32> format for backwards compatibility.
+
+    /// Create from legacy `Option<f32>` format for backwards compatibility.
     /// Positive values are subtraction, negative values indicate division (abs value).
     pub fn from_legacy(offset: Option<f32>) -> Self {
         match offset {
@@ -80,7 +80,7 @@ impl Default for NumbersConfig {
 /// Render numeric values from a grid onto an image
 ///
 /// # Arguments
-/// * `grid` - 2D array of data values [lat][lon]
+/// * `grid` - 2D array of data values \[lat\]\[lon\]
 /// * `width` - Output image width in pixels
 /// * `height` - Output image height in pixels
 /// * `config` - Numbers rendering configuration
@@ -115,13 +115,8 @@ pub fn render_numbers(
     let grid_width = grid[0].len();
 
     // Calculate sampling step based on desired pixel spacing
-    let (sample_step_y, sample_step_x) = calculate_grid_sampling(
-        grid_height,
-        grid_width,
-        width,
-        height,
-        config.spacing,
-    );
+    let (sample_step_y, sample_step_x) =
+        calculate_grid_sampling(grid_height, grid_width, width, height, config.spacing);
 
     // Draw numbers at sampled grid points
     let mut y_grid = 0;
@@ -173,7 +168,7 @@ pub fn render_numbers(
 fn draw_text_background(img: &mut RgbaImage, text: &str, x: i32, y: i32, font_size: f32) {
     let bg_color = Rgba([255, 255, 255, 220]); // Semi-transparent white
     let padding = 2;
-    
+
     // Estimate text dimensions (roughly)
     let char_width = (font_size * 0.6) as i32;
     let text_width = (text.len() as i32) * char_width;
@@ -271,7 +266,7 @@ pub fn get_color_for_value(value: f32, stops: &[ColorStop]) -> Rgba<u8> {
     let r = (lower_color[0] as f32 + t * (upper_color[0] as f32 - lower_color[0] as f32)) as u8;
     let g = (lower_color[1] as f32 + t * (upper_color[1] as f32 - lower_color[1] as f32)) as u8;
     let b = (lower_color[2] as f32 + t * (upper_color[2] as f32 - lower_color[2] as f32)) as u8;
-    
+
     // Darken the color slightly for better contrast on white background
     let darken = 0.7;
     Rgba([
@@ -315,14 +310,14 @@ pub struct AlignedNumbersConfig {
 }
 
 /// Render numeric values with geographically-aligned positions.
-/// 
+///
 /// Numbers are placed at positions that snap to a global grid based on
 /// geographic coordinates, ensuring consistent positioning across tiles.
 ///
 /// # Arguments
-/// * `grid` - 2D array of data values [lat][lon]
+/// * `grid` - 2D array of data values \[lat\]\[lon\]
 /// * `width` - Output image width in pixels
-/// * `height` - Output image height in pixels  
+/// * `height` - Output image height in pixels
 /// * `config` - Aligned numbers rendering configuration
 ///
 /// # Returns
@@ -339,7 +334,7 @@ pub fn render_numbers_aligned(
         visible_bbox = ?config.visible_bbox,
         "Rendering numbers with geographic alignment"
     );
-    
+
     let mut img = ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0]));
 
     if grid.is_empty() || grid[0].is_empty() {
@@ -370,7 +365,8 @@ pub fn render_numbers_aligned(
     let first_lat = (min_lat / spacing).ceil() * spacing;
 
     // Get visible area (if not specified, use full bbox)
-    let [vis_min_lon, vis_min_lat, vis_max_lon, vis_max_lat] = config.visible_bbox.unwrap_or(config.bbox);
+    let [vis_min_lon, vis_min_lat, vis_max_lon, vis_max_lat] =
+        config.visible_bbox.unwrap_or(config.bbox);
 
     // Iterate over aligned geographic positions
     let mut geo_lat = first_lat;
@@ -380,8 +376,11 @@ pub fn render_numbers_aligned(
             // Check if this position is in the visible area (center tile)
             // Add small buffer for numbers that might extend into visible area
             let text_buffer_deg = spacing * 0.3; // Buffer for text width
-            if geo_lon < vis_min_lon - text_buffer_deg || geo_lon > vis_max_lon + text_buffer_deg ||
-               geo_lat < vis_min_lat - text_buffer_deg || geo_lat > vis_max_lat + text_buffer_deg {
+            if geo_lon < vis_min_lon - text_buffer_deg
+                || geo_lon > vis_max_lon + text_buffer_deg
+                || geo_lat < vis_min_lat - text_buffer_deg
+                || geo_lat > vis_max_lat + text_buffer_deg
+            {
                 geo_lon += spacing;
                 continue;
             }
@@ -407,9 +406,13 @@ pub fn render_numbers_aligned(
             }
 
             // Get value with bilinear interpolation
-            let value = sample_grid_bilinear(grid, grid_width, grid_height, 
+            let value = sample_grid_bilinear(
+                grid,
+                grid_width,
+                grid_height,
                 (geo_lon - min_lon) / lon_range * grid_width as f64,
-                (max_lat - geo_lat) / lat_range * grid_height as f64);
+                (max_lat - geo_lat) / lat_range * grid_height as f64,
+            );
 
             // Skip NaN values
             if value.is_nan() {
@@ -461,7 +464,11 @@ fn sample_grid_bilinear(grid: &[Vec<f32>], width: usize, height: usize, x: f64, 
     let v11 = grid[y1][x1];
     let v21 = if x2 < width { grid[y1][x2] } else { v11 };
     let v12 = if y2 < height { grid[y2][x1] } else { v11 };
-    let v22 = if x2 < width && y2 < height { grid[y2][x2] } else { v11 };
+    let v22 = if x2 < width && y2 < height {
+        grid[y2][x2]
+    } else {
+        v11
+    };
 
     // Skip if any corner is NaN
     if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
@@ -502,15 +509,15 @@ pub struct GridPointNumbersConfig {
 }
 
 /// Render numeric values at exact source grid point locations.
-/// 
+///
 /// This shows the exact data values at each grid point, which is useful for
 /// debugging and validation. Numbers are placed at the geographic locations
 /// corresponding to the original data grid points.
 ///
 /// # Arguments
-/// * `grid` - 2D array of resampled data values [y][x] matching render dimensions
+/// * `grid` - 2D array of resampled data values \[y\]\[x\] matching render dimensions
 /// * `width` - Output image width in pixels
-/// * `height` - Output image height in pixels  
+/// * `height` - Output image height in pixels
 /// * `config` - Grid point numbers rendering configuration
 ///
 /// # Returns
@@ -544,13 +551,14 @@ pub fn render_numbers_at_grid_points(
 
     let [source_min_lon, source_min_lat, source_max_lon, source_max_lat] = config.source_bbox;
     let (source_width, source_height) = config.source_dims;
-    
+
     // Calculate source grid resolution
     let source_lon_step = (source_max_lon - source_min_lon) / (source_width - 1) as f64;
     let source_lat_step = (source_max_lat - source_min_lat) / (source_height - 1) as f64;
 
     // Get visible area (if not specified, use full render bbox)
-    let [vis_min_lon, vis_min_lat, vis_max_lon, vis_max_lat] = config.visible_bbox.unwrap_or(config.render_bbox);
+    let [vis_min_lon, vis_min_lat, vis_max_lon, vis_max_lat] =
+        config.visible_bbox.unwrap_or(config.render_bbox);
 
     // Helper to convert longitude from -180/180 to 0-360 format if needed
     let to_source_lon = |lon: f64| -> f64 {
@@ -560,7 +568,7 @@ pub fn render_numbers_at_grid_points(
             lon
         }
     };
-    
+
     // Helper to convert longitude from 0-360 to -180/180 format for display
     let from_source_lon = |lon: f64| -> f64 {
         if config.source_uses_360 && lon > 180.0 {
@@ -577,7 +585,7 @@ pub fn render_numbers_at_grid_points(
     // Calculate step to skip grid points if they would be too close together
     let pixels_per_source_lon = (width as f64 / render_lon_range) * source_lon_step;
     let pixels_per_source_lat = (height as f64 / render_lat_range) * source_lat_step;
-    
+
     let step_x = ((config.min_pixel_spacing as f64 / pixels_per_source_lon).ceil() as usize).max(1);
     let step_y = ((config.min_pixel_spacing as f64 / pixels_per_source_lat).ceil() as usize).max(1);
 
@@ -623,7 +631,7 @@ pub fn render_numbers_at_grid_points(
             // Calculate geographic position of this grid point (in source coordinates)
             let geo_lon_src = source_min_lon + (i as f64 * source_lon_step);
             let geo_lat = source_min_lat + (j as f64 * source_lat_step);
-            
+
             // Convert to display coordinates (-180 to 180)
             let geo_lon = from_source_lon(geo_lon_src);
 
@@ -631,8 +639,11 @@ pub fn render_numbers_at_grid_points(
             // Use a small buffer for text that might extend into visible area
             let text_buffer_lon = source_lon_step * 0.5;
             let text_buffer_lat = source_lat_step * 0.5;
-            if geo_lon < vis_min_lon - text_buffer_lon || geo_lon > vis_max_lon + text_buffer_lon ||
-               geo_lat < vis_min_lat - text_buffer_lat || geo_lat > vis_max_lat + text_buffer_lat {
+            if geo_lon < vis_min_lon - text_buffer_lon
+                || geo_lon > vis_max_lon + text_buffer_lon
+                || geo_lat < vis_min_lat - text_buffer_lat
+                || geo_lat > vis_max_lat + text_buffer_lat
+            {
                 i += step_x as i64;
                 continue;
             }
@@ -649,8 +660,10 @@ pub fn render_numbers_at_grid_points(
 
             // Sample value from the resampled grid at this pixel location
             // We use the resampled grid coordinates that correspond to this geographic position
-            let grid_x = ((geo_lon - render_min_lon) / render_lon_range * grid_width as f64) as usize;
-            let grid_y = ((render_max_lat - geo_lat) / render_lat_range * grid_height as f64) as usize;
+            let grid_x =
+                ((geo_lon - render_min_lon) / render_lon_range * grid_width as f64) as usize;
+            let grid_y =
+                ((render_max_lat - geo_lat) / render_lat_range * grid_height as f64) as usize;
 
             if grid_x >= grid_width || grid_y >= grid_height {
                 i += step_x as i64;
@@ -689,7 +702,7 @@ pub fn render_numbers_at_grid_points(
             let char_width = (config.font_size * 0.6) as i32;
             let text_width = (text.len() as i32) * char_width;
             let text_height = config.font_size as i32;
-            
+
             // Center the text on the grid point
             let centered_px = px - text_width / 2;
             let centered_py = py - text_height / 2;
@@ -698,7 +711,15 @@ pub fn render_numbers_at_grid_points(
             draw_text_background(&mut img, &text, centered_px, centered_py, config.font_size);
 
             // Draw the text (centered)
-            draw_text_mut(&mut img, color, centered_px, centered_py, scale, &font, &text);
+            draw_text_mut(
+                &mut img,
+                color,
+                centered_px,
+                centered_py,
+                scale,
+                &font,
+                &text,
+            );
 
             i += step_x as i64;
         }

@@ -110,7 +110,7 @@ impl Geostationary {
             35786023.0,
             6378137.0,
             6356752.31414,
-            -137.2,        // GOES-18 position
+            -137.2, // GOES-18 position
             -0.101360,
             0.128226,
             0.000028,
@@ -249,10 +249,10 @@ impl Geostationary {
 
             // Sample each edge
             let edges = [
-                (frac * (self.nx as f64 - 1.0), 0.0),                      // Top
-                (frac * (self.nx as f64 - 1.0), self.ny as f64 - 1.0),    // Bottom
-                (0.0, frac * (self.ny as f64 - 1.0)),                      // Left
-                (self.nx as f64 - 1.0, frac * (self.ny as f64 - 1.0)),    // Right
+                (frac * (self.nx as f64 - 1.0), 0.0),                  // Top
+                (frac * (self.nx as f64 - 1.0), self.ny as f64 - 1.0), // Bottom
+                (0.0, frac * (self.ny as f64 - 1.0)),                  // Left
+                (self.nx as f64 - 1.0, frac * (self.ny as f64 - 1.0)), // Right
             ];
 
             for (i, j) in edges {
@@ -344,9 +344,17 @@ mod tests {
 
         // CONUS sector covers US plus surrounding areas
         // Actual computed bounds: lon -142.66 to -52.94, lat 14.57 to 55.29
-        assert!(min_lon < -140.0, "min_lon should be < -140, got {}", min_lon);
+        assert!(
+            min_lon < -140.0,
+            "min_lon should be < -140, got {}",
+            min_lon
+        );
         assert!(max_lon > -55.0, "max_lon should be > -55, got {}", max_lon);
-        assert!(min_lat > 10.0 && min_lat < 20.0, "min_lat should be ~14-15, got {}", min_lat);
+        assert!(
+            min_lat > 10.0 && min_lat < 20.0,
+            "min_lat should be ~14-15, got {}",
+            min_lat
+        );
         assert!(max_lat > 50.0, "max_lat should be > 50, got {}", max_lat);
     }
 
@@ -368,18 +376,8 @@ mod tests {
             assert!(lat.abs() < 0.1, "Nadir latitude should be ~0, got {}", lat);
 
             if let Some((x2, y2)) = proj.geo_to_scan(lon, lat) {
-                assert!(
-                    (x - x2).abs() < 1e-6,
-                    "X roundtrip failed: {} vs {}",
-                    x,
-                    x2
-                );
-                assert!(
-                    (y - y2).abs() < 1e-6,
-                    "Y roundtrip failed: {} vs {}",
-                    y,
-                    y2
-                );
+                assert!((x - x2).abs() < 1e-6, "X roundtrip failed: {} vs {}", x, x2);
+                assert!((y - y2).abs() < 1e-6, "Y roundtrip failed: {} vs {}", y, y2);
             } else {
                 panic!("Failed to convert geo back to scan");
             }
@@ -418,7 +416,7 @@ mod tests {
 
         // A scan angle pointing to space should return None
         let result = proj.scan_to_geo(0.5, 0.5); // Very large scan angle (~28 degrees)
-        // Just ensure it doesn't panic
+                                                 // Just ensure it doesn't panic
         println!("Off-earth result: {:?}", result);
     }
 

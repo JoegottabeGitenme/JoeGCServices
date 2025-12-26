@@ -15,10 +15,7 @@ pub enum GridProcessorError {
 
     /// The requested region is outside the grid bounds.
     #[error("requested region {requested:?} is outside grid bounds {grid:?}")]
-    OutOfBounds {
-        requested: String,
-        grid: String,
-    },
+    OutOfBounds { requested: String, grid: String },
 
     /// Invalid metadata in the grid file.
     #[error("invalid grid metadata: {0}")]
@@ -51,19 +48,19 @@ pub enum GridProcessorError {
     /// Interpolation error.
     #[error("interpolation error: {0}")]
     InterpolationError(String),
-    
+
     /// Storage connection error.
     #[error("storage connection error: {0}")]
     Storage(String),
-    
+
     /// Metadata parsing error.
     #[error("metadata error: {0}")]
     Metadata(String),
-    
+
     /// Catalog query error.
     #[error("catalog error: {0}")]
     Catalog(String),
-    
+
     /// Dataset not found.
     #[error("dataset not found: {0}")]
     NotFound(String),

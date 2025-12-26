@@ -24,7 +24,7 @@ impl DimensionType {
     pub fn is_observation(&self) -> bool {
         matches!(self, DimensionType::Observation)
     }
-    
+
     /// Check if this is a forecast-type model
     pub fn is_forecast(&self) -> bool {
         matches!(self, DimensionType::Forecast)
@@ -45,7 +45,7 @@ pub struct ModelDimensionConfig {
     /// Whether ELEVATION dimension is enabled (vertical levels)
     pub has_elevation: bool,
     /// Whether this model requires reading the full grid (no partial bbox reads).
-    /// 
+    ///
     /// Set to true for models with non-geographic projections (e.g., Lambert Conformal)
     /// where the relationship between grid indices and geographic coordinates is non-linear.
     /// For these models, partial bbox reads would produce incorrect results.
@@ -61,7 +61,7 @@ impl Default for ModelDimensionConfig {
             has_forecast: true,
             has_time: false,
             has_elevation: true,
-            requires_full_grid: false,  // Most models support partial reads
+            requires_full_grid: false, // Most models support partial reads
         }
     }
 }
@@ -128,17 +128,17 @@ impl ModelDimensionRegistry {
             configs: HashMap::new(),
         }
     }
-    
+
     /// Load dimension configurations from all model YAML files in a directory.
     pub fn load_from_directory<P: AsRef<Path>>(config_dir: P) -> Self {
         let mut registry = Self::new();
         let models_dir = config_dir.as_ref().join("models");
-        
+
         if !models_dir.exists() {
             warn!(path = ?models_dir, "Models config directory not found");
             return registry;
         }
-        
+
         let entries = match fs::read_dir(&models_dir) {
             Ok(entries) => entries,
             Err(e) => {
@@ -146,7 +146,7 @@ impl ModelDimensionRegistry {
                 return registry;
             }
         };
-        
+
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
@@ -160,23 +160,23 @@ impl ModelDimensionRegistry {
                 }
             }
         }
-        
+
         debug!(
             count = registry.configs.len(),
             models = ?registry.configs.keys().collect::<Vec<_>>(),
             "Loaded model dimension configs"
         );
-        
+
         registry
     }
-    
+
     /// Load dimension config from a single YAML file.
     fn load_model_config<P: AsRef<Path>>(path: P) -> Option<(String, ModelDimensionConfig)> {
         let contents = fs::read_to_string(path.as_ref()).ok()?;
         let yaml: YamlModelFile = serde_yaml::from_str(&contents).ok()?;
-        
+
         let model_id = yaml.model.id.clone();
-        
+
         // Determine if full grid reads are required
         // Can be set explicitly via grid.requires_full_grid, or inferred from projection
         let requires_full_grid = if let Some(ref grid) = yaml.grid {
@@ -184,16 +184,18 @@ impl ModelDimensionRegistry {
             grid.requires_full_grid.unwrap_or_else(|| {
                 // Infer from projection type - non-geographic projections require full grid
                 match grid.projection.as_deref() {
-                    Some("lambert_conformal") | Some("polar_stereographic") | 
-                    Some("mercator") | Some("geostationary") => true,
+                    Some("lambert_conformal")
+                    | Some("polar_stereographic")
+                    | Some("mercator")
+                    | Some("geostationary") => true,
                     Some("geographic") | Some("lat_lon") | Some("equidistant_cylindrical") => false,
-                    _ => false,  // Default to allowing partial reads
+                    _ => false, // Default to allowing partial reads
                 }
             })
         } else {
             false
         };
-        
+
         // Determine dimension type from explicit config or infer from schedule
         let config = if let Some(dims) = yaml.dimensions {
             // Explicit dimensions config
@@ -205,7 +207,7 @@ impl ModelDimensionRegistry {
                     DimensionType::Forecast
                 }
             };
-            
+
             ModelDimensionConfig {
                 dimension_type,
                 has_run: dims.run.unwrap_or(dimension_type.is_forecast()),
@@ -220,7 +222,7 @@ impl ModelDimensionRegistry {
                 Some("observation") => DimensionType::Observation,
                 _ => DimensionType::Forecast,
             };
-            
+
             ModelDimensionConfig {
                 dimension_type,
                 has_run: dimension_type.is_forecast(),
@@ -235,39 +237,39 @@ impl ModelDimensionRegistry {
             config.requires_full_grid = requires_full_grid;
             config
         };
-        
+
         Some((model_id, config))
     }
-    
+
     /// Get dimension config for a model.
     /// Returns default (forecast) config if model not found.
     pub fn get(&self, model: &str) -> ModelDimensionConfig {
         self.configs.get(model).cloned().unwrap_or_default()
     }
-    
+
     /// Get dimension type for a model.
     pub fn get_dimension_type(&self, model: &str) -> DimensionType {
         self.get(model).dimension_type
     }
-    
+
     /// Check if a model is observation type.
     pub fn is_observation(&self, model: &str) -> bool {
         self.get_dimension_type(model).is_observation()
     }
-    
+
     /// Check if a model is forecast type.
     pub fn is_forecast(&self, model: &str) -> bool {
         self.get_dimension_type(model).is_forecast()
     }
-    
+
     /// Check if a model requires full grid reads (no partial bbox optimization).
-    /// 
+    ///
     /// Returns true for models with non-geographic projections where partial
     /// bbox reads would produce incorrect results.
     pub fn requires_full_grid(&self, model: &str) -> bool {
         self.get(model).requires_full_grid
     }
-    
+
     /// Get all registered model IDs.
     pub fn models(&self) -> Vec<&str> {
         self.configs.keys().map(|s| s.as_str()).collect()
@@ -277,7 +279,7 @@ impl ModelDimensionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config() {
         let config = ModelDimensionConfig::default();
@@ -287,7 +289,7 @@ mod tests {
         assert!(!config.has_time);
         assert!(config.has_elevation);
     }
-    
+
     #[test]
     fn test_registry_unknown_model() {
         let registry = ModelDimensionRegistry::new();

@@ -601,5 +601,3 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
         }
     }
 }
-
-

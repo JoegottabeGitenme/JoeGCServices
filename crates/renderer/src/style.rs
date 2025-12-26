@@ -14,12 +14,12 @@ pub struct PrecomputedPalette {
     /// All unique colors in the palette.
     /// Index 0 is always transparent (0, 0, 0, 0) for NaN/missing values.
     pub colors: Vec<(u8, u8, u8, u8)>,
-    
+
     /// Lookup table: maps quantized value (0-4095) to palette index.
     /// Using 4096 entries (12 bits) for good precision while staying small.
     /// Value outside range maps to index 0 (transparent) or clamped color.
     pub value_to_index: Vec<u8>,
-    
+
     /// The value range this palette covers
     pub min_value: f32,
     pub max_value: f32,
@@ -106,7 +106,7 @@ impl StyleConfig {
     pub fn get_style(&self, name: &str) -> Option<&StyleDefinition> {
         self.styles.get(name)
     }
-    
+
     /// Get the default style (the one with `default: true`)
     /// Falls back to looking for a style named "default" for backwards compatibility
     pub fn get_default_style(&self) -> Option<(&String, &StyleDefinition)> {
@@ -117,10 +117,11 @@ impl StyleConfig {
             }
         }
         // Fallback: look for style named "default" (backwards compat)
-        self.styles.get_key_value("default")
+        self.styles
+            .get_key_value("default")
             .or_else(|| self.styles.iter().next())
     }
-    
+
     /// Get the default style name
     pub fn default_style_name(&self) -> Option<&str> {
         self.get_default_style().map(|(name, _)| name.as_str())
@@ -142,45 +143,57 @@ impl StyleDefinition {
         if self.stops.is_empty() {
             return None;
         }
-        
+
         // Sort stops by value
         let mut stops = self.stops.clone();
-        stops.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(std::cmp::Ordering::Equal));
-        
+        stops.sort_by(|a, b| {
+            a.value
+                .partial_cmp(&b.value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         // Parse colors
         let parsed_colors: Vec<(f32, (u8, u8, u8, u8))> = stops
             .iter()
             .filter_map(|s| hex_to_rgba(&s.color).map(|c| (s.value, c)))
             .collect();
-        
+
         if parsed_colors.is_empty() {
             return None;
         }
-        
+
         // Determine value range
-        let min_value = self.range.as_ref().map(|r| r.min).unwrap_or(parsed_colors[0].0);
-        let max_value = self.range.as_ref().map(|r| r.max).unwrap_or(parsed_colors[parsed_colors.len() - 1].0);
+        let min_value = self
+            .range
+            .as_ref()
+            .map(|r| r.min)
+            .unwrap_or(parsed_colors[0].0);
+        let max_value = self
+            .range
+            .as_ref()
+            .map(|r| r.max)
+            .unwrap_or(parsed_colors[parsed_colors.len() - 1].0);
         let range = max_value - min_value;
-        
+
         if range <= 0.0 {
             return None;
         }
-        
+
         // Build palette with exactly 255 colors (index 0 reserved for transparent)
         // This ensures we have even coverage of the entire color range
         let mut colors: Vec<(u8, u8, u8, u8)> = Vec::with_capacity(256);
-        
+
         // Index 0 is always transparent (for NaN/missing)
         colors.push((0, 0, 0, 0));
-        
+
         // Generate 255 evenly-spaced colors across the value range
         for i in 0..255 {
-            let t = i as f32 / 254.0;  // 0.0 to 1.0
+            let t = i as f32 / 254.0; // 0.0 to 1.0
             let value = min_value + t * range;
             let color = interpolate_color_at_value(value, &parsed_colors);
             colors.push(color);
         }
-        
+
         // Build LUT: map each of 4096 entries to the nearest palette index
         let mut value_to_index = vec![0u8; PALETTE_LUT_SIZE];
         for i in 0..PALETTE_LUT_SIZE {
@@ -189,7 +202,7 @@ impl StyleDefinition {
             let palette_idx = 1 + (i * 254 / (PALETTE_LUT_SIZE - 1));
             value_to_index[i] = palette_idx as u8;
         }
-        
+
         Some(PrecomputedPalette {
             colors,
             value_to_index,
@@ -211,28 +224,28 @@ fn interpolate_color_at_value(value: f32, stops: &[(f32, (u8, u8, u8, u8))]) -> 
     if stops.is_empty() {
         return (0, 0, 0, 0);
     }
-    
+
     // Below first stop
     if value <= stops[0].0 {
         return stops[0].1;
     }
-    
+
     // Above last stop
     if value >= stops[stops.len() - 1].0 {
         return stops[stops.len() - 1].1;
     }
-    
+
     // Find surrounding stops
     for i in 0..stops.len() - 1 {
         let (low_val, low_color) = stops[i];
         let (high_val, high_color) = stops[i + 1];
-        
+
         if value >= low_val && value <= high_val {
             let range = high_val - low_val;
             if range.abs() < 0.0001 {
                 return low_color;
             }
-            
+
             let t = (value - low_val) / range;
             return (
                 (low_color.0 as f32 * (1.0 - t) + high_color.0 as f32 * t) as u8,
@@ -242,7 +255,7 @@ fn interpolate_color_at_value(value: f32, stops: &[(f32, (u8, u8, u8, u8))]) -> 
             );
         }
     }
-    
+
     stops[stops.len() - 1].1
 }
 
@@ -251,7 +264,7 @@ fn interpolate_color_at_value(value: f32, stops: &[(f32, (u8, u8, u8, u8))]) -> 
 fn find_closest_color_index(palette: &[(u8, u8, u8, u8)], target: (u8, u8, u8, u8)) -> u8 {
     let mut best_idx = 0u8;
     let mut best_dist = u32::MAX;
-    
+
     for (i, &(r, g, b, a)) in palette.iter().enumerate().skip(1) {
         // Simple color distance (could use LAB for better results)
         let dr = (r as i32 - target.0 as i32).abs() as u32;
@@ -259,13 +272,13 @@ fn find_closest_color_index(palette: &[(u8, u8, u8, u8)], target: (u8, u8, u8, u
         let db = (b as i32 - target.2 as i32).abs() as u32;
         let da = (a as i32 - target.3 as i32).abs() as u32;
         let dist = dr * dr + dg * dg + db * db + da * da;
-        
+
         if dist < best_dist {
             best_dist = dist;
             best_idx = i as u8;
         }
     }
-    
+
     best_idx
 }
 
@@ -273,7 +286,7 @@ fn find_closest_color_index(palette: &[(u8, u8, u8, u8)], target: (u8, u8, u8, u
 /// Supports both 6-char RGB (#RRGGBB) and 8-char RGBA (#RRGGBBAA) formats
 pub fn hex_to_rgba(hex: &str) -> Option<(u8, u8, u8, u8)> {
     let hex = hex.trim_start_matches('#');
-    
+
     match hex.len() {
         6 => {
             // RGB format - fully opaque
@@ -385,30 +398,32 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct ColorOptionVisitor;
-    
+
     impl<'de> Visitor<'de> for ColorOptionVisitor {
         type Value = Option<[u8; 4]>;
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a hex color string like '#FF0000', an RGBA array [255, 0, 0, 255], or null")
+            formatter.write_str(
+                "a hex color string like '#FF0000', an RGBA array [255, 0, 0, 255], or null",
+            )
         }
-        
+
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
             Ok(None)
         }
-        
+
         fn visit_unit<E>(self) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
             Ok(None)
         }
-        
+
         fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
         where
             E: de::Error,
@@ -429,19 +444,25 @@ where
                 Err(de::Error::custom(format!("invalid hex color: {}", value)))
             }
         }
-        
+
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
         where
             A: de::SeqAccess<'de>,
         {
-            let r = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-            let g = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-            let b = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+            let r = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+            let g = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+            let b = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(2, &self))?;
             let a = seq.next_element()?.unwrap_or(255u8);
             Ok(Some([r, g, b, a]))
         }
     }
-    
+
     deserializer.deserialize_any(ColorOptionVisitor)
 }
 
@@ -451,16 +472,17 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct ColorVisitor;
-    
+
     impl<'de> Visitor<'de> for ColorVisitor {
         type Value = [u8; 4];
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a hex color string like '#FF0000' or an RGBA array [255, 0, 0, 255]")
+            formatter
+                .write_str("a hex color string like '#FF0000' or an RGBA array [255, 0, 0, 255]")
         }
-        
+
         fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
         where
             E: de::Error,
@@ -481,19 +503,25 @@ where
                 Err(de::Error::custom(format!("invalid hex color: {}", value)))
             }
         }
-        
+
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
         where
             A: de::SeqAccess<'de>,
         {
-            let r = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-            let g = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-            let b = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+            let r = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+            let g = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+            let b = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(2, &self))?;
             let a = seq.next_element()?.unwrap_or(255u8);
             Ok([r, g, b, a])
         }
     }
-    
+
     deserializer.deserialize_any(ColorVisitor)
 }
 
@@ -503,12 +531,16 @@ impl ContourStyle {
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         let json: serde_json::Value = serde_json::from_str(&content)?;
-        
+
         // Find the default style name
         if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
             // First look for a style with default: true
             for (name, style) in styles {
-                if style.get("default").and_then(|d| d.as_bool()).unwrap_or(false) {
+                if style
+                    .get("default")
+                    .and_then(|d| d.as_bool())
+                    .unwrap_or(false)
+                {
                     return Self::from_file_with_style(path, name);
                 }
             }
@@ -521,26 +553,29 @@ impl ContourStyle {
                 return Self::from_file_with_style(path, name);
             }
         }
-        
+
         // Fall back to flat format (direct ContourStyle)
         Ok(serde_json::from_str(&content)?)
     }
-    
+
     /// Load a specific style variant from JSON file
     /// Supports mixed-type style files (gradient + contour + numbers in same file)
-    pub fn from_file_with_style(path: &str, style_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_file_with_style(
+        path: &str,
+        style_name: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
-        
+
         // Parse as generic JSON first to handle mixed-type style files
         let json: serde_json::Value = serde_json::from_str(&content)?;
-        
+
         // Try to get the specific style from styles map
         if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
             if let Some(style_value) = styles.get(style_name) {
                 // Parse just this one style as ContourStyleDefinition
                 let style_def: ContourStyleDefinition = serde_json::from_value(style_value.clone())
                     .map_err(|e| format!("Failed to parse style '{}': {}", style_name, e))?;
-                
+
                 return Ok(ContourStyle {
                     name: style_def.name.clone(),
                     title: Some(style_def.name.clone()),
@@ -554,28 +589,28 @@ impl ContourStyle {
                 return Err(format!("Style '{}' not found in {}", style_name, path).into());
             }
         }
-        
+
         // Fall back to flat format (direct ContourStyle)
         Ok(serde_json::from_str(&content)?)
     }
-    
+
     /// Generate contour levels from the configuration
     pub fn generate_levels(&self, data_min: f32, data_max: f32) -> Vec<f32> {
         // If levels are explicitly specified, use them
         if let Some(ref levels) = self.contour.levels {
             return levels.clone();
         }
-        
+
         // Otherwise generate from interval
         if let Some(interval) = self.contour.interval {
             let min = self.contour.min_value.unwrap_or(data_min);
             let max = self.contour.max_value.unwrap_or(data_max);
             let base = self.contour.base.unwrap_or(0.0);
-            
+
             // Generate levels in display units (e.g., Celsius) starting from base
             // This ensures levels align with nice values like 0°C
             let mut levels = Vec::new();
-            
+
             // Start from the base and go down to min
             let mut level = base;
             while level >= min {
@@ -584,7 +619,7 @@ impl ContourStyle {
                 }
                 level -= interval;
             }
-            
+
             // Go up from base to max
             level = base + interval;
             while level <= max {
@@ -593,10 +628,10 @@ impl ContourStyle {
                 }
                 level += interval;
             }
-            
+
             // Sort levels
             levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            
+
             // Convert to data units if unit_conversion is specified
             if let Some(conversion) = self.contour.unit_conversion {
                 levels.iter().map(|&l| l + conversion).collect()
@@ -671,50 +706,66 @@ fn apply_style_gradient_into(
         pixels.len(),
         width * height * 4,
         "pixel buffer size mismatch: expected {}x{}x4={}, got {}",
-        width, height, width * height * 4, pixels.len()
+        width,
+        height,
+        width * height * 4,
+        pixels.len()
     );
-    
+
     // Extract color stops and sort by value
     let mut stops = style.stops.clone();
-    stops.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(std::cmp::Ordering::Equal));
-    
+    stops.sort_by(|a, b| {
+        a.value
+            .partial_cmp(&b.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     if stops.is_empty() {
         return;
     }
-    
+
     // Convert hex colors to RGBA (supports 6-char RGB and 8-char RGBA)
-    let colors: Vec<Option<(u8, u8, u8, u8)>> = stops.iter().map(|s| hex_to_rgba(&s.color)).collect();
+    let colors: Vec<Option<(u8, u8, u8, u8)>> =
+        stops.iter().map(|s| hex_to_rgba(&s.color)).collect();
     let stop_values: Vec<f32> = stops.iter().map(|s| s.value).collect();
-    
+
     // Get the transform from the style
     let transform = style.transform.clone();
-    
+
     // Use range from style if specified, otherwise use stop boundaries
-    let min_range = style.range.as_ref().map(|r| r.min).unwrap_or(stop_values[0]);
-    let max_range = style.range.as_ref().map(|r| r.max).unwrap_or(stop_values[stop_values.len() - 1]);
-    
+    let min_range = style
+        .range
+        .as_ref()
+        .map(|r| r.min)
+        .unwrap_or(stop_values[0]);
+    let max_range = style
+        .range
+        .as_ref()
+        .map(|r| r.max)
+        .unwrap_or(stop_values[stop_values.len() - 1]);
+
     // Get out_of_range behavior: "clamp" (default), "transparent", or "extend"
     let out_of_range_transparent = style.out_of_range.as_deref() == Some("transparent");
-    
+
     let row_bytes = width * 4;
-    
+
     // Process rows in parallel
     pixels
         .par_chunks_mut(row_bytes)
         .enumerate()
         .for_each(|(y, row)| {
             let data_row_start = y * width;
-            
+
             for x in 0..width {
                 let data_idx = data_row_start + x;
                 let pixel_idx = x * 4;
-                
+
                 if data_idx >= data.len() {
                     break;
                 }
-                
+
                 let raw_value = data[data_idx];
-                
+
                 // Handle NaN and common missing values as transparent
                 if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
                     row[pixel_idx] = 0;
@@ -723,10 +774,10 @@ fn apply_style_gradient_into(
                     row[pixel_idx + 3] = 0;
                     continue;
                 }
-                
+
                 // Apply transform to convert to display units
                 let value = apply_transform(raw_value, transform.as_ref());
-                
+
                 // Handle out-of-range values
                 if value < min_range {
                     if out_of_range_transparent {
@@ -742,7 +793,7 @@ fn apply_style_gradient_into(
                     }
                     continue;
                 }
-                
+
                 if value > max_range {
                     if out_of_range_transparent {
                         row[pixel_idx] = 0;
@@ -757,11 +808,11 @@ fn apply_style_gradient_into(
                     }
                     continue;
                 }
-                
+
                 // Find the two surrounding color stops
                 let mut low_idx = 0;
                 let mut high_idx = stop_values.len() - 1;
-                
+
                 for (i, &stop_val) in stop_values.iter().enumerate() {
                     if stop_val <= value {
                         low_idx = i;
@@ -771,7 +822,7 @@ fn apply_style_gradient_into(
                         break;
                     }
                 }
-                
+
                 // Interpolate color between two stops
                 let (r, g, b, a) = if low_idx == high_idx {
                     match colors[low_idx] {
@@ -786,7 +837,7 @@ fn apply_style_gradient_into(
                     } else {
                         ((value - low_val) / (high_val - low_val)).clamp(0.0, 1.0)
                     };
-                    
+
                     match (colors[low_idx], colors[high_idx]) {
                         (Some((r1, g1, b1, a1)), Some((r2, g2, b2, a2))) => {
                             let r = (r1 as f32 * (1.0 - t) + r2 as f32 * t) as u8;
@@ -798,7 +849,7 @@ fn apply_style_gradient_into(
                         _ => (200, 200, 200, 255),
                     }
                 };
-                
+
                 row[pixel_idx] = r;
                 row[pixel_idx + 1] = g;
                 row[pixel_idx + 2] = b;
@@ -854,59 +905,70 @@ fn apply_style_gradient_indexed_into(
         indices.len(),
         width * height,
         "index buffer size mismatch: expected {}x{}={}, got {}",
-        width, height, width * height, indices.len()
+        width,
+        height,
+        width * height,
+        indices.len()
     );
-    
+
     let transform = style.transform.as_ref();
     let min_value = palette.min_value;
     let max_value = palette.max_value;
     let range = max_value - min_value;
     let lut_max = (PALETTE_LUT_SIZE - 1) as f32;
-    
+
     // Get out_of_range behavior
     let out_of_range_transparent = style.out_of_range.as_deref() == Some("transparent");
-    
+
     // Index for below-range values (first color after transparent, or 0 if transparent)
-    let below_range_idx = if out_of_range_transparent { 0 } else { palette.value_to_index[0] };
-    // Index for above-range values (last color, or 0 if transparent)  
-    let above_range_idx = if out_of_range_transparent { 0 } else { palette.value_to_index[PALETTE_LUT_SIZE - 1] };
-    
+    let below_range_idx = if out_of_range_transparent {
+        0
+    } else {
+        palette.value_to_index[0]
+    };
+    // Index for above-range values (last color, or 0 if transparent)
+    let above_range_idx = if out_of_range_transparent {
+        0
+    } else {
+        palette.value_to_index[PALETTE_LUT_SIZE - 1]
+    };
+
     // Process rows in parallel
     indices
         .par_chunks_mut(width)
         .enumerate()
         .for_each(|(y, row)| {
             let data_row_start = y * width;
-            
+
             for x in 0..width {
                 let data_idx = data_row_start + x;
-                
+
                 if data_idx >= data.len() {
                     break;
                 }
-                
+
                 let raw_value = data[data_idx];
-                
+
                 // Handle NaN and missing values -> transparent (index 0)
                 if raw_value.is_nan() || raw_value <= MISSING_VALUE_THRESHOLD {
                     row[x] = 0;
                     continue;
                 }
-                
+
                 // Apply transform
                 let value = apply_transform(raw_value, transform);
-                
+
                 // Handle out-of-range
                 if value < min_value {
                     row[x] = below_range_idx;
                     continue;
                 }
-                
+
                 if value > max_value {
                     row[x] = above_range_idx;
                     continue;
                 }
-                
+
                 // Normalize to LUT index and lookup
                 let t = (value - min_value) / range;
                 let lut_idx = (t * lut_max) as usize;
@@ -915,119 +977,4 @@ fn apply_style_gradient_indexed_into(
         });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hex_to_rgb() {
-        assert_eq!(hex_to_rgb("#FF0000"), Some((255, 0, 0)));
-        assert_eq!(hex_to_rgb("#00FF00"), Some((0, 255, 0)));
-        assert_eq!(hex_to_rgb("#0000FF"), Some((0, 0, 255)));
-        assert_eq!(hex_to_rgb("FF0000"), Some((255, 0, 0)));
-        assert_eq!(hex_to_rgb("#GGGGGG"), None);
-    }
-    
-    #[test]
-    fn test_linear_transform() {
-        let json = r##"{
-            "version": "1.0",
-            "styles": {
-                "gradient": {
-                    "default": true,
-                    "name": "Test",
-                    "type": "gradient",
-                    "transform": {
-                        "type": "linear",
-                        "scale": 0.0167,
-                        "offset": 0
-                    },
-                    "stops": [
-                        {"value": 0, "color": "#000000"},
-                        {"value": 100, "color": "#FFFFFF"}
-                    ]
-                }
-            }
-        }"##;
-        
-        let config = StyleConfig::from_json(json).unwrap();
-        let style = config.get_style("gradient").unwrap();
-        
-        // Verify transform is parsed
-        assert!(style.transform.is_some());
-        let t = style.transform.as_ref().unwrap();
-        assert_eq!(t.transform_type, "linear");
-        assert_eq!(t.scale, Some(0.0167));
-        assert_eq!(t.offset, Some(0.0));
-        
-        // Test transform application
-        let raw_value: f32 = 35500.0;
-        let transformed = apply_transform(raw_value, style.transform.as_ref());
-        let expected = 35500.0 * 0.0167;
-        assert!((transformed - expected).abs() < 0.01, "Expected {}, got {}", expected, transformed);
-    }
-    
-    #[test]
-    fn test_precomputed_palette_matches_rgba() {
-        // Create a simple gradient style
-        let json = r##"{
-            "version": "1.0",
-            "styles": {
-                "gradient": {
-                    "default": true,
-                    "name": "Test Gradient",
-                    "type": "gradient",
-                    "range": {"min": 0.0, "max": 100.0},
-                    "stops": [
-                        {"value": 0, "color": "#0000FF"},
-                        {"value": 50, "color": "#00FF00"},
-                        {"value": 100, "color": "#FF0000"}
-                    ]
-                }
-            }
-        }"##;
-        
-        let config = StyleConfig::from_json(json).unwrap();
-        let style = config.get_style("gradient").unwrap();
-        let palette = style.compute_palette().expect("Should compute palette");
-        
-        println!("Palette range: {} to {}", palette.min_value, palette.max_value);
-        println!("Palette colors: {}", palette.colors.len());
-        
-        // Debug: print some LUT entries
-        println!("\nLUT entries (value -> lut_idx -> palette_idx -> color):");
-        for i in [0, 1024, 2048, 3072, 4095] {
-            let value = palette.min_value + (i as f32 / 4095.0) * (palette.max_value - palette.min_value);
-            let idx = palette.value_to_index[i];
-            let color = palette.colors[idx as usize];
-            println!("  {} -> {} -> {} -> {:?}", value, i, idx, color);
-        }
-        
-        // Test with specific values
-        let test_values = vec![0.0f32, 25.0, 50.0, 75.0, 100.0];
-        
-        for &val in &test_values {
-            // Get RGBA color
-            let rgba = apply_style_gradient(&[val], 1, 1, style);
-            let rgba_color = (rgba[0], rgba[1], rgba[2], rgba[3]);
-            
-            // Get indexed color - compute manually to debug
-            let t = (val - palette.min_value) / (palette.max_value - palette.min_value);
-            let lut_idx = (t * 4095.0) as usize;
-            let palette_idx = palette.value_to_index[lut_idx.min(4095)];
-            let indexed_color = palette.colors[palette_idx as usize];
-            
-            println!("Value {}: t={:.3}, lut={}, RGBA={:?}, Indexed idx={} color={:?}", 
-                val, t, lut_idx, rgba_color, palette_idx, indexed_color);
-            
-            // Colors should be similar (may not be exact due to quantization)
-            let r_diff = (rgba_color.0 as i32 - indexed_color.0 as i32).abs();
-            let g_diff = (rgba_color.1 as i32 - indexed_color.1 as i32).abs();
-            let b_diff = (rgba_color.2 as i32 - indexed_color.2 as i32).abs();
-            
-            assert!(r_diff <= 5, "Red mismatch at {}: {} vs {}", val, rgba_color.0, indexed_color.0);
-            assert!(g_diff <= 5, "Green mismatch at {}: {} vs {}", val, rgba_color.1, indexed_color.1);
-            assert!(b_diff <= 5, "Blue mismatch at {}: {} vs {}", val, rgba_color.2, indexed_color.2);
-        }
-    }
-}
+// Tests have been moved to tests/style_tests.rs

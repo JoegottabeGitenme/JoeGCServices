@@ -6,16 +6,16 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use zarrs::array::{ArrayBuilder, DataType, FillValue};
 use zarrs::array::codec::array_to_bytes::sharding::ShardingCodecBuilder;
 use zarrs::array::codec::bytes_to_bytes::blosc::{
     BloscCodec, BloscCompressionLevel, BloscCompressor, BloscShuffleMode,
 };
+use zarrs::array::{ArrayBuilder, DataType, FillValue};
 use zarrs::array_subset::ArraySubset;
 use zarrs::storage::{ReadableStorageTraits, StoreKey, WritableStorageTraits};
 
 use crate::config::{GridProcessorConfig, PyramidConfig, ZarrCompression};
-use crate::downsample::{DownsampleMethod, generate_pyramid};
+use crate::downsample::{generate_pyramid, DownsampleMethod};
 use crate::error::{GridProcessorError, Result};
 use crate::types::{AxisInfo, BoundingBox, MultiscaleMetadata, PyramidLevel};
 
@@ -158,11 +158,9 @@ impl ZarrWriter {
             .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         // Write data
-        let subset = ArraySubset::new_with_start_shape(
-            vec![0, 0],
-            vec![height as u64, width as u64],
-        )
-        .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+        let subset =
+            ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])
+                .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         array
             .store_array_subset_elements(&subset, data)
@@ -220,17 +218,19 @@ impl ZarrWriter {
             "reference_time".to_string(),
             serde_json::json!(reference_time.to_rfc3339()),
         );
-        attrs.insert("forecast_hour".to_string(), serde_json::json!(forecast_hour));
+        attrs.insert(
+            "forecast_hour".to_string(),
+            serde_json::json!(forecast_hour),
+        );
         attrs.insert(
             "bbox".to_string(),
             serde_json::json!([bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat]),
         );
 
         // Create chunk grid
-        let chunk_grid: zarrs::array::ChunkGrid = 
-            vec![chunk_size as u64, chunk_size as u64]
-                .try_into()
-                .map_err(|e| GridProcessorError::ConfigError(format!("{:?}", e)))?;
+        let chunk_grid: zarrs::array::ChunkGrid = vec![chunk_size as u64, chunk_size as u64]
+            .try_into()
+            .map_err(|e| GridProcessorError::ConfigError(format!("{:?}", e)))?;
 
         // Create array builder
         let mut binding = ArrayBuilder::new(
@@ -257,8 +257,10 @@ impl ZarrWriter {
     fn create_compression_codec(
         &self,
     ) -> Result<Arc<dyn zarrs::array::codec::BytesToBytesCodecTraits>> {
-        let level = BloscCompressionLevel::try_from(self.config.zarr_compression_level)
-            .map_err(|_| GridProcessorError::ConfigError("Invalid compression level".to_string()))?;
+        let level =
+            BloscCompressionLevel::try_from(self.config.zarr_compression_level).map_err(|_| {
+                GridProcessorError::ConfigError("Invalid compression level".to_string())
+            })?;
 
         let shuffle = if self.config.zarr_shuffle {
             BloscShuffleMode::Shuffle
@@ -336,17 +338,20 @@ impl ZarrWriter {
             "reference_time".to_string(),
             serde_json::json!(reference_time.to_rfc3339()),
         );
-        attrs.insert("forecast_hour".to_string(), serde_json::json!(forecast_hour));
+        attrs.insert(
+            "forecast_hour".to_string(),
+            serde_json::json!(forecast_hour),
+        );
         attrs.insert(
             "bbox".to_string(),
             serde_json::json!([bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat]),
         );
 
         // Create chunk grid for shard
-        let chunk_grid: zarrs::array::ChunkGrid = 
-            shard_shape.clone()
-                .try_into()
-                .map_err(|e| GridProcessorError::ConfigError(format!("{:?}", e)))?;
+        let chunk_grid: zarrs::array::ChunkGrid = shard_shape
+            .clone()
+            .try_into()
+            .map_err(|e| GridProcessorError::ConfigError(format!("{:?}", e)))?;
 
         // Create array with sharding
         let mut binding = ArrayBuilder::new(
@@ -367,11 +372,9 @@ impl ZarrWriter {
             .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         // Write data
-        let subset = ArraySubset::new_with_start_shape(
-            vec![0, 0],
-            vec![height as u64, width as u64],
-        )
-        .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+        let subset =
+            ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])
+                .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         array
             .store_array_subset_elements(&subset, data)
@@ -471,14 +474,17 @@ impl ZarrWriter {
         let chunk_size = self.config.zarr_chunk_size;
 
         // Calculate native resolution
-        let native_resolution = (
-            bbox.width() / width as f64,
-            bbox.height() / height as f64,
-        );
+        let native_resolution = (bbox.width() / width as f64, bbox.height() / height as f64);
 
         // Generate pyramid levels
         let pyramid_levels = if pyramid_config.enabled {
-            generate_pyramid(data, width, height, pyramid_config.min_dimension, downsample_method)
+            generate_pyramid(
+                data,
+                width,
+                height,
+                pyramid_config.min_dimension,
+                downsample_method,
+            )
         } else {
             // Just native level
             vec![crate::downsample::PyramidLevelData {
@@ -501,7 +507,7 @@ impl ZarrWriter {
             } else {
                 format!("{}/{}", group_path.trim_end_matches('/'), idx)
             };
-            
+
             // For level 0, use the original data; for others, use the downsampled data
             let level_data_slice = if level_data.level == 0 {
                 data
@@ -509,8 +515,16 @@ impl ZarrWriter {
                 &level_data.data
             };
 
-            let level_width = if level_data.level == 0 { width } else { level_data.width };
-            let level_height = if level_data.level == 0 { height } else { level_data.height };
+            let level_width = if level_data.level == 0 {
+                width
+            } else {
+                level_data.width
+            };
+            let level_height = if level_data.level == 0 {
+                height
+            } else {
+                level_data.height
+            };
 
             // Write this level as a sharded array
             let result = self.write_level_sharded(
@@ -582,7 +596,10 @@ impl ZarrWriter {
             dtype: "float32".to_string(),
             fill_value: f32::NAN,
             bbox: *bbox,
-            compression: format!("multiscale_sharded_{}", self.config.zarr_compression.as_str()),
+            compression: format!(
+                "multiscale_sharded_{}",
+                self.config.zarr_compression.as_str()
+            ),
             model: model.to_string(),
             parameter: parameter.to_string(),
             level: level.to_string(),
@@ -642,12 +659,18 @@ impl ZarrWriter {
             "reference_time".to_string(),
             serde_json::json!(reference_time.to_rfc3339()),
         );
-        attrs.insert("forecast_hour".to_string(), serde_json::json!(forecast_hour));
+        attrs.insert(
+            "forecast_hour".to_string(),
+            serde_json::json!(forecast_hour),
+        );
         attrs.insert(
             "bbox".to_string(),
             serde_json::json!([bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat]),
         );
-        attrs.insert("pyramid_level".to_string(), serde_json::json!(pyramid_level));
+        attrs.insert(
+            "pyramid_level".to_string(),
+            serde_json::json!(pyramid_level),
+        );
         attrs.insert("scale".to_string(), serde_json::json!(scale));
 
         // Create chunk grid for shard
@@ -675,8 +698,9 @@ impl ZarrWriter {
             .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         // Write data
-        let subset = ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])
-            .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
+        let subset =
+            ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])
+                .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;
 
         array
             .store_array_subset_elements(&subset, data)
@@ -783,7 +807,10 @@ impl ZarrWriter {
         let metadata_path = if group_path == "/" || group_path.is_empty() {
             "zarr.json".to_string()
         } else {
-            format!("{}/zarr.json", group_path.trim_start_matches('/').trim_end_matches('/'))
+            format!(
+                "{}/zarr.json",
+                group_path.trim_start_matches('/').trim_end_matches('/')
+            )
         };
         let store_key = StoreKey::new(&metadata_path)
             .map_err(|e| GridProcessorError::StorageError(e.to_string()))?;

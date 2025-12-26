@@ -133,7 +133,10 @@ async fn main() -> Result<()> {
     // Resume any in-progress downloads
     let in_progress = state.get_in_progress().await?;
     if !in_progress.is_empty() {
-        info!(count = in_progress.len(), "Found in-progress downloads to resume");
+        info!(
+            count = in_progress.len(),
+            "Found in-progress downloads to resume"
+        );
     }
 
     // Create scheduler
@@ -143,7 +146,8 @@ async fn main() -> Result<()> {
         args.max_concurrent,
         args.ingester_url.clone(),
         args.config_dir.clone(),
-    ).await;
+    )
+    .await;
 
     // Get model schedules for the status API
     let model_schedules = scheduler.get_model_schedules();

@@ -5,7 +5,6 @@
 
 use std::path::Path;
 
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -129,11 +128,9 @@ impl DownloadState {
         .execute(&pool)
         .await?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_completed_model ON completed_downloads(model)",
-        )
-        .execute(&pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_completed_model ON completed_downloads(model)")
+            .execute(&pool)
+            .await?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_completed_ingested ON completed_downloads(ingested)",
@@ -442,17 +439,18 @@ impl DownloadState {
 
     /// Get recent completed downloads for display.
     pub async fn get_recent_completed(&self, limit: usize) -> Result<Vec<CompletedDownload>> {
-        let rows: Vec<(String, String, Option<String>, Option<i64>, String, bool)> = sqlx::query_as(
-            r#"
+        let rows: Vec<(String, String, Option<String>, Option<i64>, String, bool)> =
+            sqlx::query_as(
+                r#"
             SELECT url, filename, model, total_bytes, completed_at, ingested
             FROM completed_downloads
             ORDER BY completed_at DESC
             LIMIT ?
             "#,
-        )
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?;
 
         let records = rows
             .into_iter()

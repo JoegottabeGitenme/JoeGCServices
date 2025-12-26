@@ -19,7 +19,10 @@ impl Catalog {
     }
 
     /// Create a new catalog connection from database URL with custom pool size.
-    pub async fn connect_with_pool_size(database_url: &str, max_connections: u32) -> WmsResult<Self> {
+    pub async fn connect_with_pool_size(
+        database_url: &str,
+        max_connections: u32,
+    ) -> WmsResult<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .connect(database_url)
@@ -172,10 +175,7 @@ impl Catalog {
         let mut params_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for row in param_rows {
-            params_map
-                .entry(row.model)
-                .or_default()
-                .push(row.parameter);
+            params_map.entry(row.model).or_default().push(row.parameter);
         }
 
         Ok(rows
@@ -337,7 +337,11 @@ impl Catalog {
     }
 
     /// Mark old datasets for a specific model as expired based on retention hours.
-    pub async fn mark_model_expired(&self, model: &str, older_than: DateTime<Utc>) -> WmsResult<u64> {
+    pub async fn mark_model_expired(
+        &self,
+        model: &str,
+        older_than: DateTime<Utc>,
+    ) -> WmsResult<u64> {
         let result = sqlx::query(
             "UPDATE datasets SET status = 'expired' WHERE model = $1 AND valid_time < $2 AND status = 'available'",
         )
@@ -375,12 +379,11 @@ impl Catalog {
 
     /// Get count of expired datasets.
     pub async fn count_expired(&self) -> WmsResult<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM datasets WHERE status = 'expired'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM datasets WHERE status = 'expired'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
 
         Ok(count)
     }
@@ -611,7 +614,7 @@ impl Catalog {
 
         Ok((run_strings, forecast_hours))
     }
-    
+
     /// Get the geographic bounding box for a model
     /// Returns the union of all dataset bounding boxes for the model
     pub async fn get_model_bbox(&self, model: &str) -> WmsResult<BoundingBox> {
@@ -628,15 +631,15 @@ impl Catalog {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
-        
+
         Ok(BoundingBox::new(result.0, result.1, result.2, result.3))
     }
-    
+
     /// Get list of models that have available data (alias for list_models).
     pub async fn get_available_models(&self) -> WmsResult<Vec<String>> {
         self.list_models().await
     }
-    
+
     /// Get recent entries for a model (for cache warming).
     /// Returns the N most recent unique observations, ordered by reference_time DESC.
     pub async fn get_recent_entries(
@@ -779,7 +782,7 @@ impl Catalog {
             count: i64,
             oldest: Option<chrono::DateTime<Utc>>,
             newest: Option<chrono::DateTime<Utc>>,
-            total_size: Option<i64>,  // Cast in SQL to avoid NUMERIC
+            total_size: Option<i64>, // Cast in SQL to avoid NUMERIC
         }
 
         let rows = sqlx::query_as::<_, ParamStatsRow>(

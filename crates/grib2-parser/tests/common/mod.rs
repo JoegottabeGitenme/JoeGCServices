@@ -136,12 +136,27 @@ pub fn create_test_tables() -> Arc<Grib2Tables> {
     tables.add_level(3, LevelDescription::Static("cloud top".to_string()));
     tables.add_level(100, LevelDescription::Template("{value} mb".to_string()));
     tables.add_level(101, LevelDescription::Static("mean sea level".to_string()));
-    tables.add_level(102, LevelDescription::Template("{value} m above MSL".to_string()));
-    tables.add_level(103, LevelDescription::Template("{value} m above ground".to_string()));
-    tables.add_level(200, LevelDescription::Static("entire atmosphere".to_string()));
+    tables.add_level(
+        102,
+        LevelDescription::Template("{value} m above MSL".to_string()),
+    );
+    tables.add_level(
+        103,
+        LevelDescription::Template("{value} m above ground".to_string()),
+    );
+    tables.add_level(
+        200,
+        LevelDescription::Static("entire atmosphere".to_string()),
+    );
     tables.add_level(212, LevelDescription::Static("low cloud layer".to_string()));
-    tables.add_level(222, LevelDescription::Static("middle cloud layer".to_string()));
-    tables.add_level(232, LevelDescription::Static("high cloud layer".to_string()));
+    tables.add_level(
+        222,
+        LevelDescription::Static("middle cloud layer".to_string()),
+    );
+    tables.add_level(
+        232,
+        LevelDescription::Static("high cloud layer".to_string()),
+    );
 
     Arc::new(tables)
 }

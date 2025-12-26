@@ -23,23 +23,23 @@ use crate::{IngestOptions, IngestionResult};
 /// GOES band to parameter/level mapping.
 fn band_to_parameter(band: u8) -> (&'static str, &'static str) {
     match band {
-        1 => ("CMI_C01", "visible_blue"),       // 0.47µm Blue
-        2 => ("CMI_C02", "visible_red"),        // 0.64µm Red (most common visible)
-        3 => ("CMI_C03", "visible_veggie"),     // 0.86µm Vegetation
-        4 => ("CMI_C04", "cirrus"),             // 1.37µm Cirrus
-        5 => ("CMI_C05", "snow_ice"),           // 1.6µm Snow/Ice
-        6 => ("CMI_C06", "cloud_particle"),     // 2.2µm Cloud Particle Size
-        7 => ("CMI_C07", "shortwave_ir"),       // 3.9µm Shortwave Window
-        8 => ("CMI_C08", "upper_vapor"),        // 6.2µm Upper-Level Water Vapor
-        9 => ("CMI_C09", "mid_vapor"),          // 6.9µm Mid-Level Water Vapor
-        10 => ("CMI_C10", "low_vapor"),         // 7.3µm Lower-Level Water Vapor
-        11 => ("CMI_C11", "cloud_phase"),       // 8.4µm Cloud-Top Phase
-        12 => ("CMI_C12", "ozone"),             // 9.6µm Ozone
-        13 => ("CMI_C13", "clean_ir"),          // 10.3µm "Clean" Longwave IR
-        14 => ("CMI_C14", "ir"),                // 11.2µm Longwave IR
-        15 => ("CMI_C15", "dirty_ir"),          // 12.3µm "Dirty" Longwave IR
-        16 => ("CMI_C16", "co2"),               // 13.3µm CO2
-        _ => ("CMI_C02", "visible_red"),        // Default
+        1 => ("CMI_C01", "visible_blue"),   // 0.47µm Blue
+        2 => ("CMI_C02", "visible_red"),    // 0.64µm Red (most common visible)
+        3 => ("CMI_C03", "visible_veggie"), // 0.86µm Vegetation
+        4 => ("CMI_C04", "cirrus"),         // 1.37µm Cirrus
+        5 => ("CMI_C05", "snow_ice"),       // 1.6µm Snow/Ice
+        6 => ("CMI_C06", "cloud_particle"), // 2.2µm Cloud Particle Size
+        7 => ("CMI_C07", "shortwave_ir"),   // 3.9µm Shortwave Window
+        8 => ("CMI_C08", "upper_vapor"),    // 6.2µm Upper-Level Water Vapor
+        9 => ("CMI_C09", "mid_vapor"),      // 6.9µm Mid-Level Water Vapor
+        10 => ("CMI_C10", "low_vapor"),     // 7.3µm Lower-Level Water Vapor
+        11 => ("CMI_C11", "cloud_phase"),   // 8.4µm Cloud-Top Phase
+        12 => ("CMI_C12", "ozone"),         // 9.6µm Ozone
+        13 => ("CMI_C13", "clean_ir"),      // 10.3µm "Clean" Longwave IR
+        14 => ("CMI_C14", "ir"),            // 11.2µm Longwave IR
+        15 => ("CMI_C15", "dirty_ir"),      // 12.3µm "Dirty" Longwave IR
+        16 => ("CMI_C16", "co2"),           // 13.3µm CO2
+        _ => ("CMI_C02", "visible_red"),    // Default
     }
 }
 
@@ -61,7 +61,7 @@ pub async fn ingest_netcdf(
 
     // Parse filename to extract metadata
     let file_info = parse_goes_filename(filename);
-    
+
     // Determine model (satellite)
     let model = options.model.clone().unwrap_or_else(|| {
         file_info
@@ -71,9 +71,10 @@ pub async fn ingest_netcdf(
     });
 
     // Extract band number
-    let band = file_info.as_ref().map(|i| i.band).unwrap_or_else(|| {
-        extract_band_from_filename(filename).unwrap_or(2)
-    });
+    let band = file_info
+        .as_ref()
+        .map(|i| i.band)
+        .unwrap_or_else(|| extract_band_from_filename(filename).unwrap_or(2));
 
     // Extract observation time
     let observation_time = file_info
@@ -230,8 +231,9 @@ async fn write_and_upload_zarr(
     let writer = ZarrWriter::new(config);
 
     // Create filesystem store
-    let store = FilesystemStore::new(&zarr_path)
-        .map_err(|e| IngestionError::ZarrWrite(format!("Failed to create filesystem store: {}", e)))?;
+    let store = FilesystemStore::new(&zarr_path).map_err(|e| {
+        IngestionError::ZarrWrite(format!("Failed to create filesystem store: {}", e))
+    })?;
 
     // Determine units based on band type
     let units = if band <= 6 {

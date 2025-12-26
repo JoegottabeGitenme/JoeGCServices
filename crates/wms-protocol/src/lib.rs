@@ -11,12 +11,11 @@ pub mod wmts;
 
 // Re-export GetFeatureInfo types
 pub use getfeatureinfo::{
-    FeatureInfo, FeatureInfoResponse, GetFeatureInfoRequest, InfoFormat, Location,
-    mercator_to_wgs84, pixel_to_geographic,
+    mercator_to_wgs84, pixel_to_geographic, FeatureInfo, FeatureInfoResponse,
+    GetFeatureInfoRequest, InfoFormat, Location,
 };
 
 pub use wmts::{
-    wmts_exception, GetCapabilitiesRequest, GetTileRequest,
-    WmtsCapabilitiesBuilder, WmtsDimensionInfo, WmtsKvpParams, WmtsLayerInfo, WmtsRequest,
-    WmtsRestPath, WmtsStyleInfo,
+    wmts_exception, GetCapabilitiesRequest, GetTileRequest, WmtsCapabilitiesBuilder,
+    WmtsDimensionInfo, WmtsKvpParams, WmtsLayerInfo, WmtsRequest, WmtsRestPath, WmtsStyleInfo,
 };

@@ -68,9 +68,9 @@ pub async fn forecast_times_handler(
     Query(query): Query<ForecastTimesQuery>,
 ) -> Result<Json<ForecastTimesResponse>, StatusCode> {
     info!(model = %model, parameter = ?query.parameter, "Forecast times request");
-    
+
     let parameter = query.parameter.unwrap_or_else(|| "TMP".to_string());
-    
+
     let forecast_hours = state
         .catalog
         .get_available_forecast_hours(&model, &parameter)
@@ -79,7 +79,7 @@ pub async fn forecast_times_handler(
             tracing::error!(error = %e, "Failed to get forecast hours");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     Ok(Json(ForecastTimesResponse {
         model,
         parameter,
@@ -94,16 +94,12 @@ pub async fn parameters_handler(
     Path(model): Path<String>,
 ) -> Result<Json<ParametersResponse>, StatusCode> {
     info!(model = %model, "Parameters request");
-    
-    let parameters = state
-        .catalog
-        .list_parameters(&model)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to list parameters");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    
+
+    let parameters = state.catalog.list_parameters(&model).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to list parameters");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
     Ok(Json(ParametersResponse { model, parameters }))
 }
 
@@ -113,9 +109,9 @@ pub async fn ingestion_events_handler(
     Extension(state): Extension<Arc<AppState>>,
     Query(query): Query<IngestionEventsQuery>,
 ) -> Result<Json<Vec<IngestionEvent>>, StatusCode> {
-    let minutes = query.limit.unwrap_or(60) as i64;  // Default to last 60 minutes
+    let minutes = query.limit.unwrap_or(60) as i64; // Default to last 60 minutes
     info!(minutes = minutes, "Ingestion events request");
-    
+
     let events = state
         .catalog
         .get_recent_ingestions(minutes)
@@ -124,7 +120,7 @@ pub async fn ingestion_events_handler(
             tracing::error!(error = %e, "Failed to get ingestion events");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     let response: Vec<IngestionEvent> = events
         .into_iter()
         .map(|e| IngestionEvent {
@@ -132,10 +128,10 @@ pub async fn ingestion_events_handler(
             parameter: e.parameter,
             reference_time: e.reference_time.to_rfc3339(),
             forecast_hour: e.forecast_hour as i32,
-            ingested_at: e.reference_time.to_rfc3339(),  // Use reference_time as proxy
+            ingested_at: e.reference_time.to_rfc3339(), // Use reference_time as proxy
         })
         .collect();
-    
+
     Ok(Json(response))
 }
 
@@ -154,7 +150,7 @@ mod tests {
             parameter: "TMP".to_string(),
             forecast_hours: vec![0, 3, 6, 12],
         };
-        
+
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"model\":\"gfs\""));
         assert!(json.contains("\"forecast_hours\":[0,3,6,12]"));
@@ -166,7 +162,7 @@ mod tests {
             model: "hrrr".to_string(),
             parameters: vec!["TMP".to_string(), "UGRD".to_string(), "VGRD".to_string()],
         };
-        
+
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"model\":\"hrrr\""));
         assert!(json.contains("TMP"));
@@ -181,7 +177,7 @@ mod tests {
             forecast_hour: 6,
             ingested_at: "2024-01-15T13:00:00Z".to_string(),
         };
-        
+
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"forecast_hour\":6"));
     }

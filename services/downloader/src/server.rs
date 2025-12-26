@@ -178,9 +178,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
 // ============================================================================
 
 /// GET /status - Overall download service status
-async fn status_handler(
-    Extension(state): Extension<Arc<ServerState>>,
-) -> impl IntoResponse {
+async fn status_handler(Extension(state): Extension<Arc<ServerState>>) -> impl IntoResponse {
     let ds = &state.download_state;
 
     // Get stats
@@ -356,9 +354,7 @@ async fn downloads_handler(
 }
 
 /// GET /schedule - Show download schedule and upcoming downloads
-async fn schedule_handler(
-    Extension(state): Extension<Arc<ServerState>>,
-) -> impl IntoResponse {
+async fn schedule_handler(Extension(state): Extension<Arc<ServerState>>) -> impl IntoResponse {
     let models: Vec<ModelScheduleInfo> = state
         .model_schedules
         .iter()

@@ -52,19 +52,34 @@ mod tests {
     #[test]
     fn test_error_display_messages() {
         let err = IngestionError::Grib2Parse("invalid magic bytes".to_string());
-        assert_eq!(err.to_string(), "Failed to parse GRIB2 data: invalid magic bytes");
+        assert_eq!(
+            err.to_string(),
+            "Failed to parse GRIB2 data: invalid magic bytes"
+        );
 
         let err = IngestionError::NetcdfParse("missing variable".to_string());
-        assert_eq!(err.to_string(), "Failed to parse NetCDF data: missing variable");
+        assert_eq!(
+            err.to_string(),
+            "Failed to parse NetCDF data: missing variable"
+        );
 
         let err = IngestionError::ZarrWrite("chunk write failed".to_string());
-        assert_eq!(err.to_string(), "Failed to write Zarr data: chunk write failed");
+        assert_eq!(
+            err.to_string(),
+            "Failed to write Zarr data: chunk write failed"
+        );
 
         let err = IngestionError::StorageUpload("connection refused".to_string());
-        assert_eq!(err.to_string(), "Failed to upload to storage: connection refused");
+        assert_eq!(
+            err.to_string(),
+            "Failed to upload to storage: connection refused"
+        );
 
         let err = IngestionError::CatalogRegister("duplicate entry".to_string());
-        assert_eq!(err.to_string(), "Failed to register in catalog: duplicate entry");
+        assert_eq!(
+            err.to_string(),
+            "Failed to register in catalog: duplicate entry"
+        );
 
         let err = IngestionError::UnknownFileType(".xyz".to_string());
         assert_eq!(err.to_string(), "Unknown file type: .xyz");
@@ -73,7 +88,10 @@ mod tests {
         assert_eq!(err.to_string(), "Missing required metadata: reference_time");
 
         let err = IngestionError::InvalidConfig("invalid bucket name".to_string());
-        assert_eq!(err.to_string(), "Invalid configuration: invalid bucket name");
+        assert_eq!(
+            err.to_string(),
+            "Invalid configuration: invalid bucket name"
+        );
 
         let err = IngestionError::Decompression("corrupted gzip".to_string());
         assert_eq!(err.to_string(), "Decompression failed: corrupted gzip");
@@ -86,7 +104,7 @@ mod tests {
     fn test_error_from_io_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err: IngestionError = io_err.into();
-        
+
         assert!(matches!(err, IngestionError::FileRead(_)));
         assert!(err.to_string().contains("file not found"));
     }
@@ -95,7 +113,7 @@ mod tests {
     fn test_error_from_anyhow() {
         let anyhow_err = anyhow::anyhow!("something went wrong");
         let err: IngestionError = anyhow_err.into();
-        
+
         assert!(matches!(err, IngestionError::Other(_)));
         assert!(err.to_string().contains("something went wrong"));
     }
@@ -104,7 +122,7 @@ mod tests {
     fn test_error_debug_impl() {
         let err = IngestionError::Grib2Parse("test".to_string());
         let debug_str = format!("{:?}", err);
-        
+
         assert!(debug_str.contains("Grib2Parse"));
         assert!(debug_str.contains("test"));
     }

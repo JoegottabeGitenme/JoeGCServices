@@ -145,16 +145,14 @@ fn test_render_by_parameter_generic_output_size() {
 fn test_render_with_style_file_missing_file() {
     // Should return an error when file doesn't exist
     let data = vec![50.0f32; 100];
-    let result = render_with_style_file(
-        &data,
-        "/nonexistent/path/style.json",
-        None,
-        10,
-        10,
-    );
+    let result = render_with_style_file(&data, "/nonexistent/path/style.json", None, 10, 10);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("Failed to load style file"), "Error should mention loading failure: {}", err);
+    assert!(
+        err.contains("Failed to load style file"),
+        "Error should mention loading failure: {}",
+        err
+    );
 }
 
 #[test]
@@ -162,7 +160,7 @@ fn test_render_with_style_file_missing_style_name() {
     // Should return an error when style name not found (using temp file)
     let temp_dir = std::env::temp_dir();
     let style_path = temp_dir.join("test_style_missing_name.json");
-    
+
     // Create a minimal valid style file without the requested style
     let style_content = r##"{
         "version": "1.0",
@@ -181,7 +179,7 @@ fn test_render_with_style_file_missing_style_name() {
         }
     }"##;
     std::fs::write(&style_path, style_content).unwrap();
-    
+
     let data = vec![25.0f32; 400]; // 20x20 grid
     let result = render_with_style_file(
         &data,
@@ -190,13 +188,17 @@ fn test_render_with_style_file_missing_style_name() {
         20,
         20,
     );
-    
+
     // Cleanup
     let _ = std::fs::remove_file(&style_path);
-    
+
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("not found"), "Error should mention style not found: {}", err);
+    assert!(
+        err.contains("not found"),
+        "Error should mention style not found: {}",
+        err
+    );
 }
 
 #[test]
@@ -204,7 +206,7 @@ fn test_render_with_style_file_success() {
     // Should successfully render with a valid style file
     let temp_dir = std::env::temp_dir();
     let style_path = temp_dir.join("test_style_success.json");
-    
+
     // Create a valid style file matching the actual schema
     let style_content = r##"{
         "version": "1.0",
@@ -224,19 +226,13 @@ fn test_render_with_style_file_success() {
         }
     }"##;
     std::fs::write(&style_path, style_content).unwrap();
-    
+
     let data = vec![50.0f32; 400]; // 20x20 grid
-    let result = render_with_style_file(
-        &data,
-        style_path.to_str().unwrap(),
-        None,
-        20,
-        20,
-    );
-    
+    let result = render_with_style_file(&data, style_path.to_str().unwrap(), None, 20, 20);
+
     // Cleanup
     let _ = std::fs::remove_file(&style_path);
-    
+
     assert!(result.is_ok());
     // RGBA output: 20*20*4 = 1600 bytes
     assert_eq!(result.unwrap().len(), 1600);

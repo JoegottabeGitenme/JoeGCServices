@@ -9,10 +9,10 @@
 //! - Zarr-based data access with efficient chunked reads
 //! - Geographic alignment for consistent barb positioning across tiles
 
-use renderer::{barbs, gradient};
 use renderer::barbs::BarbConfig;
-use storage::{Catalog, CatalogEntry};
+use renderer::{barbs, gradient};
 use std::time::Instant;
+use storage::{Catalog, CatalogEntry};
 use tracing::{debug, info};
 
 use super::resampling::resample_for_model_geographic;
@@ -46,20 +46,26 @@ pub async fn render_wind_barbs_tile(
     bbox: [f32; 4],
     forecast_hour: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{TileBufferConfig, tile_bbox};
-    
+    use wms_common::tile::{tile_bbox, TileBufferConfig};
+
     // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
-    
+
     // Ensure both entries have Zarr metadata
     if u_entry.zarr_metadata.is_none() {
-        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
     if v_entry.zarr_metadata.is_none() {
-        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
-    
+
     // Load U and V component data from Zarr
     info!(
         model = model,
@@ -67,15 +73,16 @@ pub async fn render_wind_barbs_tile(
         v_path = %v_entry.storage_path,
         "Loading wind components from Zarr"
     );
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) =
         load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
-    
+
     // Use pixel buffer approach for tile rendering (4x faster than 3x3 expansion)
-    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord {
+    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord
+    {
         let buffer_config = TileBufferConfig::from_env();
         let tile_bounds = tile_bbox(&coord);
         let expanded_bbox = buffer_config.expanded_bbox(&tile_bounds);
-        
+
         (
             [
                 expanded_bbox.min_x as f32,
@@ -90,7 +97,7 @@ pub async fn render_wind_barbs_tile(
     } else {
         (bbox, width as usize, height as usize, None)
     };
-    
+
     info!(
         render_width = render_width,
         render_height = render_height,
@@ -99,17 +106,31 @@ pub async fn render_wind_barbs_tile(
         buffer_pixels = buffer_config.map(|c| c.buffer_pixels).unwrap_or(0),
         "Rendering wind barbs"
     );
-    
+
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
-        &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
+        &u_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+        data_bounds,
+        model,
+        grid_uses_360,
     );
     let v_resampled = resample_for_model_geographic(
-        &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
+        &v_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+        data_bounds,
+        model,
+        grid_uses_360,
     );
-    
+
     // Render wind barbs with geographic alignment
     let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
@@ -120,14 +141,14 @@ pub async fn render_wind_barbs_tile(
         render_bbox,
         &barb_config,
     );
-    
+
     // Crop to center tile if we used buffer rendering
     let final_pixels = if let Some(buf_config) = buffer_config {
         buf_config.crop_to_tile(&barb_pixels)
     } else {
         barb_pixels
     };
-    
+
     // Encode as PNG
     renderer::png::create_png(&final_pixels, width as usize, height as usize)
         .map_err(|e| format!("PNG encoding failed: {}", e))
@@ -160,20 +181,26 @@ pub async fn render_wind_barbs_tile_with_level(
     forecast_hour: Option<u32>,
     level: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    use wms_common::tile::{TileBufferConfig, tile_bbox};
-    
+    use wms_common::tile::{tile_bbox, TileBufferConfig};
+
     // Get the catalog entries for wind components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, level).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, level).await?;
-    
+
     // Ensure both entries have Zarr metadata
     if u_entry.zarr_metadata.is_none() {
-        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
     if v_entry.zarr_metadata.is_none() {
-        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
-    
+
     // Load U and V component data from Zarr
     info!(
         model = model,
@@ -181,15 +208,16 @@ pub async fn render_wind_barbs_tile_with_level(
         v_path = %v_entry.storage_path,
         "Loading wind components from Zarr"
     );
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) =
         load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, None).await?;
-    
+
     // Use pixel buffer approach for tile rendering (4x faster than 3x3 expansion)
-    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord {
+    let (render_bbox, render_width, render_height, buffer_config) = if let Some(coord) = tile_coord
+    {
         let buffer_config = TileBufferConfig::from_env();
         let tile_bounds = tile_bbox(&coord);
         let expanded_bbox = buffer_config.expanded_bbox(&tile_bounds);
-        
+
         (
             [
                 expanded_bbox.min_x as f32,
@@ -204,7 +232,7 @@ pub async fn render_wind_barbs_tile_with_level(
     } else {
         (bbox, width as usize, height as usize, None)
     };
-    
+
     info!(
         render_width = render_width,
         render_height = render_height,
@@ -214,17 +242,31 @@ pub async fn render_wind_barbs_tile_with_level(
         level = ?level,
         "Rendering wind barbs with level"
     );
-    
+
     // Resample data to the render bbox (model-aware for proper projection handling)
     let u_resampled = resample_for_model_geographic(
-        &u_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
+        &u_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+        data_bounds,
+        model,
+        grid_uses_360,
     );
     let v_resampled = resample_for_model_geographic(
-        &v_data, grid_width, grid_height,
-        render_width, render_height, render_bbox, data_bounds, model, grid_uses_360
+        &v_data,
+        grid_width,
+        grid_height,
+        render_width,
+        render_height,
+        render_bbox,
+        data_bounds,
+        model,
+        grid_uses_360,
     );
-    
+
     // Render wind barbs with geographic alignment
     let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
@@ -235,14 +277,14 @@ pub async fn render_wind_barbs_tile_with_level(
         render_bbox,
         &barb_config,
     );
-    
+
     // Crop to center tile if we used buffer rendering
     let final_pixels = if let Some(buf_config) = buffer_config {
         buf_config.crop_to_tile(&barb_pixels)
     } else {
         barb_pixels
     };
-    
+
     // Encode as PNG
     renderer::png::create_png(&final_pixels, width as usize, height as usize)
         .map_err(|e| format!("PNG encoding failed: {}", e))
@@ -274,15 +316,21 @@ pub async fn render_wind_barbs_layer(
     // Get catalog entries for U and V components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
     let v_entry = get_wind_entry(catalog, model, "VGRD", forecast_hour, None).await?;
-    
+
     // Ensure both entries have Zarr metadata
     if u_entry.zarr_metadata.is_none() {
-        return Err("UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "UGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
     if v_entry.zarr_metadata.is_none() {
-        return Err("VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)".to_string());
+        return Err(
+            "VGRD data is not available - missing Zarr metadata (ingestion may be incomplete)"
+                .to_string(),
+        );
     }
-    
+
     // Load U and V component data from Zarr
     info!(
         model = model,
@@ -290,21 +338,23 @@ pub async fn render_wind_barbs_layer(
         v_path = %v_entry.storage_path,
         "Loading wind components from Zarr for layer render"
     );
-    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) = 
+    let (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360) =
         load_wind_components_from_zarr(grid_processor_factory, &u_entry, &v_entry, bbox).await?;
-    
+
     // Debug: Log data statistics
-    let u_stats: (f32, f32, f32) = u_data.iter()
+    let u_stats: (f32, f32, f32) = u_data
+        .iter()
         .filter(|v| !v.is_nan())
         .fold((f32::MAX, f32::MIN, 0.0), |(min, max, sum), &v| {
             (min.min(v), max.max(v), sum + v)
         });
-    let v_stats: (f32, f32, f32) = v_data.iter()
+    let v_stats: (f32, f32, f32) = v_data
+        .iter()
         .filter(|v| !v.is_nan())
         .fold((f32::MAX, f32::MIN, 0.0), |(min, max, sum), &v| {
             (min.min(v), max.max(v), sum + v)
         });
-    
+
     info!(
         grid_width = grid_width,
         grid_height = grid_height,
@@ -350,21 +400,57 @@ pub async fn render_wind_barbs_layer(
             output_height = output_height,
             "Resampling wind data for bbox"
         );
-        
+
         // Resample from geographic coordinates (model-aware for proper projection handling)
-        let u_resampled = resample_for_model_geographic(&u_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
-        let v_resampled = resample_for_model_geographic(&v_data, grid_width, grid_height, output_width, output_height, bbox, data_bounds, model, grid_uses_360);
-        
+        let u_resampled = resample_for_model_geographic(
+            &u_data,
+            grid_width,
+            grid_height,
+            output_width,
+            output_height,
+            bbox,
+            data_bounds,
+            model,
+            grid_uses_360,
+        );
+        let v_resampled = resample_for_model_geographic(
+            &v_data,
+            grid_width,
+            grid_height,
+            output_width,
+            output_height,
+            bbox,
+            data_bounds,
+            model,
+            grid_uses_360,
+        );
+
         // Debug: check resampled data statistics
-        let u_min = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
-        let u_max = u_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MIN, f32::max);
-        let v_min = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MAX, f32::min);
-        let v_max = v_resampled.iter().cloned().filter(|v| !v.is_nan()).fold(f32::MIN, f32::max);
-        
+        let u_min = u_resampled
+            .iter()
+            .cloned()
+            .filter(|v| !v.is_nan())
+            .fold(f32::MAX, f32::min);
+        let u_max = u_resampled
+            .iter()
+            .cloned()
+            .filter(|v| !v.is_nan())
+            .fold(f32::MIN, f32::max);
+        let v_min = v_resampled
+            .iter()
+            .cloned()
+            .filter(|v| !v.is_nan())
+            .fold(f32::MAX, f32::min);
+        let v_max = v_resampled
+            .iter()
+            .cloned()
+            .filter(|v| !v.is_nan())
+            .fold(f32::MIN, f32::max);
+
         // Check if data has variation
         let u_range = u_max - u_min;
         let v_range = v_max - v_min;
-        
+
         info!(
             u_min = format!("{:.2}", u_min),
             u_max = format!("{:.2}", u_max),
@@ -374,13 +460,14 @@ pub async fn render_wind_barbs_layer(
             v_range = format!("{:.2}", v_range),
             "Resampled wind data range"
         );
-        
+
         if u_range < 0.1 && v_range < 0.1 {
             info!("WARNING: Wind data appears uniform across region - all barbs will point same direction");
         }
-        
+
         // Sample some positions to verify variation
-        let positions = renderer::barbs::calculate_barb_positions(output_width, output_height, spacing as u32);
+        let positions =
+            renderer::barbs::calculate_barb_positions(output_width, output_height, spacing as u32);
         if positions.len() >= 4 {
             for (i, (x, y)) in positions.iter().take(4).enumerate() {
                 let idx = y * output_width + x;
@@ -401,18 +488,30 @@ pub async fn render_wind_barbs_layer(
                 }
             }
         }
-        
+
         (u_resampled, v_resampled, output_width, output_height)
     } else {
         // Full globe or resample to output size
         let u_resampled = if grid_width != output_width || grid_height != output_height {
-            gradient::resample_grid(&u_data, grid_width, grid_height, output_width, output_height)
+            gradient::resample_grid(
+                &u_data,
+                grid_width,
+                grid_height,
+                output_width,
+                output_height,
+            )
         } else {
             u_data.clone()
         };
 
         let v_resampled = if grid_width != output_width || grid_height != output_height {
-            gradient::resample_grid(&v_data, grid_width, grid_height, output_width, output_height)
+            gradient::resample_grid(
+                &v_data,
+                grid_width,
+                grid_height,
+                output_width,
+                output_height,
+            )
         } else {
             v_data.clone()
         };
@@ -422,7 +521,7 @@ pub async fn render_wind_barbs_layer(
 
     // Render wind barbs
     let config = BarbConfig::default();
-    
+
     info!(
         render_width = render_width,
         render_height = render_height,
@@ -430,7 +529,7 @@ pub async fn render_wind_barbs_layer(
         barb_size = config.size,
         "Rendering wind barbs"
     );
-    
+
     // Use geographically-aligned positioning when bbox is available
     // This ensures barbs align across tile boundaries
     let barb_pixels = if let Some(bbox) = bbox {
@@ -451,7 +550,7 @@ pub async fn render_wind_barbs_layer(
             &config,
         )
     };
-    
+
     // Debug: check rendered pixels
     let non_transparent = barb_pixels.chunks(4).filter(|c| c[3] > 0).count();
     info!(
@@ -474,39 +573,36 @@ pub async fn render_wind_barbs_layer(
 pub(crate) async fn get_wind_entry(
     catalog: &Catalog,
     model: &str,
-    parameter: &str,  // "UGRD" or "VGRD"
+    parameter: &str, // "UGRD" or "VGRD"
     forecast_hour: Option<u32>,
     level: Option<&str>,
 ) -> Result<CatalogEntry, String> {
     match (forecast_hour, level) {
-        (Some(hour), Some(lev)) => {
-            catalog
-                .find_by_forecast_hour_and_level(model, parameter, hour, lev)
-                .await
-                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
-                .ok_or_else(|| format!("No {} data available for hour {} level {}", parameter, hour, lev))
-        }
-        (Some(hour), None) => {
-            catalog
-                .find_by_forecast_hour(model, parameter, hour)
-                .await
-                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
-                .ok_or_else(|| format!("No {} data available for hour {}", parameter, hour))
-        }
-        (None, Some(lev)) => {
-            catalog
-                .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
-                .await
-                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
-                .ok_or_else(|| format!("No {} data available at level {}", parameter, lev))
-        }
-        (None, None) => {
-            catalog
-                .get_latest_run_earliest_forecast(model, parameter)
-                .await
-                .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
-                .ok_or_else(|| format!("No {} data available", parameter))
-        }
+        (Some(hour), Some(lev)) => catalog
+            .find_by_forecast_hour_and_level(model, parameter, hour, lev)
+            .await
+            .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+            .ok_or_else(|| {
+                format!(
+                    "No {} data available for hour {} level {}",
+                    parameter, hour, lev
+                )
+            }),
+        (Some(hour), None) => catalog
+            .find_by_forecast_hour(model, parameter, hour)
+            .await
+            .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+            .ok_or_else(|| format!("No {} data available for hour {}", parameter, hour)),
+        (None, Some(lev)) => catalog
+            .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
+            .await
+            .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+            .ok_or_else(|| format!("No {} data available at level {}", parameter, lev)),
+        (None, None) => catalog
+            .get_latest_run_earliest_forecast(model, parameter)
+            .await
+            .map_err(|e| format!("Failed to get {}: {}", parameter, e))?
+            .ok_or_else(|| format!("No {} data available", parameter)),
     }
 }
 
@@ -515,16 +611,16 @@ pub(crate) async fn get_wind_entry(
 // ============================================================================
 
 /// Load U and V wind component data from Zarr storage.
-/// 
+///
 /// This function loads both UGRD and VGRD components from Zarr, enabling efficient
 /// chunked reads for wind barb rendering.
-/// 
+///
 /// # Arguments
 /// * `factory` - Grid processor factory with shared chunk cache
 /// * `u_entry` - Catalog entry for U component (UGRD)
 /// * `v_entry` - Catalog entry for V component (VGRD)
 /// * `bbox` - Optional bounding box for partial reads (used for tile rendering)
-/// 
+///
 /// # Returns
 /// Tuple of (u_data, v_data, grid_width, grid_height, data_bounds, grid_uses_360)
 pub(crate) async fn load_wind_components_from_zarr(
@@ -534,23 +630,26 @@ pub(crate) async fn load_wind_components_from_zarr(
     bbox: Option<[f32; 4]>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     use grid_processor::{
-        BoundingBox as GpBoundingBox,
-        GridProcessor, ZarrGridProcessor, ZarrMetadata,
-        MinioConfig, create_minio_storage,
+        create_minio_storage, BoundingBox as GpBoundingBox, GridProcessor, MinioConfig,
+        ZarrGridProcessor, ZarrMetadata,
     };
-    
+
     // Parse zarr_metadata for U component
-    let u_zarr_json = u_entry.zarr_metadata.as_ref()
+    let u_zarr_json = u_entry
+        .zarr_metadata
+        .as_ref()
         .ok_or_else(|| "No zarr_metadata in U (UGRD) catalog entry".to_string())?;
     let u_zarr_meta = ZarrMetadata::from_json(u_zarr_json)
         .map_err(|e| format!("Failed to parse U zarr_metadata: {}", e))?;
-    
+
     // Parse zarr_metadata for V component
-    let v_zarr_json = v_entry.zarr_metadata.as_ref()
+    let v_zarr_json = v_entry
+        .zarr_metadata
+        .as_ref()
         .ok_or_else(|| "No zarr_metadata in V (VGRD) catalog entry".to_string())?;
     let v_zarr_meta = ZarrMetadata::from_json(v_zarr_json)
         .map_err(|e| format!("Failed to parse V zarr_metadata: {}", e))?;
-    
+
     // Verify both grids have the same shape
     if u_zarr_meta.shape != v_zarr_meta.shape {
         return Err(format!(
@@ -558,7 +657,7 @@ pub(crate) async fn load_wind_components_from_zarr(
             u_zarr_meta.shape, v_zarr_meta.shape
         ));
     }
-    
+
     info!(
         u_path = %u_entry.storage_path,
         v_path = %v_entry.storage_path,
@@ -567,12 +666,12 @@ pub(crate) async fn load_wind_components_from_zarr(
         bbox = ?bbox,
         "Loading wind components from Zarr"
     );
-    
+
     // Create MinIO storage
     let minio_config = MinioConfig::from_env();
     let store = create_minio_storage(&minio_config)
         .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
-    
+
     // Build storage paths
     let u_zarr_path = if u_entry.storage_path.starts_with('/') {
         u_entry.storage_path.clone()
@@ -584,7 +683,7 @@ pub(crate) async fn load_wind_components_from_zarr(
     } else {
         format!("/{}", v_entry.storage_path)
     };
-    
+
     // Create GridMetadata for U processor
     let u_grid_metadata = grid_processor::GridMetadata {
         model: u_zarr_meta.model.clone(),
@@ -599,7 +698,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         num_chunks: u_zarr_meta.num_chunks,
         fill_value: u_zarr_meta.fill_value,
     };
-    
+
     // Create U processor
     let u_processor = ZarrGridProcessor::with_metadata(
         store.clone(),
@@ -607,8 +706,9 @@ pub(crate) async fn load_wind_components_from_zarr(
         u_grid_metadata,
         factory.chunk_cache(),
         factory.config().clone(),
-    ).map_err(|e| format!("Failed to open U Zarr: {}", e))?;
-    
+    )
+    .map_err(|e| format!("Failed to open U Zarr: {}", e))?;
+
     // Create GridMetadata for V processor
     let v_grid_metadata = grid_processor::GridMetadata {
         model: v_zarr_meta.model.clone(),
@@ -623,7 +723,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         num_chunks: v_zarr_meta.num_chunks,
         fill_value: v_zarr_meta.fill_value,
     };
-    
+
     // Create V processor
     let v_processor = ZarrGridProcessor::with_metadata(
         store,
@@ -631,8 +731,9 @@ pub(crate) async fn load_wind_components_from_zarr(
         v_grid_metadata,
         factory.chunk_cache(),
         factory.config().clone(),
-    ).map_err(|e| format!("Failed to open V Zarr: {}", e))?;
-    
+    )
+    .map_err(|e| format!("Failed to open V Zarr: {}", e))?;
+
     // Determine bbox to read
     let read_bbox = if let Some(bbox_arr) = bbox {
         GpBoundingBox::new(
@@ -645,15 +746,19 @@ pub(crate) async fn load_wind_components_from_zarr(
         // Read full grid
         u_zarr_meta.bbox
     };
-    
+
     // Read both regions
     let start = Instant::now();
-    let u_region = u_processor.read_region(&read_bbox).await
+    let u_region = u_processor
+        .read_region(&read_bbox)
+        .await
         .map_err(|e| format!("Failed to read U Zarr region: {}", e))?;
-    let v_region = v_processor.read_region(&read_bbox).await
+    let v_region = v_processor
+        .read_region(&read_bbox)
+        .await
         .map_err(|e| format!("Failed to read V Zarr region: {}", e))?;
     let read_duration = start.elapsed();
-    
+
     // Verify regions have same dimensions
     if u_region.width != v_region.width || u_region.height != v_region.height {
         return Err(format!(
@@ -661,10 +766,10 @@ pub(crate) async fn load_wind_components_from_zarr(
             u_region.width, u_region.height, v_region.width, v_region.height
         ));
     }
-    
+
     let grid_width = u_region.width;
     let grid_height = u_region.height;
-    
+
     // Use the bbox from the region (important for partial reads)
     let data_bounds = [
         u_region.bbox.min_lon as f32,
@@ -672,11 +777,11 @@ pub(crate) async fn load_wind_components_from_zarr(
         u_region.bbox.max_lon as f32,
         u_region.bbox.max_lat as f32,
     ];
-    
+
     // Check if source grid uses 0-360 longitude (like GFS)
     // This must be based on the full grid bbox, not the partial region bbox
     let grid_uses_360 = u_zarr_meta.bbox.min_lon >= 0.0 && u_zarr_meta.bbox.max_lon > 180.0;
-    
+
     info!(
         grid_width = grid_width,
         grid_height = grid_height,
@@ -686,6 +791,13 @@ pub(crate) async fn load_wind_components_from_zarr(
         grid_uses_360 = grid_uses_360,
         "Loaded wind components from Zarr"
     );
-    
-    Ok((u_region.data, v_region.data, grid_width, grid_height, data_bounds, grid_uses_360))
+
+    Ok((
+        u_region.data,
+        v_region.data,
+        grid_width,
+        grid_height,
+        data_bounds,
+        grid_uses_360,
+    ))
 }

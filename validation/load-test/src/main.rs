@@ -130,20 +130,29 @@ async fn main() -> anyhow::Result<()> {
             println!();
 
             println!("Tile Overlap Analysis:");
-            println!("  Common tiles:        {} ({:.1}% of first run)", 
-                common.len(), 
-                (common.len() as f64 / first_tiles.len() as f64) * 100.0);
+            println!(
+                "  Common tiles:        {} ({:.1}% of first run)",
+                common.len(),
+                (common.len() as f64 / first_tiles.len() as f64) * 100.0
+            );
             println!("  Only in first run:   {}", only_first.len());
-            println!("  Only in second run:  {} (NEW tiles causing cache misses)", only_second.len());
+            println!(
+                "  Only in second run:  {} (NEW tiles causing cache misses)",
+                only_second.len()
+            );
             println!();
 
             println!("Second Run Cache Performance:");
-            println!("  Cache hits:   {} ({:.1}%)", 
-                second_hits, 
-                (second_hits as f64 / second_requests.len() as f64) * 100.0);
-            println!("  Cache misses: {} ({:.1}%)", 
+            println!(
+                "  Cache hits:   {} ({:.1}%)",
+                second_hits,
+                (second_hits as f64 / second_requests.len() as f64) * 100.0
+            );
+            println!(
+                "  Cache misses: {} ({:.1}%)",
                 second_misses,
-                (second_misses as f64 / second_requests.len() as f64) * 100.0);
+                (second_misses as f64 / second_requests.len() as f64) * 100.0
+            );
             println!();
 
             // Expected vs actual
@@ -156,16 +165,22 @@ async fn main() -> anyhow::Result<()> {
 
             if !only_second.is_empty() {
                 println!("Why aren't you seeing 100% cache hits?");
-                println!("  The second run made {} more requests than the first run,", 
-                    second_requests.len() as i64 - first_requests.len() as i64);
-                println!("  accessing {} tiles that were never requested in the first run.", 
-                    only_second.len());
+                println!(
+                    "  The second run made {} more requests than the first run,",
+                    second_requests.len() as i64 - first_requests.len() as i64
+                );
+                println!(
+                    "  accessing {} tiles that were never requested in the first run.",
+                    only_second.len()
+                );
                 println!();
                 println!("Suggestions:");
                 println!("  1. Use a fixed number of requests instead of duration-based testing");
                 println!("  2. Constrain the tile space with a bbox in your scenario");
                 println!("  3. Use a smaller zoom range to reduce the tile space");
-                println!("  4. Use TileSelection::Fixed with specific tiles for exact reproducibility");
+                println!(
+                    "  4. Use TileSelection::Fixed with specific tiles for exact reproducibility"
+                );
             }
 
             Ok(())
@@ -178,10 +193,10 @@ async fn main() -> anyhow::Result<()> {
             log_requests,
         } => {
             println!("Loading scenario: {}", scenario.display());
-            
+
             // Load and validate configuration
             let mut config = load_test::TestConfig::from_file(&scenario)?;
-            
+
             // Apply overrides
             if let Some(c) = concurrency {
                 config.concurrency = c;
@@ -192,9 +207,9 @@ async fn main() -> anyhow::Result<()> {
             if log_requests {
                 config.log_requests = true;
             }
-            
+
             config.validate()?;
-            
+
             println!("✓ Configuration loaded successfully");
             println!("  Name: {}", config.name);
             println!("  Description: {}", config.description);
@@ -202,11 +217,11 @@ async fn main() -> anyhow::Result<()> {
             println!("  Concurrency: {}", config.concurrency);
             println!("  Layers: {}", config.layers.len());
             println!();
-            
+
             // Run the load test
             let mut runner = load_test::LoadRunner::new(config);
             let results = runner.run().await?;
-            
+
             // Output results
             match output.as_str() {
                 "json" => {
@@ -220,19 +235,23 @@ async fn main() -> anyhow::Result<()> {
                     println!("{}", load_test::ResultsReport::format_table(&results));
                 }
             }
-            
+
             Ok(())
         }
-        Commands::Quick { layer, requests, url } => {
+        Commands::Quick {
+            layer,
+            requests,
+            url,
+        } => {
             println!("Running quick test:");
             println!("  Layer: {}", layer);
             println!("  Requests: {}", requests);
             println!("  URL: {}", url);
             println!();
-            
+
             // Calculate duration based on requests (rough estimate: 10 req/s)
             let estimated_duration = (requests as f64 / 10.0).max(5.0) as u64;
-            
+
             // Create a simple config
             let config = load_test::TestConfig {
                 name: "quick".to_string(),
@@ -255,25 +274,25 @@ async fn main() -> anyhow::Result<()> {
                 time_selection: None,
                 log_requests: false,
             };
-            
+
             // Run the load test
             let mut runner = load_test::LoadRunner::new(config);
             let results = runner.run().await?;
-            
+
             // Display results as table
             println!("{}", load_test::ResultsReport::format_table(&results));
-            
+
             Ok(())
         }
         Commands::List { dir } => {
             println!("Available scenarios in {}:", dir.display());
             println!();
-            
+
             // Read directory
             match std::fs::read_dir(&dir) {
                 Ok(entries) => {
                     let mut scenarios = Vec::new();
-                    
+
                     for entry in entries {
                         if let Ok(entry) = entry {
                             let path = entry.path();
@@ -289,9 +308,9 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
-                    
+
                     scenarios.sort_by(|a, b| a.0.cmp(&b.0));
-                    
+
                     if scenarios.is_empty() {
                         println!("No scenario files found");
                     } else {
@@ -307,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("Make sure the directory exists and is readable");
                 }
             }
-            
+
             Ok(())
         }
     }

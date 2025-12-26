@@ -118,9 +118,8 @@ mod tests {
         // Simple test: 2 data points, 8 bits per value
         let packed = vec![100, 200];
         let values = unpack_simple(
-            &packed,
-            2,  // 2 data points = 16 bits = 2 bytes
-            8,  // 8 bits per value
+            &packed, 2,    // 2 data points = 16 bits = 2 bytes
+            8,    // 8 bits per value
             0.0,  // reference value
             0,    // binary scale (2^0 = 1)
             0,    // decimal scale (10^0 = 1)

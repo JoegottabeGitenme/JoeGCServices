@@ -101,7 +101,13 @@ pub async fn ingest_grib2(
             !registered_params.contains(&param_level_key)
         } else {
             !registered_params.contains(&param_level_key)
-                && should_ingest_parameter(param, level_type, level_value, &target_params, &pressure_levels)
+                && should_ingest_parameter(
+                    param,
+                    level_type,
+                    level_value,
+                    &target_params,
+                    &pressure_levels,
+                )
         };
 
         if !should_register {
@@ -114,7 +120,13 @@ pub async fn ingest_grib2(
         let level_sanitized = level.replace([' ', '/'], "_").to_lowercase();
 
         // Storage path format
-        let zarr_storage_path = build_storage_path(&model, &reference_time, param, &level_sanitized, forecast_hour);
+        let zarr_storage_path = build_storage_path(
+            &model,
+            &reference_time,
+            param,
+            &level_sanitized,
+            forecast_hour,
+        );
 
         // Extract grid dimensions
         let width = message.grid_definition.num_points_longitude as usize;
@@ -152,7 +164,12 @@ pub async fn ingest_grib2(
             GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
         } else {
             let grib_bbox = get_bbox_from_grid(&message.grid_definition);
-            GpBoundingBox::new(grib_bbox.min_x, grib_bbox.min_y, grib_bbox.max_x, grib_bbox.max_y)
+            GpBoundingBox::new(
+                grib_bbox.min_x,
+                grib_bbox.min_y,
+                grib_bbox.max_x,
+                grib_bbox.max_y,
+            )
         };
 
         // Write Zarr and upload
@@ -278,8 +295,9 @@ async fn write_and_upload_zarr(
     let writer = ZarrWriter::new(config);
 
     // Create filesystem store
-    let store = FilesystemStore::new(&zarr_path)
-        .map_err(|e| IngestionError::ZarrWrite(format!("Failed to create filesystem store: {}", e)))?;
+    let store = FilesystemStore::new(&zarr_path).map_err(|e| {
+        IngestionError::ZarrWrite(format!("Failed to create filesystem store: {}", e))
+    })?;
 
     // Configure pyramid generation
     let pyramid_config = PyramidConfig::from_env();
@@ -395,7 +413,7 @@ mod tests {
     fn test_build_storage_path_gfs() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 12, 0, 0).unwrap();
         let path = build_storage_path("gfs", &reference_time, "TMP", "2m_above_ground", 6);
-        
+
         assert_eq!(path, "grids/gfs/20241217_12z/tmp_2m_above_ground_f006.zarr");
     }
 
@@ -403,9 +421,12 @@ mod tests {
     fn test_build_storage_path_hrrr() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
         let path = build_storage_path("hrrr", &reference_time, "UGRD", "10m_above_ground", 12);
-        
+
         // Note: %Hz format produces "0z" for hour 0 (no leading zero)
-        assert_eq!(path, "grids/hrrr/20241217_00z/ugrd_10m_above_ground_f012.zarr");
+        assert_eq!(
+            path,
+            "grids/hrrr/20241217_00z/ugrd_10m_above_ground_f012.zarr"
+        );
     }
 
     #[test]
@@ -413,7 +434,7 @@ mod tests {
         // MRMS uses minute-level timestamps
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 14, 32, 0).unwrap();
         let path = build_storage_path("mrms", &reference_time, "REFL", "surface", 0);
-        
+
         assert_eq!(path, "grids/mrms/20241217_1432z/refl_surface_f000.zarr");
     }
 
@@ -421,7 +442,7 @@ mod tests {
     fn test_build_storage_path_parameter_lowercase() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
         let path = build_storage_path("gfs", &reference_time, "CAPE", "surface", 0);
-        
+
         // Parameter should be lowercase in path
         assert!(path.contains("/cape_"));
     }
@@ -429,15 +450,15 @@ mod tests {
     #[test]
     fn test_build_storage_path_forecast_hour_padding() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
-        
+
         // Single digit should be zero-padded to 3 digits
         let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 3);
         assert!(path.ends_with("_f003.zarr"));
-        
+
         // Double digit
         let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 48);
         assert!(path.ends_with("_f048.zarr"));
-        
+
         // Triple digit
         let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 120);
         assert!(path.ends_with("_f120.zarr"));
