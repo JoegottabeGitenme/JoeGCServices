@@ -1,58 +1,89 @@
-# Build stage
-FROM rust:bookworm AS builder
+# syntax=docker/dockerfile:1.4
+#
+# Downloader Service Dockerfile
+#
+# Optimizations:
+# - cargo-chef for dependency caching (only rebuilds when Cargo.toml changes)
+# - mold linker for 5-10x faster linking
+# - BuildKit cache mounts for cargo registry/git
+# - Multi-stage build for minimal runtime image
+#
+# Build:
+#   docker build -f services/downloader/Dockerfile -t downloader .
+#   docker build -f services/downloader/Dockerfile --build-arg CARGO_PROFILE=dev -t downloader:dev .
 
+# ============================================================================
+# Stage 1: Generate dependency recipe
+# ============================================================================
+FROM rust:bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
 
-# Create a dummy project to cache dependencies
-RUN cargo new --bin dummy
-WORKDIR /app/dummy
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY services ./services
+COPY validation ./validation
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Copy workspace Cargo files
-COPY Cargo.toml Cargo.lock /app/
+# ============================================================================
+# Stage 2: Build dependencies (heavily cached)
+# ============================================================================
+FROM chef AS builder
 
-# Copy all crate Cargo.toml files to cache dependencies
-COPY crates/wms-common/Cargo.toml /app/crates/wms-common/
-COPY crates/grib2-parser/Cargo.toml /app/crates/grib2-parser/
-COPY crates/netcdf-parser/Cargo.toml /app/crates/netcdf-parser/
-COPY crates/projection/Cargo.toml /app/crates/projection/
-COPY crates/renderer/Cargo.toml /app/crates/renderer/
-COPY crates/wms-protocol/Cargo.toml /app/crates/wms-protocol/
-COPY crates/storage/Cargo.toml /app/crates/storage/
-COPY services/ingester/Cargo.toml /app/services/ingester/
-COPY services/downloader/Cargo.toml /app/services/downloader/
-COPY services/wms-api/Cargo.toml /app/services/wms-api/
-COPY validation/load-test/Cargo.toml /app/validation/load-test/
+# Install build dependencies (downloader doesn't need netcdf but shares deps)
+RUN apt-get update && apt-get install -y \
+    libhdf5-dev \
+    libnetcdf-dev \
+    pkg-config \
+    mold \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create dummy lib.rs files
-RUN mkdir -p /app/crates/wms-common/src && echo "pub fn dummy() {}" > /app/crates/wms-common/src/lib.rs
-RUN mkdir -p /app/crates/grib2-parser/src && echo "pub fn dummy() {}" > /app/crates/grib2-parser/src/lib.rs
-RUN mkdir -p /app/crates/netcdf-parser/src && echo "pub fn dummy() {}" > /app/crates/netcdf-parser/src/lib.rs
-RUN mkdir -p /app/crates/projection/src && echo "pub fn dummy() {}" > /app/crates/projection/src/lib.rs
-RUN mkdir -p /app/crates/renderer/src && echo "pub fn dummy() {}" > /app/crates/renderer/src/lib.rs
-RUN mkdir -p /app/crates/wms-protocol/src && echo "pub fn dummy() {}" > /app/crates/wms-protocol/src/lib.rs
-RUN mkdir -p /app/crates/storage/src && echo "pub fn dummy() {}" > /app/crates/storage/src/lib.rs
-RUN mkdir -p /app/services/ingester/src && echo "fn main() {}" > /app/services/ingester/src/main.rs
-RUN mkdir -p /app/services/downloader/src && echo "fn main() {}" > /app/services/downloader/src/main.rs
-RUN mkdir -p /app/services/wms-api/src && echo "fn main() {}" > /app/services/wms-api/src/main.rs
-RUN mkdir -p /app/validation/load-test/src && echo "fn main() {}" > /app/validation/load-test/src/main.rs
+# Configure mold linker (5-10x faster than default ld)
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
-# Build dependencies only
-WORKDIR /app
-RUN cargo build --release --package downloader 2>/dev/null || true
+# Build profile
+ARG CARGO_PROFILE=release
 
-# Now copy actual source code
-COPY crates /app/crates
-COPY services /app/services
-COPY validation /app/validation
+# Copy recipe and cook dependencies (cached unless Cargo.toml changes)
+COPY --from=planner /app/recipe.json recipe.json
 
-# Touch all source files to invalidate cache
-RUN find /app -name "*.rs" -exec touch {} \;
+# Use BuildKit cache mounts for cargo registry and git
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    if [ "$CARGO_PROFILE" = "dev" ]; then \
+        cargo chef cook --recipe-path recipe.json; \
+    else \
+        cargo chef cook --release --recipe-path recipe.json; \
+    fi
 
-# Build the actual service
-RUN cargo build --release --package downloader
+# ============================================================================
+# Stage 3: Build application
+# ============================================================================
+# Copy source and build (only this layer rebuilds on code changes)
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY services ./services
+COPY validation ./validation
 
-# Runtime stage
-FROM debian:bookworm-slim
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    if [ "$CARGO_PROFILE" = "dev" ]; then \
+        cargo build --package downloader --locked && \
+        cp target/debug/downloader /app/downloader-binary; \
+    else \
+        cargo build --release --package downloader --locked && \
+        cp target/release/downloader /app/downloader-binary; \
+    fi
+
+# ============================================================================
+# Stage 4: Runtime image (minimal)
+# ============================================================================
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -60,7 +91,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/downloader /usr/local/bin/downloader
+# Copy binary from builder
+COPY --from=builder /app/downloader-binary /usr/local/bin/downloader
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser

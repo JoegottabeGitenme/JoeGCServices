@@ -37,7 +37,7 @@
       "description": "Temperature contour lines at 5°C intervals",
       "type": "contour",
       "transform": {
-        "type": "kelvin_to_celsius"
+        "type": "k_to_c"
       },
       "contour": {
         "interval": 5.0,
@@ -67,7 +67,7 @@
       "description": "Display temperature values as numbers on the map",
       "type": "numbers",
       "transform": {
-        "type": "kelvin_to_celsius"
+        "type": "k_to_c"
       },
       "numbers": {
         "spacing": 50,

@@ -100,7 +100,7 @@ pub async fn config_handler(Extension(state): Extension<Arc<AppState>>) -> Json<
     Json(serde_json::json!({
         "l1_cache": {
             "enabled": config.l1_cache_enabled,
-            "size": config.l1_cache_size,
+            "size_mb": config.l1_cache_size_mb,
             "ttl_secs": config.l1_cache_ttl_secs
         },
         "prefetch": {

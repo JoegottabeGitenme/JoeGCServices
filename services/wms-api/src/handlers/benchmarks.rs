@@ -167,8 +167,6 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_filename_sanitization() {
         // The handler should reject these

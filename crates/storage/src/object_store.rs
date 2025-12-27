@@ -192,6 +192,37 @@ impl ObjectStorage {
         Ok(())
     }
 
+    /// Delete all objects with a given prefix (for Zarr directories).
+    /// Returns the number of objects deleted.
+    #[instrument(skip(self), fields(bucket = %self.bucket, prefix = %prefix))]
+    pub async fn delete_prefix(&self, prefix: &str) -> WmsResult<u64> {
+        use futures::TryStreamExt;
+
+        let prefix_path = Path::from(prefix);
+        let mut deleted: u64 = 0;
+
+        // Collect all objects with this prefix
+        let objects: Vec<_> = self
+            .store
+            .list(Some(&prefix_path))
+            .try_collect()
+            .await
+            .map_err(|e| {
+                WmsError::StorageError(format!("Failed to list prefix {}: {}", prefix, e))
+            })?;
+
+        // Delete each object
+        for meta in objects {
+            self.store.delete(&meta.location).await.map_err(|e| {
+                WmsError::StorageError(format!("Failed to delete {}: {}", meta.location, e))
+            })?;
+            deleted += 1;
+        }
+
+        debug!(deleted = deleted, "Deleted objects with prefix");
+        Ok(deleted)
+    }
+
     /// Get storage statistics (total size and object count).
     pub async fn stats(&self) -> WmsResult<StorageStats> {
         self.stats_with_prefix(None).await

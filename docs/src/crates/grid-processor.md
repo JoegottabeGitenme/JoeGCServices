@@ -694,7 +694,6 @@ The `requires_full_grid` setting is automatically inferred from the projection t
 | Projection | `requires_full_grid` | Reason |
 |------------|---------------------|--------|
 | `lambert_conformal` | `true` | Non-linear mapping between grid and geographic coords |
-| `polar_stereographic` | `true` | Non-linear mapping |
 | `geostationary` | `true` | Satellite viewing geometry |
 | `mercator` | `true` | Non-linear latitude scaling |
 | `geographic` / `lat_lon` | `false` | Linear mapping allows partial reads |

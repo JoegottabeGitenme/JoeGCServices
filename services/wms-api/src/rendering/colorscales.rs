@@ -2,7 +2,7 @@
 //!
 //! This module provides color mapping functions that load styles from JSON configuration
 //! files in `config/styles/`. The JSON files are the **single source of truth** for all
-//! color scales - there are no fallback gradients in production.
+//! color scales.
 //!
 //! Style files are determined by the layer configuration in `config/layers/*.yaml`.
 //! Each layer defines its `style_file` which maps to a file in `config/styles/`.
@@ -18,10 +18,10 @@
 //! ## Error Handling
 //!
 //! If a style file cannot be loaded or doesn't contain the requested style, an error
-//! is returned. This enforces that all layers must have properly configured styles.
+//! is returned. **There is no fallback** - all layers must have properly configured
+//! styles. This ensures consistent colors across all tiles.
 
 use once_cell::sync::Lazy;
-use renderer::gradient;
 use renderer::style::{
     apply_style_gradient, apply_style_gradient_indexed, PrecomputedPalette, StyleConfig,
 };
@@ -84,7 +84,7 @@ fn get_or_compute_palette(
 }
 
 // ============================================================================
-// Color conversion utilities
+// Color conversion utilities (test-only)
 // ============================================================================
 
 /// Convert HSV to RGB (simplified version)
@@ -96,6 +96,7 @@ fn get_or_compute_palette(
 ///
 /// # Returns
 /// RGB tuple as (u8, u8, u8)
+#[cfg(test)]
 pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     let h = h % 360.0;
     let c = v * s;
@@ -260,50 +261,7 @@ pub fn render_with_style_file(
     }
 }
 
-/// Render data using a fallback gradient.
-///
-/// This is used as a last resort when:
-/// - No style file is provided
-/// - The style file cannot be loaded
-/// - The style file doesn't have a suitable style
-///
-/// # Arguments
-/// * `data` - Grid data values to render
-/// * `parameter` - Parameter name (for logging/diagnostics only)
-/// * `min_val` - Minimum data value
-/// * `max_val` - Maximum data value
-/// * `width` - Output image width in pixels
-/// * `height` - Output image height in pixels
-///
-/// # Returns
-/// RGBA pixel data as `Vec<u8>` (length = width * height * 4)
-#[allow(dead_code)] // Used in tests
-pub fn render_by_parameter(
-    data: &[f32],
-    _parameter: &str,
-    min_val: f32,
-    max_val: f32,
-    width: usize,
-    height: usize,
-) -> Vec<u8> {
-    // Note: We no longer do parameter-to-style mapping here.
-    // The style file should come from the layer configuration.
-    // This function now just renders with a generic fallback gradient.
-    render_fallback_gradient(data, width, height, min_val, max_val)
-}
-
-/// Render data with a simple blue-red gradient (fallback when no style is configured).
-fn render_fallback_gradient(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    min_val: f32,
-    max_val: f32,
-) -> Vec<u8> {
-    renderer::gradient::render_grid(data, width, height, min_val, max_val, |norm| {
-        // Generic blue-red gradient (cold to hot)
-        let hue = (1.0 - norm) * 240.0; // Blue (240°) to Red (0°)
-        let rgb = hsv_to_rgb(hue, 1.0, 1.0);
-        gradient::Color::new(rgb.0, rgb.1, rgb.2, 255)
-    })
-}
+// Note: There is intentionally no fallback rendering function.
+// All layers MUST have a valid style file configured. If style loading fails,
+// the rendering will return an error rather than silently using incorrect colors.
+// This ensures consistent rendering across all tiles.

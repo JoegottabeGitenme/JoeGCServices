@@ -95,6 +95,7 @@ fn create_temperature_style() -> style::StyleDefinition {
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
         legend: None,
+        wind: None,
     }
 }
 
@@ -141,6 +142,7 @@ fn create_wind_speed_style() -> style::StyleDefinition {
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
         legend: None,
+        wind: None,
     }
 }
 
@@ -187,6 +189,7 @@ fn create_pressure_style() -> style::StyleDefinition {
         interpolation: Some("linear".to_string()),
         out_of_range: Some("clamp".to_string()),
         legend: None,
+        wind: None,
     }
 }
 

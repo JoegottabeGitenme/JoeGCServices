@@ -433,6 +433,12 @@ async fn run_single_validation(
 
     // Render the tile
     let result = if target.parameter == "WIND_BARBS" {
+        // Get wind barbs style file
+        let wind_style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(&target.model, "WIND_BARBS");
         rendering::render_wind_barbs_tile_with_level(
             &state.catalog,
             &state.grid_processor_factory,
@@ -443,6 +449,8 @@ async fn run_single_validation(
             bbox_array,
             None,                     // Use latest forecast hour
             default_level.as_deref(), // Use default level
+            Some(&wind_style_file),
+            None, // Use default style
         )
         .await
     } else {

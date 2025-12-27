@@ -138,9 +138,13 @@ pub async fn ingest_grib2(
 - Writes Zarr arrays with pyramids
 - Handles Lambert Conformal (HRRR) and Lat/Lon (GFS) projections
 
-### tables.rs - GRIB2 Table Builder
+### tables.rs - GRIB2 Tables and Ingestion Filter
 
-Builds `Grib2Tables` from model configuration YAML files:
+Builds both `Grib2Tables` (parameter naming) and `IngestionFilter` (parameter filtering) from model YAML configs.
+
+#### GRIB2 Tables (Parameter Naming)
+
+Maps GRIB2 numeric codes to human-readable parameter names:
 
 ```rust
 /// Build tables from all model configs in config/models/
@@ -150,11 +154,21 @@ pub fn build_tables_from_configs() -> Arc<Grib2Tables>;
 pub fn build_tables_for_model(model: &str) -> Arc<Grib2Tables>;
 ```
 
+#### Ingestion Filter (Parameter Filtering)
+
+Determines which parameter/level combinations to ingest:
+
+```rust
+/// Build an ingestion filter from a model's YAML configuration.
+/// Fails fast if config is missing or invalid.
+pub fn build_filter_for_model(model: &str) -> Result<Arc<IngestionFilter>, IngestionError>;
+```
+
 **How it works**:
 1. Reads YAML files from `config/models/` directory (or `CONFIG_DIR` env var)
-2. Extracts `grib2:` sections to map (discipline, category, number) → parameter name
-3. Extracts `level_code` and `display`/`display_template` for level descriptions
-4. Returns `Arc<Grib2Tables>` for sharing across readers
+2. For tables: extracts `grib2:` sections to map (discipline, category, number) → parameter name
+3. For filter: extracts `levels[].level_code` and `value`/`values` to determine what to ingest
+4. Returns `Arc`-wrapped instances for sharing across the application
 
 **Example YAML parsed**:
 ```yaml
@@ -166,8 +180,10 @@ parameters:
       number: 0
     levels:
       - level_code: 103
-        display: "2 m above ground"
+        value: 2                    # Filter: only 2m
+        display: "2 m above ground" # Tables: display text
       - level_code: 100
+        values: [1000, 850, 500]    # Filter: only these pressure levels
         display_template: "{value} mb"
 ```
 
@@ -219,39 +235,52 @@ MRMS_SeamlessHSR_00.00_20241217-120000.grib2.gz → model="mrms", param="REFL"
 OR_ABI-L2-CMIPF-M6C13_G18_s20251190001170.nc → model="goes18", band=13
 ```
 
-### config.rs - Parameter Configuration
+### Parameter Filtering (Config-Driven)
 
-Defines which parameters to ingest:
+Which parameters are ingested is determined by the `parameters` section in each model's YAML config file (`config/models/*.yaml`). This is the same configuration used to define WMS/WMTS layers, ensuring consistency between what's ingested and what's available for rendering.
 
 ```rust
-/// Check if a parameter should be ingested
-pub fn should_ingest_parameter(
-    param: &str,
-    level_type: u8,
-    level_value: u32,
-    model: &str,
-) -> bool;
+/// Build an ingestion filter from a model's YAML configuration.
+/// Returns an error if the config is missing or invalid (fail-fast).
+pub fn build_filter_for_model(model: &str) -> Result<Arc<IngestionFilter>, IngestionError>;
 
-/// Get target pressure levels
-pub fn pressure_levels() -> HashSet<u32>;
-
-/// Get target parameters with their level specs
-pub fn target_parameters() -> Vec<(&'static str, Vec<(u8, Option<u32>)>)>;
+/// Check if a parameter/level combination should be ingested.
+impl IngestionFilter {
+    pub fn should_ingest(&self, param: &str, level_type: u8, level_value: u32) -> bool;
+}
 ```
 
-**Target Parameters**:
-| Parameter | Level Types | Description |
-|-----------|-------------|-------------|
-| TMP | 103 (2m), 100 (isobaric) | Temperature |
-| DPT | 103 (2m) | Dew point |
-| UGRD, VGRD | 103 (10m), 100 (isobaric) | Wind components |
-| RH | 103 (2m), 100 (isobaric) | Relative humidity |
-| HGT | 100 (isobaric) | Geopotential height |
-| PRMSL | 101 (MSL) | Mean sea level pressure |
-| CAPE, CIN | 1, 180 | Convective parameters |
-| TCDC, LCDC, MCDC, HCDC | Various | Cloud cover |
-| REFC | 200, 10 | Composite reflectivity (HRRR) |
-| REFL | 200, 1 | Radar reflectivity (MRMS) |
+**Level specifications in YAML:**
+
+| YAML Pattern | Meaning |
+|--------------|---------|
+| `value: 2` | Only ingest this specific value (e.g., 2m) |
+| `values: [1000, 850, 500]` | Ingest any of these values |
+| *(no value/values)* | Ingest all values for this level type |
+
+**Example from `config/models/gfs.yaml`:**
+
+```yaml
+parameters:
+  - name: TMP
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    levels:
+      - level_code: 103
+        value: 2                    # Only 2m temperature
+      - level_code: 100
+        values: [1000, 850, 500, 300, 250, 200]  # Selected pressure levels
+  
+  - name: TCDC
+    levels:
+      - level_code: 200             # All values (entire atmosphere)
+```
+
+**Fail-fast behavior:** If a model's config file is missing or has no parameters defined, ingestion fails with a critical error. This ensures users explicitly configure which parameters to ingest for each model.
+
+**To add a new parameter:** Edit the model's YAML file in `config/models/` and restart the ingester service.
 
 ### upload.rs - Storage Upload
 

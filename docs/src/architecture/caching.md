@@ -584,22 +584,6 @@ async fn warm_cache(config: &CacheWarmingConfig) -> Result<()> {
 }
 ```
 
-### Tile Counts by Zoom
-
-| Zoom | Tiles | Time (10 workers) |
-|------|-------|-------------------|
-| 0 | 1 | <1s |
-| 1 | 4 | <1s |
-| 2 | 16 | <2s |
-| 3 | 64 | ~6s |
-| 4 | 256 | ~25s |
-| 5 | 1,024 | ~2min |
-| 6 | 4,096 | ~7min |
-
-**Recommendation**: Warm zooms 0-4 (341 tiles) for instant user experience at global/continental scales.
-
----
-
 ## Prefetching
 
 Predictively fetch surrounding tiles when a tile is requested.

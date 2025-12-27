@@ -17,6 +17,7 @@ use projection::geostationary::Geostationary;
 use rand::Rng;
 use renderer::png;
 use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 // =============================================================================

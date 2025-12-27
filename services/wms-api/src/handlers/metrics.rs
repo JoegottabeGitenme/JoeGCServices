@@ -77,12 +77,36 @@ pub async fn metrics_handler(Extension(state): Extension<Arc<AppState>>) -> Resp
         l1_stats.size_bytes.load(Ordering::Relaxed)
     ));
     output.push_str(&format!(
+        "# HELP l1_cache_max_bytes Maximum L1 tile cache size in bytes\n# TYPE l1_cache_max_bytes gauge\nl1_cache_max_bytes {}\n",
+        state.tile_memory_cache.max_bytes()
+    ));
+    output.push_str(&format!(
+        "# HELP l1_cache_utilization L1 cache utilization ratio (0-1)\n# TYPE l1_cache_utilization gauge\nl1_cache_utilization {:.4}\n",
+        state.tile_memory_cache.utilization()
+    ));
+    output.push_str(&format!(
+        "# HELP l1_cache_entry_count Current number of entries in L1 cache\n# TYPE l1_cache_entry_count gauge\nl1_cache_entry_count {}\n",
+        l1_stats.entry_count.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
         "# HELP l1_cache_hits Total L1 cache hits\n# TYPE l1_cache_hits counter\nl1_cache_hits {}\n",
         l1_stats.hits.load(Ordering::Relaxed)
     ));
     output.push_str(&format!(
         "# HELP l1_cache_misses Total L1 cache misses\n# TYPE l1_cache_misses counter\nl1_cache_misses {}\n",
         l1_stats.misses.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "# HELP l1_cache_evictions Total L1 cache entries evicted\n# TYPE l1_cache_evictions counter\nl1_cache_evictions {}\n",
+        l1_stats.evictions.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "# HELP l1_cache_eviction_runs Number of batch eviction runs\n# TYPE l1_cache_eviction_runs counter\nl1_cache_eviction_runs {}\n",
+        l1_stats.eviction_runs.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "# HELP l1_cache_bytes_evicted_total Total bytes evicted from L1 cache\n# TYPE l1_cache_bytes_evicted_total counter\nl1_cache_bytes_evicted_total {}\n",
+        l1_stats.bytes_evicted_total.load(Ordering::Relaxed)
     ));
 
     // Container memory metrics
@@ -217,13 +241,18 @@ pub async fn api_metrics_handler(
             "cache_lookup_avg_ms": snapshot.cache_lookup_avg_ms
         },
 
-        // L1 tile cache (in-memory)
+        // L1 tile cache (in-memory, memory-based eviction)
         "l1_cache": {
             "hits": l1_hits,
             "misses": l1_misses,
             "hit_rate": l1_hit_rate,
             "size_bytes": l1_stats.size_bytes.load(Ordering::Relaxed),
+            "max_bytes": state.tile_memory_cache.max_bytes(),
+            "utilization": state.tile_memory_cache.utilization(),
+            "entry_count": l1_stats.entry_count.load(Ordering::Relaxed),
             "evictions": l1_stats.evictions.load(Ordering::Relaxed),
+            "eviction_runs": l1_stats.eviction_runs.load(Ordering::Relaxed),
+            "bytes_evicted_total": l1_stats.bytes_evicted_total.load(Ordering::Relaxed),
             "expired": l1_stats.expired.load(Ordering::Relaxed)
         },
 

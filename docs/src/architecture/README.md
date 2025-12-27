@@ -9,7 +9,6 @@ Each component has a single, well-defined responsibility:
 - **Downloader**: Fetches data from external sources
 - **Ingester**: Parses and stores weather data
 - **WMS API**: Serves OGC-compliant map requests
-- **Renderer Worker**: Background tile pre-rendering
 
 ### 2. **Cloud-Native Design**
 - Stateless services for horizontal scaling
@@ -59,7 +58,6 @@ graph TB
     subgraph Serving["Serving Layer"]
         API["WMS API"]
         L1["L1 Memory Cache"]
-        WORKER["Renderer Workers"]
     end
     
     NOAA --> DL
@@ -72,7 +70,6 @@ graph TB
     API --> REDIS
     API --> MINIO
     API --> PG
-    WORKER --> REDIS
 ```
 
 ### Storage Layer
@@ -90,7 +87,6 @@ graph TB
 | WMS API | HTTP server for OGC requests | 8080 | Horizontal |
 | Ingester | Data parsing and storage | - | Vertical |
 | Downloader | Data fetching with resume | 8081 | Horizontal |
-| Renderer Worker | Background tile rendering | - | Horizontal |
 
 ## Data Model
 

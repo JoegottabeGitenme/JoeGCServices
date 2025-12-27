@@ -14,10 +14,9 @@ use grid_processor::{
 use projection::LambertConformal;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 
-use crate::config::{should_ingest_parameter, standard_pressure_levels, target_grib2_parameters};
 use crate::error::{IngestionError, Result};
-use crate::metadata::{extract_mrms_param, get_bbox_from_grid, get_model_bbox};
-use crate::tables::build_tables_for_model;
+use crate::metadata::{get_bbox_from_grid, get_model_bbox};
+use crate::tables::{build_filter_for_model, build_tables_for_model};
 use crate::upload::upload_zarr_directory;
 use crate::{IngestOptions, IngestionResult};
 
@@ -53,6 +52,9 @@ pub async fn ingest_grib2(
     // Build GRIB2 lookup tables from model config
     let tables = build_tables_for_model(&model);
 
+    // Build ingestion filter from model config (fail-fast if config is missing/invalid)
+    let filter = build_filter_for_model(&model)?;
+
     // Parse GRIB2 data
     let mut reader = grib2_parser::Grib2Reader::new(data, tables);
 
@@ -62,17 +64,6 @@ pub async fn ingest_grib2(
     let mut bytes_written = 0u64;
     let mut grib_reference_time: Option<DateTime<Utc>> = None;
     let mut registered_param_names: HashSet<String> = HashSet::new();
-
-    // Get parameter filtering config
-    let target_params = target_grib2_parameters();
-    let pressure_levels = standard_pressure_levels();
-
-    // For MRMS, extract parameter name from filename
-    let mrms_param_name: Option<String> = if model == "mrms" {
-        extract_mrms_param(file_path)
-    } else {
-        None
-    };
 
     while let Some(message) = reader.next_message().ok().flatten() {
         // Extract reference time from first message
@@ -84,31 +75,16 @@ pub async fn ingest_grib2(
             );
         }
 
-        let grib_param = &message.product_definition.parameter_short_name;
-        let param = if model == "mrms" {
-            mrms_param_name.as_ref().unwrap_or(grib_param)
-        } else {
-            grib_param
-        };
+        let param = &message.product_definition.parameter_short_name;
         let level = &message.product_definition.level_description;
         let level_type = message.product_definition.level_type;
         let level_value = message.product_definition.level_value;
 
         let param_level_key = format!("{}:{}", param, level);
 
-        // Check if we should register this parameter
-        let should_register = if model == "mrms" {
-            !registered_params.contains(&param_level_key)
-        } else {
-            !registered_params.contains(&param_level_key)
-                && should_ingest_parameter(
-                    param,
-                    level_type,
-                    level_value,
-                    &target_params,
-                    &pressure_levels,
-                )
-        };
+        // Check if we should register this parameter (config-driven filtering)
+        let should_register = !registered_params.contains(&param_level_key)
+            && filter.should_ingest(param, level_type, level_value);
 
         if !should_register {
             continue;
@@ -141,11 +117,48 @@ pub async fn ingest_grib2(
             }
         };
 
-        // Convert sentinel missing values to NaN
+        // Get valid_range for this parameter (required - config validation ensures it exists)
+        let valid_range = match filter.get_valid_range(param) {
+            Some(range) => range,
+            None => {
+                // This should not happen if config is valid, but handle gracefully
+                warn!(
+                    param = %param,
+                    "Missing valid_range in config, skipping parameter"
+                );
+                continue;
+            }
+        };
+
+        // Convert values outside valid_range to NaN (sentinel value handling)
+        let mut out_of_range_count = 0usize;
         let grid_data: Vec<f32> = grid_data
             .into_iter()
-            .map(|v| if v <= -90.0 { f32::NAN } else { v })
+            .map(|v| {
+                if valid_range.is_valid(v) {
+                    v
+                } else {
+                    out_of_range_count += 1;
+                    f32::NAN
+                }
+            })
             .collect();
+
+        // Log warning if significant portion of data was out of range
+        let total_points = grid_data.len();
+        let out_of_range_pct = (out_of_range_count as f64 / total_points as f64) * 100.0;
+        if out_of_range_count > 0 && out_of_range_pct > 0.1 {
+            warn!(
+                param = %param,
+                level = %level,
+                out_of_range = out_of_range_count,
+                total = total_points,
+                pct = format!("{:.2}%", out_of_range_pct),
+                valid_min = valid_range.min,
+                valid_max = valid_range.max,
+                "Values outside valid_range converted to NaN - check valid_range config"
+            );
+        }
 
         if grid_data.len() != width * height {
             warn!(

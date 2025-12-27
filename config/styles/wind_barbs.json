@@ -15,9 +15,9 @@
         "type": "mps_to_knots"
       },
       "wind": {
-        "spacing": 50,
-        "size": 25.0,
-        "line_width": 1.5,
+        "spacing": 30,
+        "size": 35.0,
+        "line_width": 2.5,
         "color": "#000000",
         "direction_from": true,
         "calm_threshold": 2.5

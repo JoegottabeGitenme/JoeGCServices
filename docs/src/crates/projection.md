@@ -12,11 +12,12 @@ Coordinate reference system (CRS) transformations and map projections implemente
 
 | Projection | EPSG Codes | Used By | Complexity |
 |------------|------------|---------|------------|
-| Geographic (Lat/Lon) | EPSG:4326 | All models | Trivial |
+| Geographic (Lat/Lon) | EPSG:4326 | GFS, MRMS | Trivial |
 | Web Mercator | EPSG:3857 | Web maps | Simple |
-| Lambert Conformal | Various | GFS, HRRR | Medium |
-| Polar Stereographic | EPSG:3413, EPSG:3031 | Polar regions | Medium |
+| Lambert Conformal | Various | HRRR | Medium |
 | Geostationary | N/A | GOES satellites | Complex |
+
+> **Note**: Polar Stereographic (EPSG:3413, EPSG:3031) is not currently implemented. The `polar.rs` module is a placeholder for future development.
 
 ## Usage Example
 
@@ -95,7 +96,7 @@ pub struct Geostationary {
 ## Performance
 
 - Geographic ↔ Mercator: ~10 ns per point
-- Lambert/Polar: ~50 ns per point
+- Lambert Conformal: ~50 ns per point
 - Geostationary: ~100 ns per point
 
 Vectorized operations on 1M points: ~50 ms.

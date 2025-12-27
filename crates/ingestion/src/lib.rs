@@ -13,8 +13,12 @@
 //! - Zarr pyramid generation
 //! - Upload to object storage (MinIO/S3)
 //! - Catalog registration (PostgreSQL)
+//!
+//! # Parameter Filtering
+//!
+//! Which parameters are ingested is controlled by each model's YAML config file
+//! in `config/models/`. See [`tables::IngestionFilter`] for details.
 
-pub mod config;
 pub mod error;
 mod grib2;
 mod ingester;
@@ -24,9 +28,6 @@ pub mod tables;
 mod upload;
 
 // Re-exports
-pub use config::{
-    should_ingest_parameter, standard_pressure_levels, target_grib2_parameters, ParameterSpec,
-};
 pub use error::{IngestionError, Result};
 pub use ingester::{IngestOptions, Ingester, IngestionResult};
 pub use metadata::{
@@ -34,4 +35,7 @@ pub use metadata::{
     get_bbox_from_grid, get_model_bbox, goes_band_to_parameter, parse_goes_filename, FileType,
     GoesFileInfo,
 };
-pub use tables::{build_tables_for_model, build_tables_from_configs};
+pub use tables::{
+    build_filter_for_model, build_tables_for_model, build_tables_from_configs, IngestionFilter,
+    LevelFilter, ValidRange,
+};

@@ -14,20 +14,23 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! use renderer::buffer_pool::{with_pixel_buffer, with_index_buffer, with_resample_buffer};
+//! ```
+//! use renderer::buffer_pool::{with_pixel_buffer, with_index_buffer};
 //!
 //! // Get a pixel buffer, use it, result is returned
-//! let png = with_pixel_buffer(256, 256, |pixels| {
-//!     // Fill pixels...
-//!     create_png(pixels, 256, 256)
-//! })?;
+//! let result = with_pixel_buffer(256, 256, |pixels| {
+//!     // Fill pixels with some data
+//!     pixels[0] = 255; // Set first pixel red channel
+//!     pixels.len()
+//! });
+//! assert_eq!(result, 256 * 256 * 4);
 //!
 //! // Get an index buffer for indexed PNG rendering
-//! let png = with_index_buffer(256, 256, |indices| {
-//!     // Fill indices...
-//!     create_png_indexed(256, 256, &palette, indices)
-//! })?;
+//! let result = with_index_buffer(256, 256, |indices| {
+//!     indices[0] = 1; // Set first pixel to palette index 1
+//!     indices.len()
+//! });
+//! assert_eq!(result, 256 * 256);
 //! ```
 //!
 //! ## Performance Impact
@@ -342,7 +345,9 @@ pub fn get_pool_stats() -> PoolStats {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use renderer::buffer_pool::{get_pool_stats, trim_pools};
+///
 /// // Periodic cleanup (e.g., every 5 minutes)
 /// if get_pool_stats().total_bytes > 10_000_000 {
 ///     trim_pools();

@@ -33,8 +33,6 @@ graph TB
         Port 8080"]
         L1["L1 Memory Cache
         Per-Instance"]
-        WORKER["Renderer Workers
-        Background Jobs"]
     end
     
     subgraph Monitoring
@@ -54,8 +52,6 @@ graph TB
     API -.->|Check| REDIS
     API -->|Query| PG
     API -->|Fetch| MINIO
-    
-    WORKER -.->|Warm| REDIS
     
     API -->|Metrics| PROM
     PROM -->|Display| GRAF
@@ -208,39 +204,6 @@ async fn main() {
 ```
 
 **Code Reference**: `services/wms-api/src/main.rs`
-
----
-
-### 4. Renderer Worker
-
-**Purpose**: Background service for pre-rendering tiles to warm caches.
-
-**Technology**: Rust + Redis job queue
-
-**Use Cases**:
-- **Startup Warming**: Pre-render popular tiles at service startup
-- **Scheduled Warming**: Pre-render new forecast hours before they're requested
-- **Predictive Warming**: Pre-render based on access patterns
-
-**Job Queue**:
-```rust
-struct RenderJob {
-    layer: String,
-    style: String,
-    z: u32,
-    x: u32,
-    y: u32,
-    time: DateTime<Utc>,
-}
-
-// Worker loop
-loop {
-    let job: RenderJob = redis.blpop("render_queue").await?;
-    let tile = render_tile(&job).await?;
-    cache.set(&job.cache_key(), tile).await?;
-}
-```
-
 
 ---
 

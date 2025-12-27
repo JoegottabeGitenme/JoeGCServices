@@ -399,21 +399,26 @@ docker-compose exec postgres vacuumdb -U weatherwms --analyze weatherwms
 
 ## Rendering Issues
 
-### Tiles Render as Solid Colors
+### Style Loading Failure
 
-**Symptom**: Each tile appears as a single solid color instead of showing gradients.
+**Symptom**: Tile requests fail with "Failed to load style file" error.
 
-**Cause**: Style name not being passed to the renderer, causing fallback to per-tile min/max normalization.
+**Cause**: The layer's configured style file doesn't exist or contains invalid JSON.
 
-**Solution**: Ensure the WMTS/WMS handlers pass the style parameter:
-```rust
-// In handlers.rs - WMTS GetTile
-crate::rendering::render_weather_data(
-    ...
-    Some(style),  // Must pass style name, not None
-    ...
-)
+**Solution**: 
+1. Check that the style file exists at the path specified in `config/layers/*.yaml`
+2. Validate the JSON syntax of the style file
+3. Ensure the style file contains a valid style definition with color stops
+
+```bash
+# Validate style files
+for f in config/styles/*.json; do
+  echo "Checking $f..."
+  python3 -c "import json; json.load(open('$f'))" || echo "INVALID: $f"
+done
 ```
+
+**Note**: Style loading failures are fatal - there is no fallback to per-tile normalization. This ensures consistent colors across all tiles.
 
 See [Rendering Pipeline](../architecture/rendering-pipeline.md) for details.
 

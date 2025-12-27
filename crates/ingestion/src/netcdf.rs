@@ -17,6 +17,7 @@ use wms_common::BoundingBox;
 
 use crate::error::{IngestionError, Result};
 use crate::metadata::parse_goes_filename;
+use crate::tables::build_filter_for_model;
 use crate::upload::upload_zarr_directory;
 use crate::{IngestOptions, IngestionResult};
 
@@ -93,6 +94,17 @@ pub async fn ingest_netcdf(
         "Ingesting GOES NetCDF file"
     );
 
+    // Build ingestion filter from model config (for valid_range)
+    let filter = build_filter_for_model(&model)?;
+
+    // Get valid_range for this parameter
+    let valid_range = filter.get_valid_range(parameter).ok_or_else(|| {
+        IngestionError::InvalidConfig(format!(
+            "Missing valid_range for parameter {} in model {}",
+            parameter, model
+        ))
+    })?;
+
     // Parse the NetCDF file
     let (raw_data, width, height, projection, x_offset, y_offset, x_scale, y_scale) =
         netcdf_parser::load_goes_netcdf_from_bytes(&data)
@@ -124,6 +136,35 @@ pub async fn ingest_netcdf(
     let (reprojected_data, out_width, out_height, gp_bbox) =
         reproject_geostationary_to_geographic(&raw_data, width, height, &proj);
 
+    // Apply valid_range filtering - convert out-of-range values to NaN
+    let mut out_of_range_count = 0usize;
+    let filtered_data: Vec<f32> = reprojected_data
+        .iter()
+        .map(|&v| {
+            if v.is_nan() || valid_range.is_valid(v) {
+                v
+            } else {
+                out_of_range_count += 1;
+                f32::NAN
+            }
+        })
+        .collect();
+
+    // Log warning if significant portion of data was out of range
+    let total_points = filtered_data.len();
+    let out_of_range_pct = (out_of_range_count as f64 / total_points as f64) * 100.0;
+    if out_of_range_count > 0 && out_of_range_pct > 0.1 {
+        warn!(
+            parameter = %parameter,
+            out_of_range = out_of_range_count,
+            total = total_points,
+            pct = format!("{:.2}%", out_of_range_pct),
+            valid_min = valid_range.min,
+            valid_max = valid_range.max,
+            "Values outside valid_range converted to NaN - check valid_range config"
+        );
+    }
+
     info!(
         out_width = out_width,
         out_height = out_height,
@@ -143,7 +184,7 @@ pub async fn ingest_netcdf(
     // Write Zarr and upload
     let (zarr_file_size, zarr_metadata) = write_and_upload_zarr(
         storage,
-        &reprojected_data,
+        &filtered_data,
         out_width,
         out_height,
         &gp_bbox,

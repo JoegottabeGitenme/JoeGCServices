@@ -64,14 +64,6 @@ resources:
     cpu: 4000m
     memory: 8Gi
 
-# Renderer Worker (each replica)
-resources:
-  requests:
-    cpu: 1000m
-    memory: 1Gi
-  limits:
-    cpu: 2000m
-    memory: 2Gi
 ```
 
 ## Example Deployment

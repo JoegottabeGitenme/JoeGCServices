@@ -23,7 +23,6 @@ use tracing::info;
 
 // Re-export functions for internal use
 pub(crate) use colorscales::render_with_style_file_indexed;
-// Note: render_by_parameter is still available for fallback scenarios via direct module access
 
 // Re-export public functions from submodules
 pub use isolines::render_isolines_tile_with_level;

@@ -254,6 +254,12 @@ async fn warm_single_tile(
 
     // Render the tile based on layer type
     let result = if parameter == "WIND_BARBS" {
+        // Get wind barbs style file
+        let wind_style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, "WIND_BARBS");
         rendering::render_wind_barbs_tile_with_level(
             &state.catalog,
             &state.grid_processor_factory,
@@ -264,6 +270,8 @@ async fn warm_single_tile(
             bbox_array,
             Some(forecast_hour),
             default_level.as_deref(), // Use default level
+            Some(&wind_style_file),
+            None, // Use default style
         )
         .await
     } else if style == "isolines" {

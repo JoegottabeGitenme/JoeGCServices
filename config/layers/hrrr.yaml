@@ -221,13 +221,13 @@ layers:
   - id: hrrr_MXUPHL
     parameter: MXUPHL
     title: "Updraft Helicity"
-    abstract: "Maximum updraft helicity (tornado/severe weather potential)"
+    abstract: "Maximum updraft helicity 2-5km layer (tornado/severe weather potential)"
     style_file: helicity.json
     units:
       native: "m^2/s^2"
       display: "m^2/s^2"
     levels:
-      - value: "2000-5000 m above ground"
+      - value: "2000 m above ground"
         default: true
 
   # ==========================================================================
