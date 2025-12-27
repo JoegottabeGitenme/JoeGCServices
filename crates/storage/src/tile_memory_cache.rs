@@ -128,10 +128,14 @@ impl TileMemoryCache {
     /// let cache = TileMemoryCache::new(1024, 300);
     /// ```
     pub fn new(max_size_mb: usize, default_ttl_secs: u64) -> Self {
-        // Use effectively unbounded LruCache since we evict based on memory.
-        // We use a large capacity (10M entries) to avoid LruCache's internal eviction.
-        // This is sufficient for even large caches (a 10GB cache with 10KB tiles = 1M entries).
-        let cache_size = NonZeroUsize::new(10_000_000).expect("Capacity must be > 0");
+        // Use effectively unbounded LruCache since we manage eviction based on memory ourselves.
+        // 10 million entry capacity is chosen because:
+        // - LruCache requires an entry limit, but we don't want it to evict (we do memory-based eviction)
+        // - At ~30KB average tile size, a 10GB cache would hold ~350K entries
+        // - 10M provides 30x headroom for smaller tiles or larger caches
+        // - Memory overhead is minimal (just the LruCache internal bookkeeping)
+        const LRU_CAPACITY: usize = 10_000_000;
+        let cache_size = NonZeroUsize::new(LRU_CAPACITY).expect("Capacity must be > 0");
 
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
@@ -183,14 +187,14 @@ impl TileMemoryCache {
     /// first, removing ~5% of entries (by memory) to make room.
     pub async fn set(&self, key: &str, data: Bytes, ttl: Option<Duration>) {
         let tile_size = data.len() as u64;
-        let current_bytes = self.stats.size_bytes.load(Ordering::Relaxed);
-
-        // Check if we need to evict before inserting
-        if current_bytes + tile_size > self.max_bytes {
-            self.evict_batch().await;
-        }
 
         let mut cache = self.cache.write().await;
+
+        // Check if we need to evict before inserting (done inside lock to avoid race)
+        let current_bytes = self.stats.size_bytes.load(Ordering::Relaxed);
+        if current_bytes + tile_size > self.max_bytes {
+            self.evict_batch_locked(&mut cache);
+        }
 
         // Check if we're replacing an existing entry
         if let Some(existing) = cache.peek(key) {
@@ -221,12 +225,14 @@ impl TileMemoryCache {
 
     /// Evict ~5% of cache capacity (by memory) using LRU order.
     ///
-    /// This is called automatically when the cache exceeds its memory limit.
-    /// Batch eviction is more efficient than one-at-a-time during request bursts.
+    /// This version takes a mutable reference to an already-locked cache,
+    /// avoiding a potential race condition between checking size and evicting.
     ///
     /// Returns (entries_evicted, bytes_freed).
-    async fn evict_batch(&self) -> (usize, u64) {
-        let mut cache = self.cache.write().await;
+    fn evict_batch_locked(
+        &self,
+        cache: &mut LruCache<String, CachedTile>,
+    ) -> (usize, u64) {
         let current_bytes = self.stats.size_bytes.load(Ordering::Relaxed);
 
         // Target: free 5% of max capacity
