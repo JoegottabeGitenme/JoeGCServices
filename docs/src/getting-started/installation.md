@@ -68,7 +68,6 @@ This script:
    - WMS API (web service)
    - Ingester (data processing)
    - Downloader (data fetching)
-   - Renderer Worker (background rendering)
    - Web Dashboard (admin UI)
 3. Initializes the database schema
 4. Creates the MinIO bucket

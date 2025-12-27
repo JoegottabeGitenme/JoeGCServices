@@ -188,7 +188,7 @@ Weather data visualization engine that converts numeric grids to styled images.
 
 **Output Formats**: PNG, JPEG
 
-**Used by**: WMS API, Renderer Worker
+**Used by**: WMS API
 
 ---
 
