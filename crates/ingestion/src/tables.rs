@@ -45,7 +45,7 @@ impl ValidRange {
 /// Filter criteria for a single parameter at a specific level type.
 #[derive(Debug, Clone)]
 pub struct LevelFilter {
-    /// Specific values allowed (e.g., [2] for "2m only", [1000, 850, 500] for pressure levels).
+    /// Specific values allowed (e.g., `[2]` for "2m only", `[1000, 850, 500]` for pressure levels).
     /// If None, accept all values for this level type.
     pub allowed_values: Option<HashSet<u32>>,
 }

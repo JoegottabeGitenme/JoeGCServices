@@ -231,10 +231,7 @@ impl TileMemoryCache {
     /// avoiding a potential race condition between checking size and evicting.
     ///
     /// Returns (entries_evicted, bytes_freed).
-    fn evict_batch_locked(
-        &self,
-        cache: &mut LruCache<String, CachedTile>,
-    ) -> (usize, u64) {
+    fn evict_batch_locked(&self, cache: &mut LruCache<String, CachedTile>) -> (usize, u64) {
         let current_bytes = self.stats.size_bytes.load(Ordering::Relaxed);
 
         // Target: free 5% of max capacity
@@ -271,8 +268,10 @@ impl TileMemoryCache {
         info!(
             entries_evicted = entries_evicted,
             bytes_freed_mb = format!("{:.2}", bytes_freed as f64 / (1024.0 * 1024.0)),
-            cache_size_mb =
-                format!("{:.2}", (current_bytes - bytes_freed) as f64 / (1024.0 * 1024.0)),
+            cache_size_mb = format!(
+                "{:.2}",
+                (current_bytes - bytes_freed) as f64 / (1024.0 * 1024.0)
+            ),
             max_size_mb = format!("{:.2}", self.max_bytes as f64 / (1024.0 * 1024.0)),
             "L1 cache batch eviction completed"
         );
