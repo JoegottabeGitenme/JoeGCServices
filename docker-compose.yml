@@ -76,6 +76,7 @@ services:
       dockerfile: services/wms-api/Dockerfile
       args:
         CARGO_PROFILE: ${CARGO_PROFILE:-release}
+        BUILDKIT_INLINE_CACHE: 1
     env_file:
       - .env
     ports:
@@ -98,9 +99,9 @@ services:
       RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
       # Performance tuning
       TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-8}
-      # L1 tile memory cache (Phase 7.A)
+      # L1 tile memory cache (Phase 7.A) - memory-based
       ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
-      TILE_CACHE_SIZE: ${TILE_CACHE_SIZE:-10000}
+      TILE_CACHE_SIZE_MB: ${TILE_CACHE_SIZE_MB:-1024}
       TILE_CACHE_TTL_SECS: ${TILE_CACHE_TTL_SECS:-300}
       # Prefetch settings (Phase 7.B)
       ENABLE_PREFETCH: ${ENABLE_PREFETCH:-true}
@@ -259,6 +260,7 @@ services:
       dockerfile: services/ingester/Dockerfile
       args:
         CARGO_PROFILE: ${CARGO_PROFILE:-release}
+        BUILDKIT_INLINE_CACHE: 1
     env_file:
       - .env
     ports:
@@ -300,6 +302,7 @@ services:
       dockerfile: services/downloader/Dockerfile
       args:
         CARGO_PROFILE: ${CARGO_PROFILE:-release}
+        BUILDKIT_INLINE_CACHE: 1
     env_file:
       - .env
     ports:

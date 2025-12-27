@@ -61,6 +61,7 @@ parameters:
     band: 1
     levels:
       - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_blue"
     style: goes_visible
     units: "reflectance"
@@ -73,6 +74,7 @@ parameters:
     band: 2
     levels:
       - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_red"
     style: goes_visible
     units: "reflectance"
@@ -85,6 +87,7 @@ parameters:
     band: 8
     levels:
       - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "upper_vapor"
     style: goes_ir
     units: "K"
@@ -98,6 +101,7 @@ parameters:
     band: 13
     levels:
       - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "clean_ir"
     style: goes_ir
     units: "K"

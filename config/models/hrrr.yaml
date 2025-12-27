@@ -327,6 +327,7 @@ parameters:
     valid_range: [-1000, 0]  # CIN is typically negative
 
   # Updraft Helicity (2-5km layer) - Severe weather/tornado potential
+  # Note: GRIB2 stores this as a layer (2000-5000m) but we match on first surface value
   - name: MXUPHL
     description: "Maximum Updraft Helicity"
     grib2:
@@ -337,8 +338,8 @@ parameters:
     levels:
       - type: height_above_ground_layer
         level_code: 103
-        value: [ 2000, 5000 ]
-        display: "2000-5000 m above ground"
+        value: 2000
+        display: "2000 m above ground"
     style: helicity
     units: m^2/s^2
     valid_range: [-1000, 1000]  # Helicity can be positive or negative

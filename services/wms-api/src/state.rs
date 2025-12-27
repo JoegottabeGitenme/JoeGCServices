@@ -17,9 +17,9 @@ use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemory
 /// Each optimization can be toggled on/off via environment variables.
 #[derive(Clone, Debug)]
 pub struct OptimizationConfig {
-    // L1 Cache
+    // L1 Cache (memory-based)
     pub l1_cache_enabled: bool,
-    pub l1_cache_size: usize,
+    pub l1_cache_size_mb: usize, // Max memory in MB (default: 1024 = 1GB)
     pub l1_cache_ttl_secs: u64,
 
     // Zarr Chunk Cache (for chunked Zarr grid data)
@@ -75,9 +75,9 @@ impl OptimizationConfig {
         }
 
         Self {
-            // L1 Cache
+            // L1 Cache (memory-based)
             l1_cache_enabled: parse_bool("ENABLE_L1_CACHE", true),
-            l1_cache_size: parse_usize("TILE_CACHE_SIZE", 10000),
+            l1_cache_size_mb: parse_usize("TILE_CACHE_SIZE_MB", 1024), // Default: 1GB
             l1_cache_ttl_secs: parse_u64("TILE_CACHE_TTL_SECS", 300),
 
             // Zarr Chunk Cache (for chunked Zarr grid data)
@@ -163,7 +163,7 @@ impl AppState {
             .unwrap_or(20); // Increased from 10 to 20 default
 
         // Use optimization config for cache sizes
-        let tile_cache_size = optimization_config.l1_cache_size;
+        let tile_cache_size_mb = optimization_config.l1_cache_size_mb;
         let tile_cache_ttl = optimization_config.l1_cache_ttl_secs;
         let prefetch_rings = optimization_config.prefetch_rings;
 
@@ -184,8 +184,13 @@ impl AppState {
         let storage = Arc::new(ObjectStorage::new(&storage_config)?);
         let metrics = Arc::new(MetricsCollector::new());
 
-        // Create L1 in-memory tile cache
-        let tile_memory_cache = TileMemoryCache::new(tile_cache_size, tile_cache_ttl);
+        // Create L1 in-memory tile cache (memory-based, size in MB)
+        let tile_memory_cache = TileMemoryCache::new(tile_cache_size_mb, tile_cache_ttl);
+        info!(
+            l1_cache_size_mb = tile_cache_size_mb,
+            l1_cache_ttl_secs = tile_cache_ttl,
+            "L1 tile memory cache initialized"
+        );
 
         // Create GridProcessorFactory for Zarr-based data access
         // Now using the factory from grid-processor crate which manages MinIO config internally
