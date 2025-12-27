@@ -142,8 +142,6 @@ macro_rules! assert_coords_approx_eq {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_assert_approx_eq_passes() {
         assert_approx_eq!(1.0001, 1.0, 0.001);
