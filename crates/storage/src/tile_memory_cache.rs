@@ -123,7 +123,9 @@ impl TileMemoryCache {
     /// * `default_ttl_secs` - Default TTL for entries in seconds
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use storage::TileMemoryCache;
+    ///
     /// // Create a 1GB cache with 5 minute TTL
     /// let cache = TileMemoryCache::new(1024, 300);
     /// ```

@@ -17,7 +17,7 @@
 //!
 //! Then import in your tests:
 //!
-//! ```ignore
+//! ```
 //! use test_utils::{require_test_file, fixtures};
 //! ```
 
@@ -37,7 +37,7 @@ pub use paths::*;
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```no_run
 /// use test_utils::require_test_file;
 ///
 /// #[test]
@@ -68,7 +68,7 @@ macro_rules! require_test_file {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```no_run
 /// use test_utils::require_test_files;
 ///
 /// #[test]
@@ -101,11 +101,11 @@ macro_rules! require_test_files {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```
 /// use test_utils::assert_approx_eq;
 ///
 /// assert_approx_eq!(1.0001_f64, 1.0_f64, 0.001_f64); // passes
-/// assert_approx_eq!(1.1_f32, 1.0_f32, 0.001_f32);    // fails
+/// // assert_approx_eq!(1.1_f32, 1.0_f32, 0.001_f32); // would panic
 /// ```
 #[macro_export]
 macro_rules! assert_approx_eq {
@@ -127,7 +127,7 @@ macro_rules! assert_approx_eq {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```
 /// use test_utils::assert_coords_approx_eq;
 ///
 /// assert_coords_approx_eq!((1.0001, 2.0001), (1.0, 2.0), 0.001);
