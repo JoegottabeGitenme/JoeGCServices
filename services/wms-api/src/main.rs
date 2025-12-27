@@ -259,46 +259,16 @@ async fn async_main(args: Args) -> Result<()> {
 
     // Start database sync background task (cleans orphan MinIO files not tracked in DB)
     {
-        let sync_enabled = env::var("ENABLE_SYNC")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(true); // enabled by default
+        let sync_config = cleanup::SyncConfig::from_env();
 
-        if sync_enabled {
-            let sync_interval_secs: u64 = env::var("SYNC_INTERVAL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(6 * 3600); // default 6 hours
-
+        if sync_config.enabled {
             info!(
-                interval_secs = sync_interval_secs,
+                interval_secs = sync_config.interval_secs,
                 "Starting database sync background task"
             );
-
-            let state_for_sync = state.clone();
+            let sync_task = cleanup::SyncTask::new(state.clone(), sync_config);
             tokio::spawn(async move {
-                use tokio::time::{interval, Duration};
-                let mut tick = interval(Duration::from_secs(sync_interval_secs));
-
-                loop {
-                    tick.tick().await;
-                    let sync_task = cleanup::SyncTask::new(state_for_sync.clone());
-                    match sync_task.run().await {
-                        Ok(stats) => {
-                            if stats.orphan_minio_deleted > 0 || stats.orphan_db_deleted > 0 {
-                                info!(
-                                    orphan_minio_deleted = stats.orphan_minio_deleted,
-                                    orphan_db_deleted = stats.orphan_db_deleted,
-                                    "Database sync completed - cleaned orphan records"
-                                );
-                            } else {
-                                info!("Database sync completed - no orphans found");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "Database sync failed");
-                        }
-                    }
-                }
+                sync_task.run_forever().await;
             });
         } else {
             info!("Database sync disabled (set ENABLE_SYNC=true to enable)");
