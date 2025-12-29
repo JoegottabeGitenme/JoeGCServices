@@ -19,42 +19,41 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
     exit 1
 fi
 
-# 1. Check formatting
+# 1. Check and fix formatting
 echo "  Checking formatting..."
 if ! cargo fmt --check > /dev/null 2>&1; then
-    echo -e "${RED}Formatting check failed!${NC}"
-    echo ""
-    echo "Run 'cargo fmt' to fix formatting issues, then amend your commit:"
-    echo "  cargo fmt"
-    echo "  git add -u"
-    echo "  git commit --amend --no-edit"
-    echo ""
-    echo "Files with formatting issues:"
-    cargo fmt --check 2>&1 | grep "^Diff in" | head -10
-    exit 1
+    echo -e "${YELLOW}  Formatting issues found, auto-fixing...${NC}"
+    cargo fmt
+    git add -u
+    git commit --amend --no-edit
+    echo -e "  ${GREEN}Formatting fixed and commit amended${NC}"
+else
+    echo -e "  ${GREEN}Formatting OK${NC}"
 fi
-echo -e "  ${GREEN}Formatting OK${NC}"
 
-# 2. Check for trailing whitespace in Rust files
+# 2. Check and fix trailing whitespace in Rust files
 echo "  Checking for trailing whitespace..."
-WHITESPACE_ERRORS=""
+WHITESPACE_FILES=""
 RS_FILES=$(find . -name "*.rs" -not -path "./target/*" 2>/dev/null || true)
 for file in $RS_FILES; do
     if grep -qE "[[:space:]]$" "$file" 2>/dev/null; then
-        WHITESPACE_ERRORS="${WHITESPACE_ERRORS}\n  - $file"
+        WHITESPACE_FILES="${WHITESPACE_FILES} $file"
     fi
 done
 
-if [ -n "$WHITESPACE_ERRORS" ]; then
-    echo -e "${RED}Trailing whitespace found in:${WHITESPACE_ERRORS}${NC}"
-    echo ""
-    echo "Fix with: find . -name '*.rs' -not -path './target/*' -exec sed -i 's/[[:space:]]*\$//' {} \\;"
-    echo "Then amend your commit:"
-    echo "  git add -u"
-    echo "  git commit --amend --no-edit"
-    exit 1
+if [ -n "$WHITESPACE_FILES" ]; then
+    echo -e "${YELLOW}  Trailing whitespace found, auto-fixing...${NC}"
+    for file in $WHITESPACE_FILES; do
+        sed -i 's/[[:space:]]*$//' "$file"
+        echo -e "    Fixed: $file"
+    done
+    # Stage and amend the commit
+    git add -u
+    git commit --amend --no-edit
+    echo -e "  ${GREEN}Whitespace fixed and commit amended${NC}"
+else
+    echo -e "  ${GREEN}No trailing whitespace${NC}"
 fi
-echo -e "  ${GREEN}No trailing whitespace${NC}"
 
 # 3. Cargo check
 echo "  Running cargo check..."

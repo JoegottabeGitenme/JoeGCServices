@@ -145,7 +145,7 @@ pub async fn loadtest_dashboard_handler() -> impl IntoResponse {
             .then(r => r.json())
             .then(data => {
                 if (data.files && data.files.length > 0) {
-                    document.getElementById('results').innerHTML = 
+                    document.getElementById('results').innerHTML =
                         '<ul>' + data.files.map(f => '<li><a href="/api/loadtest/file/' + f + '">' + f + '</a></li>').join('') + '</ul>';
                 } else {
                     document.getElementById('results').innerHTML = '<p>No results found</p>';
