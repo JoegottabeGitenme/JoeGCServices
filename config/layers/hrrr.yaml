@@ -50,25 +50,25 @@ layers:
   - id: hrrr_UGRD
     parameter: UGRD
     title: "U-Component of Wind"
-    abstract: "Eastward wind component at 10m above ground"
+    abstract: "Eastward wind component at 2m above ground"
     style_file: wind.json
     units:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
   - id: hrrr_VGRD
     parameter: VGRD
     title: "V-Component of Wind"
-    abstract: "Northward wind component at 10m above ground"
+    abstract: "Northward wind component at 2m above ground"
     style_file: wind.json
     units:
       native: m/s
       display: m/s
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
   - id: hrrr_GUST
@@ -91,7 +91,7 @@ layers:
     composite: true
     requires: [ UGRD, VGRD ]
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
   # ==========================================================================
