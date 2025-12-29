@@ -3652,15 +3652,15 @@ function updateIngestionWidget(data) {
             activeList.innerHTML = data.active.map(item => {
                 const filename = extractFilename(item.file_path);
                 const elapsed = formatElapsedTime(item.started_at);
+                const model = extractModelFromPath(item.file_path) || 'unknown';
                 return `
                     <div class="ingestion-item">
                         <div class="ingestion-item-header">
-                            <span class="ingestion-item-model">${item.model}</span>
+                            <span class="ingestion-item-model">${model}</span>
                             <span class="ingestion-item-status">${formatIngestionStatus(item.status)}</span>
                         </div>
                         <div class="ingestion-item-file" title="${item.file_path}">${filename}</div>
                         <div class="ingestion-item-progress">
-                            <span>Found: ${item.parameters_found} | Stored: ${item.parameters_stored}</span>
                             <span>${elapsed}</span>
                         </div>
                     </div>
@@ -3688,10 +3688,14 @@ function updateIngestionWidget(data) {
         if (data.recent && data.recent.length > 0) {
             recentList.innerHTML = data.recent.slice(0, 5).map(item => {
                 const timeClass = item.success ? '' : ' failed';
+                // Extract model name from file_path (e.g., "hrrr/..." -> "hrrr")
+                const model = extractModelFromPath(item.file_path) || 'unknown';
+                // Use datasets_registered (API field) or parameters count
+                const count = item.datasets_registered ?? item.parameters?.length ?? 0;
                 return `
                     <div class="ingestion-recent-item">
-                        <span class="ingestion-recent-model">${item.model}</span>
-                        <span class="ingestion-recent-params">${item.parameters_registered} params</span>
+                        <span class="ingestion-recent-model">${model}</span>
+                        <span class="ingestion-recent-params">${count} datasets</span>
                         <span class="ingestion-recent-time${timeClass}">${formatDuration(item.duration_ms)}</span>
                     </div>
                 `;
@@ -3752,6 +3756,43 @@ function formatDuration(ms) {
 function extractFilename(path) {
     if (!path) return 'unknown';
     return path.split('/').pop() || path;
+}
+
+// Extract model name from ingestion file path
+// e.g., "grids/hrrr/2024/..." -> "hrrr"
+// e.g., "/data/hrrr.t00z.grib2" -> "hrrr"
+// e.g., "/data/downloads/goes18_OR_ABI-..." -> "goes18"
+// e.g., "/data/downloads/mrms_MRMS_..." -> "mrms"
+// e.g., "/data/downloads/hrrr_20251229_17z_f006.grib2" -> "hrrr"
+function extractModelFromPath(path) {
+    if (!path) return null;
+    
+    // Try to extract from grids/model/ pattern
+    const gridsMatch = path.match(/grids\/([^/]+)\//);
+    if (gridsMatch) return gridsMatch[1].toUpperCase();
+    
+    // Extract filename from path
+    const filename = path.split('/').pop() || '';
+    
+    // Try to match download filename pattern: {model}_{...}
+    // e.g., "goes18_OR_ABI...", "mrms_MRMS_...", "hrrr_20251229_..."
+    const downloadMatch = filename.match(/^(goes16|goes18|mrms|hrrr|gfs)_/i);
+    if (downloadMatch) return downloadMatch[1].toUpperCase();
+    
+    // Try to extract model name from grib2 filename pattern (e.g., hrrr.t00z.grib2)
+    const gribMatch = filename.match(/^([a-zA-Z]+)\./);
+    if (gribMatch) return gribMatch[1].toUpperCase();
+    
+    // Try to extract from common path patterns
+    const pathParts = path.split('/');
+    for (const part of pathParts) {
+        const lower = part.toLowerCase();
+        if (['hrrr', 'gfs', 'mrms', 'goes16', 'goes18'].includes(lower)) {
+            return part.toUpperCase();
+        }
+    }
+    
+    return null;
 }
 
 // ============================================================================

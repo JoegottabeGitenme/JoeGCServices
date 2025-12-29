@@ -39,10 +39,13 @@ grid:
 schedule:
   type: observation                      # Observation data, not forecast
   poll_interval_secs: 300                # Check every 5 minutes
-  lookback_minutes: 60                   # Check last hour of data
+  # Note: lookback_minutes is deprecated for observation models.
+  # The downloader now uses retention.hours to determine how far back to look for data.
+  # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
   hours: 2                              # Keep 2 hours of imagery
+  keep_latest_observations: 24          # Always keep ~2 hours of observations (updates every ~5 min)
 
 # Precaching configuration - proactively warm GridDataCache
 # NOTE: GOES grids are large (~60-240MB each in memory), so keep_recent should be low

@@ -245,7 +245,7 @@ async fn async_main(args: Args) -> Result<()> {
         if cleanup_config.enabled {
             info!(
                 interval_secs = cleanup_config.interval_secs,
-                models = ?cleanup_config.model_retentions.keys().collect::<Vec<_>>(),
+                models = ?cleanup_config.model_configs.keys().collect::<Vec<_>>(),
                 "Starting data cleanup background task"
             );
             let cleanup_task = cleanup::CleanupTask::new(state.clone(), cleanup_config);

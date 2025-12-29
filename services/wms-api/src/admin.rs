@@ -1329,6 +1329,24 @@ pub struct CleanupStatusResponse {
 pub struct ModelRetentionInfo {
     pub model: String,
     pub retention_hours: u32,
+    /// Model type: "forecast" or "observation"
+    pub model_type: String,
+    /// For forecast models: number of complete runs to always keep
+    pub keep_latest_runs: u32,
+    /// For observation models: number of observations to always keep
+    pub keep_latest_observations: u32,
+    /// For forecast models: expected number of forecast hours per run
+    pub expected_forecast_hours: Option<u32>,
+    /// List of currently protected runs/observations
+    pub protected_runs: Vec<ProtectedRunDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtectedRunDetail {
+    pub reference_time: String,
+    pub dataset_count: i64,
+    pub is_complete: bool,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1361,6 +1379,7 @@ pub async fn cleanup_status_handler(
 
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
     let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
+    let cleanup_task = crate::cleanup::CleanupTask::new(state.clone(), config.clone());
 
     let expired_count = state.catalog.count_expired().await.unwrap_or(0);
 
@@ -1374,12 +1393,37 @@ pub async fn cleanup_status_handler(
     let now = Utc::now();
 
     for model in &models {
-        let retention_hours = config.get_retention_hours(model);
+        let model_config = config.get_model_config(model);
+        let retention_hours = model_config.hours;
         let cutoff = now - chrono::Duration::hours(retention_hours as i64);
+
+        // Get protected runs for this model
+        let protected_runs = cleanup_task
+            .get_protected_runs(model)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| ProtectedRunDetail {
+                reference_time: r.reference_time.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                dataset_count: r.dataset_count,
+                is_complete: r.is_complete,
+                reason: r.reason,
+            })
+            .collect();
+
+        let model_type_str = match model_config.model_type {
+            crate::cleanup::ModelType::Forecast => "forecast",
+            crate::cleanup::ModelType::Observation => "observation",
+        };
 
         model_retentions.push(ModelRetentionInfo {
             model: model.clone(),
             retention_hours,
+            model_type: model_type_str.to_string(),
+            keep_latest_runs: model_config.keep_latest_runs,
+            keep_latest_observations: model_config.keep_latest_observations,
+            expected_forecast_hours: model_config.expected_forecast_hours,
+            protected_runs,
         });
 
         // Get preview of what would be purged
@@ -1433,11 +1477,21 @@ pub async fn cleanup_status_handler(
     }
 
     // Also add models from config that might not have data yet
-    for (model, hours) in &config.model_retentions {
+    for (model, model_config) in &config.model_configs {
         if !models.contains(model) {
+            let model_type_str = match model_config.model_type {
+                crate::cleanup::ModelType::Forecast => "forecast",
+                crate::cleanup::ModelType::Observation => "observation",
+            };
+
             model_retentions.push(ModelRetentionInfo {
                 model: model.clone(),
-                retention_hours: *hours,
+                retention_hours: model_config.hours,
+                model_type: model_type_str.to_string(),
+                keep_latest_runs: model_config.keep_latest_runs,
+                keep_latest_observations: model_config.keep_latest_observations,
+                expected_forecast_hours: model_config.expected_forecast_hours,
+                protected_runs: vec![], // No data yet
             });
         }
     }

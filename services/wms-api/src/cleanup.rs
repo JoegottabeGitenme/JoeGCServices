@@ -2,17 +2,73 @@
 //!
 //! This module handles automatic cleanup of expired datasets based on
 //! retention settings in model configuration files.
+//!
+//! # Retention Safeguards
+//!
+//! The cleanup system includes safeguards to prevent data loss during ingestion outages:
+//!
+//! ## Forecast Models (HRRR, GFS)
+//! - Uses `keep_latest_runs` to protect the N most recent complete model runs
+//! - A run is "complete" when all expected forecast hours are ingested
+//! - Only deletes old runs when a newer complete run exists
+//!
+//! ## Observation Models (MRMS, GOES)
+//! - Uses `keep_latest_observations` to always keep the N most recent observations
+//! - Prevents deletion even if data exceeds retention hours
 
 use anyhow::Result;
-use chrono::{Duration, Utc};
-use serde::Deserialize;
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::time::{interval, Duration as TokioDuration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::state::AppState;
+
+/// Model type for determining retention behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelType {
+    /// Forecast model with runs and forecast hours (e.g., HRRR, GFS)
+    Forecast,
+    /// Observation model with time-based data (e.g., MRMS, GOES)
+    Observation,
+}
+
+impl Default for ModelType {
+    fn default() -> Self {
+        ModelType::Forecast
+    }
+}
+
+/// Per-model retention settings.
+#[derive(Debug, Clone)]
+pub struct ModelRetentionConfig {
+    /// Retention hours (time-based cutoff)
+    pub hours: u32,
+    /// Model type (forecast or observation)
+    pub model_type: ModelType,
+    /// For forecast models: number of complete runs to always keep
+    pub keep_latest_runs: u32,
+    /// For observation models: number of observations to always keep
+    pub keep_latest_observations: u32,
+    /// For forecast models: expected number of forecast hours per run
+    pub expected_forecast_hours: Option<u32>,
+}
+
+impl Default for ModelRetentionConfig {
+    fn default() -> Self {
+        Self {
+            hours: 24,
+            model_type: ModelType::Forecast,
+            keep_latest_runs: 1,
+            keep_latest_observations: 1,
+            expected_forecast_hours: None,
+        }
+    }
+}
 
 /// Configuration for the cleanup task.
 #[derive(Debug, Clone)]
@@ -21,8 +77,8 @@ pub struct CleanupConfig {
     pub enabled: bool,
     /// How often to run cleanup (in seconds)
     pub interval_secs: u64,
-    /// Per-model retention settings
-    pub model_retentions: HashMap<String, u32>,
+    /// Per-model retention settings (full config)
+    pub model_configs: HashMap<String, ModelRetentionConfig>,
     /// Default retention if model not specified (in hours)
     pub default_retention_hours: u32,
 }
@@ -32,7 +88,7 @@ impl Default for CleanupConfig {
         Self {
             enabled: true,
             interval_secs: 3600, // Run every hour
-            model_retentions: HashMap::new(),
+            model_configs: HashMap::new(),
             default_retention_hours: 24, // 24 hours default
         }
     }
@@ -42,11 +98,36 @@ impl Default for CleanupConfig {
 #[derive(Debug, Deserialize)]
 struct ModelConfigRetention {
     hours: Option<u32>,
+    keep_latest_runs: Option<u32>,
+    keep_latest_observations: Option<u32>,
+}
+
+/// Structure matching dimensions section in model YAML files.
+#[derive(Debug, Deserialize)]
+struct ModelConfigDimensions {
+    #[serde(rename = "type")]
+    dimension_type: Option<String>,
+}
+
+/// Structure matching schedule section in model YAML files.
+#[derive(Debug, Deserialize)]
+struct ModelConfigSchedule {
+    forecast_hours: Option<ForecastHoursConfig>,
+}
+
+/// Structure matching forecast_hours in schedule section.
+#[derive(Debug, Deserialize)]
+struct ForecastHoursConfig {
+    start: Option<u32>,
+    end: Option<u32>,
+    step: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ModelConfigFile {
     model: ModelConfigModel,
+    dimensions: Option<ModelConfigDimensions>,
+    schedule: Option<ModelConfigSchedule>,
     retention: Option<ModelConfigRetention>,
 }
 
@@ -74,24 +155,24 @@ impl CleanupConfig {
             .unwrap_or(24); // 24 hours default
 
         // Load model retention settings from config files
-        let model_retentions = Self::load_model_retentions(config_dir);
+        let model_configs = Self::load_model_configs(config_dir);
 
         Self {
             enabled,
             interval_secs,
-            model_retentions,
+            model_configs,
             default_retention_hours,
         }
     }
 
     /// Load retention settings from model YAML files.
-    fn load_model_retentions(config_dir: &str) -> HashMap<String, u32> {
-        let mut retentions = HashMap::new();
+    fn load_model_configs(config_dir: &str) -> HashMap<String, ModelRetentionConfig> {
+        let mut configs = HashMap::new();
         let models_dir = Path::new(config_dir).join("models");
 
         if !models_dir.exists() {
             warn!("Model config directory not found: {:?}", models_dir);
-            return retentions;
+            return configs;
         }
 
         // Read all YAML files in the models directory
@@ -102,16 +183,69 @@ impl CleanupConfig {
                     if let Ok(contents) = std::fs::read_to_string(&path) {
                         match serde_yaml::from_str::<ModelConfigFile>(&contents) {
                             Ok(config) => {
-                                if let Some(retention) = config.retention {
-                                    if let Some(hours) = retention.hours {
-                                        info!(
-                                            model = %config.model.id,
-                                            retention_hours = hours,
-                                            "Loaded retention config"
-                                        );
-                                        retentions.insert(config.model.id, hours);
-                                    }
-                                }
+                                let model_id = config.model.id.clone();
+
+                                // Determine model type from dimensions.type
+                                let model_type = config
+                                    .dimensions
+                                    .as_ref()
+                                    .and_then(|d| d.dimension_type.as_ref())
+                                    .map(|t| {
+                                        if t == "observation" {
+                                            ModelType::Observation
+                                        } else {
+                                            ModelType::Forecast
+                                        }
+                                    })
+                                    .unwrap_or(ModelType::Forecast);
+
+                                // Calculate expected forecast hours from schedule
+                                let expected_forecast_hours = config
+                                    .schedule
+                                    .as_ref()
+                                    .and_then(|s| s.forecast_hours.as_ref())
+                                    .and_then(|fh| {
+                                        let start = fh.start.unwrap_or(0);
+                                        let end = fh.end?;
+                                        let step = fh.step.unwrap_or(1);
+                                        if step > 0 {
+                                            Some((end - start) / step + 1)
+                                        } else {
+                                            None
+                                        }
+                                    });
+
+                                // Get retention settings
+                                let retention = config.retention.as_ref();
+                                let hours = retention.and_then(|r| r.hours).unwrap_or(24);
+
+                                // Get safeguard settings with defaults
+                                let keep_latest_runs =
+                                    retention.and_then(|r| r.keep_latest_runs).unwrap_or(1); // Default: always keep at least 1 run
+
+                                let keep_latest_observations = retention
+                                    .and_then(|r| r.keep_latest_observations)
+                                    .unwrap_or(1); // Default: always keep at least 1 observation
+
+                                let model_config = ModelRetentionConfig {
+                                    hours,
+                                    model_type,
+                                    keep_latest_runs,
+                                    keep_latest_observations,
+                                    expected_forecast_hours,
+                                };
+
+                                info!(
+                                    model = %model_id,
+                                    retention_hours = hours,
+                                    model_type = ?model_type,
+                                    keep_latest_runs = keep_latest_runs,
+                                    keep_latest_observations = keep_latest_observations,
+                                    expected_forecast_hours = ?expected_forecast_hours,
+                                    "Loaded retention config"
+                                );
+
+                                configs.insert(model_id, model_config);
                             }
                             Err(e) => {
                                 warn!(
@@ -126,15 +260,31 @@ impl CleanupConfig {
             }
         }
 
-        retentions
+        configs
     }
 
-    /// Get retention hours for a model.
-    pub fn get_retention_hours(&self, model: &str) -> u32 {
-        *self
-            .model_retentions
+    /// Get retention config for a model.
+    pub fn get_model_config(&self, model: &str) -> ModelRetentionConfig {
+        self.model_configs
             .get(model)
-            .unwrap_or(&self.default_retention_hours)
+            .cloned()
+            .unwrap_or(ModelRetentionConfig {
+                hours: self.default_retention_hours,
+                ..Default::default()
+            })
+    }
+
+    /// Get retention hours for a model (for backward compatibility).
+    pub fn get_retention_hours(&self, model: &str) -> u32 {
+        self.get_model_config(model).hours
+    }
+
+    /// For backward compatibility: get model_retentions as HashMap<String, u32>
+    pub fn model_retentions(&self) -> HashMap<String, u32> {
+        self.model_configs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.hours))
+            .collect()
     }
 }
 
@@ -176,6 +326,15 @@ impl SyncConfig {
     }
 }
 
+/// Information about a protected run (for admin visibility).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtectedRunInfo {
+    pub reference_time: DateTime<Utc>,
+    pub dataset_count: i64,
+    pub is_complete: bool,
+    pub reason: String,
+}
+
 /// Background cleanup task.
 pub struct CleanupTask {
     state: Arc<AppState>,
@@ -188,6 +347,11 @@ impl CleanupTask {
         Self { state, config }
     }
 
+    /// Get the cleanup configuration.
+    pub fn config(&self) -> &CleanupConfig {
+        &self.config
+    }
+
     /// Run the cleanup task once.
     pub async fn run_once(&self) -> Result<CleanupStats> {
         let mut stats = CleanupStats::default();
@@ -198,18 +362,28 @@ impl CleanupTask {
         let models = self.state.catalog.list_models().await?;
 
         for model in &models {
-            let retention_hours = self.config.get_retention_hours(model);
-            let cutoff = Utc::now() - Duration::hours(retention_hours as i64);
+            let model_config = self.config.get_model_config(model);
+            let cutoff = Utc::now() - Duration::hours(model_config.hours as i64);
 
             info!(
                 model = %model,
-                retention_hours = retention_hours,
+                retention_hours = model_config.hours,
+                model_type = ?model_config.model_type,
                 cutoff = %cutoff,
                 "Checking for expired datasets"
             );
 
-            // Mark datasets as expired
-            let marked = self.state.catalog.mark_model_expired(model, cutoff).await?;
+            let marked = match model_config.model_type {
+                ModelType::Forecast => {
+                    self.cleanup_forecast_model(model, &model_config, cutoff)
+                        .await?
+                }
+                ModelType::Observation => {
+                    self.cleanup_observation_model(model, &model_config, cutoff)
+                        .await?
+                }
+            };
+
             if marked > 0 {
                 info!(model = %model, count = marked, "Marked datasets as expired");
                 stats.marked_expired += marked;
@@ -256,7 +430,7 @@ impl CleanupTask {
             // Invalidate capabilities cache when data is deleted
             if deleted > 0 {
                 self.state.capabilities_cache.invalidate().await;
-                tracing::debug!(
+                debug!(
                     "Invalidated capabilities cache after cleanup deleted {} records",
                     deleted
                 );
@@ -272,6 +446,180 @@ impl CleanupTask {
         );
 
         Ok(stats)
+    }
+
+    /// Cleanup logic for forecast models (HRRR, GFS).
+    /// Protects the latest N complete runs before deleting old data.
+    async fn cleanup_forecast_model(
+        &self,
+        model: &str,
+        config: &ModelRetentionConfig,
+        cutoff: DateTime<Utc>,
+    ) -> Result<u64> {
+        // Get all runs for this model
+        let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
+
+        if runs.is_empty() {
+            debug!(model = %model, "No runs found, skipping cleanup");
+            return Ok(0);
+        }
+
+        // Identify complete runs (runs that have all expected forecast hours)
+        let expected = config.expected_forecast_hours.unwrap_or(1) as i64;
+        let mut complete_runs: Vec<DateTime<Utc>> = runs
+            .iter()
+            .filter(|(_, count)| *count >= expected)
+            .map(|(ref_time, _)| *ref_time)
+            .collect();
+
+        // Sort by time descending (newest first)
+        complete_runs.sort_by(|a, b| b.cmp(a));
+
+        // Determine which runs to protect
+        let runs_to_protect: Vec<DateTime<Utc>> = complete_runs
+            .iter()
+            .take(config.keep_latest_runs as usize)
+            .cloned()
+            .collect();
+
+        if runs_to_protect.is_empty() {
+            // No complete runs exist - protect the newest run regardless of completeness
+            // This prevents data loss when a new run is still being ingested
+            let newest_run = runs.iter().map(|(ref_time, _)| ref_time).max();
+            if let Some(newest) = newest_run {
+                info!(
+                    model = %model,
+                    newest_run = %newest,
+                    "No complete runs found, protecting newest incomplete run"
+                );
+                // Mark expired but exclude the newest run
+                return self
+                    .state
+                    .catalog
+                    .mark_model_expired_except_runs(model, cutoff, &[*newest])
+                    .await
+                    .map_err(Into::into);
+            }
+            return Ok(0);
+        }
+
+        info!(
+            model = %model,
+            protected_runs = ?runs_to_protect.iter().map(|r| r.to_rfc3339()).collect::<Vec<_>>(),
+            total_runs = runs.len(),
+            complete_runs = complete_runs.len(),
+            expected_forecast_hours = expected,
+            "Protecting complete runs from cleanup"
+        );
+
+        // Mark expired datasets, but exclude protected runs
+        self.state
+            .catalog
+            .mark_model_expired_except_runs(model, cutoff, &runs_to_protect)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Cleanup logic for observation models (MRMS, GOES).
+    /// Always keeps the latest N observations regardless of age.
+    async fn cleanup_observation_model(
+        &self,
+        model: &str,
+        config: &ModelRetentionConfig,
+        cutoff: DateTime<Utc>,
+    ) -> Result<u64> {
+        // For observation models, each reference_time is essentially one observation
+        let observations = self.state.catalog.get_model_runs_with_counts(model).await?;
+
+        if observations.is_empty() {
+            debug!(model = %model, "No observations found, skipping cleanup");
+            return Ok(0);
+        }
+
+        // Sort by time descending (newest first)
+        let mut sorted_obs: Vec<DateTime<Utc>> = observations.iter().map(|(t, _)| *t).collect();
+        sorted_obs.sort_by(|a, b| b.cmp(a));
+
+        // Protect the latest N observations
+        let protected_obs: Vec<DateTime<Utc>> = sorted_obs
+            .iter()
+            .take(config.keep_latest_observations as usize)
+            .cloned()
+            .collect();
+
+        info!(
+            model = %model,
+            total_observations = observations.len(),
+            protected_count = protected_obs.len(),
+            keep_latest = config.keep_latest_observations,
+            "Protecting latest observations from cleanup"
+        );
+
+        // Mark expired datasets, but exclude protected observations
+        self.state
+            .catalog
+            .mark_model_expired_except_runs(model, cutoff, &protected_obs)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get information about protected runs for a model (for admin API).
+    pub async fn get_protected_runs(&self, model: &str) -> Result<Vec<ProtectedRunInfo>> {
+        let model_config = self.config.get_model_config(model);
+        let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
+
+        if runs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let expected = model_config.expected_forecast_hours.unwrap_or(1) as i64;
+
+        match model_config.model_type {
+            ModelType::Forecast => {
+                let mut complete_runs: Vec<(DateTime<Utc>, i64)> = runs
+                    .iter()
+                    .filter(|(_, count)| *count >= expected)
+                    .cloned()
+                    .collect();
+                complete_runs.sort_by(|a, b| b.0.cmp(&a.0));
+
+                let protected: Vec<ProtectedRunInfo> = complete_runs
+                    .iter()
+                    .take(model_config.keep_latest_runs as usize)
+                    .map(|(ref_time, count)| ProtectedRunInfo {
+                        reference_time: *ref_time,
+                        dataset_count: *count,
+                        is_complete: true,
+                        reason: format!(
+                            "Complete run ({}/{} forecast hours), protected by keep_latest_runs={}",
+                            count, expected, model_config.keep_latest_runs
+                        ),
+                    })
+                    .collect();
+
+                Ok(protected)
+            }
+            ModelType::Observation => {
+                let mut sorted_obs: Vec<(DateTime<Utc>, i64)> = runs;
+                sorted_obs.sort_by(|a, b| b.0.cmp(&a.0));
+
+                let protected: Vec<ProtectedRunInfo> = sorted_obs
+                    .iter()
+                    .take(model_config.keep_latest_observations as usize)
+                    .map(|(ref_time, count)| ProtectedRunInfo {
+                        reference_time: *ref_time,
+                        dataset_count: *count,
+                        is_complete: true,
+                        reason: format!(
+                            "Latest observation, protected by keep_latest_observations={}",
+                            model_config.keep_latest_observations
+                        ),
+                    })
+                    .collect();
+
+                Ok(protected)
+            }
+        }
     }
 
     /// Run the cleanup task in a loop.
@@ -303,7 +651,7 @@ impl CleanupTask {
 }
 
 /// Statistics from a cleanup run.
-#[derive(Debug, Default, Clone, serde::Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct CleanupStats {
     /// Number of datasets marked as expired
     pub marked_expired: u64,
@@ -316,7 +664,7 @@ pub struct CleanupStats {
 }
 
 /// Statistics from a sync operation.
-#[derive(Debug, Default, Clone, serde::Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct SyncStats {
     /// Number of database records checked
     pub db_records_checked: u64,
@@ -335,7 +683,7 @@ pub struct SyncStats {
 }
 
 /// Detailed preview of what will be synced.
-#[derive(Debug, Default, Clone, serde::Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct SyncPreview {
     /// Paths in database but not in MinIO storage
     pub orphan_db_paths: Vec<String>,

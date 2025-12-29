@@ -36,10 +36,13 @@ grid:
 schedule:
   type: observation                      # Observation data, not forecast
   poll_interval_secs: 120                # Check every 2 minutes (data updates ~2min)
-  lookback_minutes: 30                   # Check last 30 minutes
+  # Note: lookback_minutes is deprecated for observation models.
+  # The downloader now uses retention.hours to determine how far back to look for data.
+  # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
   hours: 1                              # Keep 1 hour of radar data
+  keep_latest_observations: 60          # Always keep ~2 hours of observations (updates every ~2 min)
 
 # Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
 precaching:
@@ -55,13 +58,14 @@ precaching:
 parameters:
   # Seamless Hybrid Scan Reflectivity - the fully composited radar mosaic
   # This is the product that shows continuous coverage like Windy/NWS
+  # GRIB2 codes: discipline=209 (MRMS local), category=8, number=8
   - name: REFL
     description: "Seamless Hybrid Scan Reflectivity"
     downsample: max
     grib2:
       discipline: 209                    # MRMS local table
-      category: 0
-      number: 16                         # SeamlessHSR uses same parameter ID
+      category: 8                        # Reflectivity category in MRMS
+      number: 8                          # SeamlessHSR parameter number
     product: "SeamlessHSR_00.00"
     levels:
       - type: height_above_msl
@@ -74,13 +78,14 @@ parameters:
     valid_range: [-30, 80]
 
   # Precipitation Rate
+  # GRIB2 codes: discipline=209 (MRMS local), category=6, number=1
   - name: PRECIP_RATE
     description: "Precipitation Rate"
     downsample: max
     grib2:
       discipline: 209
-      category: 1
-      number: 0                          # PrecipRate
+      category: 6                        # Precipitation category in MRMS
+      number: 1                          # PrecipRate parameter number
     product: "PrecipRate_00.00"
     levels:
       - type: height_above_msl

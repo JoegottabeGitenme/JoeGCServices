@@ -52,6 +52,7 @@ schedule:
 
 retention:
   hours: 2                          # Keep data for 2 hours
+  keep_latest_runs: 1               # Always keep at least 1 complete run (safeguard)
 
 # Precaching configuration - disabled for now (focus on observation data first)
 precaching:
