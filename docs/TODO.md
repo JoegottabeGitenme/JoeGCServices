@@ -19,15 +19,12 @@
     - this could be useful for a mobile app
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
 - some of the scripts in the scripts folder could be moved somewhere into validation
-- integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
 - style viewing and editing web app, view current styles and how they would look on the map
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
   how they impact performance
-- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
-  manage things like cold/warm cache etc.
 - need to consider actually deploying this to ec2 or something
     - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
 - implement renderer queue after we've deleted the renderer worker stuff???
@@ -50,3 +47,13 @@
   eachother
 - ingester should be able to handle multiple downloads at once
 - README needs some screenshots and to be more accurate
+- Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
+- Cache warming should just fill L2 cache
+- Most chunks decompressed are 1 MB, figure out how much storage to cache common products
+- Chunk cache keys reference wms when they don't need to, wms should know what parameters it needs, what parameters go
+  into what models etc.
+- Cache invalidation section in the docs doesn't quite make sense
+- Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
+- System design high level architecture diagram isn't right anymore
+- Do both wms and WMTS need to support featureinfo requests?
+- Minio object storage section is wrong
