@@ -703,6 +703,12 @@ async fn wmts_get_tile(
 
     // Render the tile
     let result = if parameter == "WIND_BARBS" {
+        // Get wind barbs style file
+        let wind_style_file = state
+            .layer_configs
+            .read()
+            .await
+            .get_style_file_for_parameter(model, "WIND_BARBS");
         crate::rendering::render_wind_barbs_tile_with_level(
             &state.catalog,
             &state.grid_processor_factory,
@@ -713,6 +719,8 @@ async fn wmts_get_tile(
             bbox_array,
             forecast_hour,
             elevation,
+            Some(&wind_style_file),
+            None, // Use default style
         )
         .await
     } else if style == "isolines" {
@@ -1144,6 +1152,8 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
             bbox_array,
             None,
             None,
+            Some(&style_file), // style_file is already resolved above
+            None,              // Use default style
         )
         .await
     } else if style == "isolines" {

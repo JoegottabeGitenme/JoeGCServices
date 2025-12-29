@@ -634,7 +634,7 @@ fn test_gradient_values_out_of_range() {
 }
 
 #[test]
-fn test_gradient_missing_value_detection() {
+fn test_gradient_nan_handling() {
     let json = r##"{
         "version": "1.0",
         "styles": {
@@ -654,10 +654,11 @@ fn test_gradient_missing_value_detection() {
     let config = StyleConfig::from_json(json).unwrap();
     let style = config.get_style("test").unwrap();
 
-    // Very negative values are sometimes used as missing data markers
-    let rgba = apply_style_gradient(&[-9999.0], 1, 1, style);
-    // Should be treated as transparent (missing data)
-    assert_eq!(rgba[3], 0, "Missing data marker should be transparent");
+    // NaN values should be rendered as transparent
+    // Note: Sentinel values (like -9999) are now converted to NaN during ingestion,
+    // so the renderer only needs to handle NaN for transparency
+    let rgba = apply_style_gradient(&[f32::NAN], 1, 1, style);
+    assert_eq!(rgba[3], 0, "NaN should be transparent");
 }
 
 // ============================================================================

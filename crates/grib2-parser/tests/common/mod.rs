@@ -90,6 +90,7 @@ macro_rules! require_test_files {
 ///
 /// This provides the parameter and level mappings needed for testing
 /// without requiring actual YAML config files.
+#[allow(dead_code)] // Used by multiple test files, not all may use it
 pub fn create_test_tables() -> Arc<Grib2Tables> {
     let mut tables = Grib2Tables::new();
 

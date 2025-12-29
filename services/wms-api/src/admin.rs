@@ -1508,7 +1508,7 @@ pub struct SyncStatusResponse {
 pub async fn sync_status_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync status (dry run)");
 
-    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
 
     match sync_task.dry_run().await {
         Ok(stats) => {
@@ -1563,7 +1563,7 @@ pub struct SyncPreviewResponse {
 pub async fn sync_preview_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync preview (detailed orphan list)");
 
-    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
 
     match sync_task.preview().await {
         Ok(preview) => Json(SyncPreviewResponse {
@@ -1588,7 +1588,7 @@ pub async fn sync_preview_handler(Extension(state): Extension<Arc<AppState>>) ->
 pub async fn sync_run_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Running sync to clean up orphans");
 
-    let sync_task = crate::cleanup::SyncTask::new(state.clone());
+    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
 
     match sync_task.run().await {
         Ok(stats) => {

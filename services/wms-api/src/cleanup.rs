@@ -138,6 +138,44 @@ impl CleanupConfig {
     }
 }
 
+/// Configuration for the sync task.
+#[derive(Debug, Clone)]
+pub struct SyncConfig {
+    /// Whether sync is enabled
+    pub enabled: bool,
+    /// How often to run sync (in seconds)
+    pub interval_secs: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 60, // Run every minute
+        }
+    }
+}
+
+impl SyncConfig {
+    /// Load sync configuration from environment.
+    pub fn from_env() -> Self {
+        let enabled = std::env::var("ENABLE_SYNC")
+            .ok()
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(true); // Enabled by default
+
+        let interval_secs = std::env::var("SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60); // 1 minute default
+
+        Self {
+            enabled,
+            interval_secs,
+        }
+    }
+}
+
 /// Background cleanup task.
 pub struct CleanupTask {
     state: Arc<AppState>,
@@ -189,7 +227,16 @@ impl CleanupTask {
 
             // Delete files from object storage
             for path in &expired_paths {
-                match self.state.storage.delete(path).await {
+                // Use delete_prefix for Zarr directories to delete all files
+                let result = if path.ends_with(".zarr") {
+                    // Add trailing slash to ensure we only delete within the zarr directory
+                    let prefix = format!("{}/", path);
+                    self.state.storage.delete_prefix(&prefix).await.map(|_| ())
+                } else {
+                    self.state.storage.delete(path).await
+                };
+
+                match result {
                     Ok(()) => {
                         stats.files_deleted += 1;
                     }
@@ -303,12 +350,48 @@ pub struct SyncPreview {
 /// Sync task for reconciling database and MinIO storage.
 pub struct SyncTask {
     state: Arc<AppState>,
+    config: SyncConfig,
 }
 
 impl SyncTask {
     /// Create a new sync task.
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+    pub fn new(state: Arc<AppState>, config: SyncConfig) -> Self {
+        Self { state, config }
+    }
+
+    /// Create a new sync task with default config (for admin API use).
+    pub fn new_default(state: Arc<AppState>) -> Self {
+        Self {
+            state,
+            config: SyncConfig::default(),
+        }
+    }
+
+    /// Run the sync task in a loop.
+    pub async fn run_forever(self) {
+        if !self.config.enabled {
+            info!("Sync task disabled");
+            return;
+        }
+
+        info!(
+            interval_secs = self.config.interval_secs,
+            "Starting sync background task"
+        );
+
+        let mut ticker = interval(TokioDuration::from_secs(self.config.interval_secs));
+
+        // Run immediately on startup
+        if let Err(e) = self.run().await {
+            error!(error = %e, "Sync cycle failed");
+        }
+
+        loop {
+            ticker.tick().await;
+            if let Err(e) = self.run().await {
+                error!(error = %e, "Sync cycle failed");
+            }
+        }
     }
 
     /// Perform a dry-run sync to identify orphans without deleting.
@@ -487,7 +570,16 @@ impl SyncTask {
 
             if delete {
                 for path in &orphan_minio_paths {
-                    match self.state.storage.delete(path).await {
+                    // Use delete_prefix for Zarr directories to delete all files
+                    let result = if path.ends_with(".zarr") {
+                        // Add trailing slash to ensure we only delete within the zarr directory
+                        let prefix = format!("{}/", path);
+                        self.state.storage.delete_prefix(&prefix).await.map(|_| ())
+                    } else {
+                        self.state.storage.delete(path).await
+                    };
+
+                    match result {
                         Ok(()) => {
                             stats.orphan_minio_deleted += 1;
                         }
@@ -530,5 +622,12 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.interval_secs, 3600);
         assert_eq!(config.default_retention_hours, 24);
+    }
+
+    #[test]
+    fn test_sync_config_default() {
+        let config = SyncConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.interval_secs, 60);
     }
 }

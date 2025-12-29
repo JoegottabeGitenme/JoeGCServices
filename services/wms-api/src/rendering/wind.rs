@@ -8,15 +8,62 @@
 //! - Level-aware wind component loading (e.g., 10m, 850mb)
 //! - Zarr-based data access with efficient chunked reads
 //! - Geographic alignment for consistent barb positioning across tiles
+//! - Style-driven configuration (spacing, size, color) via wind_barbs.json
 
 use renderer::barbs::BarbConfig;
+use renderer::style::StyleConfig;
 use renderer::{barbs, gradient};
 use std::time::Instant;
 use storage::{Catalog, CatalogEntry};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::resampling::resample_for_model_geographic;
 use grid_processor::GridProcessorFactory;
+
+// ============================================================================
+// Style loading helper
+// ============================================================================
+
+/// Load BarbConfig from a style file, falling back to defaults if the file doesn't exist
+/// or doesn't contain valid wind barb configuration.
+fn load_barb_config_from_style(style_file: Option<&str>, style_name: Option<&str>) -> BarbConfig {
+    let Some(path) = style_file else {
+        return BarbConfig::default();
+    };
+
+    // Try to load the style config
+    let config = match StyleConfig::from_file(path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(path = path, error = %e, "Failed to load wind barb style, using defaults");
+            return BarbConfig::default();
+        }
+    };
+
+    // Get the requested style or the default
+    let style = if let Some(name) = style_name {
+        config.get_style(name)
+    } else {
+        config.get_default_style().map(|(_, s)| s)
+    };
+
+    match style {
+        Some(s) => {
+            let barb_config = s.get_barb_config();
+            info!(
+                spacing = barb_config.spacing,
+                size = barb_config.size,
+                color = %barb_config.color,
+                "Loaded wind barb config from style"
+            );
+            barb_config
+        }
+        None => {
+            warn!(path = path, "No wind barb style found, using defaults");
+            BarbConfig::default()
+        }
+    }
+}
 
 // ============================================================================
 // Public rendering functions
@@ -33,6 +80,9 @@ use grid_processor::GridProcessorFactory;
 /// - `width`: Output image width (single tile)
 /// - `height`: Output image height (single tile)
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
+/// - `forecast_hour`: Optional forecast hour
+/// - `style_file`: Optional path to wind_barbs.json style file
+/// - `style_name`: Optional style name within the file (defaults to the default style)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -45,6 +95,8 @@ pub async fn render_wind_barbs_tile(
     height: u32,
     bbox: [f32; 4],
     forecast_hour: Option<u32>,
+    style_file: Option<&str>,
+    style_name: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{tile_bbox, TileBufferConfig};
 
@@ -131,8 +183,10 @@ pub async fn render_wind_barbs_tile(
         grid_uses_360,
     );
 
+    // Load barb config from style file (or use defaults)
+    let barb_config = load_barb_config_from_style(style_file, style_name);
+
     // Render wind barbs with geographic alignment
-    let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
         &u_resampled,
         &v_resampled,
@@ -167,6 +221,8 @@ pub async fn render_wind_barbs_tile(
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat] for the single tile
 /// - `forecast_hour`: Optional forecast hour; if None, uses latest
 /// - `level`: Optional vertical level/elevation (e.g., "500 mb", "10 m above ground")
+/// - `style_file`: Optional path to wind_barbs.json style file
+/// - `style_name`: Optional style name within the file (defaults to the default style)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -180,6 +236,8 @@ pub async fn render_wind_barbs_tile_with_level(
     bbox: [f32; 4],
     forecast_hour: Option<u32>,
     level: Option<&str>,
+    style_file: Option<&str>,
+    style_name: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     use wms_common::tile::{tile_bbox, TileBufferConfig};
 
@@ -267,8 +325,10 @@ pub async fn render_wind_barbs_tile_with_level(
         grid_uses_360,
     );
 
+    // Load barb config from style file (or use defaults)
+    let barb_config = load_barb_config_from_style(style_file, style_name);
+
     // Render wind barbs with geographic alignment
-    let barb_config = barbs::BarbConfig::default();
     let barb_pixels = barbs::render_wind_barbs_aligned(
         &u_resampled,
         &v_resampled,
@@ -299,7 +359,9 @@ pub async fn render_wind_barbs_tile_with_level(
 /// - `width`: Output image width
 /// - `height`: Output image height
 /// - `bbox`: Optional bounding box [min_lon, min_lat, max_lon, max_lat]
-/// - `barb_spacing`: Optional spacing between barbs in pixels (default: 50)
+/// - `forecast_hour`: Optional forecast hour
+/// - `style_file`: Optional path to wind_barbs.json style file
+/// - `style_name`: Optional style name within the file (defaults to the default style)
 ///
 /// # Returns
 /// PNG image data as bytes
@@ -310,8 +372,9 @@ pub async fn render_wind_barbs_layer(
     width: u32,
     height: u32,
     bbox: Option<[f32; 4]>,
-    barb_spacing: Option<usize>,
     forecast_hour: Option<u32>,
+    style_file: Option<&str>,
+    style_name: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     // Get catalog entries for U and V components
     let u_entry = get_wind_entry(catalog, model, "UGRD", forecast_hour, None).await?;
@@ -384,10 +447,13 @@ pub async fn render_wind_barbs_layer(
         ));
     }
 
+    // Load barb config from style file (or use defaults)
+    let barb_config = load_barb_config_from_style(style_file, style_name);
+
     // Prepare rendering parameters
     let output_width = width as usize;
     let output_height = height as usize;
-    let spacing = barb_spacing.unwrap_or(50);
+    let spacing = barb_config.spacing as usize;
 
     // If bbox is specified, we need to resample to that region
     let (u_to_render, v_to_render, render_width, render_height) = if let Some(bbox) = bbox {
@@ -519,14 +585,11 @@ pub async fn render_wind_barbs_layer(
         (u_resampled, v_resampled, output_width, output_height)
     };
 
-    // Render wind barbs
-    let config = BarbConfig::default();
-
     info!(
         render_width = render_width,
         render_height = render_height,
-        barb_spacing = config.spacing,
-        barb_size = config.size,
+        barb_spacing = barb_config.spacing,
+        barb_size = barb_config.size,
         "Rendering wind barbs"
     );
 
@@ -539,7 +602,7 @@ pub async fn render_wind_barbs_layer(
             render_width,
             render_height,
             bbox,
-            &config,
+            &barb_config,
         )
     } else {
         barbs::render_wind_barbs(
@@ -547,7 +610,7 @@ pub async fn render_wind_barbs_layer(
             &v_to_render,
             render_width,
             render_height,
-            &config,
+            &barb_config,
         )
     };
 
