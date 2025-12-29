@@ -20,7 +20,7 @@ layers:
   - id: hrrr_TMP
     parameter: TMP
     title: "Temperature"
-    abstract: "Air temperature at various levels"
+    abstract: "Air temperature at 2m above ground"
     style_file: temperature.json
     units:
       native: K
@@ -29,11 +29,6 @@ layers:
     levels:
       - value: "2 m above ground"
         default: true
-      - value: "850 mb"
-      - value: "700 mb"
-      - value: "500 mb"
-      - value: "300 mb"
-      - value: "250 mb"
 
   - id: hrrr_DPT
     parameter: DPT
@@ -55,7 +50,7 @@ layers:
   - id: hrrr_UGRD
     parameter: UGRD
     title: "U-Component of Wind"
-    abstract: "Eastward wind component"
+    abstract: "Eastward wind component at 2m above ground"
     style_file: wind.json
     units:
       native: m/s
@@ -67,7 +62,7 @@ layers:
   - id: hrrr_VGRD
     parameter: VGRD
     title: "V-Component of Wind"
-    abstract: "Northward wind component"
+    abstract: "Northward wind component at 2m above ground"
     style_file: wind.json
     units:
       native: m/s
@@ -132,18 +127,6 @@ layers:
       - value: "2 m above ground"
         default: true
 
-  - id: hrrr_PWAT
-    parameter: PWAT
-    title: "Precipitable Water"
-    abstract: "Total column precipitable water"
-    style_file: humidity.json
-    units:
-      native: "kg/m^2"
-      display: mm
-    levels:
-      - value: "entire atmosphere"
-        default: true
-
   # ==========================================================================
   # Precipitation Layers
   # ==========================================================================
@@ -159,91 +142,6 @@ layers:
     accumulation: true
     levels:
       - value: "surface"
-        default: true
-
-  # ==========================================================================
-  # Radar/Reflectivity Layers
-  # ==========================================================================
-
-  - id: hrrr_REFD
-    parameter: REFD
-    title: "Composite Reflectivity"
-    abstract: "Simulated radar composite reflectivity"
-    style_file: reflectivity.json
-    units:
-      native: dBZ
-      display: dBZ
-    levels:
-      - value: "entire atmosphere"
-        default: true
-
-  - id: hrrr_RETOP
-    parameter: RETOP
-    title: "Echo Top Height"
-    abstract: "Height of radar echo tops"
-    style_file: reflectivity.json
-    units:
-      native: m
-      display: kft
-      conversion: m_to_kft
-    levels:
-      - value: "cloud top"
-        default: true
-
-  # ==========================================================================
-  # Convective/Stability Layers
-  # ==========================================================================
-
-  - id: hrrr_CAPE
-    parameter: CAPE
-    title: "CAPE"
-    abstract: "Convective Available Potential Energy"
-    style_file: cape.json
-    units:
-      native: "J/kg"
-      display: "J/kg"
-    levels:
-      - value: "surface"
-        default: true
-
-  - id: hrrr_CIN
-    parameter: CIN
-    title: "CIN"
-    abstract: "Convective Inhibition"
-    style_file: cin.json
-    units:
-      native: "J/kg"
-      display: "J/kg"
-    levels:
-      - value: "surface"
-        default: true
-
-  - id: hrrr_MXUPHL
-    parameter: MXUPHL
-    title: "Updraft Helicity"
-    abstract: "Maximum updraft helicity 2-5km layer (tornado/severe weather potential)"
-    style_file: helicity.json
-    units:
-      native: "m^2/s^2"
-      display: "m^2/s^2"
-    levels:
-      - value: "2000 m above ground"
-        default: true
-
-  # ==========================================================================
-  # Lightning
-  # ==========================================================================
-
-  - id: hrrr_LTNG
-    parameter: LTNG
-    title: "Lightning Threat"
-    abstract: "Lightning flash density"
-    style_file: lightning.json
-    units:
-      native: "flashes/km^2/min"
-      display: "flashes/km^2/min"
-    levels:
-      - value: "entire atmosphere"
         default: true
 
   # ==========================================================================
@@ -278,59 +176,3 @@ layers:
     levels:
       - value: "entire atmosphere"
         default: true
-
-  - id: hrrr_LCDC
-    parameter: LCDC
-    title: "Low Cloud Cover"
-    abstract: "Low cloud cover (surface to ~2km / 800mb)"
-    style_file: cloud.json
-    units:
-      native: "%"
-      display: "%"
-    levels:
-      - value: "low cloud top"
-        default: true
-
-  - id: hrrr_MCDC
-    parameter: MCDC
-    title: "Middle Cloud Cover"
-    abstract: "Middle cloud cover (~2-6km / 800-400mb)"
-    style_file: cloud.json
-    units:
-      native: "%"
-      display: "%"
-    levels:
-      - value: "middle cloud top"
-        default: true
-
-  - id: hrrr_HCDC
-    parameter: HCDC
-    title: "High Cloud Cover"
-    abstract: "High cloud cover (above ~6km / 400mb)"
-    style_file: cloud.json
-    units:
-      native: "%"
-      display: "%"
-    levels:
-      - value: "high cloud top"
-        default: true
-
-  # ==========================================================================
-  # Upper-Air
-  # ==========================================================================
-
-  - id: hrrr_HGT
-    parameter: HGT
-    title: "Geopotential Height"
-    abstract: "Height of pressure surfaces"
-    style_file: geopotential.json
-    units:
-      native: gpm
-      display: m
-    levels:
-      - value: "500 mb"
-        default: true
-      - value: "850 mb"
-      - value: "700 mb"
-      - value: "300 mb"
-      - value: "250 mb"

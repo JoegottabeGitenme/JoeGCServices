@@ -83,7 +83,7 @@ impl fmt::Display for CrsCode {
 pub enum AxisOrder {
     /// X (longitude/easting), Y (latitude/northing)
     XY,
-    /// Y (latitude/northing), X (longitude/easting)  
+    /// Y (latitude/northing), X (longitude/easting)
     LatLon,
 }
 

@@ -12,7 +12,7 @@ Weather data visualization engine that converts numeric grids to styled PNG imag
 
 - **Parallel rendering** using rayon for multi-core utilization
 - **Pre-computed palettes** for optimal indexed PNG encoding
-- **Multiple rendering styles**: gradients, contours, wind barbs, numeric labels
+- **Multiple rendering styles**: gradients, contours, wind barbs
 - **Custom PNG encoder** supporting both RGBA and indexed (palette) formats
 
 ## Modules
@@ -24,7 +24,6 @@ Weather data visualization engine that converts numeric grids to styled PNG imag
 | `png` | Custom PNG encoder (RGBA and indexed) |
 | `contour` | Marching squares for isolines |
 | `barbs` | Wind barb rendering |
-| `numbers` | Numeric value labels |
 
 ## Rendering Approaches
 
@@ -98,22 +97,6 @@ let rgba = render_wind_barbs(
 )?;
 ```
 
-### 5. Numeric Labels
-
-Point value annotations:
-
-```rust
-use renderer::numbers::{render_numbers, NumbersConfig};
-
-let config = NumbersConfig {
-    spacing: 50,
-    font_size: 11.0,
-    decimal_places: 1,
-    ..Default::default()
-};
-let rgba = render_numbers(&data, width, height, &config)?;
-```
-
 ## PNG Encoding Options
 
 | Function | Output | Use Case |
@@ -169,7 +152,7 @@ pub struct PrecomputedPalette {
 ```rust
 pub struct StyleDefinition {
     pub name: String,
-    pub style_type: String,  // "gradient", "contour", "numbers"
+    pub style_type: String,  // "gradient", "contour", "wind_barbs"
     pub range: Option<ValueRange>,
     pub transform: Option<Transform>,
     pub stops: Vec<ColorStop>,

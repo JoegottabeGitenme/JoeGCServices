@@ -14,7 +14,6 @@ Exit codes:
 """
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -27,7 +26,6 @@ VALID_STYLE_TYPES = {
     "filled_contour",
     "wind_barbs",
     "wind_arrows",
-    "numbers",
 }
 
 # Valid transform types
@@ -176,7 +174,7 @@ def validate_range(range_obj: Any, path: str, errors: list, file: str):
 
     if "min" in range_obj and "max" in range_obj:
         if isinstance(range_obj["min"], (int, float)) and isinstance(
-            range_obj["max"], (int, float)
+                range_obj["max"], (int, float)
         ):
             if range_obj["min"] >= range_obj["max"]:
                 errors.append(
@@ -315,33 +313,6 @@ def validate_color_by_speed(cbs: Any, path: str, errors: list, file: str):
         )
 
 
-def validate_numbers(numbers: Any, path: str, errors: list, file: str):
-    """Validate numbers-specific options."""
-    if not isinstance(numbers, dict):
-        errors.append(
-            ValidationError(
-                file, path, f"Numbers must be object, got {type(numbers).__name__}"
-            )
-        )
-        return
-
-    number_fields = [
-        "spacing",
-        "font_size",
-        "decimal_places",
-    ]
-    for field in number_fields:
-        if field in numbers and not isinstance(numbers[field], (int, float)):
-            errors.append(
-                ValidationError(file, f"{path}.{field}", f"Field must be number")
-            )
-
-    color_fields = ["font_color", "background_color"]
-    for field in color_fields:
-        if field in numbers:
-            validate_color(numbers[field], f"{path}.{field}", errors, file)
-
-
 def validate_style(style_id: str, style: Any, path: str, errors: list, file: str):
     """Validate a single style definition."""
     if not isinstance(style, dict):
@@ -416,8 +387,8 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
                 validate_stop(stop, i, f"{path}.stops", errors, file)
 
         if (
-            "interpolation" in style
-            and style["interpolation"] not in VALID_INTERPOLATION_TYPES
+                "interpolation" in style
+                and style["interpolation"] not in VALID_INTERPOLATION_TYPES
         ):
             errors.append(
                 ValidationError(
@@ -428,8 +399,8 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
             )
 
         if (
-            "out_of_range" in style
-            and style["out_of_range"] not in VALID_OUT_OF_RANGE_TYPES
+                "out_of_range" in style
+                and style["out_of_range"] not in VALID_OUT_OF_RANGE_TYPES
         ):
             errors.append(
                 ValidationError(
@@ -451,10 +422,6 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
             validate_color_by_speed(
                 style["color_by_speed"], f"{path}.color_by_speed", errors, file
             )
-
-    elif style_type == "numbers":
-        if "numbers" in style:
-            validate_numbers(style["numbers"], f"{path}.numbers", errors, file)
 
 
 def validate_file(filepath: Path, verbose: bool = False) -> list:

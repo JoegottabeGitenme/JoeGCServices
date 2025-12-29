@@ -39,7 +39,7 @@ pub struct MinioConfig {
     pub bucket: String,
     /// Access key ID
     pub access_key_id: String,
-    /// Secret access key  
+    /// Secret access key
     pub secret_access_key: String,
     /// AWS region (use "us-east-1" for MinIO)
     pub region: String,

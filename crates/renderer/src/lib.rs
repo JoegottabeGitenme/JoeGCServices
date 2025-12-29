@@ -6,7 +6,6 @@
 //! - Wind barbs
 //! - Wind arrows
 //! - Style-based color mapping
-//! - Numeric values at grid points
 //!
 //! ## Performance Optimizations
 //!
@@ -24,7 +23,6 @@ pub mod barbs;
 pub mod buffer_pool;
 pub mod contour;
 pub mod gradient;
-pub mod numbers;
 pub mod png;
 pub mod style;
 

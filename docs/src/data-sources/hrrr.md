@@ -24,21 +24,24 @@ High-resolution numerical weather model for CONUS providing detailed short-range
 | `TMP` | 2m | Temperature | K |
 | `DPT` | 2m | Dewpoint temperature | K |
 | `RH` | 2m | Relative humidity | % |
-| `UGRD` | 10m | U-component wind | m/s |
-| `VGRD` | 10m | V-component wind | m/s |
+| `UGRD` | 2m | U-component wind | m/s |
+| `VGRD` | 2m | V-component wind | m/s |
 | `GUST` | surface | Wind gust | m/s |
-| `REFL` | entire atmos | Composite reflectivity | dBZ |
-| `VIS` | surface | Visibility | m |
+| `PRMSL` | mean sea level | Mean sea level pressure | Pa |
 | `APCP` | surface | Accumulated precipitation | kg/m² |
-| `CAPE` | surface | Convective available potential energy | J/kg |
-| `CIN` | surface | Convective inhibition | J/kg |
+| `VIS` | surface | Visibility | m |
+| `TCDC` | entire atmosphere | Total cloud cover | % |
+
+Note: The HRRR configuration focuses on core weather parameters. Convective parameters (CAPE, CIN) and composite reflectivity (REFL) are available in the raw GRIB2 data but not currently exposed as layers.
 
 ## Layer Names
 
 Examples:
-- `hrrr_TMP_2m` - Surface temperature
-- `hrrr_REFL` - Composite reflectivity
-- `hrrr_CAPE` - Convective energy
+- `hrrr_TMP` - Surface temperature (2m)
+- `hrrr_DPT` - Dewpoint temperature (2m)
+- `hrrr_WIND_BARBS` - Wind barbs (composite of UGRD/VGRD)
+- `hrrr_PRMSL` - Mean sea level pressure
+- `hrrr_TCDC` - Total cloud cover
 
 ## Data Source
 
@@ -70,9 +73,9 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/hrrr/prod/hrrr.20241203/conus/hrr
 
 ## Typical Uses
 
-- **Severe weather forecasting**: Thunderstorms, tornadoes
-- **Short-range temperature forecasts**: Hourly temperatures
-- **Convective analysis**: CAPE, storm initiation
-- **High-resolution radar simulation**: Reflectivity forecasts
-- **Aviation**: Terminal forecasts, turbulence
+- **Short-range temperature forecasts**: Hourly temperatures at 3km resolution
+- **Wind analysis**: Surface and near-surface wind conditions
+- **Visibility monitoring**: Aviation and transportation planning
+- **Cloud cover forecasting**: Solar energy and outdoor activities
+- **Pressure analysis**: Weather system tracking
 - **Nowcasting**: 0-6 hour detailed forecasts

@@ -60,7 +60,7 @@ pub fn create_temperature_grid(width: usize, height: usize) -> Vec<f32> {
 /// # Arguments
 /// * `path` - Directory to create the Zarr array in
 /// * `width` - Grid width
-/// * `height` - Grid height  
+/// * `height` - Grid height
 /// * `chunk_size` - Chunk dimensions (both x and y)
 /// * `bbox` - Geographic bounding box
 ///

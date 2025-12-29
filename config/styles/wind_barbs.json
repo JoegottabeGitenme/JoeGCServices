@@ -15,9 +15,9 @@
         "type": "mps_to_knots"
       },
       "wind": {
-        "spacing": 30,
-        "size": 35.0,
-        "line_width": 2.5,
+        "spacing": 20,
+        "size": 65.0,
+        "line_width": 4.5,
         "color": "#000000",
         "direction_from": true,
         "calm_threshold": 2.5
@@ -64,15 +64,51 @@
       "color_by_speed": {
         "enabled": true,
         "stops": [
-          { "value": 0, "color": "#FFFFFF", "label": "Calm" },
-          { "value": 5, "color": "#00FF00", "label": "5 kt" },
-          { "value": 10, "color": "#00C000", "label": "10 kt" },
-          { "value": 15, "color": "#FFFF00", "label": "15 kt" },
-          { "value": 20, "color": "#FFC000", "label": "20 kt" },
-          { "value": 30, "color": "#FF8000", "label": "30 kt" },
-          { "value": 50, "color": "#FF4040", "label": "50 kt" },
-          { "value": 70, "color": "#FF0000", "label": "70 kt" },
-          { "value": 100, "color": "#C00000", "label": "100+ kt" }
+          {
+            "value": 0,
+            "color": "#FFFFFF",
+            "label": "Calm"
+          },
+          {
+            "value": 5,
+            "color": "#00FF00",
+            "label": "5 kt"
+          },
+          {
+            "value": 10,
+            "color": "#00C000",
+            "label": "10 kt"
+          },
+          {
+            "value": 15,
+            "color": "#FFFF00",
+            "label": "15 kt"
+          },
+          {
+            "value": 20,
+            "color": "#FFC000",
+            "label": "20 kt"
+          },
+          {
+            "value": 30,
+            "color": "#FF8000",
+            "label": "30 kt"
+          },
+          {
+            "value": 50,
+            "color": "#FF4040",
+            "label": "50 kt"
+          },
+          {
+            "value": 70,
+            "color": "#FF0000",
+            "label": "70 kt"
+          },
+          {
+            "value": 100,
+            "color": "#C00000",
+            "label": "100+ kt"
+          }
         ],
         "interpolation": "linear",
         "out_of_range": "clamp"

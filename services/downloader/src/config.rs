@@ -237,6 +237,25 @@ impl ModelConfig {
     pub fn is_observation(&self) -> bool {
         self.schedule.schedule_type == "observation"
     }
+
+    /// Get the lookback period in minutes for observation data.
+    /// Uses retention.hours converted to minutes for observation models.
+    /// Falls back to schedule.lookback_minutes if retention is not set or zero.
+    pub fn lookback_minutes(&self) -> u32 {
+        if self.is_observation() {
+            // Use retention hours as the lookback period
+            let retention_minutes = self.retention.hours * 60;
+            if retention_minutes > 0 {
+                retention_minutes
+            } else {
+                // Fallback to schedule.lookback_minutes if retention not configured
+                self.schedule.lookback_minutes
+            }
+        } else {
+            // For forecast models, use the configured lookback_minutes (usually 0)
+            self.schedule.lookback_minutes
+        }
+    }
 }
 
 /// Load all enabled model configurations from a directory.
@@ -337,5 +356,113 @@ schedule:
             config.forecast_hours(),
             vec![0, 3, 6, 9, 12, 15, 18, 21, 24]
         );
+    }
+
+    #[test]
+    fn test_observation_lookback_uses_retention() {
+        let yaml = r#"
+model:
+  id: mrms
+  name: "MRMS"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: noaa-mrms-pds
+
+grid:
+  projection: latlon
+  resolution: "0.01deg"
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 120
+  lookback_minutes: 30
+
+retention:
+  hours: 2
+"#;
+
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model.id, "mrms");
+        assert!(config.is_observation());
+        // For observation models, lookback_minutes should use retention.hours * 60
+        assert_eq!(config.lookback_minutes(), 120); // 2 hours * 60 = 120 minutes
+    }
+
+    #[test]
+    fn test_forecast_lookback_uses_schedule() {
+        let yaml = r#"
+model:
+  id: gfs
+  name: "GFS"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: noaa-gfs-bdp-pds
+
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox:
+    min_lon: 0.0
+    min_lat: -90.0
+    max_lon: 360.0
+    max_lat: 90.0
+
+schedule:
+  type: forecast
+  cycles: [0, 6, 12, 18]
+  poll_interval_secs: 3600
+  lookback_minutes: 60
+"#;
+
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model.id, "gfs");
+        assert!(!config.is_observation());
+        // For forecast models, lookback_minutes should use schedule.lookback_minutes
+        assert_eq!(config.lookback_minutes(), 60);
+    }
+
+    #[test]
+    fn test_observation_fallback_to_schedule_lookback() {
+        let yaml = r#"
+model:
+  id: test
+  name: "Test"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: test
+
+grid:
+  projection: latlon
+  resolution: "1deg"
+  bbox:
+    min_lon: 0.0
+    min_lat: 0.0
+    max_lon: 1.0
+    max_lat: 1.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 120
+  lookback_minutes: 45
+
+retention:
+  hours: 0
+"#;
+
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.is_observation());
+        // When retention.hours is 0, should fallback to schedule.lookback_minutes
+        assert_eq!(config.lookback_minutes(), 45);
     }
 }

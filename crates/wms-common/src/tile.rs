@@ -561,7 +561,7 @@ pub fn expanded_tile_bbox(coord: &TileCoord, config: &ExpandedTileConfig) -> Bou
 /// Calculate the crop region within an expanded render to extract the center tile.
 ///
 /// # Arguments
-/// * `coord` - The center tile coordinate  
+/// * `coord` - The center tile coordinate
 /// * `config` - Expansion configuration
 ///
 /// # Returns

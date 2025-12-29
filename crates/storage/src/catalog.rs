@@ -55,7 +55,7 @@ impl Catalog {
         sqlx::query(
             r#"
             INSERT INTO datasets (
-                id, model, parameter, level, 
+                id, model, parameter, level,
                 reference_time, forecast_hour, valid_time,
                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y,
                 storage_path, file_size, ingested_at, status, zarr_metadata
@@ -352,6 +352,97 @@ impl Catalog {
         .map_err(|e| WmsError::DatabaseError(format!("Update failed: {}", e)))?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Mark old datasets for a specific model as expired, but protect specified runs.
+    ///
+    /// This is the main retention safeguard method. It marks datasets as expired if:
+    /// - valid_time < older_than (exceeds retention period)
+    /// - reference_time is NOT in the protected_runs list
+    ///
+    /// This ensures we always keep at least N complete runs even during ingestion outages.
+    pub async fn mark_model_expired_except_runs(
+        &self,
+        model: &str,
+        older_than: DateTime<Utc>,
+        protected_runs: &[DateTime<Utc>],
+    ) -> WmsResult<u64> {
+        if protected_runs.is_empty() {
+            // No protection, use standard expiration
+            return self.mark_model_expired(model, older_than).await;
+        }
+
+        // Build the query with protected runs excluded
+        // We need to use a parameterized IN clause
+        let placeholders: Vec<String> = (3..=protected_runs.len() + 2)
+            .map(|i| format!("${}", i))
+            .collect();
+        let in_clause = placeholders.join(", ");
+
+        let query = format!(
+            "UPDATE datasets SET status = 'expired' \
+             WHERE model = $1 AND valid_time < $2 AND status = 'available' \
+             AND reference_time NOT IN ({})",
+            in_clause
+        );
+
+        let mut query_builder = sqlx::query(&query).bind(model).bind(older_than);
+
+        for run in protected_runs {
+            query_builder = query_builder.bind(*run);
+        }
+
+        let result = query_builder
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Update failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get all runs (reference_times) for a model with their dataset counts.
+    ///
+    /// Returns a list of (reference_time, dataset_count) tuples, ordered by reference_time DESC.
+    /// This is used to determine run completeness and decide which runs to protect.
+    pub async fn get_model_runs_with_counts(
+        &self,
+        model: &str,
+    ) -> WmsResult<Vec<(DateTime<Utc>, i64)>> {
+        let rows = sqlx::query_as::<_, (DateTime<Utc>, i64)>(
+            "SELECT reference_time, COUNT(*) as count \
+             FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             GROUP BY reference_time \
+             ORDER BY reference_time DESC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get the count of distinct forecast hours for a specific run.
+    ///
+    /// This is used to determine if a run is "complete" by comparing against expected forecast hours.
+    pub async fn count_run_forecast_hours(
+        &self,
+        model: &str,
+        reference_time: DateTime<Utc>,
+    ) -> WmsResult<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(DISTINCT forecast_hour) \
+             FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(count)
     }
 
     /// Get storage paths for expired datasets (for deletion from object storage).
@@ -1104,7 +1195,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'available',
     zarr_metadata JSONB,
-    
+
     UNIQUE(model, parameter, level, reference_time, forecast_hour)
 );
 
@@ -1118,7 +1209,7 @@ CREATE TABLE IF NOT EXISTS layer_styles (
     style_name VARCHAR(100) NOT NULL,
     style_config JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
+
     UNIQUE(layer_id, style_name)
 )
 "#;

@@ -120,12 +120,36 @@ schedule:
 
 ### `retention` (recommended)
 
-How long to keep ingested data:
+How long to keep ingested data, with safeguards to prevent data loss during ingestion outages:
 
 ```yaml
+# For forecast models (HRRR, GFS)
 retention:
-  hours: 24    # Keep data for 24 hours
+  hours: 24              # Keep data for 24 hours
+  keep_latest_runs: 1    # Always keep at least 1 complete run (safeguard)
+
+# For observation models (MRMS, GOES)
+retention:
+  hours: 2                       # Keep data for 2 hours  
+  keep_latest_observations: 60   # Always keep at least 60 observations (~2 hours)
 ```
+
+#### Retention Safeguards
+
+The cleanup system includes safeguards to ensure data is never completely deleted during ingestion outages:
+
+**For forecast models** (`dimensions.type: forecast`):
+- `keep_latest_runs`: Number of complete model runs to always protect
+- A run is "complete" when all expected forecast hours are ingested
+- Old runs are only deleted when a newer complete run exists
+- Default: 1 (always keep at least one complete run)
+
+**For observation models** (`dimensions.type: observation`):
+- `keep_latest_observations`: Number of recent observations to always protect
+- Observations are protected regardless of age
+- Default: 1 (always keep at least one observation)
+
+This ensures users always have data to display even if NOAA, AWS, or your ingestion pipeline experiences an outage.
 
 ### `parameters` (required)
 

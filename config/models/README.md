@@ -131,12 +131,25 @@ schedule:
 
 ### `retention` (recommended)
 
-How long to keep ingested data.
+How long to keep ingested data, with safeguards to prevent data loss.
 
 ```yaml
+# For forecast models
 retention:
-  hours: 24    # Keep data for 24 hours
+  hours: 24              # Keep data for 24 hours
+  keep_latest_runs: 1    # Always keep at least 1 complete run
+
+# For observation models  
+retention:
+  hours: 2                       # Keep data for 2 hours
+  keep_latest_observations: 60   # Always keep at least 60 observations
 ```
+
+**Safeguard options:**
+- `keep_latest_runs` (forecast models): Protects N complete runs from deletion
+- `keep_latest_observations` (observation models): Protects N recent observations
+
+These safeguards ensure data is never completely deleted during ingestion outages.
 
 ### `precaching` (optional)
 

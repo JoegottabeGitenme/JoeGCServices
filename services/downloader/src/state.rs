@@ -249,7 +249,7 @@ impl DownloadState {
         sqlx::query(
             r#"
             UPDATE downloads
-            SET total_bytes = ?, downloaded_bytes = ?, retry_count = ?, 
+            SET total_bytes = ?, downloaded_bytes = ?, retry_count = ?,
                 status = 'in_progress', updated_at = ?
             WHERE url = ?
             "#,
@@ -314,9 +314,9 @@ impl DownloadState {
             Option<String>,
         )> = sqlx::query_as(
             r#"
-            SELECT url, filename, model, total_bytes, downloaded_bytes, 
+            SELECT url, filename, model, total_bytes, downloaded_bytes,
                    status, retry_count, created_at, updated_at, error_message
-            FROM downloads 
+            FROM downloads
             WHERE status IN ('pending', 'in_progress', 'retrying')
             ORDER BY created_at ASC
             "#,
@@ -484,9 +484,9 @@ impl DownloadState {
             Option<String>,
         )> = sqlx::query_as(
             r#"
-            SELECT url, filename, model, total_bytes, downloaded_bytes, 
+            SELECT url, filename, model, total_bytes, downloaded_bytes,
                    status, retry_count, created_at, updated_at, error_message
-            FROM downloads 
+            FROM downloads
             WHERE status = 'pending'
             ORDER BY created_at ASC
             "#,
@@ -532,9 +532,9 @@ impl DownloadState {
             Option<String>,
         )> = sqlx::query_as(
             r#"
-            SELECT url, filename, model, total_bytes, downloaded_bytes, 
+            SELECT url, filename, model, total_bytes, downloaded_bytes,
                    status, retry_count, created_at, updated_at, error_message
-            FROM downloads 
+            FROM downloads
             WHERE status = 'failed'
             ORDER BY updated_at DESC
             "#,
@@ -572,7 +572,7 @@ impl DownloadState {
         // SQLite date functions to group by hour
         let rows: Vec<(String, i64, i64)> = sqlx::query_as(
             r#"
-            SELECT 
+            SELECT
                 strftime('%Y-%m-%d %H:00', completed_at) as hour,
                 COUNT(*) as count,
                 COALESCE(SUM(total_bytes), 0) as bytes

@@ -67,13 +67,6 @@ pub struct WmtsKvpParams {
     pub forecast: Option<String>,
     #[serde(rename = "ELEVATION")]
     pub elevation: Option<String>,
-    // GetFeatureInfo parameters
-    #[serde(rename = "I")]
-    pub i: Option<u32>,
-    #[serde(rename = "J")]
-    pub j: Option<u32>,
-    #[serde(rename = "INFOFORMAT")]
-    pub info_format: Option<String>,
 }
 
 // ============================================================================
@@ -196,120 +189,6 @@ pub async fn wmts_kvp_handler(
                 observation_time,
                 dimensions.elevation.as_deref(),
                 format,
-            )
-            .await
-        }
-        Some("GetFeatureInfo") => {
-            // Validate required parameters
-            let layer = match &params.layer {
-                Some(l) => l.clone(),
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "LAYER is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-            let tile_matrix = match &params.tile_matrix {
-                Some(tm) => tm.clone(),
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "TILEMATRIX is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-            let tile_row = match params.tile_row {
-                Some(tr) => tr,
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "TILEROW is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-            let tile_col = match params.tile_col {
-                Some(tc) => tc,
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "TILECOL is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-            let i = match params.i {
-                Some(i) => i,
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "I is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-            let j = match params.j {
-                Some(j) => j,
-                None => {
-                    return wmts_exception(
-                        "MissingParameterValue",
-                        "J is required",
-                        StatusCode::BAD_REQUEST,
-                    )
-                }
-            };
-
-            let z: u32 = tile_matrix.parse().unwrap_or(0);
-            let info_format = params.info_format.as_deref().unwrap_or("application/json");
-
-            // Validate I and J are within tile bounds (0-255 for 256x256 tiles)
-            if i >= 256 {
-                return wmts_exception(
-                    "PointIJOutOfRange",
-                    &format!(
-                        "I parameter value {} is out of range. Must be between 0 and 255.",
-                        i
-                    ),
-                    StatusCode::BAD_REQUEST,
-                );
-            }
-            if j >= 256 {
-                return wmts_exception(
-                    "PointIJOutOfRange",
-                    &format!(
-                        "J parameter value {} is out of range. Must be between 0 and 255.",
-                        j
-                    ),
-                    StatusCode::BAD_REQUEST,
-                );
-            }
-
-            let dimensions = DimensionParams {
-                time: params.time.clone(),
-                run: params.run.clone(),
-                forecast: params.forecast.clone(),
-                elevation: params.elevation.clone(),
-            };
-
-            let model = layer.split('_').next().unwrap_or("");
-            let (forecast_hour, observation_time, _) =
-                dimensions.parse_for_layer(model, &state.model_dimensions);
-
-            wmts_get_feature_info(
-                state,
-                &layer,
-                z,
-                tile_col,
-                tile_row,
-                i,
-                j,
-                forecast_hour,
-                observation_time,
-                dimensions.elevation.as_deref(),
-                info_format,
             )
             .await
         }
@@ -752,29 +631,6 @@ async fn wmts_get_tile(
             true,
         )
         .await
-    } else if style == "numbers" {
-        let style_file = state
-            .layer_configs
-            .read()
-            .await
-            .get_style_file_for_parameter(model, &parameter);
-        crate::rendering::render_numbers_tile_with_buffer(
-            &state.catalog,
-            &state.metrics,
-            &state.grid_processor_factory,
-            model,
-            &parameter,
-            Some(coord),
-            256,
-            256,
-            bbox_array,
-            &style_file,
-            forecast_hour,
-            elevation,
-            true,
-            requires_full_grid,
-        )
-        .await
     } else {
         let style_file = state
             .layer_configs
@@ -882,142 +738,6 @@ async fn wmts_get_tile(
             )
         }
     }
-}
-
-// ============================================================================
-// GetFeatureInfo
-// ============================================================================
-
-async fn wmts_get_feature_info(
-    state: Arc<AppState>,
-    layer: &str,
-    z: u32,
-    x: u32,
-    y: u32,
-    i: u32,
-    j: u32,
-    forecast_hour: Option<u32>,
-    observation_time: Option<chrono::DateTime<chrono::Utc>>,
-    elevation: Option<&str>,
-    info_format: &str,
-) -> Response {
-    use wms_protocol::{FeatureInfoResponse, InfoFormat};
-
-    info!(layer = %layer, z = z, x = x, y = y, i = i, j = j, forecast_hour = ?forecast_hour, elevation = ?elevation, "WMTS GetFeatureInfo request");
-
-    // Parse info format
-    let format = match InfoFormat::from_mime(info_format) {
-        Some(f) => f,
-        None => {
-            return wmts_exception(
-                "InvalidParameterValue",
-                &format!("INFOFORMAT '{}' is not supported. Supported formats: application/json, text/html, text/xml, text/plain", info_format),
-                StatusCode::BAD_REQUEST,
-            );
-        }
-    };
-
-    // Calculate the geographic bbox for the tile
-    let coord = TileCoord::new(z, x, y);
-    let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
-
-    // Convert tile pixel coordinates to lat/lon
-    // Tile is 256x256 pixels
-    let tile_width = latlon_bbox.max_x - latlon_bbox.min_x;
-    let tile_height = latlon_bbox.max_y - latlon_bbox.min_y;
-
-    // Note: In web tiles, J=0 is at the top, so we need to flip the y coordinate
-    let pixel_lon = latlon_bbox.min_x + (i as f64 / 256.0) * tile_width;
-    let pixel_lat = latlon_bbox.max_y - (j as f64 / 256.0) * tile_height; // Flip Y
-
-    // Create a small bbox around the point (single pixel)
-    let pixel_width = tile_width / 256.0;
-    let pixel_height = tile_height / 256.0;
-    let bbox_array = [
-        pixel_lon - pixel_width / 2.0,  // min_lon
-        pixel_lat - pixel_height / 2.0, // min_lat
-        pixel_lon + pixel_width / 2.0,  // max_lon
-        pixel_lat + pixel_height / 2.0, // max_lat
-    ];
-
-    // Parse layer
-    let parts: Vec<&str> = layer.split('_').collect();
-    let (model, parameter) = if parts.len() >= 2 {
-        (parts[0], parts[1..].join("_").to_uppercase())
-    } else {
-        return wmts_exception(
-            "InvalidParameterValue",
-            "Invalid layer format",
-            StatusCode::BAD_REQUEST,
-        );
-    };
-
-    // Get effective elevation
-    let effective_elevation: Option<String> = match elevation {
-        Some(elev) => Some(elev.to_string()),
-        None => {
-            let configs = state.layer_configs.read().await;
-            configs
-                .get_layer_by_param(model, &parameter)
-                .and_then(|l| l.default_level())
-                .map(|s| s.to_string())
-        }
-    };
-
-    // Query the point value
-    let features = match crate::rendering::query_point_value(
-        &state.catalog,
-        &state.metrics,
-        &state.grid_processor_factory,
-        layer,
-        bbox_array,
-        256,
-        256,
-        i,
-        j,
-        "EPSG:4326",
-        forecast_hour,
-        observation_time,
-        effective_elevation.as_deref(),
-    )
-    .await
-    {
-        Ok(features) => features,
-        Err(e) => {
-            error!(layer = %layer, error = %e, "WMTS GetFeatureInfo query failed");
-            return wmts_exception(
-                "NoApplicableCode",
-                &format!("Query failed: {}", e),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            );
-        }
-    };
-
-    let response = FeatureInfoResponse::new(features);
-
-    // Format response based on INFOFORMAT
-    let (body, content_type) = match format {
-        InfoFormat::Json => match response.to_json() {
-            Ok(json) => (json, "application/json"),
-            Err(e) => {
-                return wmts_exception(
-                    "NoApplicableCode",
-                    &format!("JSON encoding failed: {}", e),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                );
-            }
-        },
-        InfoFormat::Html => (response.to_html(), "text/html"),
-        InfoFormat::Xml => (response.to_xml(), "text/xml"),
-        InfoFormat::Text => (response.to_text(), "text/plain"),
-    };
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .body(body.into())
-        .unwrap()
 }
 
 // ============================================================================
@@ -1171,24 +891,6 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
             None,
             None,
             true,
-        )
-        .await
-    } else if style == "numbers" {
-        crate::rendering::render_numbers_tile_with_buffer(
-            &state.catalog,
-            &state.metrics,
-            &state.grid_processor_factory,
-            model,
-            &parameter,
-            Some(coord),
-            256,
-            256,
-            bbox_array,
-            &style_file,
-            None,
-            None,
-            true,
-            requires_full_grid,
         )
         .await
     } else {
@@ -1445,9 +1147,6 @@ fn build_wmts_capabilities_xml_v2(
       <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
     </ows:Operation>
     <ows:Operation name="GetTile">
-      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
-    </ows:Operation>
-    <ows:Operation name="GetFeatureInfo">
       <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
     </ows:Operation>
   </ows:OperationsMetadata>

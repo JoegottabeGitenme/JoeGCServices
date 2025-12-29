@@ -360,49 +360,114 @@ impl Scheduler {
     ) -> Result<Vec<(String, String)>> {
         let mut files = Vec::new();
 
-        // For observation data, we look for recent timestamps
-        let lookback = model.schedule.lookback_minutes;
+        // For observation data, use retention hours as the lookback period
+        // This ensures we download historical data up to the retention limit on startup
+        let lookback = model.lookback_minutes();
         let now = Utc::now();
+        let earliest_time = now - ChronoDuration::minutes(lookback as i64);
 
         info!(
             model = %model.model.id,
             lookback_minutes = lookback,
+            retention_hours = model.retention.hours,
+            earliest_time = %earliest_time,
             "Checking for available observation files"
         );
 
         // MRMS uses S3 listing to discover recent files
         if model.model.id == "mrms" {
-            // MRMS files are organized by date: CONUS/{product}/{YYYYMMDD}/MRMS_{product}_{timestamp}.grib2.gz
-            // Files are available every 2 minutes
-            let date_str = now.format("%Y%m%d").to_string();
+            files = self
+                .discover_mrms_files(model, now, earliest_time, lookback)
+                .await?;
+        } else if model.model.id.starts_with("goes") {
+            files = self
+                .discover_goes_files(model, now, earliest_time, lookback)
+                .await?;
+        }
 
-            // Check each MRMS product
-            for param in &model.parameters {
-                if let Some(product) = param.product.as_ref() {
+        Ok(files)
+    }
+
+    /// Discover MRMS files within the lookback period.
+    /// Handles date boundary by checking multiple date folders if needed.
+    async fn discover_mrms_files(
+        &self,
+        model: &ModelConfig,
+        now: DateTime<Utc>,
+        earliest_time: DateTime<Utc>,
+        lookback: u32,
+    ) -> Result<Vec<(String, String)>> {
+        let mut files = Vec::new();
+
+        // MRMS files are organized by date: CONUS/{product}/{YYYYMMDD}/MRMS_{product}_{timestamp}.grib2.gz
+        // Files are available every 2 minutes
+
+        // Determine which dates we need to check (handles date boundary)
+        let mut dates_to_check = Vec::new();
+        let today = now.format("%Y%m%d").to_string();
+        dates_to_check.push(today.clone());
+
+        // If earliest_time is on a different day, also check that day
+        let earliest_date = earliest_time.format("%Y%m%d").to_string();
+        if earliest_date != today {
+            dates_to_check.push(earliest_date.clone());
+        }
+
+        info!(
+            model = %model.model.id,
+            dates = ?dates_to_check,
+            "Checking MRMS date folders"
+        );
+
+        // Check each MRMS product
+        for param in &model.parameters {
+            if let Some(product) = param.product.as_ref() {
+                for date_str in &dates_to_check {
                     let prefix = format!("CONUS/{}/{}/", product, date_str);
 
                     // Calculate start_after to skip to files within lookback period
+                    // For the earliest date, start from the earliest_time
+                    // For today, we can start from beginning of day or earliest_time, whichever is later
+                    let start_time = if date_str == &earliest_date {
+                        earliest_time
+                    } else {
+                        // For today's folder, start from beginning of day
+                        now.date_naive()
+                            .and_hms_opt(0, 0, 0)
+                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                            .unwrap_or(earliest_time)
+                    };
+
                     // MRMS filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
-                    let earliest_time = now - ChronoDuration::minutes(lookback as i64);
                     let start_after_key = format!(
                         "CONUS/{}/{}/MRMS_{}_{}",
                         product,
                         date_str,
                         product,
-                        earliest_time.format("%Y%m%d-%H%M00")
+                        start_time.format("%Y%m%d-%H%M00")
                     );
 
                     debug!(
                         model = %model.model.id,
                         prefix = %prefix,
                         product = product,
+                        date = date_str,
                         start_after = %start_after_key,
                         "Listing MRMS files from S3"
                     );
 
+                    // Calculate max results based on lookback period
+                    // MRMS updates every 2 minutes, so ~30 files per hour per product
+                    let max_results = ((lookback / 2) as usize + 10).max(50);
+
                     // List recent files from S3 using start_after to skip older files
                     match self
-                        .list_s3_files(&model.source.bucket, &prefix, 50, Some(&start_after_key))
+                        .list_s3_files(
+                            &model.source.bucket,
+                            &prefix,
+                            max_results,
+                            Some(&start_after_key),
+                        )
                         .await
                     {
                         Ok(keys) => {
@@ -412,76 +477,32 @@ impl Scheduler {
                                 count = keys.len(),
                                 "Listed files from S3"
                             );
-                            // Filter for files within lookback period
-                            // Filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
-                            let earliest_time = now - ChronoDuration::minutes(lookback as i64);
 
                             for key in keys {
                                 if key.ends_with(".grib2.gz") && key.contains(product) {
                                     // Extract timestamp from filename
                                     // Example: CONUS/MergedReflectivityQC_00.50/20251202/MRMS_MergedReflectivityQC_00.50_20251202-005440.grib2.gz
-                                    if let Some(filename) = key.split('/').next_back() {
-                                        // Parse timestamp from filename (YYYYMMDD-HHMMSS)
-                                        if let Some(timestamp_part) =
-                                            filename.split('_').next_back()
-                                        {
-                                            let timestamp_str =
-                                                timestamp_part.replace(".grib2.gz", "");
-                                            // Format: 20251202-175037 (YYYYMMDD-HHMMSS, total 15 chars including hyphen)
-                                            // Remove hyphen for easier parsing
-                                            let timestamp_clean = timestamp_str.replace("-", "");
-                                            // Now format is: 20251202175037 (14 chars)
-                                            if timestamp_clean.len() >= 14 {
-                                                let year: i32 =
-                                                    timestamp_clean[0..4].parse().unwrap_or(0);
-                                                let month: u32 =
-                                                    timestamp_clean[4..6].parse().unwrap_or(0);
-                                                let day: u32 =
-                                                    timestamp_clean[6..8].parse().unwrap_or(0);
-                                                let hour: u32 =
-                                                    timestamp_clean[8..10].parse().unwrap_or(0);
-                                                let minute: u32 =
-                                                    timestamp_clean[10..12].parse().unwrap_or(0);
-                                                let second: u32 =
-                                                    timestamp_clean[12..14].parse().unwrap_or(0);
+                                    if let Some(file_time) = self.parse_mrms_timestamp(&key) {
+                                        // Only include files within lookback period
+                                        if file_time >= earliest_time && file_time <= now {
+                                            let url = format!(
+                                                "https://{}.s3.amazonaws.com/{}",
+                                                model.source.bucket, key
+                                            );
 
-                                                if let Some(naive_dt) =
-                                                    chrono::NaiveDate::from_ymd_opt(
-                                                        year, month, day,
-                                                    )
-                                                    .and_then(|d| {
-                                                        d.and_hms_opt(hour, minute, second)
-                                                    })
-                                                {
-                                                    let file_time =
-                                                        DateTime::<Utc>::from_naive_utc_and_offset(
-                                                            naive_dt, Utc,
-                                                        );
+                                            let filename =
+                                                key.split('/').next_back().unwrap_or(&key);
+                                            let output_filename = format!("mrms_{}", filename);
 
-                                                    // Only include files within lookback period
-                                                    if file_time >= earliest_time
-                                                        && file_time <= now
-                                                    {
-                                                        let url = format!(
-                                                            "https://{}.s3.amazonaws.com/{}",
-                                                            model.source.bucket, key
-                                                        );
+                                            debug!(
+                                                model = %model.model.id,
+                                                url = %url,
+                                                output = %output_filename,
+                                                timestamp = %file_time,
+                                                "Found MRMS file"
+                                            );
 
-                                                        let output_filename =
-                                                            format!("mrms_{}", filename);
-
-                                                        info!(
-                                                            model = %model.model.id,
-                                                            url = %url,
-                                                            output = %output_filename,
-                                                            timestamp = %file_time,
-                                                            "Found MRMS file"
-                                                        );
-
-                                                        files.push((url, output_filename));
-                                                    }
-                                                }
-                                            }
+                                            files.push((url, output_filename));
                                         }
                                     }
                                 }
@@ -498,106 +519,182 @@ impl Scheduler {
                     }
                 }
             }
+        }
 
-            if files.is_empty() {
+        if files.is_empty() {
+            debug!(
+                model = %model.model.id,
+                lookback_minutes = lookback,
+                "No new MRMS files found"
+            );
+        } else {
+            info!(
+                model = %model.model.id,
+                count = files.len(),
+                "Found MRMS files to download"
+            );
+        }
+
+        Ok(files)
+    }
+
+    /// Parse timestamp from MRMS filename.
+    /// Filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
+    fn parse_mrms_timestamp(&self, key: &str) -> Option<DateTime<Utc>> {
+        let filename = key.split('/').next_back()?;
+        let timestamp_part = filename.split('_').next_back()?;
+        let timestamp_str = timestamp_part.replace(".grib2.gz", "");
+        // Format: 20251202-175037 (YYYYMMDD-HHMMSS)
+        let timestamp_clean = timestamp_str.replace("-", "");
+        // Now format is: 20251202175037 (14 chars)
+        if timestamp_clean.len() >= 14 {
+            let year: i32 = timestamp_clean[0..4].parse().ok()?;
+            let month: u32 = timestamp_clean[4..6].parse().ok()?;
+            let day: u32 = timestamp_clean[6..8].parse().ok()?;
+            let hour: u32 = timestamp_clean[8..10].parse().ok()?;
+            let minute: u32 = timestamp_clean[10..12].parse().ok()?;
+            let second: u32 = timestamp_clean[12..14].parse().ok()?;
+
+            let naive_dt = chrono::NaiveDate::from_ymd_opt(year, month, day)?
+                .and_hms_opt(hour, minute, second)?;
+            Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc))
+        } else {
+            None
+        }
+    }
+
+    /// Discover GOES files within the lookback period.
+    /// Handles date/hour boundaries by iterating through all hours in the lookback window.
+    async fn discover_goes_files(
+        &self,
+        model: &ModelConfig,
+        now: DateTime<Utc>,
+        earliest_time: DateTime<Utc>,
+        lookback: u32,
+    ) -> Result<Vec<(String, String)>> {
+        let mut files = Vec::new();
+
+        // GOES-16 and GOES-18 satellite imagery
+        // Files are available every 5-10 minutes
+        // Format: OR_ABI-L2-CMIPC-M{mode}C{band:02}_G{satellite}_s{start}_e{end}_c{created}.nc
+
+        let satellite_num = if model.model.id == "goes16" {
+            "16"
+        } else {
+            "18"
+        };
+
+        // Calculate hours to check - need to cover entire lookback period
+        // Add 1 to ensure we include the current partial hour
+        let hours_to_check = (lookback / 60) + 1;
+
+        // Calculate max_results based on lookback period
+        // GOES files are available every 5 minutes, so ~12 files per hour per band
+        let files_per_hour = 12; // ~5 minute intervals
+        let max_results = (files_per_hour * 2).max(24); // Check 2 hours worth per query
+
+        // Get configured bands from source
+        let bands = model.source.bands.clone().unwrap_or_else(|| vec![2, 8, 13]); // Default: Red, WV, IR
+
+        info!(
+            model = %model.model.id,
+            hours_to_check = hours_to_check,
+            bands = ?bands,
+            earliest_time = %earliest_time,
+            "Checking GOES hour folders"
+        );
+
+        // Iterate through each hour in the lookback window
+        for hours_ago in 0..hours_to_check {
+            let check_time = now - ChronoDuration::hours(hours_ago as i64);
+            let hour = check_time.hour();
+            let check_doy = check_time.ordinal();
+            let check_year = check_time.year();
+
+            for band in &bands {
+                // S3 path pattern: ABI-L2-CMIPC/{year}/{day_of_year:03}/{hour:02}/
+                let product = model.source.product.as_deref().unwrap_or("ABI-L2-CMIPC");
+
+                let prefix = format!("{}/{}/{:03}/{:02}/", product, check_year, check_doy, hour);
+
+                // Use start_after to efficiently skip to files matching this band and satellite
+                // GOES filenames are lexicographically sorted by band (C01, C02, ..., C13, C14, C15, C16)
+                // and then by satellite (G16, G18) and timestamp
+                // Example: OR_ABI-L2-CMIPC-M6C13_G18_s20253570101170...
+                // We want to start just before our target band+satellite combo
+                let start_after_key = format!(
+                    "{}OR_{}-M6C{:02}_G{}_",
+                    prefix, product, band, satellite_num
+                );
+
                 debug!(
                     model = %model.model.id,
-                    lookback_minutes = lookback,
-                    "No new MRMS files found"
+                    prefix = %prefix,
+                    band = band,
+                    satellite = satellite_num,
+                    year = check_year,
+                    doy = check_doy,
+                    hour = hour,
+                    start_after = %start_after_key,
+                    max_results = max_results,
+                    "Listing GOES files from S3 with start_after"
                 );
-            } else {
-                info!(
-                    model = %model.model.id,
-                    count = files.len(),
-                    "Found MRMS files to download"
-                );
-            }
-        } else if model.model.id.starts_with("goes") {
-            // GOES-16 and GOES-18 satellite imagery
-            // Files are available every 5-10 minutes
-            // Format: OR_ABI-L2-CMIPC-M{mode}C{band:02}_G{satellite}_s{start}_e{end}_c{created}.nc
 
-            let satellite_num = if model.model.id == "goes16" {
-                "16"
-            } else {
-                "18"
-            };
+                // List files from S3 using start_after to skip directly to target band
+                match self
+                    .list_s3_files(
+                        &model.source.bucket,
+                        &prefix,
+                        max_results,
+                        Some(&start_after_key),
+                    )
+                    .await
+                {
+                    Ok(keys) => {
+                        // Filter for the specific band we want (start_after gets us close but we still need to verify)
+                        // Filename format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
+                        let band_str = format!("C{:02}", band);
+                        let sat_str = format!("_G{}_", satellite_num);
 
-            // Check recent hours (lookback is in minutes, convert to hours)
-            let hours_to_check = (lookback / 60).max(1);
+                        let mut found_count = 0;
+                        for key in keys {
+                            if key.contains(&band_str)
+                                && key.contains(&sat_str)
+                                && key.ends_with(".nc")
+                            {
+                                // Parse timestamp from filename to verify it's within the lookback window
+                                if let Some(file_time) = self.parse_goes_timestamp(&key) {
+                                    if file_time >= earliest_time && file_time <= now {
+                                        // Construct the full S3 URL
+                                        let url = format!(
+                                            "https://{}.s3.amazonaws.com/{}",
+                                            model.source.bucket, key
+                                        );
 
-            // Calculate max_results based on lookback period
-            // GOES files are available every 5 minutes, so ~12 files per hour per band
-            // We want to fetch all files within the lookback period
-            let files_per_hour = 12; // ~5 minute intervals
-            let max_results = (files_per_hour * hours_to_check as usize).max(20);
+                                        // Extract filename for output
+                                        let filename = key.split('/').next_back().unwrap_or(&key);
+                                        let output_filename =
+                                            format!("goes{}_{}", satellite_num, filename);
 
-            // Get configured bands from source
-            let bands = model.source.bands.clone().unwrap_or_else(|| vec![2, 8, 13]); // Default: Red, WV, IR
+                                        debug!(
+                                            model = %model.model.id,
+                                            url = %url,
+                                            output = %output_filename,
+                                            timestamp = %file_time,
+                                            "Found GOES file"
+                                        );
 
-            for hours_ago in 0..hours_to_check {
-                let check_time = now - ChronoDuration::hours(hours_ago as i64);
-                let hour = check_time.hour();
-                let check_doy = check_time.ordinal(); // Handle day boundary
-                let check_year = check_time.year();
-
-                for band in &bands {
-                    // S3 path pattern: ABI-L2-CMIPC/{year}/{day_of_year:03}/{hour:02}/
-                    let product = model.source.product.as_deref().unwrap_or("ABI-L2-CMIPC");
-
-                    let prefix =
-                        format!("{}/{}/{:03}/{:02}/", product, check_year, check_doy, hour);
-
-                    // Use start_after to efficiently skip to files matching this band and satellite
-                    // GOES filenames are lexicographically sorted by band (C01, C02, ..., C13, C14, C15, C16)
-                    // and then by satellite (G16, G18) and timestamp
-                    // Example: OR_ABI-L2-CMIPC-M6C13_G18_s20253570101170...
-                    // We want to start just before our target band+satellite combo
-                    let start_after_key = format!(
-                        "{}OR_{}-M6C{:02}_G{}_",
-                        prefix, product, band, satellite_num
-                    );
-
-                    info!(
-                        model = %model.model.id,
-                        prefix = %prefix,
-                        band = band,
-                        satellite = satellite_num,
-                        start_after = %start_after_key,
-                        max_results = max_results,
-                        "Listing GOES files from S3 with start_after"
-                    );
-
-                    // List files from S3 using start_after to skip directly to target band
-                    match self
-                        .list_s3_files(
-                            &model.source.bucket,
-                            &prefix,
-                            max_results,
-                            Some(&start_after_key),
-                        )
-                        .await
-                    {
-                        Ok(keys) => {
-                            // Filter for the specific band we want (start_after gets us close but we still need to verify)
-                            // Filename format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
-                            let band_str = format!("C{:02}", band);
-                            let sat_str = format!("_G{}_", satellite_num);
-
-                            let mut found_count = 0;
-                            for key in keys {
-                                if key.contains(&band_str)
-                                    && key.contains(&sat_str)
-                                    && key.ends_with(".nc")
-                                {
-                                    // Construct the full S3 URL
+                                        files.push((url, output_filename));
+                                        found_count += 1;
+                                    }
+                                } else {
+                                    // If we can't parse timestamp, include the file anyway
+                                    // (the file is in the right hour folder)
                                     let url = format!(
                                         "https://{}.s3.amazonaws.com/{}",
                                         model.source.bucket, key
                                     );
 
-                                    // Extract timestamp from filename for output filename
-                                    // Example: OR_ABI-L2-CMIPC-M6C02_G16_s20242350000000_e20242350009308_c20242350009356.nc
                                     let filename = key.split('/').next_back().unwrap_or(&key);
                                     let output_filename =
                                         format!("goes{}_{}", satellite_num, filename);
@@ -606,50 +703,80 @@ impl Scheduler {
                                         model = %model.model.id,
                                         url = %url,
                                         output = %output_filename,
-                                        "Found GOES file"
+                                        "Found GOES file (no timestamp parsed)"
                                     );
 
                                     files.push((url, output_filename));
                                     found_count += 1;
                                 }
                             }
+                        }
 
+                        if found_count > 0 {
                             info!(
                                 model = %model.model.id,
                                 band = band,
+                                year = check_year,
+                                doy = check_doy,
                                 hour = hour,
                                 found = found_count,
                                 "GOES files found for band/hour"
                             );
                         }
-                        Err(e) => {
-                            warn!(
-                                model = %model.model.id,
-                                prefix = %prefix,
-                                error = %e,
-                                "Failed to list GOES files from S3"
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            model = %model.model.id,
+                            prefix = %prefix,
+                            error = %e,
+                            "Failed to list GOES files from S3"
+                        );
                     }
                 }
             }
+        }
 
-            if files.is_empty() {
-                debug!(
-                    model = %model.model.id,
-                    lookback_minutes = lookback,
-                    "No new GOES files found"
-                );
-            } else {
-                info!(
-                    model = %model.model.id,
-                    count = files.len(),
-                    "Found GOES files to download"
-                );
-            }
+        if files.is_empty() {
+            debug!(
+                model = %model.model.id,
+                lookback_minutes = lookback,
+                "No new GOES files found"
+            );
+        } else {
+            info!(
+                model = %model.model.id,
+                count = files.len(),
+                "Found GOES files to download"
+            );
         }
 
         Ok(files)
+    }
+
+    /// Parse timestamp from GOES filename.
+    /// Filename format: OR_ABI-L2-CMIPC-M6C{band}_G{sat}_s{start}_e{end}_c{created}.nc
+    /// Start timestamp format: s{YYYYDDDHHMMSS}0 (year, day-of-year, hour, min, sec, tenths)
+    fn parse_goes_timestamp(&self, key: &str) -> Option<DateTime<Utc>> {
+        let filename = key.split('/').next_back()?;
+        // Find the start timestamp (s{timestamp})
+        let s_idx = filename.find("_s")?;
+        let timestamp_start = s_idx + 2;
+        // Timestamp is 14 chars: YYYYDDDHHMMSS (year, doy, hour, min, sec) + 1 for tenths
+        if filename.len() < timestamp_start + 14 {
+            return None;
+        }
+        let timestamp_str = &filename[timestamp_start..timestamp_start + 13];
+
+        let year: i32 = timestamp_str[0..4].parse().ok()?;
+        let doy: u32 = timestamp_str[4..7].parse().ok()?;
+        let hour: u32 = timestamp_str[7..9].parse().ok()?;
+        let minute: u32 = timestamp_str[9..11].parse().ok()?;
+        let second: u32 = timestamp_str[11..13].parse().ok()?;
+
+        // Convert day-of-year to month/day
+        let naive_date = chrono::NaiveDate::from_yo_opt(year, doy)?;
+        let naive_dt = naive_date.and_hms_opt(hour, minute, second)?;
+        Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc))
     }
 
     /// Check if a file exists via HEAD request.

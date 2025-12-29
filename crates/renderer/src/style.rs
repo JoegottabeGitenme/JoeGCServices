@@ -959,7 +959,7 @@ fn apply_style_gradient_into(
 /// # Arguments
 /// * `data` - Input weather data values
 /// * `width` - Image width
-/// * `height` - Image height  
+/// * `height` - Image height
 /// * `palette` - Pre-computed palette from `StyleDefinition::compute_palette()`
 /// * `style` - Style definition (for transform)
 ///
