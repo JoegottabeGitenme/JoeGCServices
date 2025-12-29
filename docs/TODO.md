@@ -57,3 +57,5 @@
 - System design high level architecture diagram isn't right anymore
 - Do both wms and WMTS need to support featureinfo requests?
 - Minio object storage section is wrong
+- download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
+- also NBM https://vlab.noaa.gov/web/mdl/nbm-download

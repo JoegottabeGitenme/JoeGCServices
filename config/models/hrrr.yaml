@@ -60,7 +60,7 @@ precaching:
   keep_recent: 6                    # 6 most recent forecasts
   warm_on_ingest: false
   poll_interval_secs: 300
-  parameters: [ "TMP", "REFC" ]       # Most requested parameters
+  parameters: [ "TMP" ]               # Most requested parameters
 
 # GRIB2 level type codes reference:
 #   1 = surface
@@ -151,10 +151,6 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
-      - type: isobaric
-        level_code: 100
-        values: [ 850, 700, 500, 300, 250 ]
-        display_template: "{value} mb"
     style: wind
     units: m/s
     valid_range: [ -150, 150 ]  # Wind components can be negative
@@ -172,10 +168,6 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
-      - type: isobaric
-        level_code: 100
-        values: [ 850, 700, 500, 300, 250 ]
-        display_template: "{value} mb"
     style: wind
     units: m/s
     valid_range: [ -150, 150 ]  # Wind components can be negative
@@ -197,23 +189,6 @@ parameters:
     units: "%"
     valid_range: [ 0, 100 ]  # Percentage 0-100%
 
-  # Precipitable Water (entire atmosphere)
-  - name: PWAT
-    description: "Precipitable Water"
-    grib2:
-      discipline: 0
-      category: 1
-      number: 3
-    downsample: mean
-    levels:
-      - type: entire_atmosphere
-        level_code: 200
-        display: "entire atmosphere"
-    style: humidity
-    units: kg/m^2
-    display_units: mm
-    valid_range: [ 0, 100 ]  # 0-100 mm
-
   # Surface wind gust
   - name: GUST
     description: "Wind Speed (Gust)"
@@ -229,45 +204,6 @@ parameters:
     style: wind
     units: m/s
     valid_range: [ 0, 100 ]  # Gusts always positive (magnitude)
-
-  # ==========================================================================
-  # Radar & Reflectivity
-  # ==========================================================================
-  
-  # Composite Reflectivity  
-  - name: REFC
-    description: "Composite Reflectivity"
-    grib2:
-      discipline: 0
-      category: 16
-      number: 196
-    downsample: max
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 1000
-        display: "1000 m above ground"
-    style: reflectivity
-    units: dBZ
-    valid_range: [ -30, 80 ]  # dBZ range for radar reflectivity
-
-  # Echo Top Height
-  - name: RETOP
-    description: "Echo Top Height"
-    grib2:
-      discipline: 0
-      category: 16
-      number: 197
-    downsample: max
-    levels:
-      - type: cloud_top
-        level_code: 3
-        display: "cloud top"
-    style: default
-    units: m
-    display_units: kft
-    conversion: m_to_kft
-    valid_range: [ 0, 25000 ]  # 0-25 km echo tops
 
   # ==========================================================================
   # Precipitation Parameters
@@ -290,80 +226,6 @@ parameters:
     display_units: mm
     accumulation: true
     valid_range: [ 0, 500 ]  # 0-500 mm accumulated
-
-  # ==========================================================================
-  # Convective/Stability Parameters
-  # ==========================================================================
-  
-  # Convective Available Potential Energy (surface-based)
-  - name: CAPE
-    description: "Convective Available Potential Energy"
-    grib2:
-      discipline: 0
-      category: 7
-      number: 6
-    downsample: max
-    levels:
-      - type: surface
-        level_code: 1
-        display: "surface"
-    style: cape
-    units: J/kg
-    valid_range: [ 0, 10000 ]  # 0-10000 J/kg
-
-  # Convective Inhibition
-  - name: CIN
-    description: "Convective Inhibition"
-    grib2:
-      discipline: 0
-      category: 7
-      number: 7
-    downsample: mean
-    levels:
-      - type: surface
-        level_code: 1
-        display: "surface"
-    style: cape
-    units: J/kg
-    valid_range: [ -1000, 0 ]  # CIN is typically negative
-
-  # Updraft Helicity (2-5km layer) - Severe weather/tornado potential
-  # Note: GRIB2 stores this as a layer (2000-5000m) but we match on first surface value
-  - name: MXUPHL
-    description: "Maximum Updraft Helicity"
-    grib2:
-      discipline: 0
-      category: 7
-      number: 199
-    downsample: max
-    levels:
-      - type: height_above_ground_layer
-        level_code: 103
-        value: 2000
-        display: "2000 m above ground"
-    style: helicity
-    units: m^2/s^2
-    valid_range: [ -1000, 1000 ]  # Helicity can be positive or negative
-
-  # ==========================================================================
-  # Lightning
-  # ==========================================================================
-  
-  # Lightning Threat (LTNG) - Total lightning density
-  - name: LTNG
-    description: "Lightning Threat"
-    grib2:
-      discipline: 0
-      category: 17
-      number: 192
-    downsample: max
-    levels:
-      - type: entire_atmosphere
-        level_code: 200
-        display: "entire atmosphere"
-    style: lightning
-    units: flashes/km^2/min
-    valid_range: [ 0, 100 ]  # Lightning density
 
   # ==========================================================================
   # Visibility
@@ -406,94 +268,6 @@ parameters:
     style: cloud
     units: "%"
     valid_range: [ 0, 100 ]  # Percentage 0-100%
-
-  # Low Cloud Cover
-  - name: LCDC
-    description: "Low Cloud Cover"
-    grib2:
-      discipline: 0
-      category: 6
-      number: 3
-    downsample: mean
-    levels:
-      - type: low_cloud_layer
-        level_code: 212
-        display: "low cloud layer"
-    style: cloud
-    units: "%"
-    valid_range: [ 0, 100 ]  # Percentage 0-100%
-
-  # Middle Cloud Cover
-  - name: MCDC
-    description: "Middle Cloud Cover"
-    grib2:
-      discipline: 0
-      category: 6
-      number: 4
-    downsample: mean
-    levels:
-      - type: middle_cloud_layer
-        level_code: 222
-        display: "middle cloud layer"
-    style: cloud
-    units: "%"
-    valid_range: [ 0, 100 ]  # Percentage 0-100%
-
-  # High Cloud Cover
-  - name: HCDC
-    description: "High Cloud Cover"
-    grib2:
-      discipline: 0
-      category: 6
-      number: 5
-    downsample: mean
-    levels:
-      - type: high_cloud_layer
-        level_code: 232
-        display: "high cloud layer"
-    style: cloud
-    units: "%"
-    valid_range: [ 0, 100 ]  # Percentage 0-100%
-
-  # ==========================================================================
-  # Upper-Air Temperature
-  # ==========================================================================
-  
-  # Temperature at pressure levels
-  - name: TMP
-    description: "Temperature"
-    grib2:
-      discipline: 0
-      category: 0
-      number: 0
-    downsample: mean
-    levels:
-      - type: isobaric
-        level_code: 100
-        values: [ 850, 700, 500, 300, 250 ]
-        display_template: "{value} mb"
-    style: temperature
-    units: K
-    display_units: °C
-    conversion: K_to_C
-    valid_range: [ 180, 340 ]  # ~-93°C to 67°C
-
-  # Geopotential Height at pressure levels
-  - name: HGT
-    description: "Geopotential Height"
-    grib2:
-      discipline: 0
-      category: 3
-      number: 5
-    downsample: mean
-    levels:
-      - type: isobaric
-        level_code: 100
-        values: [ 850, 700, 500, 300, 250 ]
-        display_template: "{value} mb"
-    style: default
-    units: gpm
-    valid_range: [ -500, 20000 ]  # Geopotential height range
 
 # Composite layers
 composites:
