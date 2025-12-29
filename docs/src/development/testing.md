@@ -19,7 +19,6 @@ crates/
 │   ├── gradient_tests.rs    # Color gradient tests
 │   ├── contour_tests.rs     # Contour generation tests
 │   ├── barbs_tests.rs       # Wind barb rendering tests
-│   ├── numbers_tests.rs     # Numeric label tests
 │   ├── style_tests.rs       # Style configuration tests
 │   └── png_tests.rs         # PNG encoding tests
 ├── wms-common/tests/

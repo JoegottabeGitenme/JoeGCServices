@@ -43,7 +43,7 @@ RUST_BACKTRACE=1                   # Enable backtraces
 
 ### Tile Rendering
 ```bash
-# Buffer pixels for wind barbs and numbers rendering
+# Buffer pixels for wind barb rendering
 # Prevents edge clipping artifacts at tile boundaries
 TILE_RENDER_BUFFER_PIXELS=120      # Default: 120px (good for 108px barbs)
                                    # Renders 496x496 and crops to 256x256

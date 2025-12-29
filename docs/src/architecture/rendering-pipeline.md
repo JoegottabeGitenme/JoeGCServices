@@ -547,7 +547,7 @@ let png = create_png_from_precomputed(&indices, w, h, &palette)?;
 
 ### 4. Tile Buffer for Edge Features
 
-Wind barbs, numbers, and other features that can extend beyond their anchor point use a **pixel buffer** approach to
+Wind barbs and other features that can extend beyond their anchor point use a **pixel buffer** approach to
 prevent clipping at tile boundaries.
 
 #### The Problem

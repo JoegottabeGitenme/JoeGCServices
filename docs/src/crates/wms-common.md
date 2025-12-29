@@ -80,7 +80,7 @@ pub struct TileCoord {
 
 ### TileBufferConfig
 
-Configuration for rendering tiles with a pixel buffer margin. Used to prevent edge clipping for features like wind barbs and numbers.
+Configuration for rendering tiles with a pixel buffer margin. Used to prevent edge clipping for features like wind barbs.
 
 ```rust
 pub struct TileBufferConfig {
