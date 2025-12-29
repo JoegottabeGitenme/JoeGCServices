@@ -59,3 +59,7 @@
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
+- uhhh we might be caching blank tiles, example: HRRR data outside of it's geographic bounds WMS still returns a 'tile'
+  but it's just blank, this could potentially be optmized somehow, maybe just don't cache if it's completely blank?
+  maybe a simple hashsum check? don't want to introduce too much overhead for something that ultimately may not happen
+  often. Right now each blank tile is 0.5kb and returns in around 7ms

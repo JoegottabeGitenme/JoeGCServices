@@ -70,25 +70,6 @@
         "title": "Pressure (hPa)",
         "labels": ["960", "980", "1000", "1013", "1020", "1040"]
       }
-    },
-    "numbers": {
-      "name": "MSLP Values",
-      "description": "Display MSLP values as numbers on the map",
-      "type": "numbers",
-      "units": "hPa",
-      "transform": {
-        "type": "Pa_to_hPa"
-      },
-      "numbers": {
-        "spacing": 50,
-        "font_size": 11.0,
-        "font_color": "#000000",
-        "background_color": "#FFFFFFCC",
-        "decimal_places": 1
-      },
-      "legend": {
-        "title": "Pressure (hPa)"
-      }
     }
   }
 }

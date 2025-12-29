@@ -927,32 +927,6 @@ async fn render_weather_data(
     // Check if model requires full grid reads (non-geographic projection)
     let requires_full_grid = state.model_dimensions.requires_full_grid(model);
 
-    if style == "numbers" {
-        let style_file = state
-            .layer_configs
-            .read()
-            .await
-            .get_style_file_for_parameter(model, &parameter);
-
-        return crate::rendering::render_numbers_tile(
-            &state.catalog,
-            &state.metrics,
-            &state.grid_processor_factory,
-            model,
-            &parameter,
-            width,
-            height,
-            parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
-            &style_file,
-            forecast_hour,
-            level.as_deref(),
-            use_mercator,
-            requires_full_grid,
-        )
-        .await
-        .map_err(WmsError::from_rendering_error);
-    }
-
     // Standard rendering
     let style_file = state
         .layer_configs

@@ -61,24 +61,6 @@
       "legend": {
         "title": "Temperature (°C)"
       }
-    },
-    "numbers": {
-      "name": "Numeric Values",
-      "description": "Display temperature values as numbers on the map",
-      "type": "numbers",
-      "transform": {
-        "type": "k_to_c"
-      },
-      "numbers": {
-        "spacing": 50,
-        "font_size": 11.0,
-        "font_color": "#000000",
-        "background_color": "#FFFFFFCC",
-        "decimal_places": 1
-      },
-      "legend": {
-        "title": "Temperature (°C)"
-      }
     }
   }
 }

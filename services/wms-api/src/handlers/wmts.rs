@@ -752,29 +752,6 @@ async fn wmts_get_tile(
             true,
         )
         .await
-    } else if style == "numbers" {
-        let style_file = state
-            .layer_configs
-            .read()
-            .await
-            .get_style_file_for_parameter(model, &parameter);
-        crate::rendering::render_numbers_tile_with_buffer(
-            &state.catalog,
-            &state.metrics,
-            &state.grid_processor_factory,
-            model,
-            &parameter,
-            Some(coord),
-            256,
-            256,
-            bbox_array,
-            &style_file,
-            forecast_hour,
-            elevation,
-            true,
-            requires_full_grid,
-        )
-        .await
     } else {
         let style_file = state
             .layer_configs
@@ -1171,24 +1148,6 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
             None,
             None,
             true,
-        )
-        .await
-    } else if style == "numbers" {
-        crate::rendering::render_numbers_tile_with_buffer(
-            &state.catalog,
-            &state.metrics,
-            &state.grid_processor_factory,
-            model,
-            &parameter,
-            Some(coord),
-            256,
-            256,
-            bbox_array,
-            &style_file,
-            None,
-            None,
-            true,
-            requires_full_grid,
         )
         .await
     } else {
