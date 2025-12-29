@@ -50,12 +50,9 @@
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
 - Most chunks decompressed are 1 MB, figure out how much storage to cache common products
-- Chunk cache keys reference wms when they don't need to, wms should know what parameters it needs, what parameters go
-  into what models etc.
 - Cache invalidation section in the docs doesn't quite make sense
 - Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
 - System design high level architecture diagram isn't right anymore
-- Do both wms and WMTS need to support featureinfo requests?
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
@@ -63,3 +60,4 @@
   but it's just blank, this could potentially be optmized somehow, maybe just don't cache if it's completely blank?
   maybe a simple hashsum check? don't want to introduce too much overhead for something that ultimately may not happen
   often. Right now each blank tile is 0.5kb and returns in around 7ms
+- looping radar (only product that does this) absolutely eats up the chunk cache
