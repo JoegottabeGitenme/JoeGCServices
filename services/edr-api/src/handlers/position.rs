@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Extension, Path, Query},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use chrono::{DateTime, Utc};
@@ -16,6 +16,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::LevelValue;
+use crate::content_negotiation::check_data_query_accept;
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 
@@ -47,9 +48,10 @@ pub async fn position_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
     Query(params): Query<PositionQueryParams>,
+    headers: HeaderMap,
 ) -> Response {
     // Use latest instance
-    position_query(state, collection_id, None, params).await
+    position_query(state, collection_id, None, params, headers).await
 }
 
 /// GET /edr/collections/:collection_id/instances/:instance_id/position
@@ -57,8 +59,9 @@ pub async fn instance_position_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, instance_id)): Path<(String, String)>,
     Query(params): Query<PositionQueryParams>,
+    headers: HeaderMap,
 ) -> Response {
-    position_query(state, collection_id, Some(instance_id), params).await
+    position_query(state, collection_id, Some(instance_id), params, headers).await
 }
 
 async fn position_query(
@@ -66,7 +69,22 @@ async fn position_query(
     collection_id: String,
     instance_id: Option<String>,
     params: PositionQueryParams,
+    headers: HeaderMap,
 ) -> Response {
+    // Debug: log the Accept header
+    if let Some(accept) = headers.get(header::ACCEPT) {
+        tracing::debug!("Position query Accept header: {:?}", accept);
+    } else {
+        tracing::debug!("Position query: No Accept header present");
+    }
+    
+    // Check Accept header - return 406 if unsupported format requested
+    // Per OGC EDR spec and RFC 7231
+    if let Err(response) = check_data_query_accept(&headers) {
+        tracing::debug!("Rejecting request with 406 Not Acceptable");
+        return response;
+    }
+
     let config = state.edr_config.read().await;
 
     // Find the collection

@@ -4,6 +4,7 @@
 //! OGC API - Environmental Data Retrieval specification.
 
 pub mod config;
+pub mod content_negotiation;
 pub mod handlers;
 pub mod limits;
 pub mod state;

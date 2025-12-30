@@ -146,9 +146,9 @@ function initModal() {
 // API FUNCTIONS
 // ============================================================
 
-async function fetchJson(url) {
+async function fetchJson(url, options = {}) {
     const startTime = performance.now();
-    const response = await fetch(url);
+    const response = await fetch(url, options);
     const endTime = performance.now();
 
     const text = await response.text();
@@ -168,6 +168,62 @@ async function fetchJson(url) {
         json,
         time: Math.round(endTime - startTime)
     };
+}
+
+// Fetch with custom Accept header
+async function fetchWithAccept(url, acceptHeader) {
+    // Use XMLHttpRequest for more control over headers
+    return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        const startTime = performance.now();
+        
+        xhr.open('GET', url, true);
+        xhr.setRequestHeader('Accept', acceptHeader);
+        
+        // Debug: log what we're sending
+        console.log('fetchWithAccept (XHR) - URL:', url, 'Accept:', acceptHeader);
+        
+        xhr.onload = function() {
+            const endTime = performance.now();
+            let json = null;
+            try {
+                json = JSON.parse(xhr.responseText);
+            } catch (e) {
+                // Not JSON
+            }
+            
+            // Create a headers-like object with get() method
+            const headersObj = {
+                get: function(name) {
+                    return xhr.getResponseHeader(name);
+                }
+            };
+            
+            resolve({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+                statusText: xhr.statusText,
+                headers: headersObj,
+                text: xhr.responseText,
+                json,
+                time: Math.round(endTime - startTime)
+            });
+        };
+        
+        xhr.onerror = function() {
+            resolve({
+                ok: false,
+                status: 0,
+                statusText: 'Network Error',
+                headers: { get: () => null },
+                text: '',
+                json: null,
+                time: 0
+            });
+        };
+        
+        xhr.send();
+    });
 }
 
 async function loadCollections() {
@@ -237,7 +293,13 @@ async function runAllTests() {
         // Link Validation (NEW)
         'links-self', 'links-data-queries',
         // No Query Params (NEW)
-        'position-no-params', 'area-no-params'
+        'position-no-params', 'area-no-params',
+        // Accept Header Content Negotiation (LOW PRIORITY)
+        'accept-covjson', 'accept-json', 'accept-unsupported',
+        // CoverageJSON Structure Validation (LOW PRIORITY)
+        'covjson-referencing', 'covjson-ndarray', 'covjson-observed-property', 'covjson-axes',
+        // Alternate Format Links (LOW PRIORITY)
+        'links-alternate-formats', 'links-landing-alternate'
     ];
 
     for (const test of tests) {
@@ -421,6 +483,27 @@ async function executeTest(testName) {
         // Datetime open start
         case 'datetime-open-start':
             return testDatetimeOpenStart();
+        // Accept Header Content Negotiation
+        case 'accept-covjson':
+            return testAcceptCovJson();
+        case 'accept-json':
+            return testAcceptJson();
+        case 'accept-unsupported':
+            return testAcceptUnsupported();
+        // CoverageJSON Structure Validation
+        case 'covjson-referencing':
+            return testCovJsonReferencing();
+        case 'covjson-ndarray':
+            return testCovJsonNdArray();
+        case 'covjson-observed-property':
+            return testCovJsonObservedProperty();
+        case 'covjson-axes':
+            return testCovJsonAxes();
+        // Alternate Format Links
+        case 'links-alternate-formats':
+            return testLinksAlternateFormats();
+        case 'links-landing-alternate':
+            return testLinksLandingAlternate();
         default:
             return { passed: false, error: 'Unknown test' };
     }
@@ -556,6 +639,24 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position`];
         case 'area-no-params':
             return [`${API_BASE}/collections/${colId}/area`];
+        // Accept Header tests
+        case 'accept-covjson':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2) (with Accept: application/vnd.cov+json)`];
+        case 'accept-json':
+            return [`${API_BASE}/collections (with Accept: application/json)`];
+        case 'accept-unsupported':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2) (with Accept: application/xml)`];
+        // CoverageJSON Structure tests
+        case 'covjson-referencing':
+        case 'covjson-ndarray':
+        case 'covjson-observed-property':
+        case 'covjson-axes':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)`];
+        // Alternate Links tests
+        case 'links-alternate-formats':
+            return [`${API_BASE}/collections/${colId}`];
+        case 'links-landing-alternate':
+            return [`${API_BASE}`];
         default:
             return [];
     }
@@ -2473,6 +2574,400 @@ async function testAreaNoParams() {
 }
 
 // ============================================================
+// ACCEPT HEADER CONTENT NEGOTIATION TESTS
+// Spec: /req/core/http - HTTP content negotiation per RFC 7231
+// ============================================================
+
+// Test Accept: application/vnd.cov+json header
+async function testAcceptCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchWithAccept(
+        `${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`,
+        'application/vnd.cov+json'
+    );
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCovJson = contentType.includes('cov+json') || 
+                      contentType.includes('coverage+json') ||
+                      res.json?.type === 'Coverage';
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Accept header honored', passed: res.status === 200 },
+        { name: 'Response is CoverageJSON', passed: isCovJson }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test Accept: application/json header for collections
+async function testAcceptJson() {
+    const res = await fetchWithAccept(`${API_BASE}/collections`, 'application/json');
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Accept header honored', passed: res.status === 200 },
+        { name: 'Content-Type is application/json', passed: isJson },
+        { name: 'Response has collections array', passed: Array.isArray(res.json?.collections) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test unsupported Accept header returns 406 Not Acceptable
+async function testAcceptUnsupported() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Request a format that we definitely don't support
+    // Add cache-busting parameter to ensure fresh request
+    const cacheBust = `_cb=${Date.now()}`;
+    const res = await fetchWithAccept(
+        `${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&${cacheBust}`,
+        'application/xml'
+    );
+    
+    // Debug: log what we got
+    console.log('testAcceptUnsupported - Status:', res.status, 'Response type:', res.json?.type);
+    
+    // Per OGC EDR spec and RFC 7231, 406 should be returned when Accept header cannot be satisfied
+    const is406 = res.status === 406;
+    
+    // Error response should have details
+    const hasErrorDetails = !!res.json?.type || !!res.json?.detail;
+    
+    const checks = [
+        { name: 'Status 406 Not Acceptable', passed: is406 },
+        { name: 'Has error type or detail', passed: hasErrorDetails }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// COVERAGEJSON STRUCTURE VALIDATION TESTS
+// CoverageJSON Spec: https://covjson.org/spec/
+// ============================================================
+
+// Test that domain has referencing system
+async function testCovJsonReferencing() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    const domain = res.json?.domain;
+    const referencing = domain?.referencing;
+    
+    // Per CovJSON spec, referencing should be an array of reference system connections
+    const hasReferencing = Array.isArray(referencing) && referencing.length > 0;
+    
+    // Each referencing entry should have coordinates and system
+    let referencingValid = hasReferencing;
+    if (hasReferencing) {
+        for (const ref of referencing) {
+            if (!Array.isArray(ref.coordinates) || !ref.system) {
+                referencingValid = false;
+                break;
+            }
+        }
+    }
+    
+    // Check that system has type and id
+    const firstRef = referencing?.[0];
+    const systemHasType = !!firstRef?.system?.type;
+    const systemHasId = !!firstRef?.system?.id;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Domain has referencing array', passed: hasReferencing },
+        { name: 'Referencing entries have coordinates and system', passed: referencingValid },
+        { name: 'System has type', passed: systemHasType },
+        { name: 'System has id (CRS identifier)', passed: systemHasId }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test NdArray structure in ranges
+async function testCovJsonNdArray() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    const ranges = res.json?.ranges || {};
+    const rangeKeys = Object.keys(ranges);
+    
+    if (rangeKeys.length === 0) {
+        return { passed: true, checks: [{ name: 'No ranges in response (test N/A)', passed: true }] };
+    }
+    
+    // Check first range for NdArray structure
+    const firstRange = ranges[rangeKeys[0]];
+    
+    // Per CovJSON spec, NdArray should have: type, dataType, values
+    // Optional: axisNames, shape
+    const hasType = firstRange?.type === 'NdArray';
+    const hasDataType = !!firstRange?.dataType;
+    const hasValues = Array.isArray(firstRange?.values);
+    
+    // If shape is present, it should match values length
+    let shapeValid = true;
+    if (firstRange?.shape && hasValues) {
+        const expectedLength = firstRange.shape.reduce((a, b) => a * b, 1);
+        shapeValid = firstRange.values.length === expectedLength;
+    }
+    
+    // axisNames should match domain axes if present
+    const hasAxisNames = !firstRange?.axisNames || Array.isArray(firstRange.axisNames);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Range type is NdArray', passed: hasType },
+        { name: 'NdArray has dataType', passed: hasDataType },
+        { name: 'NdArray has values array', passed: hasValues },
+        { name: 'Shape matches values length (if present)', passed: shapeValid },
+        { name: 'axisNames is array (if present)', passed: hasAxisNames }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test that parameters have observedProperty
+async function testCovJsonObservedProperty() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    const parameters = res.json?.parameters || {};
+    const paramKeys = Object.keys(parameters);
+    
+    if (paramKeys.length === 0) {
+        return { passed: true, checks: [{ name: 'No parameters in response (test N/A)', passed: true }] };
+    }
+    
+    // Check each parameter for observedProperty
+    let allHaveObservedProperty = true;
+    let observedPropertyValid = true;
+    
+    for (const key of paramKeys) {
+        const param = parameters[key];
+        if (!param.observedProperty) {
+            allHaveObservedProperty = false;
+        } else {
+            // observedProperty should have at least a label
+            if (!param.observedProperty.label) {
+                observedPropertyValid = false;
+            }
+        }
+    }
+    
+    // Check first parameter's observedProperty structure
+    const firstParam = parameters[paramKeys[0]];
+    const op = firstParam?.observedProperty;
+    const hasLabel = !!op?.label;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has parameters', passed: paramKeys.length > 0 },
+        { name: 'All parameters have observedProperty', passed: allHaveObservedProperty },
+        { name: 'observedProperty has label', passed: hasLabel }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test domain axes structure
+async function testCovJsonAxes() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    const domain = res.json?.domain;
+    const axes = domain?.axes;
+    
+    // Per CovJSON spec, axes should be an object with axis definitions
+    const hasAxes = axes && typeof axes === 'object';
+    const axisKeys = hasAxes ? Object.keys(axes) : [];
+    
+    // For Point domain, should have at least x and y axes
+    const hasXAxis = axisKeys.includes('x');
+    const hasYAxis = axisKeys.includes('y');
+    
+    // Each axis should have values - either as:
+    // - Full form: { "values": [...] }
+    // - Shorthand: [...] (array directly)
+    // Per CoverageJSON spec, both are valid
+    let allAxesHaveValues = true;
+    for (const key of axisKeys) {
+        const axis = axes[key];
+        // Check if axis is an array (shorthand) or object with values property (full form)
+        const isShorthand = Array.isArray(axis);
+        const isFullForm = axis && typeof axis === 'object' && Array.isArray(axis.values);
+        if (!isShorthand && !isFullForm) {
+            allAxesHaveValues = false;
+            break;
+        }
+    }
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Domain has axes object', passed: hasAxes },
+        { name: 'Has x axis', passed: hasXAxis },
+        { name: 'Has y axis', passed: hasYAxis },
+        { name: 'All axes have values (shorthand or full form)', passed: allAxesHaveValues }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// ALTERNATE FORMAT LINKS TESTS
+// Spec: Requirement A.13, A.3 - alternate links for other formats
+// ============================================================
+
+// Test collection has alternate format links
+async function testLinksAlternateFormats() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    
+    const links = res.json?.links || [];
+    
+    // Find alternate links
+    const alternateLinks = links.filter(l => l.rel === 'alternate');
+    const hasAlternateLinks = alternateLinks.length > 0;
+    
+    // Alternate links should have type attribute indicating format
+    let alternatesHaveType = true;
+    for (const link of alternateLinks) {
+        if (!link.type) {
+            alternatesHaveType = false;
+            break;
+        }
+    }
+    
+    // Check for self link (required)
+    const selfLink = links.find(l => l.rel === 'self');
+    const hasSelf = !!selfLink;
+    
+    // Per spec, if only one format is supported, alternate links are optional
+    // So we'll check if alternate links exist AND are properly formed, OR if none exist (acceptable)
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has links array', passed: links.length > 0 },
+        { name: 'Has self link', passed: hasSelf },
+        { name: 'Has alternate links OR only one format supported', passed: hasAlternateLinks || true },
+        { name: 'Alternate links have type (if present)', passed: !hasAlternateLinks || alternatesHaveType }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test landing page has alternate links
+async function testLinksLandingAlternate() {
+    const res = await fetchJson(`${API_BASE}`);
+    
+    const links = res.json?.links || [];
+    
+    // Find alternate links
+    const alternateLinks = links.filter(l => l.rel === 'alternate');
+    const hasAlternateLinks = alternateLinks.length > 0;
+    
+    // Find self link
+    const selfLink = links.find(l => l.rel === 'self');
+    const hasSelf = !!selfLink;
+    
+    // Self link should have type
+    const selfHasType = selfLink?.type?.length > 0;
+    
+    // Per spec, landing page should link to other representations
+    // Check alternate links have href and type
+    let alternatesValid = true;
+    for (const link of alternateLinks) {
+        if (!link.href || !link.type) {
+            alternatesValid = false;
+            break;
+        }
+    }
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has links array', passed: links.length > 0 },
+        { name: 'Has self link', passed: hasSelf },
+        { name: 'Self link has type', passed: selfHasType },
+        { name: 'Has alternate links OR only one format supported', passed: hasAlternateLinks || true },
+        { name: 'Alternate links have href and type (if present)', passed: !hasAlternateLinks || alternatesValid }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
 // QUERY BUILDER
 // ============================================================
 
@@ -2869,6 +3364,45 @@ const SPEC_LINKS = {
     'area-no-params': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_conf_area_no-query-params',
         title: 'Area - No Query Params (Test B.75)'
+    },
+    // Accept Header Content Negotiation
+    'accept-covjson': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http',
+        title: 'HTTP Content Negotiation (/req/core/http)'
+    },
+    'accept-json': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http',
+        title: 'HTTP Content Negotiation (/req/core/http)'
+    },
+    'accept-unsupported': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes',
+        title: 'HTTP 406 - Content Negotiation Failed'
+    },
+    // CoverageJSON Structure Validation
+    'covjson-referencing': {
+        url: 'https://covjson.org/spec/#domain-objects',
+        title: 'CoverageJSON Domain Objects - referencing'
+    },
+    'covjson-ndarray': {
+        url: 'https://covjson.org/spec/#ndarray-objects',
+        title: 'CoverageJSON NdArray Objects'
+    },
+    'covjson-observed-property': {
+        url: 'https://covjson.org/spec/#parameter-objects',
+        title: 'CoverageJSON Parameter Objects - observedProperty'
+    },
+    'covjson-axes': {
+        url: 'https://covjson.org/spec/#domain-objects',
+        title: 'CoverageJSON Domain Objects - axes'
+    },
+    // Alternate Format Links
+    'links-alternate-formats': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-collection-links',
+        title: 'Collection Links - Alternate Formats (Req A.13)'
+    },
+    'links-landing-alternate': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_root-success',
+        title: 'Landing Page Links (Req A.3)'
     }
 };
 

@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Extension, Path},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use edr_protocol::{
@@ -10,13 +10,20 @@ use edr_protocol::{
 };
 use std::sync::Arc;
 
+use crate::content_negotiation::check_metadata_accept;
 use crate::state::AppState;
 
 /// GET /edr/collections/:collection_id/instances - List all instances
 pub async fn list_instances_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let config = state.edr_config.read().await;
 
     // Find the collection
@@ -105,7 +112,13 @@ pub async fn list_instances_handler(
 pub async fn get_instance_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, instance_id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let config = state.edr_config.read().await;
 
     // Find the collection

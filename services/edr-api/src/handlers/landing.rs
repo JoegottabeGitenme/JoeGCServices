@@ -2,16 +2,25 @@
 
 use axum::{
     extract::Extension,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use edr_protocol::LandingPage;
 use std::sync::Arc;
 
+use crate::content_negotiation::check_metadata_accept;
 use crate::state::AppState;
 
 /// GET /edr - Landing page
-pub async fn landing_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
+pub async fn landing_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let landing = LandingPage::new(
         "Weather WMS EDR API",
         "OGC API - Environmental Data Retrieval for weather model data including HRRR, GFS, and more",

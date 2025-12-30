@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Extension, Path},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use edr_protocol::{
@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::{CollectionDefinition, LevelValue, ModelEdrConfig};
+use crate::content_negotiation::check_metadata_accept;
 use crate::state::AppState;
 use storage::Catalog;
 
@@ -117,7 +118,15 @@ async fn build_extent_from_catalog(
 }
 
 /// GET /edr/collections - List all collections
-pub async fn list_collections_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
+pub async fn list_collections_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let config = state.edr_config.read().await;
 
     let mut collections = Vec::new();
@@ -169,7 +178,13 @@ pub async fn list_collections_handler(Extension(state): Extension<Arc<AppState>>
 pub async fn get_collection_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let config = state.edr_config.read().await;
 
     // Find the collection

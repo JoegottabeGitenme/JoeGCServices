@@ -1,13 +1,20 @@
 //! Conformance endpoint handler.
 
 use axum::{
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use edr_protocol::ConformanceClasses;
 
+use crate::content_negotiation::check_metadata_accept;
+
 /// GET /edr/conformance - Conformance classes
-pub async fn conformance_handler() -> Response {
+pub async fn conformance_handler(headers: HeaderMap) -> Response {
+    // Check Accept header - return 406 if unsupported format requested
+    if let Err(response) = check_metadata_accept(&headers) {
+        return response;
+    }
+
     let conformance = ConformanceClasses::current();
 
     let json = serde_json::to_string_pretty(&conformance).unwrap_or_default();

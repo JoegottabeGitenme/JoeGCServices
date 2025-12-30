@@ -698,6 +698,102 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Accept Header Content Negotiation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="accept-header">
+                    <span class="toggle">+</span>
+                    Accept Header Content Negotiation
+                    <span class="section-status" id="accept-header-status"></span>
+                </h3>
+                <div class="section-content" id="accept-header-tests">
+                    <div class="test-item" data-test="accept-covjson">
+                        <span class="test-name">Accept: application/vnd.cov+json</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement /req/core/http - HTTP content negotiation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="accept-json">
+                        <span class="test-name">Accept: application/json</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement /req/core/http - HTTP content negotiation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="accept-unsupported">
+                        <span class="test-name">Accept: Unsupported Type Returns 406</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP 406 - Content negotiation failed">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CoverageJSON Structure Validation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="covjson-structure">
+                    <span class="toggle">+</span>
+                    CoverageJSON Structure Validation
+                    <span class="section-status" id="covjson-structure-status"></span>
+                </h3>
+                <div class="section-content" id="covjson-structure-tests">
+                    <div class="test-item" data-test="covjson-referencing">
+                        <span class="test-name">Domain Has Referencing System</span>
+                        <a href="https://covjson.org/spec/#domain-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Domain Objects - referencing">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-ndarray">
+                        <span class="test-name">NdArray Structure Valid</span>
+                        <a href="https://covjson.org/spec/#ndarray-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: NdArray Objects">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-observed-property">
+                        <span class="test-name">Parameters Have observedProperty</span>
+                        <a href="https://covjson.org/spec/#parameter-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Parameter Objects - observedProperty">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-axes">
+                        <span class="test-name">Domain Axes Structure Valid</span>
+                        <a href="https://covjson.org/spec/#domain-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Domain Objects - axes">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alternate Links Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="alternate-links">
+                    <span class="toggle">+</span>
+                    Alternate Format Links
+                    <span class="section-status" id="alternate-links-status"></span>
+                </h3>
+                <div class="section-content" id="alternate-links-tests">
+                    <div class="test-item" data-test="links-alternate-formats">
+                        <span class="test-name">Collection Has Alternate Format Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-collection-links" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.13 - alternate links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="links-landing-alternate">
+                        <span class="test-name">Landing Page Has Alternate Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_root-success" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.3 - Landing page links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- Interactive Query Panel -->
