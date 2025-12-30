@@ -7,12 +7,12 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use std::collections::HashMap;
 
 use edr_protocol::{
-    collections::{Collection, CollectionList, Instance, InstanceList},
     coverage_json::{CovJsonParameter, CoverageJson, Domain, NdArray},
     parameters::{Parameter, Unit},
     queries::{BboxQuery, DateTimeQuery, PositionQuery},
     responses::{ConformanceClasses, LandingPage},
     types::{Extent, Link, TemporalExtent, VerticalExtent},
+    collections::{Collection, CollectionList, Instance, InstanceList},
 };
 
 // =============================================================================
@@ -105,7 +105,11 @@ fn bench_datetime_parsing(c: &mut Criterion) {
 
     // Interval
     group.bench_function("parse_interval", |b| {
-        b.iter(|| DateTimeQuery::parse(black_box("2024-12-29T00:00:00Z/2024-12-29T23:59:59Z")))
+        b.iter(|| {
+            DateTimeQuery::parse(black_box(
+                "2024-12-29T00:00:00Z/2024-12-29T23:59:59Z",
+            ))
+        })
     });
 
     // Open-ended intervals
@@ -170,7 +174,9 @@ fn bench_parameter_parsing(c: &mut Criterion) {
 
     group.bench_function("parse_multiple_7", |b| {
         b.iter(|| {
-            PositionQuery::parse_parameter_names(black_box("TMP,UGRD,VGRD,RH,HGT,PRMSL,APCP"))
+            PositionQuery::parse_parameter_names(black_box(
+                "TMP,UGRD,VGRD,RH,HGT,PRMSL,APCP",
+            ))
         })
     });
 
@@ -217,12 +223,7 @@ fn bench_coverage_json_creation(c: &mut Criterion) {
 
     // Add multiple parameters (typical weather query)
     group.bench_function("add_5_parameters", |b| {
-        let base = CoverageJson::point(
-            -97.5,
-            35.2,
-            Some("2024-12-29T12:00:00Z".to_string()),
-            Some(2.0),
-        );
+        let base = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0));
         let params = [
             ("TMP", Unit::kelvin(), 288.5),
             ("UGRD", Unit::meters_per_second(), 5.2),
@@ -428,11 +429,13 @@ fn bench_collections(c: &mut Criterion) {
             );
             params.insert(
                 "UGRD".to_string(),
-                Parameter::new("UGRD", "U-Wind").with_unit(Unit::meters_per_second()),
+                Parameter::new("UGRD", "U-Wind")
+                    .with_unit(Unit::meters_per_second()),
             );
             params.insert(
                 "VGRD".to_string(),
-                Parameter::new("VGRD", "V-Wind").with_unit(Unit::meters_per_second()),
+                Parameter::new("VGRD", "V-Wind")
+                    .with_unit(Unit::meters_per_second()),
             );
 
             Collection::new(black_box("hrrr-surface"))
@@ -449,10 +452,16 @@ fn bench_collections(c: &mut Criterion) {
     group.bench_function("create_collection_list", |b| {
         let collections: Vec<Collection> = (0..5)
             .map(|i| {
-                Collection::new(format!("collection-{}", i)).with_title(format!("Collection {}", i))
+                Collection::new(format!("collection-{}", i))
+                    .with_title(format!("Collection {}", i))
             })
             .collect();
-        b.iter(|| CollectionList::new(black_box(collections.clone()), "http://localhost:8083/edr"))
+        b.iter(|| {
+            CollectionList::new(
+                black_box(collections.clone()),
+                "http://localhost:8083/edr",
+            )
+        })
     });
 
     // Serialize collection list
@@ -481,7 +490,8 @@ fn bench_instances(c: &mut Criterion) {
     // Create instance
     group.bench_function("create_instance", |b| {
         b.iter(|| {
-            Instance::new(black_box("2024-12-29T12:00:00Z")).with_title("HRRR Run 2024-12-29 12Z")
+            Instance::new(black_box("2024-12-29T12:00:00Z"))
+                .with_title("HRRR Run 2024-12-29 12Z")
         })
     });
 
@@ -505,11 +515,7 @@ fn bench_instances(c: &mut Criterion) {
     });
 
     // Serialize instance list
-    let list = InstanceList::new(
-        instances.clone(),
-        "http://localhost:8083/edr",
-        "hrrr-surface",
-    );
+    let list = InstanceList::new(instances.clone(), "http://localhost:8083/edr", "hrrr-surface");
     let json = serde_json::to_string(&list).unwrap();
     group.throughput(Throughput::Bytes(json.len() as u64));
     group.bench_function("serialize_instance_list", |b| {
@@ -597,7 +603,9 @@ fn bench_types(c: &mut Criterion) {
     });
 
     // Unit presets
-    group.bench_function("create_unit_kelvin", |b| b.iter(|| Unit::kelvin()));
+    group.bench_function("create_unit_kelvin", |b| {
+        b.iter(|| Unit::kelvin())
+    });
 
     group.bench_function("create_unit_from_symbol", |b| {
         b.iter(|| Unit::from_symbol(black_box("m/s")))
@@ -614,17 +622,12 @@ fn bench_deserialization(c: &mut Criterion) {
     let mut group = c.benchmark_group("deserialization");
 
     // CoverageJSON deserialization
-    let cov = CoverageJson::point(
-        -97.5,
-        35.2,
-        Some("2024-12-29T12:00:00Z".to_string()),
-        Some(2.0),
-    )
-    .with_parameter(
-        "TMP",
-        CovJsonParameter::new("Temperature").with_unit(Unit::kelvin()),
-        288.5,
-    );
+    let cov = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0))
+        .with_parameter(
+            "TMP",
+            CovJsonParameter::new("Temperature").with_unit(Unit::kelvin()),
+            288.5,
+        );
     let json = serde_json::to_string(&cov).unwrap();
     group.throughput(Throughput::Bytes(json.len() as u64));
     group.bench_function("deserialize_coverage_json", |b| {
