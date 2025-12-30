@@ -110,6 +110,9 @@ async fn run_server(args: Args) {
         .route("/ready", get(handlers::health::ready_handler))
         .route("/metrics", get(handlers::health::metrics_handler))
         
+        // Catalog check (for coverage validation)
+        .route("/edr/catalog-check", get(handlers::catalog_check::catalog_check_handler))
+        
         // Middleware
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())

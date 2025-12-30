@@ -108,9 +108,37 @@ impl IngestionFilter {
         self.filters.len()
     }
 
-    /// Insert a filter entry for a parameter/level combination.
+    /// Insert or merge a filter entry for a parameter/level combination.
+    /// 
+    /// If an entry already exists for this (param, level_code) pair, the allowed_values
+    /// are merged together. This allows multiple level definitions with the same
+    /// level_code but different values (e.g., multiple isobaric levels).
     fn insert(&mut self, param: String, level_code: u8, filter: LevelFilter) {
-        self.filters.insert((param, level_code), filter);
+        let key = (param, level_code);
+        if let Some(existing) = self.filters.get_mut(&key) {
+            // Merge allowed_values
+            match (&mut existing.allowed_values, filter.allowed_values) {
+                (Some(existing_values), Some(new_values)) => {
+                    // Merge the new values into existing set
+                    existing_values.extend(new_values);
+                }
+                (None, Some(new_values)) => {
+                    // Existing accepts all, new has specific values - stay permissive
+                    // Actually, this shouldn't happen in practice
+                    existing.allowed_values = Some(new_values);
+                }
+                (Some(_), None) => {
+                    // Existing has specific values, new accepts all - stay permissive
+                    existing.allowed_values = None;
+                }
+                (None, None) => {
+                    // Both accept all - no change needed
+                }
+            }
+        } else {
+            // No existing entry, just insert
+            self.filters.insert(key, filter);
+        }
     }
 
     /// Set the valid range for a parameter.
@@ -402,7 +430,8 @@ fn load_model_config(
                             .or_else(|| level.get("display_template").and_then(|d| d.as_str()));
 
                         if let Some(display) = display_text {
-                            let description = if display.contains("{value}") {
+                            // Check for any template placeholder ({value}, {value_mb}, etc.)
+                            let description = if display.contains("{value") {
                                 LevelDescription::Template(display.to_string())
                             } else {
                                 LevelDescription::Static(display.to_string())
@@ -938,5 +967,51 @@ parameters:
         assert!(range.is_valid(0.0));
         assert!(!range.is_valid(-1001.0));
         assert!(!range.is_valid(1.0));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    
+    #[test]
+    fn test_hrrr_filter_from_real_config() {
+        // This test uses the actual HRRR config file
+        std::env::set_var("CONFIG_DIR", "../../config");
+        
+        let filter = build_filter_for_model("hrrr").expect("Should load HRRR config");
+        
+        // Check isobaric levels for TMP (100 = isobaric level code)
+        // Values are in Pascals: 100000, 92500, 85000, 70000, 50000, 30000, 25000
+        println!("Testing TMP isobaric levels...");
+        assert!(filter.should_ingest("TMP", 100, 100000), "TMP at 1000 mb (100000 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 92500), "TMP at 925 mb (92500 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 85000), "TMP at 850 mb (85000 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 70000), "TMP at 700 mb (70000 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 50000), "TMP at 500 mb (50000 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 30000), "TMP at 300 mb (30000 Pa)");
+        assert!(filter.should_ingest("TMP", 100, 25000), "TMP at 250 mb (25000 Pa)");
+        
+        // Check height_above_ground levels for TMP (103 = height above ground)
+        println!("Testing TMP height above ground...");
+        assert!(filter.should_ingest("TMP", 103, 2), "TMP at 2m");
+        
+        // Check that invalid levels are rejected
+        assert!(!filter.should_ingest("TMP", 100, 80000), "TMP at invalid 800 mb");
+        
+        // Check UGRD/VGRD at 10m (height above ground)
+        println!("Testing UGRD/VGRD at 10m...");
+        assert!(filter.should_ingest("UGRD", 103, 10), "UGRD at 10m");
+        assert!(filter.should_ingest("VGRD", 103, 10), "VGRD at 10m");
+        
+        // Check REFC at entire atmosphere (200)
+        println!("Testing REFC at entire atmosphere...");
+        assert!(filter.should_ingest("REFC", 200, 0), "REFC at entire atmosphere");
+        
+        // Check TCDC at entire atmosphere (200)
+        println!("Testing TCDC at entire atmosphere...");
+        assert!(filter.should_ingest("TCDC", 200, 0), "TCDC at entire atmosphere");
+        
+        println!("All HRRR filter tests passed!");
     }
 }

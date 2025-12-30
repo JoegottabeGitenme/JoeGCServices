@@ -5,6 +5,7 @@
 // - Otherwise (K8s ingress) -> use relative URLs (same origin)
 const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
 const DOWNLOADER_URL = window.location.port === '8000' ? 'http://localhost:8081' : '/downloader';
+const EDR_URL = window.location.port === '8000' ? 'http://localhost:8083/edr' : '/edr';
 const REDIS_URL = `${API_BASE}/api/ingestion`;
 
 // External service URLs - can be customized for different environments
@@ -38,6 +39,7 @@ let preloadedLayers = {}; // Cache of preloaded tile layers for animation
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
 const wmtsStatusEl = document.getElementById('wmts-status');
+const edrStatusEl = document.getElementById('edr-status');
 const ingesterServiceStatusEl = document.getElementById('ingester-service-status');
 const datasetCountEl = document.getElementById('dataset-count');
 const modelsListEl = document.getElementById('models-list');
@@ -1060,7 +1062,7 @@ function addMercatorBaseLayers() {
     };
 }
 
-// Check WMS and WMTS service status
+// Check WMS, WMTS, and EDR service status
 async function checkServiceStatus() {
     try {
         // Check WMS
@@ -1085,16 +1087,38 @@ async function checkServiceStatus() {
         console.error('WMTS status check failed:', error);
         setStatusIndicator('wmts', 'offline');
     }
+
+    try {
+        // Check EDR
+        const edrResponse = await fetch(
+            `${EDR_URL}`,
+            { mode: 'cors', cache: 'no-cache' }
+        );
+        setStatusIndicator('edr', edrResponse.ok ? 'online' : 'offline');
+    } catch (error) {
+        console.error('EDR status check failed:', error);
+        setStatusIndicator('edr', 'offline');
+    }
 }
 
 // Update status indicator
 function setStatusIndicator(service, status) {
-    const element = service === 'wms' ? wmsStatusEl : wmtsStatusEl;
+    let element;
+    if (service === 'wms') {
+        element = wmsStatusEl;
+    } else if (service === 'wmts') {
+        element = wmtsStatusEl;
+    } else if (service === 'edr') {
+        element = edrStatusEl;
+    }
+    
+    if (!element) return;
+    
     const statusDot = element.querySelector('.status-dot');
     const statusText = element.querySelector('.status-text');
 
-    statusDot.className = `status-dot ${status}`;
-    statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    if (statusDot) statusDot.className = `status-dot ${status}`;
+    if (statusText) statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 // Load available layers from WMS/WMTS capabilities and create layer control

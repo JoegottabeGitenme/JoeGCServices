@@ -19,7 +19,9 @@ source:
   type: aws_s3
   bucket: noaa-hrrr-bdp-pds
   prefix_template: "hrrr.{date}/conus"
-  file_pattern: "hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2"
+  # Use pressure file (wrfprs) for full isobaric data (~400MB vs ~135MB for wrfsfc)
+  # Contains: all surface params + full upper-air profiles at standard pressure levels
+  file_pattern: "hrrr.t{cycle:02}z.wrfprsf{forecast:02}.grib2"
   region: us-east-1
 
 grid:
@@ -114,34 +116,29 @@ parameters:
         value: 2
         display: "2 m above ground"
       # Isobaric levels for upper-air analysis
+      # Use {value_mb} template to convert Pa to mb (divide by 100)
       - type: isobaric
         level_code: 100
         value: 100000  # 1000 mb in Pa
-        display: "1000 mb"
+        display_template: "{value_mb} mb"
       - type: isobaric
         level_code: 100
         value: 92500   # 925 mb in Pa
-        display: "925 mb"
       - type: isobaric
         level_code: 100
         value: 85000   # 850 mb in Pa
-        display: "850 mb"
       - type: isobaric
         level_code: 100
         value: 70000   # 700 mb in Pa
-        display: "700 mb"
       - type: isobaric
         level_code: 100
         value: 50000   # 500 mb in Pa
-        display: "500 mb"
       - type: isobaric
         level_code: 100
         value: 30000   # 300 mb in Pa
-        display: "300 mb"
       - type: isobaric
         level_code: 100
         value: 25000   # 250 mb in Pa
-        display: "250 mb"
     style: temperature
     units: K
     display_units: °C

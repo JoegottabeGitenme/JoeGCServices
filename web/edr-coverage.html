@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EDR Data Coverage Validation</title>
+    <link rel="stylesheet" href="edr-coverage.css">
+</head>
+<body>
+    <header>
+        <h1>EDR Data Coverage Validation</h1>
+        <p>Verify that every advertised piece of data can actually be retrieved</p>
+        <nav>
+            <a href="index.html">Dashboard</a> |
+            <a href="edr-compliance.html">EDR Compliance</a>
+        </nav>
+    </header>
+
+    <!-- Configuration Panel -->
+    <section class="config-panel">
+        <div class="config-row">
+            <div class="endpoint-config">
+                <label for="endpoint-input">EDR API Endpoint:</label>
+                <input type="text" id="endpoint-input" value="http://localhost:8083/edr">
+                <button id="apply-btn">Apply</button>
+            </div>
+            <div class="mode-config">
+                <label for="mode-select">Validation Mode:</label>
+                <select id="mode-select">
+                    <option value="quick">Quick (Sample HTTP per parameter)</option>
+                    <option value="full" selected>Full (Multiple times per parameter)</option>
+                    <option value="thorough">Thorough (All times + levels)</option>
+                </select>
+            </div>
+            <div class="test-point-config">
+                <label>Test Point:</label>
+                <input type="text" id="test-lon" value="-100" size="6" title="Longitude">
+                <input type="text" id="test-lat" value="40" size="6" title="Latitude">
+            </div>
+        </div>
+    </section>
+
+    <!-- Progress & Summary Panel -->
+    <section class="summary-panel">
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <span class="progress-text" id="progress-text">Ready to validate</span>
+        </div>
+        <div class="summary-stats">
+            <div class="stat pass">
+                <span class="count" id="pass-count">0</span>
+                <span class="label">Pass</span>
+            </div>
+            <div class="stat fail">
+                <span class="count" id="fail-count">0</span>
+                <span class="label">Fail</span>
+            </div>
+            <div class="stat warn">
+                <span class="count" id="warn-count">0</span>
+                <span class="label">Warn</span>
+            </div>
+            <div class="stat skip">
+                <span class="count" id="skip-count">0</span>
+                <span class="label">Skip</span>
+            </div>
+        </div>
+        <div class="summary-actions">
+            <button id="run-btn" class="btn-primary">Run Validation</button>
+            <button id="stop-btn" class="btn-secondary" disabled>Stop</button>
+            <button id="clear-btn" class="btn-secondary">Clear</button>
+            <button id="export-btn" class="btn-secondary">Export JSON</button>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Left: Collections Tree -->
+        <section class="collections-panel">
+            <div class="panel-header">
+                <h2>Collections Coverage</h2>
+                <div class="filter-bar">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="fail">Failures</button>
+                    <button class="filter-btn" data-filter="warn">Warnings</button>
+                    <button class="filter-btn" data-filter="pass">Passed</button>
+                </div>
+            </div>
+            <div class="collections-tree" id="collections-tree">
+                <div class="loading">Click "Run Validation" to start...</div>
+            </div>
+        </section>
+
+        <!-- Right: Details Panel -->
+        <section class="details-panel">
+            <div class="panel-header">
+                <h2>Validation Details</h2>
+            </div>
+            <div class="details-content" id="details-content">
+                <p class="placeholder">Select an item from the tree to see details</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- Log Panel -->
+    <section class="log-panel" id="log-panel">
+        <div class="log-header" onclick="toggleLog()">
+            <span>Request Log</span>
+            <span class="log-count" id="log-count">0 requests</span>
+            <span class="toggle-icon" id="log-toggle-icon">+</span>
+        </div>
+        <div class="log-content" id="log-content">
+            <div class="log-empty">No requests logged yet</div>
+        </div>
+    </section>
+
+    <!-- Gap Summary Panel -->
+    <section class="gap-summary-panel" id="gap-summary-panel" style="display: none;">
+        <div class="panel-header">
+            <h2>Coverage Gaps Summary</h2>
+            <button class="btn-small" onclick="copyGapSummary()">Copy</button>
+        </div>
+        <div class="gap-content" id="gap-content"></div>
+    </section>
+
+    <script src="edr-coverage.js"></script>
+</body>
+</html>

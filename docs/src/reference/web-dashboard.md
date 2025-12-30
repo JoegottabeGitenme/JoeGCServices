@@ -144,6 +144,8 @@ Full WMTS 1.0.0 compliance test suite:
 Header badges show quick OGC compliance status:
 - **WMS 1.3.0**: Click to open WMS compliance test page
 - **WMTS 1.0.0**: Click to open WMTS compliance test page
+- **EDR 1.1**: Click to open EDR compliance test page
+- **EDR Coverage**: Click to open EDR coverage validation page
 
 ### External Links
 
@@ -153,6 +155,8 @@ Quick access to related tools:
 - Load Tests
 - Microbenchmarks
 - Tile Visualizer
+- EDR Compliance
+- EDR Coverage
 - Grafana
 - Prometheus
 - MinIO Console
@@ -260,6 +264,12 @@ web/
 ├── wmts-compliance.html # WMTS 1.0.0 compliance tests
 ├── wmts-compliance.js   # WMTS test implementation
 ├── wmts-compliance.css  # WMTS test styling
+├── edr-compliance.html  # EDR 1.1 compliance tests
+├── edr-compliance.js    # EDR test implementation
+├── edr-compliance.css   # EDR test styling
+├── edr-coverage.html    # EDR coverage validation
+├── edr-coverage.js      # Coverage validation logic
+├── edr-coverage.css     # Coverage validation styling
 └── server.py            # Simple HTTP server
 ```
 

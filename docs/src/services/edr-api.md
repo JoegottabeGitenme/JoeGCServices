@@ -77,6 +77,12 @@ graph TB
 | `/edr/collections/{id}/position` | GET | Position query (latest run) |
 | `/edr/collections/{id}/instances/{instId}/position` | GET | Position query (specific run) |
 
+### Diagnostic Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/edr/catalog-check` | GET | Returns actual database contents for validation |
+
 ### Operations Endpoints
 
 | Endpoint | Method | Description |
@@ -171,6 +177,7 @@ services/edr-api/src/
 │   ├── collections.rs      # Collections handlers
 │   ├── instances.rs        # Instances handlers
 │   ├── position.rs         # Position query handler
+│   ├── catalog_check.rs    # Database contents diagnostic endpoint
 │   └── health.rs           # Health/metrics handlers
 └── Dockerfile
 ```

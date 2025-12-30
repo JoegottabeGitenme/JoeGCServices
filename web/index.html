@@ -51,6 +51,26 @@
                                 <span class="compliance-text">Checking...</span>
                             </button>
                         </div>
+                        <div class="status-item">
+                            <span class="status-label">EDR:</span>
+                            <a href="http://localhost:8083/edr" 
+                               target="_blank"
+                               class="status-badge-link"
+                               title="Click to open EDR API Landing Page">
+                                <div class="status-badge" id="edr-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </a>
+                            <a href="edr-compliance.html" class="compliance-badge" id="edr-compliance-btn" title="EDR API Compliance Tests">
+                                <span class="status-dot"></span>
+                                <span class="compliance-text">Compliance</span>
+                            </a>
+                            <a href="edr-coverage.html" class="compliance-badge" id="edr-coverage-btn" title="EDR Data Coverage Validation">
+                                <span class="status-dot"></span>
+                                <span class="compliance-text">Coverage</span>
+                            </a>
+                        </div>
                     </div>
                     <div class="external-links">
                         <a href="admin.html" class="external-link" title="Open Admin Dashboard">
@@ -72,6 +92,14 @@
                         <a href="tile-visualizer.html" class="external-link" title="Visualize Tile Requests from Load Tests">
                             <span class="link-icon">🗺️</span>
                             <span class="link-text">Tile Viz</span>
+                        </a>
+                        <a href="edr-coverage.html" class="external-link" title="EDR Data Coverage Validation">
+                            <span class="link-icon">🔍</span>
+                            <span class="link-text">EDR Coverage</span>
+                        </a>
+                        <a href="edr-compliance.html" class="external-link" title="EDR API Compliance Tests">
+                            <span class="link-icon">✅</span>
+                            <span class="link-text">EDR Compliance</span>
                         </a>
                         <a href="http://localhost:3000/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" target="_blank" class="external-link" title="Open Grafana Performance Dashboard">
                             <span class="link-icon">📊</span>

@@ -21,11 +21,19 @@ pub enum LevelDescription {
 }
 
 impl LevelDescription {
-    /// Format the level description, substituting {value} if it's a template
+    /// Format the level description, substituting placeholders if it's a template.
+    ///
+    /// Supported placeholders:
+    /// - `{value}` - Raw level value (e.g., 100000 for 1000 mb in Pa)
+    /// - `{value_mb}` - Value converted from Pa to mb (divided by 100)
     pub fn format(&self, value: u32) -> String {
         match self {
             LevelDescription::Static(s) => s.clone(),
-            LevelDescription::Template(t) => t.replace("{value}", &value.to_string()),
+            LevelDescription::Template(t) => {
+                let result = t.replace("{value}", &value.to_string());
+                // Handle Pa to mb conversion for isobaric levels
+                result.replace("{value_mb}", &(value / 100).to_string())
+            }
         }
     }
 }

@@ -274,6 +274,67 @@ This validates:
 - Position query functionality
 - Error handling
 
+## Coverage Validation
+
+In addition to compliance testing, a coverage validation tool verifies that all advertised parameters can actually be retrieved:
+
+```
+http://localhost:8000/edr-coverage.html
+```
+
+### Purpose
+
+The coverage validation tool addresses a critical gap: an EDR API can be fully OGC-compliant but still advertise data that doesn't exist in the database. This happens when:
+
+- Configuration lists parameters that haven't been ingested yet
+- Data expired or was deleted but config wasn't updated
+- Ingestion filters excluded certain levels or parameters
+
+### Features
+
+- **Three test modes**:
+  - **Quick**: Tests one parameter per collection
+  - **Full**: Tests all parameters at one level each
+  - **Thorough**: Tests all parameters at all advertised levels
+
+- **Concurrent testing**: Runs up to 20 requests in parallel for fast validation
+
+- **Catalog comparison**: Compares advertised collections/parameters against actual database contents (requires `catalog-check` endpoint)
+
+- **Detailed logging**: Full request log with JSON export for debugging
+
+- **External server support**: Can test any EDR server (gracefully skips catalog comparison if `catalog-check` endpoint unavailable)
+
+### Results
+
+The tool displays:
+- **Pass** (green): Parameter retrieved successfully with data
+- **Warn** (yellow): Request succeeded but returned no data (empty coverage)
+- **Fail** (red): Request failed with error
+
+### Catalog Check Endpoint
+
+The coverage tool uses an optional diagnostic endpoint:
+
+```http
+GET /edr/catalog-check
+```
+
+This returns what's actually in the database (not what's configured), enabling comparison between advertised and available data:
+
+```json
+{
+  "status": "ok",
+  "database_contents": {
+    "hrrr": {
+      "parameters": ["TMP", "UGRD", "VGRD", "HGT"],
+      "level_codes": [100, 103, 200],
+      "level_values": [85000, 70000, 50000, 10]
+    }
+  }
+}
+```
+
 ## See Also
 
 - [EDR API Service](../services/edr-api.md) - Service implementation details

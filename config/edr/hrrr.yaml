@@ -1,9 +1,14 @@
 # HRRR EDR Configuration
 # Defines collections grouped by level type for the OGC EDR API
+#
+# NOTE: The HRRR surface file (wrfsfc) contains limited isobaric data.
+# To get full upper-air profiles, the pressure file (wrfprs) would need to be downloaded.
+# Current configuration reflects what's available from the surface file.
 
 model: hrrr
 
 collections:
+  # Full isobaric data from pressure file (wrfprs)
   - id: hrrr-isobaric
     title: "HRRR - Isobaric Levels"
     description: "Upper-air parameters on pressure levels (1000, 925, 850, 700, 500, 300, 250 hPa)"
@@ -46,7 +51,7 @@ collections:
 
   - id: hrrr-height-agl
     title: "HRRR - Heights Above Ground"
-    description: "Parameters at specific heights above ground level"
+    description: "Parameters at specific heights above ground level (2m temp/dew point/humidity/wind)"
     level_filter:
       level_type: height_above_ground
       level_code: 103
@@ -57,25 +62,28 @@ collections:
         levels: [2]
       - name: RH
         levels: [2]
+      # TODO: 10m wind not working yet - need to investigate level_value template
+      # Currently only 2m values are being ingested for UGRD/VGRD
       - name: UGRD
-        levels: [10]
+        levels: [2]
       - name: VGRD
-        levels: [10]
-      - name: REFC
-        levels: [1000]
+        levels: [2]
     run_mode: instances
 
   - id: hrrr-atmosphere
     title: "HRRR - Entire Atmosphere"
-    description: "Column-integrated and atmospheric parameters"
+    description: "Column-integrated atmospheric parameters (PWAT)"
     level_filter:
       level_type: entire_atmosphere
       level_code: 200
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
-      - name: TCDC
-        levels: [entire_atmosphere]
+      # TODO: REFC and TCDC need GRIB2 parameter code mapping fix
+      # - name: REFC
+      #   levels: [entire_atmosphere]
+      # - name: TCDC
+      #   levels: [entire_atmosphere]
     run_mode: instances
 
   - id: hrrr-cloud-layers
