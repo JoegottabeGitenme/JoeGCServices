@@ -174,6 +174,208 @@ pub mod crs {
     pub const CRS_84: &str = "CRS:84";
 }
 
+/// Common HTTP request parameters for EDR testing.
+pub mod edr {
+    /// Default EDR base URL for tests.
+    pub const BASE_URL: &str = "http://localhost:8083/edr";
+
+    /// Common coordinate test cases.
+    pub mod coords {
+        /// Oklahoma City (land, CONUS interior)
+        pub const OKC: (f64, f64) = (-97.5, 35.2);
+
+        /// Denver (high altitude)
+        pub const DENVER: (f64, f64) = (-104.99, 39.74);
+
+        /// San Francisco (coastal)
+        pub const SAN_FRANCISCO: (f64, f64) = (-122.42, 37.77);
+
+        /// Washington DC (east coast)
+        pub const WASHINGTON_DC: (f64, f64) = (-77.04, 38.90);
+
+        /// Chicago (midwest)
+        pub const CHICAGO: (f64, f64) = (-87.63, 41.88);
+
+        /// Ocean point (Gulf of Mexico)
+        pub const GULF_OCEAN: (f64, f64) = (-92.0, 26.0);
+
+        /// Origin point
+        pub const ORIGIN: (f64, f64) = (0.0, 0.0);
+
+        /// Max bounds (edge case)
+        pub const MAX_BOUNDS: (f64, f64) = (180.0, 90.0);
+
+        /// Min bounds (edge case)
+        pub const MIN_BOUNDS: (f64, f64) = (-180.0, -90.0);
+    }
+
+    /// Common WKT coordinate strings.
+    pub mod wkt {
+        /// Oklahoma City as WKT POINT
+        pub const OKC: &str = "POINT(-97.5 35.2)";
+
+        /// Denver as WKT POINT
+        pub const DENVER: &str = "POINT(-104.99 39.74)";
+
+        /// San Francisco as WKT POINT
+        pub const SAN_FRANCISCO: &str = "POINT(-122.42 37.77)";
+
+        /// With space after POINT
+        pub const WITH_SPACE: &str = "POINT (-97.5 35.2)";
+
+        /// Lowercase point
+        pub const LOWERCASE: &str = "point(-97.5 35.2)";
+    }
+
+    /// Common pressure levels (hPa/mb).
+    pub mod levels {
+        /// Standard isobaric levels for upper-air analysis
+        pub const STANDARD_ISOBARIC: [f64; 7] = [1000.0, 925.0, 850.0, 700.0, 500.0, 300.0, 250.0];
+
+        /// Common surface levels
+        pub const SURFACE: &str = "surface";
+
+        /// Common height above ground levels (meters)
+        pub const HEIGHT_2M: &str = "2";
+        pub const HEIGHT_10M: &str = "10";
+    }
+
+    /// Common parameter names.
+    pub mod params {
+        /// Temperature
+        pub const TMP: &str = "TMP";
+
+        /// U-component of wind
+        pub const UGRD: &str = "UGRD";
+
+        /// V-component of wind
+        pub const VGRD: &str = "VGRD";
+
+        /// Relative humidity
+        pub const RH: &str = "RH";
+
+        /// Geopotential height
+        pub const HGT: &str = "HGT";
+
+        /// Mean sea level pressure
+        pub const PRMSL: &str = "PRMSL";
+
+        /// Total precipitation
+        pub const APCP: &str = "APCP";
+
+        /// Composite reflectivity
+        pub const REFC: &str = "REFC";
+
+        /// CAPE
+        pub const CAPE: &str = "CAPE";
+
+        /// All standard surface parameters
+        pub const SURFACE_PARAMS: [&str; 4] = ["TMP", "UGRD", "VGRD", "PRMSL"];
+
+        /// All standard isobaric parameters
+        pub const ISOBARIC_PARAMS: [&str; 5] = ["TMP", "UGRD", "VGRD", "RH", "HGT"];
+    }
+
+    /// Common datetime test strings.
+    pub mod datetime {
+        /// Fixed reference datetime for tests
+        pub const REFERENCE: &str = "2024-12-29T12:00:00Z";
+
+        /// Interval spanning a day
+        pub const DAY_INTERVAL: &str = "2024-12-29T00:00:00Z/2024-12-29T23:59:59Z";
+
+        /// Open-ended start interval
+        pub const OPEN_START: &str = "../2024-12-29T23:59:59Z";
+
+        /// Open-ended end interval
+        pub const OPEN_END: &str = "2024-12-29T00:00:00Z/..";
+
+        /// Multiple hours for testing
+        pub const HOURS: [&str; 4] = [
+            "2024-12-29T00:00:00Z",
+            "2024-12-29T06:00:00Z",
+            "2024-12-29T12:00:00Z",
+            "2024-12-29T18:00:00Z",
+        ];
+    }
+
+    /// Common collection IDs.
+    pub mod collections {
+        pub const HRRR_SURFACE: &str = "hrrr-surface";
+        pub const HRRR_ISOBARIC: &str = "hrrr-isobaric";
+        pub const HRRR_ATMOSPHERE: &str = "hrrr-atmosphere";
+        pub const GFS_SURFACE: &str = "gfs-surface";
+        pub const GFS_ISOBARIC: &str = "gfs-isobaric";
+    }
+
+    /// Default position query parameters.
+    pub struct PositionQueryParams {
+        pub coords: &'static str,
+        pub z: Option<&'static str>,
+        pub datetime: Option<&'static str>,
+        pub parameter_name: Option<&'static str>,
+        pub crs: Option<&'static str>,
+        pub f: Option<&'static str>,
+    }
+
+    impl Default for PositionQueryParams {
+        fn default() -> Self {
+            Self {
+                coords: wkt::OKC,
+                z: None,
+                datetime: None,
+                parameter_name: Some(params::TMP),
+                crs: None,
+                f: None,
+            }
+        }
+    }
+
+    impl PositionQueryParams {
+        /// Convert to query string for URL.
+        pub fn to_query_string(&self) -> String {
+            let mut parts = vec![format!("coords={}", urlencoding(self.coords))];
+
+            if let Some(z) = self.z {
+                parts.push(format!("z={}", z));
+            }
+            if let Some(dt) = self.datetime {
+                parts.push(format!("datetime={}", urlencoding(dt)));
+            }
+            if let Some(param) = self.parameter_name {
+                parts.push(format!("parameter-name={}", param));
+            }
+            if let Some(crs) = self.crs {
+                parts.push(format!("crs={}", crs));
+            }
+            if let Some(f) = self.f {
+                parts.push(format!("f={}", f));
+            }
+
+            parts.join("&")
+        }
+
+        /// Build a full URL for a position query.
+        pub fn to_url(&self, collection_id: &str) -> String {
+            format!(
+                "{}/collections/{}/position?{}",
+                BASE_URL,
+                collection_id,
+                self.to_query_string()
+            )
+        }
+    }
+
+    /// Simple URL encoding for test strings (handles common chars).
+    fn urlencoding(s: &str) -> String {
+        s.replace(' ', "%20")
+            .replace('(', "%28")
+            .replace(')', "%29")
+            .replace('/', "%2F")
+            .replace(':', "%3A")
+    }
+}
+
 /// Common HTTP request parameters for WMS testing.
 pub mod wms {
     /// Default WMS GetMap parameters.
@@ -247,5 +449,49 @@ mod tests {
         assert!(query.contains("SERVICE=WMS"));
         assert!(query.contains("VERSION=1.3.0"));
         assert!(query.contains("LAYERS=gfs_TMP_2m"));
+    }
+
+    #[test]
+    fn test_edr_position_query_default() {
+        let params = edr::PositionQueryParams::default();
+        let query = params.to_query_string();
+        assert!(query.contains("coords="));
+        assert!(query.contains("parameter-name=TMP"));
+    }
+
+    #[test]
+    fn test_edr_position_query_full() {
+        let params = edr::PositionQueryParams {
+            coords: edr::wkt::DENVER,
+            z: Some("850"),
+            datetime: Some(edr::datetime::REFERENCE),
+            parameter_name: Some("TMP,UGRD,VGRD"),
+            crs: Some("CRS:84"),
+            f: Some("application/vnd.cov+json"),
+        };
+        let query = params.to_query_string();
+        assert!(query.contains("z=850"));
+        assert!(query.contains("datetime="));
+    }
+
+    #[test]
+    fn test_edr_position_query_url() {
+        let params = edr::PositionQueryParams::default();
+        let url = params.to_url(edr::collections::HRRR_SURFACE);
+        assert!(url.contains("/collections/hrrr-surface/position"));
+        assert!(url.contains("coords="));
+    }
+
+    #[test]
+    fn test_edr_coords() {
+        let (lon, lat) = edr::coords::OKC;
+        assert!(lon < 0.0); // Western hemisphere
+        assert!(lat > 0.0); // Northern hemisphere
+    }
+
+    #[test]
+    fn test_edr_levels() {
+        assert_eq!(edr::levels::STANDARD_ISOBARIC.len(), 7);
+        assert_eq!(edr::levels::STANDARD_ISOBARIC[0], 1000.0);
     }
 }

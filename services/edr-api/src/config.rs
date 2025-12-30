@@ -1,9 +1,9 @@
 //! EDR configuration loading and types.
 
-use std::collections::HashMap;
-use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 
 /// EDR configuration loaded from YAML files.
 #[derive(Debug, Clone, Default)]
@@ -16,18 +16,21 @@ impl EdrConfig {
     /// Load configuration from a directory of YAML files.
     pub fn load_from_dir(dir: &str) -> Result<Self> {
         let path = Path::new(dir);
-        
+
         // If directory doesn't exist, return default config
         if !path.exists() {
-            tracing::warn!("EDR config directory {} does not exist, using defaults", dir);
+            tracing::warn!(
+                "EDR config directory {} does not exist, using defaults",
+                dir
+            );
             return Ok(Self::default());
         }
 
         let mut models = HashMap::new();
 
         // Read all YAML files in the directory
-        for entry in std::fs::read_dir(path)
-            .with_context(|| format!("Failed to read directory: {}", dir))?
+        for entry in
+            std::fs::read_dir(path).with_context(|| format!("Failed to read directory: {}", dir))?
         {
             let entry = entry?;
             let file_path = entry.path();
@@ -244,10 +247,18 @@ impl Default for LimitsConfig {
     }
 }
 
-fn default_max_params() -> usize { 10 }
-fn default_max_time_steps() -> usize { 48 }
-fn default_max_levels() -> usize { 20 }
-fn default_max_response_mb() -> usize { 50 }
+fn default_max_params() -> usize {
+    10
+}
+fn default_max_time_steps() -> usize {
+    48
+}
+fn default_max_levels() -> usize {
+    20
+}
+fn default_max_response_mb() -> usize {
+    50
+}
 
 #[cfg(test)]
 mod tests {

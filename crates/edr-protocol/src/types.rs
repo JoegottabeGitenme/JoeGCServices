@@ -263,8 +263,7 @@ mod tests {
 
     #[test]
     fn test_link_serialization() {
-        let link = Link::new("http://example.com", "self")
-            .with_type("application/json");
+        let link = Link::new("http://example.com", "self").with_type("application/json");
 
         let json = serde_json::to_string(&link).unwrap();
         assert!(json.contains("\"href\":\"http://example.com\""));

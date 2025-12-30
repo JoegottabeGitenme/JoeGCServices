@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::parameters::{Parameter, Unit, I18nString, ObservedProperty};
+use crate::parameters::{I18nString, ObservedProperty, Parameter, Unit};
 
 /// A CoverageJSON document containing coverage data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,41 +42,26 @@ impl CoverageJson {
     }
 
     /// Add a parameter with its value.
-    pub fn with_parameter(
-        mut self,
-        name: &str,
-        param: CovJsonParameter,
-        value: f32,
-    ) -> Self {
+    pub fn with_parameter(mut self, name: &str, param: CovJsonParameter, value: f32) -> Self {
         if let Some(ref mut params) = self.parameters {
             params.insert(name.to_string(), param);
         }
 
         if let Some(ref mut ranges) = self.ranges {
-            ranges.insert(
-                name.to_string(),
-                NdArray::scalar(value),
-            );
+            ranges.insert(name.to_string(), NdArray::scalar(value));
         }
 
         self
     }
 
     /// Add a parameter with a null (missing) value.
-    pub fn with_parameter_null(
-        mut self,
-        name: &str,
-        param: CovJsonParameter,
-    ) -> Self {
+    pub fn with_parameter_null(mut self, name: &str, param: CovJsonParameter) -> Self {
         if let Some(ref mut params) = self.parameters {
             params.insert(name.to_string(), param);
         }
 
         if let Some(ref mut ranges) = self.ranges {
-            ranges.insert(
-                name.to_string(),
-                NdArray::scalar_null(),
-            );
+            ranges.insert(name.to_string(), NdArray::scalar_null());
         }
 
         self
@@ -96,10 +81,7 @@ impl CoverageJson {
         }
 
         if let Some(ref mut ranges) = self.ranges {
-            ranges.insert(
-                name.to_string(),
-                NdArray::new(values, shape, axis_names),
-            );
+            ranges.insert(name.to_string(), NdArray::new(values, shape, axis_names));
         }
 
         self
@@ -149,14 +131,12 @@ impl Domain {
             axes.insert("z".to_string(), Axis::Values(vec![AxisValue::Float(z)]));
         }
 
-        let referencing = vec![
-            ReferenceSystemConnection {
-                coordinates: vec!["x".to_string(), "y".to_string()],
-                system: ReferenceSystem::Geographic {
-                    id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-                },
+        let referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::Geographic {
+                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
             },
-        ];
+        }];
 
         Self {
             type_: "Domain".to_string(),
@@ -197,14 +177,12 @@ impl Domain {
             );
         }
 
-        let referencing = vec![
-            ReferenceSystemConnection {
-                coordinates: vec!["x".to_string(), "y".to_string()],
-                system: ReferenceSystem::Geographic {
-                    id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-                },
+        let referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::Geographic {
+                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
             },
-        ];
+        }];
 
         Self {
             type_: "Domain".to_string(),
@@ -239,11 +217,7 @@ pub enum Axis {
     /// Explicit list of values.
     Values(Vec<AxisValue>),
     /// Regular axis defined by start, stop, and number of points.
-    Regular {
-        start: f64,
-        stop: f64,
-        num: usize,
-    },
+    Regular { start: f64, stop: f64, num: usize },
 }
 
 impl Axis {
@@ -427,7 +401,11 @@ impl NdArray {
     }
 
     /// Create an array with missing data support.
-    pub fn with_missing(values: Vec<Option<f32>>, shape: Vec<usize>, axis_names: Vec<String>) -> Self {
+    pub fn with_missing(
+        values: Vec<Option<f32>>,
+        shape: Vec<usize>,
+        axis_names: Vec<String>,
+    ) -> Self {
         Self {
             type_: "NdArray".to_string(),
             data_type: "float".to_string(),
@@ -444,7 +422,12 @@ mod tests {
 
     #[test]
     fn test_point_coverage() {
-        let cov = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0));
+        let cov = CoverageJson::point(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            Some(2.0),
+        );
 
         assert_eq!(cov.type_, CoverageType::Coverage);
         assert_eq!(cov.domain.domain_type, DomainType::Point);
@@ -456,11 +439,9 @@ mod tests {
 
     #[test]
     fn test_coverage_with_parameter() {
-        let param = CovJsonParameter::new("Temperature")
-            .with_unit(Unit::kelvin());
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
 
-        let cov = CoverageJson::point(-97.5, 35.2, None, None)
-            .with_parameter("TMP", param, 288.5);
+        let cov = CoverageJson::point(-97.5, 35.2, None, None).with_parameter("TMP", param, 288.5);
 
         let params = cov.parameters.unwrap();
         assert!(params.contains_key("TMP"));
@@ -472,24 +453,30 @@ mod tests {
 
     #[test]
     fn test_coverage_serialization() {
-        let param = CovJsonParameter::new("Temperature")
-            .with_unit(Unit::kelvin());
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
 
         let cov = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), None)
             .with_parameter("TMP", param, 288.5);
 
         let json = serde_json::to_string_pretty(&cov).unwrap();
-        
+
         // Pretty-printed JSON has spaces after colons
         assert!(json.contains("\"type\": \"Coverage\"") || json.contains("\"type\":\"Coverage\""));
-        assert!(json.contains("\"domainType\": \"Point\"") || json.contains("\"domainType\":\"Point\""));
+        assert!(
+            json.contains("\"domainType\": \"Point\"") || json.contains("\"domainType\":\"Point\"")
+        );
         assert!(json.contains("\"TMP\""));
         assert!(json.contains("288.5"));
     }
 
     #[test]
     fn test_domain_point() {
-        let domain = Domain::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(850.0));
+        let domain = Domain::point(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            Some(850.0),
+        );
 
         assert_eq!(domain.domain_type, DomainType::Point);
         assert_eq!(domain.axes.len(), 4);
@@ -532,7 +519,11 @@ mod tests {
     #[test]
     fn test_ndarray_multidim() {
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let arr = NdArray::new(values.clone(), vec![2, 3], vec!["y".to_string(), "x".to_string()]);
+        let arr = NdArray::new(
+            values.clone(),
+            vec![2, 3],
+            vec!["y".to_string(), "x".to_string()],
+        );
 
         assert_eq!(arr.shape, Some(vec![2, 3]));
         assert_eq!(arr.axis_names, Some(vec!["y".to_string(), "x".to_string()]));
@@ -542,7 +533,11 @@ mod tests {
     #[test]
     fn test_ndarray_with_missing() {
         let values = vec![Some(1.0), None, Some(3.0), Some(4.0)];
-        let arr = NdArray::with_missing(values.clone(), vec![2, 2], vec!["y".to_string(), "x".to_string()]);
+        let arr = NdArray::with_missing(
+            values.clone(),
+            vec![2, 2],
+            vec!["y".to_string(), "x".to_string()],
+        );
 
         assert_eq!(arr.values[0], Some(1.0));
         assert_eq!(arr.values[1], None);
@@ -567,8 +562,7 @@ mod tests {
 
     #[test]
     fn test_covjson_parameter_from_edr_parameter() {
-        let param = Parameter::new("TMP", "Temperature")
-            .with_unit(Unit::kelvin());
+        let param = Parameter::new("TMP", "Temperature").with_unit(Unit::kelvin());
 
         let cov_param = CovJsonParameter::from_parameter(&param);
         assert_eq!(cov_param.type_, "Parameter");
@@ -581,8 +575,13 @@ mod tests {
             .with_unit(Unit::kelvin())
             .with_description("Air temperature at 2m");
 
-        let cov = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0))
-            .with_parameter("TMP", param, 288.5);
+        let cov = CoverageJson::point(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            Some(2.0),
+        )
+        .with_parameter("TMP", param, 288.5);
 
         let json = serde_json::to_string(&cov).unwrap();
         let parsed: CoverageJson = serde_json::from_str(&json).unwrap();

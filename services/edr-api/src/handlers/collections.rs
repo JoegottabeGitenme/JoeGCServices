@@ -1,51 +1,55 @@
 //! Collections endpoint handlers.
 
-use std::sync::Arc;
-use std::collections::HashMap;
 use axum::{
     extract::{Extension, Path},
     http::{header, StatusCode},
     response::Response,
 };
 use edr_protocol::{
-    Collection, CollectionList, DataQueries, Extent, TemporalExtent, VerticalExtent,
-    Parameter,
-    responses::ExceptionResponse,
+    responses::ExceptionResponse, Collection, CollectionList, DataQueries, Extent, Parameter,
+    TemporalExtent, VerticalExtent,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::state::AppState;
 use crate::config::{CollectionDefinition, LevelValue, ModelEdrConfig};
+use crate::state::AppState;
 use storage::Catalog;
 
 /// Build extent from catalog data for a collection.
 async fn build_extent_from_catalog(
-    catalog: &Catalog, 
+    catalog: &Catalog,
     model_config: &ModelEdrConfig,
     collection_def: &CollectionDefinition,
 ) -> Extent {
     let model_name = &model_config.model;
-    
+
     // Get bounding box from catalog
     let bbox = catalog.get_model_bbox(model_name).await.ok();
-    
+
     // Get temporal extent from catalog
-    let temporal_extent = catalog.get_model_temporal_extent(model_name).await.ok().flatten();
-    
+    let temporal_extent = catalog
+        .get_model_temporal_extent(model_name)
+        .await
+        .ok()
+        .flatten();
+
     // Get all valid times for the values array
     let valid_times = catalog.get_model_valid_times(model_name).await.ok();
-    
+
     // Build spatial extent
-    let spatial_bbox = bbox.map(|b| [b.min_x, b.min_y, b.max_x, b.max_y])
+    let spatial_bbox = bbox
+        .map(|b| [b.min_x, b.min_y, b.max_x, b.max_y])
         .unwrap_or([-180.0, -90.0, 180.0, 90.0]);
-    
+
     let mut extent = Extent::with_spatial(spatial_bbox, None);
-    
+
     // Add temporal extent if available
     if let Some((start, end)) = temporal_extent {
         let start_str = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let end_str = end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let mut temporal = TemporalExtent::new(Some(start_str), Some(end_str));
-        
+
         // Add values array with available times
         if let Some(times) = valid_times {
             let time_strings: Vec<String> = times
@@ -54,18 +58,16 @@ async fn build_extent_from_catalog(
                 .collect();
             temporal = temporal.with_values(time_strings);
         }
-        
+
         extent = extent.with_temporal(temporal);
     }
-    
+
     // Build vertical extent from collection definition
     // Collect all numeric levels from parameters
     let mut level_values: Vec<f64> = Vec::new();
     let mut has_pressure_levels = false;
     let mut has_height_levels = false;
-    
 
-    
     for param in &collection_def.parameters {
         for level in &param.levels {
             match level {
@@ -85,7 +87,7 @@ async fn build_extent_from_catalog(
             }
         }
     }
-    
+
     // Determine VRS based on level_filter type
     let level_type = &collection_def.level_filter.level_type;
     if level_type == "isobaric" || level_type.contains("pressure") {
@@ -93,12 +95,12 @@ async fn build_extent_from_catalog(
     } else if level_type.contains("height") || level_type.contains("ground") {
         has_height_levels = true;
     }
-    
+
     // Only add vertical extent if we have numeric levels
     if !level_values.is_empty() {
         // Sort levels
         level_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         let vrs = if has_pressure_levels {
             Some("hPa".to_string())
         } else if has_height_levels {
@@ -106,18 +108,16 @@ async fn build_extent_from_catalog(
         } else {
             None
         };
-        
+
         let vertical = VerticalExtent::with_levels(level_values, vrs);
         extent = extent.with_vertical(vertical);
     }
-    
+
     extent
 }
 
 /// GET /edr/collections - List all collections
-pub async fn list_collections_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> Response {
+pub async fn list_collections_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
     let config = state.edr_config.read().await;
 
     let mut collections = Vec::new();
@@ -138,17 +138,15 @@ pub async fn list_collections_handler(
         if let Some((model_config, coll_def)) = config.find_collection(&collection_def.id) {
             let extent = build_extent_from_catalog(&state.catalog, model_config, coll_def).await;
             collection = collection.with_extent(extent);
-            
+
             // Add CRS and formats
             collection = collection
                 .with_crs(model_config.settings.supported_crs.clone())
                 .with_output_formats(model_config.settings.output_formats.clone());
         } else {
             // Fallback to global extent if no model config
-            collection = collection.with_extent(Extent::with_spatial(
-                [-180.0, -90.0, 180.0, 90.0],
-                None,
-            ));
+            collection =
+                collection.with_extent(Extent::with_spatial([-180.0, -90.0, 180.0, 90.0], None));
         }
 
         collections.push(collection);

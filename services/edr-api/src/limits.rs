@@ -53,7 +53,8 @@ impl ResponseSizeEstimate {
         resolution_degrees: f64,
     ) -> Self {
         // Estimate number of grid points in the area
-        let num_points = (bbox_area_sq_degrees / (resolution_degrees * resolution_degrees)) as usize;
+        let num_points =
+            (bbox_area_sq_degrees / (resolution_degrees * resolution_degrees)) as usize;
         let num_points = num_points.max(1);
 
         let data_bytes = num_parameters * num_time_steps * num_vertical_levels * num_points * 4;
@@ -122,16 +123,35 @@ impl std::fmt::Display for LimitExceeded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LimitExceeded::TooManyParameters { requested, limit } => {
-                write!(f, "Too many parameters: {} requested, limit is {}", requested, limit)
+                write!(
+                    f,
+                    "Too many parameters: {} requested, limit is {}",
+                    requested, limit
+                )
             }
             LimitExceeded::TooManyTimeSteps { requested, limit } => {
-                write!(f, "Too many time steps: {} requested, limit is {}", requested, limit)
+                write!(
+                    f,
+                    "Too many time steps: {} requested, limit is {}",
+                    requested, limit
+                )
             }
             LimitExceeded::TooManyLevels { requested, limit } => {
-                write!(f, "Too many vertical levels: {} requested, limit is {}", requested, limit)
+                write!(
+                    f,
+                    "Too many vertical levels: {} requested, limit is {}",
+                    requested, limit
+                )
             }
-            LimitExceeded::ResponseTooLarge { estimated_mb, limit_mb } => {
-                write!(f, "Response too large: estimated {:.1}MB, limit is {}MB", estimated_mb, limit_mb)
+            LimitExceeded::ResponseTooLarge {
+                estimated_mb,
+                limit_mb,
+            } => {
+                write!(
+                    f,
+                    "Response too large: estimated {:.1}MB, limit is {}MB",
+                    estimated_mb, limit_mb
+                )
             }
         }
     }
@@ -180,7 +200,10 @@ mod tests {
         };
 
         let result = estimate.check_limits(&limits);
-        assert!(matches!(result, Err(LimitExceeded::TooManyParameters { .. })));
+        assert!(matches!(
+            result,
+            Err(LimitExceeded::TooManyParameters { .. })
+        ));
     }
 
     #[test]
@@ -193,12 +216,18 @@ mod tests {
         };
 
         let result = estimate.check_limits(&limits);
-        assert!(matches!(result, Err(LimitExceeded::ResponseTooLarge { .. })));
+        assert!(matches!(
+            result,
+            Err(LimitExceeded::ResponseTooLarge { .. })
+        ));
     }
 
     #[test]
     fn test_limit_exceeded_display() {
-        let err = LimitExceeded::TooManyParameters { requested: 20, limit: 10 };
+        let err = LimitExceeded::TooManyParameters {
+            requested: 20,
+            limit: 10,
+        };
         let display = format!("{}", err);
         assert!(display.contains("20"));
         assert!(display.contains("10"));

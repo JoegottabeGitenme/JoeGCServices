@@ -1,25 +1,21 @@
 //! Position query handler.
 
-use std::sync::Arc;
 use axum::{
     extract::{Extension, Path, Query},
     http::{header, StatusCode},
     response::Response,
 };
-use serde::Deserialize;
 use edr_protocol::{
-    CoverageJson,
-    PositionQuery as ParsedPositionQuery,
-    responses::ExceptionResponse,
-    coverage_json::CovJsonParameter,
-    queries::DateTimeQuery,
-    parameters::Unit,
+    coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
+    responses::ExceptionResponse, CoverageJson, PositionQuery as ParsedPositionQuery,
 };
 use grid_processor::DatasetQuery;
+use serde::Deserialize;
+use std::sync::Arc;
 
-use crate::state::AppState;
 use crate::config::LevelValue;
 use crate::limits::ResponseSizeEstimate;
+use crate::state::AppState;
 
 /// Query parameters for position endpoint.
 #[derive(Debug, Deserialize)]
@@ -121,7 +117,8 @@ async fn position_query(
     };
 
     // Parse parameter names
-    let requested_params = params.parameter_name
+    let requested_params = params
+        .parameter_name
         .as_ref()
         .map(|p| ParsedPositionQuery::parse_parameter_names(p))
         .unwrap_or_default();
@@ -129,10 +126,18 @@ async fn position_query(
     // Determine which parameters to query
     let params_to_query: Vec<_> = if requested_params.is_empty() {
         // Return all parameters in collection
-        collection_def.parameters.iter().map(|p| p.name.clone()).collect()
+        collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
     } else {
         // Validate requested parameters exist in collection
-        let available: Vec<_> = collection_def.parameters.iter().map(|p| p.name.as_str()).collect();
+        let available: Vec<_> = collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         for param in &requested_params {
             if !available.contains(&param.as_str()) {
                 return error_response(
@@ -166,10 +171,7 @@ async fn position_query(
             Err(_) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,
-                    ExceptionResponse::bad_request(format!(
-                        "Invalid instance ID format: {}",
-                        id
-                    )),
+                    ExceptionResponse::bad_request(format!("Invalid instance ID format: {}", id)),
                 );
             }
         }
@@ -186,29 +188,31 @@ async fn position_query(
     // For each parameter, query the data
     for param_name in &params_to_query {
         // Find the parameter definition in the collection to get level info
-        let param_def = collection_def.parameters.iter().find(|p| p.name == *param_name);
-        
+        let param_def = collection_def
+            .parameters
+            .iter()
+            .find(|p| p.name == *param_name);
+
         // Build the level string for catalog lookup
         let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
-        
+
         // Build the DatasetQuery
         let mut query = DatasetQuery::forecast(&model_config.model, param_name);
-        
+
         if let Some(level) = &level_str {
             query = query.at_level(level);
         }
-        
+
         // Use the reference time if provided
         if let Some(ref_time) = _reference_time {
             query = query.at_run(ref_time);
         }
-        
+
         // Query the actual data
         match state.grid_data_service.read_point(&query, lon, lat).await {
             Ok(point_value) => {
                 let unit = Unit::from_symbol(&point_value.units);
-                let cov_param = CovJsonParameter::new(param_name)
-                    .with_unit(unit);
+                let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
 
                 if let Some(val) = point_value.value {
                     coverage = coverage.with_parameter(param_name, cov_param, val);
@@ -216,7 +220,10 @@ async fn position_query(
                     // No data at this point (outside grid or fill value)
                     tracing::debug!(
                         "No data value at ({}, {}) for {}/{}",
-                        lon, lat, model_config.model, param_name
+                        lon,
+                        lat,
+                        model_config.model,
+                        param_name
                     );
                     let cov_param = CovJsonParameter::new(param_name)
                         .with_unit(Unit::from_symbol(&point_value.units));
@@ -227,7 +234,11 @@ async fn position_query(
                 // Log the error but continue with other parameters
                 tracing::warn!(
                     "Failed to query {}/{} at ({}, {}): {}",
-                    model_config.model, param_name, lon, lat, e
+                    model_config.model,
+                    param_name,
+                    lon,
+                    lat,
+                    e
                 );
                 // Add parameter with null value
                 let cov_param = CovJsonParameter::new(param_name);
@@ -270,10 +281,12 @@ fn build_level_string(
 ) -> Option<String> {
     // Use z_value if provided, otherwise use the first level from param definition
     let level_value = z_value.or_else(|| {
-        param_def.and_then(|p| p.levels.first()).and_then(|l| match l {
-            LevelValue::Numeric(n) => Some(*n),
-            LevelValue::Named(_) => None,
-        })
+        param_def
+            .and_then(|p| p.levels.first())
+            .and_then(|l| match l {
+                LevelValue::Numeric(n) => Some(*n),
+                LevelValue::Named(_) => None,
+            })
     });
 
     match level_filter.level_type.as_str() {
@@ -303,10 +316,12 @@ fn build_level_string(
         }
         _ => {
             // Unknown level type, try to use named level from param
-            param_def.and_then(|p| p.levels.first()).and_then(|l| match l {
-                LevelValue::Named(name) => Some(name.clone()),
-                LevelValue::Numeric(_) => None,
-            })
+            param_def
+                .and_then(|p| p.levels.first())
+                .and_then(|l| match l {
+                    LevelValue::Named(name) => Some(name.clone()),
+                    LevelValue::Numeric(_) => None,
+                })
         }
     }
 }
@@ -371,7 +386,12 @@ mod tests {
 
     #[test]
     fn test_coverage_json_creation() {
-        let coverage = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0));
+        let coverage = CoverageJson::point(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            Some(2.0),
+        );
 
         let json = serde_json::to_string(&coverage).unwrap();
         assert!(json.contains("\"type\":\"Coverage\""));

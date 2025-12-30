@@ -22,7 +22,7 @@ pub async fn conformance_handler() -> Response {
 
 #[cfg(test)]
 mod tests {
-    use edr_protocol::{ConformanceClasses, conformance};
+    use edr_protocol::{conformance, ConformanceClasses};
 
     #[test]
     fn test_conformance_classes() {
@@ -42,8 +42,10 @@ mod tests {
         // Should contain conformsTo array
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let conforms_to = parsed.get("conformsTo").unwrap().as_array().unwrap();
-        
+
         assert!(!conforms_to.is_empty());
-        assert!(conforms_to.iter().any(|v| v.as_str().unwrap().contains("core")));
+        assert!(conforms_to
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("core")));
     }
 }

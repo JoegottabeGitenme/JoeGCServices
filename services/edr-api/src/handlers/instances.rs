@@ -1,15 +1,14 @@
 //! Instances endpoint handlers.
 
-use std::sync::Arc;
 use axum::{
     extract::{Extension, Path},
     http::{header, StatusCode},
     response::Response,
 };
 use edr_protocol::{
-    Instance, InstanceList, DataQueries, Extent, TemporalExtent,
-    responses::ExceptionResponse,
+    responses::ExceptionResponse, DataQueries, Extent, Instance, InstanceList, TemporalExtent,
 };
+use std::sync::Arc;
 
 use crate::state::AppState;
 
@@ -52,8 +51,11 @@ pub async fn list_instances_handler(
     for (reference_time, _count) in runs {
         let run_id = reference_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-        let mut instance = Instance::new(&run_id)
-            .with_title(format!("{} run at {}", model_name.to_uppercase(), run_id));
+        let mut instance = Instance::new(&run_id).with_title(format!(
+            "{} run at {}",
+            model_name.to_uppercase(),
+            run_id
+        ));
 
         // Build links
         instance.build_links(&state.base_url, &collection_id);
@@ -63,7 +65,12 @@ pub async fn list_instances_handler(
         instance = instance.with_data_queries(queries);
 
         // Get actual temporal extent from forecast range
-        let forecast_range = state.catalog.get_run_forecast_range(model_name, reference_time).await.ok().flatten();
+        let forecast_range = state
+            .catalog
+            .get_run_forecast_range(model_name, reference_time)
+            .await
+            .ok()
+            .flatten();
         let (start_str, end_str) = match forecast_range {
             Some((start, end)) => (
                 start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
@@ -71,13 +78,10 @@ pub async fn list_instances_handler(
             ),
             None => (run_id.clone(), None),
         };
-        
+
         let extent = Extent {
             spatial: None,
-            temporal: Some(TemporalExtent::new(
-                Some(start_str),
-                end_str,
-            )),
+            temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
             vertical: None,
         };
         instance = instance.with_extent(extent);
@@ -163,8 +167,11 @@ pub async fn get_instance_handler(
             .unwrap();
     }
 
-    let mut instance = Instance::new(&instance_id)
-        .with_title(format!("{} run at {}", model_name.to_uppercase(), instance_id));
+    let mut instance = Instance::new(&instance_id).with_title(format!(
+        "{} run at {}",
+        model_name.to_uppercase(),
+        instance_id
+    ));
 
     // Build links
     instance.build_links(&state.base_url, &collection_id);
@@ -174,7 +181,12 @@ pub async fn get_instance_handler(
     instance = instance.with_data_queries(queries);
 
     // Get actual temporal extent from forecast range
-    let forecast_range = state.catalog.get_run_forecast_range(model_name, reference_time).await.ok().flatten();
+    let forecast_range = state
+        .catalog
+        .get_run_forecast_range(model_name, reference_time)
+        .await
+        .ok()
+        .flatten();
     let (start_str, end_str) = match forecast_range {
         Some((start, end)) => (
             start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
@@ -182,13 +194,10 @@ pub async fn get_instance_handler(
         ),
         None => (instance_id.clone(), None),
     };
-    
+
     let extent = Extent {
         spatial: None,
-        temporal: Some(TemporalExtent::new(
-            Some(start_str),
-            end_str,
-        )),
+        temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
         vertical: None,
     };
     instance = instance.with_extent(extent);
@@ -209,8 +218,8 @@ mod tests {
 
     #[test]
     fn test_instance_creation() {
-        let mut instance = Instance::new("2024-12-29T12:00:00Z")
-            .with_title("HRRR run at 2024-12-29 12Z");
+        let mut instance =
+            Instance::new("2024-12-29T12:00:00Z").with_title("HRRR run at 2024-12-29 12Z");
 
         instance.build_links("http://localhost:8083/edr", "hrrr-isobaric");
 

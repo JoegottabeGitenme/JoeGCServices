@@ -1514,6 +1514,8 @@ name = "edr-protocol"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "criterion",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

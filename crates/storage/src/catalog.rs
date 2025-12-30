@@ -971,10 +971,7 @@ impl Catalog {
 
     /// Get all available valid times for a model (for populating temporal extent values).
     /// Returns unique valid times sorted ascending.
-    pub async fn get_model_valid_times(
-        &self,
-        model: &str,
-    ) -> WmsResult<Vec<DateTime<Utc>>> {
+    pub async fn get_model_valid_times(&self, model: &str) -> WmsResult<Vec<DateTime<Utc>>> {
         let times = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT DISTINCT valid_time FROM datasets \
              WHERE model = $1 AND status = 'available' \

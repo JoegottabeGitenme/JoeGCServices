@@ -1,19 +1,17 @@
 //! Landing page handler.
 
-use std::sync::Arc;
 use axum::{
     extract::Extension,
     http::{header, StatusCode},
     response::Response,
 };
 use edr_protocol::LandingPage;
+use std::sync::Arc;
 
 use crate::state::AppState;
 
 /// GET /edr - Landing page
-pub async fn landing_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> Response {
+pub async fn landing_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
     let landing = LandingPage::new(
         "Weather WMS EDR API",
         "OGC API - Environmental Data Retrieval for weather model data including HRRR, GFS, and more",
@@ -36,11 +34,7 @@ mod tests {
 
     #[test]
     fn test_landing_page_structure() {
-        let landing = LandingPage::new(
-            "Test API",
-            "Test description",
-            "http://localhost:8083/edr",
-        );
+        let landing = LandingPage::new("Test API", "Test description", "http://localhost:8083/edr");
 
         // Verify required links
         assert!(landing.links.iter().any(|l| l.rel == "self"));
@@ -51,11 +45,7 @@ mod tests {
 
     #[test]
     fn test_landing_page_json() {
-        let landing = LandingPage::new(
-            "Test API",
-            "Test description",
-            "http://localhost:8083/edr",
-        );
+        let landing = LandingPage::new("Test API", "Test description", "http://localhost:8083/edr");
 
         let json = serde_json::to_string(&landing).unwrap();
 

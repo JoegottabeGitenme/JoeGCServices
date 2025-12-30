@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{Extent, Link};
 use crate::parameters::Parameter;
+use crate::types::{Extent, Link};
 
 /// A list of collections available from the EDR API.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -24,10 +24,8 @@ impl CollectionList {
     /// Create a new collection list.
     pub fn new(collections: Vec<Collection>, base_url: &str) -> Self {
         Self {
-            links: vec![
-                Link::new(format!("{}/collections", base_url), "self")
-                    .with_type("application/json"),
-            ],
+            links: vec![Link::new(format!("{}/collections", base_url), "self")
+                .with_type("application/json")],
             collections,
         }
     }
@@ -259,8 +257,11 @@ impl InstanceList {
                     "self",
                 )
                 .with_type("application/json"),
-                Link::new(format!("{}/collections/{}", base_url, collection_id), "collection")
-                    .with_type("application/json"),
+                Link::new(
+                    format!("{}/collections/{}", base_url, collection_id),
+                    "collection",
+                )
+                .with_type("application/json"),
             ],
             instances,
         }
@@ -378,8 +379,14 @@ mod tests {
             .with_output_formats(vec!["application/vnd.cov+json".to_string()]);
 
         let json = serde_json::to_string_pretty(&collection).unwrap();
-        assert!(json.contains("\"id\": \"test-collection\"") || json.contains("\"id\":\"test-collection\""));
-        assert!(json.contains("\"title\": \"Test Collection\"") || json.contains("\"title\":\"Test Collection\""));
+        assert!(
+            json.contains("\"id\": \"test-collection\"")
+                || json.contains("\"id\":\"test-collection\"")
+        );
+        assert!(
+            json.contains("\"title\": \"Test Collection\"")
+                || json.contains("\"title\":\"Test Collection\"")
+        );
         assert!(json.contains("\"crs\""));
         assert!(json.contains("CRS:84"));
     }
@@ -416,8 +423,8 @@ mod tests {
 
     #[test]
     fn test_instance() {
-        let mut instance = Instance::new("2024-12-29T12:00:00Z")
-            .with_title("HRRR Run 2024-12-29 12Z");
+        let mut instance =
+            Instance::new("2024-12-29T12:00:00Z").with_title("HRRR Run 2024-12-29 12Z");
 
         instance.build_links("http://localhost:8083/edr", "hrrr-isobaric");
 
@@ -441,17 +448,13 @@ mod tests {
 
     #[test]
     fn test_collection_with_parameters() {
-        use std::collections::HashMap;
         use crate::parameters::Parameter;
+        use std::collections::HashMap;
 
         let mut params = HashMap::new();
-        params.insert(
-            "TMP".to_string(),
-            Parameter::new("TMP", "Temperature"),
-        );
+        params.insert("TMP".to_string(), Parameter::new("TMP", "Temperature"));
 
-        let collection = Collection::new("test")
-            .with_parameters(params);
+        let collection = Collection::new("test").with_parameters(params);
 
         assert!(collection.parameter_names.is_some());
         let params = collection.parameter_names.unwrap();

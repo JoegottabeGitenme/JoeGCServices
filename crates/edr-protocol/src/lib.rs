@@ -25,22 +25,22 @@
 //! );
 //! ```
 
-pub mod types;
 pub mod collections;
-pub mod parameters;
 pub mod coverage_json;
+pub mod errors;
+pub mod parameters;
 pub mod queries;
 pub mod responses;
-pub mod errors;
+pub mod types;
 
 // Re-export commonly used types
-pub use types::{Link, Extent, SpatialExtent, TemporalExtent, VerticalExtent, Crs};
 pub use collections::{Collection, CollectionList, DataQueries, Instance, InstanceList};
-pub use parameters::{Parameter, Unit, ObservedProperty};
-pub use coverage_json::{CoverageJson, Domain, DomainType, Axis, NdArray, ReferenceSystem};
-pub use queries::{PositionQuery, CoordinateParseError};
-pub use responses::{LandingPage, ConformanceClasses};
+pub use coverage_json::{Axis, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
 pub use errors::EdrError;
+pub use parameters::{ObservedProperty, Parameter, Unit};
+pub use queries::{CoordinateParseError, PositionQuery};
+pub use responses::{ConformanceClasses, LandingPage};
+pub use types::{Crs, Extent, Link, SpatialExtent, TemporalExtent, VerticalExtent};
 
 /// EDR API conformance class URIs
 pub mod conformance {

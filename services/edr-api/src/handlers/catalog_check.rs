@@ -72,9 +72,7 @@ pub struct TemporalRange {
 }
 
 /// GET /edr/catalog-check - Return catalog inventory for coverage validation
-pub async fn catalog_check_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> Response {
+pub async fn catalog_check_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
     // Query catalog for all models
     let models = match state.catalog.list_models().await {
         Ok(m) => m,
@@ -143,7 +141,10 @@ pub async fn catalog_check_handler(
             // Get forecast hours for this run
             let forecast_hours = state
                 .catalog
-                .get_available_forecast_hours(&model_name, &param_info.keys().next().unwrap_or(&String::new()))
+                .get_available_forecast_hours(
+                    &model_name,
+                    &param_info.keys().next().unwrap_or(&String::new()),
+                )
                 .await
                 .unwrap_or_default();
 

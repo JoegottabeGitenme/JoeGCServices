@@ -5,8 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::Link;
 use crate::conformance;
+use crate::types::Link;
 
 /// Landing page response for the EDR API root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -199,7 +199,7 @@ mod tests {
 
         assert_eq!(landing.title, "Weather EDR API");
         assert!(landing.description.is_some());
-        
+
         // Should have at least self, conformance, data, and service-desc links
         assert!(landing.links.len() >= 4);
         assert!(landing.links.iter().any(|l| l.rel == "self"));
@@ -210,15 +210,13 @@ mod tests {
 
     #[test]
     fn test_landing_page_serialization() {
-        let landing = LandingPage::new(
-            "Test API",
-            "Test description",
-            "http://localhost:8083/edr",
-        );
+        let landing = LandingPage::new("Test API", "Test description", "http://localhost:8083/edr");
 
         let json = serde_json::to_string_pretty(&landing).unwrap();
         // Pretty-printed JSON has spaces after colons
-        assert!(json.contains("\"title\": \"Test API\"") || json.contains("\"title\":\"Test API\""));
+        assert!(
+            json.contains("\"title\": \"Test API\"") || json.contains("\"title\":\"Test API\"")
+        );
         assert!(json.contains("\"description\""));
         assert!(json.contains("\"links\""));
         assert!(json.contains("\"rel\": \"self\"") || json.contains("\"rel\":\"self\""));
@@ -245,8 +243,7 @@ mod tests {
 
     #[test]
     fn test_conformance_with_class() {
-        let conf = ConformanceClasses::minimal()
-            .with_class(conformance::GEOJSON);
+        let conf = ConformanceClasses::minimal().with_class(conformance::GEOJSON);
 
         assert!(conf.contains(conformance::CORE));
         assert!(conf.contains(conformance::GEOJSON));
@@ -303,7 +300,9 @@ mod tests {
         assert!(json.contains("\"type\""));
         // Pretty-printed JSON has spaces after colons
         assert!(json.contains("\"status\": 404") || json.contains("\"status\":404"));
-        assert!(json.contains("\"title\": \"Not Found\"") || json.contains("\"title\":\"Not Found\""));
+        assert!(
+            json.contains("\"title\": \"Not Found\"") || json.contains("\"title\":\"Not Found\"")
+        );
         assert!(json.contains("\"detail\""));
         assert!(json.contains("\"instance\""));
     }

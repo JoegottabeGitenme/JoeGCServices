@@ -109,7 +109,7 @@ impl IngestionFilter {
     }
 
     /// Insert or merge a filter entry for a parameter/level combination.
-    /// 
+    ///
     /// If an entry already exists for this (param, level_code) pair, the allowed_values
     /// are merged together. This allows multiple level definitions with the same
     /// level_code but different values (e.g., multiple isobaric levels).
@@ -973,45 +973,75 @@ parameters:
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    
+
     #[test]
     fn test_hrrr_filter_from_real_config() {
         // This test uses the actual HRRR config file
         std::env::set_var("CONFIG_DIR", "../../config");
-        
+
         let filter = build_filter_for_model("hrrr").expect("Should load HRRR config");
-        
+
         // Check isobaric levels for TMP (100 = isobaric level code)
         // Values are in Pascals: 100000, 92500, 85000, 70000, 50000, 30000, 25000
         println!("Testing TMP isobaric levels...");
-        assert!(filter.should_ingest("TMP", 100, 100000), "TMP at 1000 mb (100000 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 92500), "TMP at 925 mb (92500 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 85000), "TMP at 850 mb (85000 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 70000), "TMP at 700 mb (70000 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 50000), "TMP at 500 mb (50000 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 30000), "TMP at 300 mb (30000 Pa)");
-        assert!(filter.should_ingest("TMP", 100, 25000), "TMP at 250 mb (25000 Pa)");
-        
+        assert!(
+            filter.should_ingest("TMP", 100, 100000),
+            "TMP at 1000 mb (100000 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 92500),
+            "TMP at 925 mb (92500 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 85000),
+            "TMP at 850 mb (85000 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 70000),
+            "TMP at 700 mb (70000 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 50000),
+            "TMP at 500 mb (50000 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 30000),
+            "TMP at 300 mb (30000 Pa)"
+        );
+        assert!(
+            filter.should_ingest("TMP", 100, 25000),
+            "TMP at 250 mb (25000 Pa)"
+        );
+
         // Check height_above_ground levels for TMP (103 = height above ground)
         println!("Testing TMP height above ground...");
         assert!(filter.should_ingest("TMP", 103, 2), "TMP at 2m");
-        
+
         // Check that invalid levels are rejected
-        assert!(!filter.should_ingest("TMP", 100, 80000), "TMP at invalid 800 mb");
-        
+        assert!(
+            !filter.should_ingest("TMP", 100, 80000),
+            "TMP at invalid 800 mb"
+        );
+
         // Check UGRD/VGRD at 10m (height above ground)
         println!("Testing UGRD/VGRD at 10m...");
         assert!(filter.should_ingest("UGRD", 103, 10), "UGRD at 10m");
         assert!(filter.should_ingest("VGRD", 103, 10), "VGRD at 10m");
-        
+
         // Check REFC at entire atmosphere (200)
         println!("Testing REFC at entire atmosphere...");
-        assert!(filter.should_ingest("REFC", 200, 0), "REFC at entire atmosphere");
-        
+        assert!(
+            filter.should_ingest("REFC", 200, 0),
+            "REFC at entire atmosphere"
+        );
+
         // Check TCDC at entire atmosphere (200)
         println!("Testing TCDC at entire atmosphere...");
-        assert!(filter.should_ingest("TCDC", 200, 0), "TCDC at entire atmosphere");
-        
+        assert!(
+            filter.should_ingest("TCDC", 200, 0),
+            "TCDC at entire atmosphere"
+        );
+
         println!("All HRRR filter tests passed!");
     }
 }

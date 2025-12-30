@@ -1,11 +1,11 @@
 //! Application state for the EDR API.
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use storage::Catalog;
 use grid_processor::{GridDataService, MinioConfig};
+use storage::Catalog;
 
 use crate::config::EdrConfig;
 
@@ -28,18 +28,18 @@ impl AppState {
     /// Create a new AppState from environment configuration.
     pub async fn new() -> Result<Self> {
         // Get database URL
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://weatherwms:weatherwms@localhost:5432/weatherwms".to_string());
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgresql://weatherwms:weatherwms@localhost:5432/weatherwms".to_string()
+        });
 
         // Get S3/MinIO configuration
-        let s3_endpoint = std::env::var("S3_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:9000".to_string());
-        let s3_bucket = std::env::var("S3_BUCKET")
-            .unwrap_or_else(|_| "weather-data".to_string());
-        let s3_access_key = std::env::var("S3_ACCESS_KEY")
-            .unwrap_or_else(|_| "minioadmin".to_string());
-        let s3_secret_key = std::env::var("S3_SECRET_KEY")
-            .unwrap_or_else(|_| "minioadmin".to_string());
+        let s3_endpoint =
+            std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "weather-data".to_string());
+        let s3_access_key =
+            std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string());
+        let s3_secret_key =
+            std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string());
 
         // Get base URL for links
         let base_url = std::env::var("EDR_BASE_URL")
@@ -65,11 +65,8 @@ impl AppState {
             .unwrap_or(256);
 
         // Create high-level grid data service
-        let grid_data_service = GridDataService::new(
-            Arc::clone(&catalog),
-            minio_config,
-            chunk_cache_size_mb,
-        );
+        let grid_data_service =
+            GridDataService::new(Arc::clone(&catalog), minio_config, chunk_cache_size_mb);
 
         // Load EDR config
         let edr_config = EdrConfig::load_from_dir("config/edr")?;

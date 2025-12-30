@@ -1,6 +1,5 @@
 //! Health and metrics handlers.
 
-use std::sync::Arc;
 use axum::{
     extract::Extension,
     http::{header, StatusCode},
@@ -8,6 +7,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use std::sync::Arc;
 
 use crate::state::AppState;
 
@@ -33,9 +33,7 @@ pub async fn health_handler() -> Json<HealthResponse> {
 }
 
 /// GET /ready - Readiness check (verifies database connectivity)
-pub async fn ready_handler(
-    Extension(state): Extension<Arc<AppState>>,
-) -> Response {
+pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
     // Check database connectivity by listing models
     let db_status = match state.catalog.list_models().await {
         Ok(_) => "ok".to_string(),

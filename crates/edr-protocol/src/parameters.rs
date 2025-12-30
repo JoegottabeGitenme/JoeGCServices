@@ -111,11 +111,10 @@ impl I18nString {
     pub fn text(&self) -> &str {
         match self {
             I18nString::Simple(s) => s,
-            I18nString::Localized(map) => {
-                map.get("en").map(|s| s.as_str()).unwrap_or_else(|| {
-                    map.values().next().map(|s| s.as_str()).unwrap_or("")
-                })
-            }
+            I18nString::Localized(map) => map
+                .get("en")
+                .map(|s| s.as_str())
+                .unwrap_or_else(|| map.values().next().map(|s| s.as_str()).unwrap_or("")),
         }
     }
 }
@@ -334,12 +333,13 @@ mod tests {
 
     #[test]
     fn test_parameter_serialization() {
-        let param = Parameter::new("TMP", "Temperature")
-            .with_unit(Unit::kelvin());
+        let param = Parameter::new("TMP", "Temperature").with_unit(Unit::kelvin());
 
         let json = serde_json::to_string_pretty(&param).unwrap();
         // Pretty-printed JSON has spaces after colons
-        assert!(json.contains("\"type\": \"Parameter\"") || json.contains("\"type\":\"Parameter\""));
+        assert!(
+            json.contains("\"type\": \"Parameter\"") || json.contains("\"type\":\"Parameter\"")
+        );
         assert!(json.contains("\"id\": \"TMP\"") || json.contains("\"id\":\"TMP\""));
         assert!(json.contains("\"observedProperty\""));
     }

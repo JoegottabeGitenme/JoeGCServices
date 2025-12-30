@@ -101,11 +101,26 @@ mod tests {
 
     #[test]
     fn test_error_status_codes() {
-        assert_eq!(EdrError::CollectionNotFound("test".to_string()).status_code(), 404);
-        assert_eq!(EdrError::InstanceNotFound("test".to_string()).status_code(), 404);
-        assert_eq!(EdrError::InvalidParameter("test".to_string()).status_code(), 400);
-        assert_eq!(EdrError::ResponseTooLarge("test".to_string()).status_code(), 413);
-        assert_eq!(EdrError::InternalError("test".to_string()).status_code(), 500);
+        assert_eq!(
+            EdrError::CollectionNotFound("test".to_string()).status_code(),
+            404
+        );
+        assert_eq!(
+            EdrError::InstanceNotFound("test".to_string()).status_code(),
+            404
+        );
+        assert_eq!(
+            EdrError::InvalidParameter("test".to_string()).status_code(),
+            400
+        );
+        assert_eq!(
+            EdrError::ResponseTooLarge("test".to_string()).status_code(),
+            413
+        );
+        assert_eq!(
+            EdrError::InternalError("test".to_string()).status_code(),
+            500
+        );
     }
 
     #[test]
@@ -123,7 +138,7 @@ mod tests {
         let err: EdrError = coord_err.into();
 
         assert_eq!(err.status_code(), 400);
-        
+
         let exc = err.to_exception();
         assert_eq!(exc.status, Some(400));
     }
@@ -138,7 +153,8 @@ mod tests {
 
     #[test]
     fn test_response_too_large_exception() {
-        let err = EdrError::ResponseTooLarge("Estimated response size: 75MB (limit: 50MB)".to_string());
+        let err =
+            EdrError::ResponseTooLarge("Estimated response size: 75MB (limit: 50MB)".to_string());
         let exc = err.to_exception();
 
         assert_eq!(exc.status, Some(413));
