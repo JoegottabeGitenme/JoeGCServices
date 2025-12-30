@@ -70,6 +70,44 @@ impl ResponseSizeEstimate {
         }
     }
 
+    /// Estimate the response size for a radius query.
+    ///
+    /// Radius queries are similar to area queries but the area is circular.
+    /// The bounding box area is π/4 * (2r)² = πr² (circle inscribed in bbox).
+    pub fn for_radius(
+        num_parameters: usize,
+        num_time_steps: usize,
+        num_vertical_levels: usize,
+        radius_km: f64,
+        resolution_degrees: f64,
+    ) -> Self {
+        // Convert radius to degrees (approximate)
+        // At mid-latitudes, 1 degree ≈ 100 km
+        let radius_degrees = radius_km / 100.0;
+        
+        // Bounding box is 2r x 2r, but only π/4 of that is actually the circle
+        let bbox_side = 2.0 * radius_degrees;
+        let bbox_area = bbox_side * bbox_side;
+        let circle_area = std::f64::consts::PI / 4.0 * bbox_area;
+        
+        // Estimate number of grid points in the circular area
+        let num_points =
+            (circle_area / (resolution_degrees * resolution_degrees)) as usize;
+        let num_points = num_points.max(1);
+
+        let data_bytes = num_parameters * num_time_steps * num_vertical_levels * num_points * 4;
+        let json_overhead = num_parameters * 200 + num_points * 10;
+        let base_overhead = 1000;
+
+        Self {
+            num_parameters,
+            num_time_steps,
+            num_vertical_levels,
+            num_points,
+            estimated_bytes: data_bytes + json_overhead + base_overhead,
+        }
+    }
+
     /// Get estimated size in megabytes.
     pub fn estimated_mb(&self) -> f64 {
         self.estimated_bytes as f64 / (1024.0 * 1024.0)
@@ -231,5 +269,16 @@ mod tests {
         let display = format!("{}", err);
         assert!(display.contains("20"));
         assert!(display.contains("10"));
+    }
+
+    #[test]
+    fn test_radius_estimate() {
+        // 100 km radius at 0.03 degree resolution
+        let estimate = ResponseSizeEstimate::for_radius(1, 1, 1, 100.0, 0.03);
+
+        // 100km ≈ 1 degree, so area ≈ π square degrees
+        // At 0.03 degree resolution, that's roughly π / 0.0009 ≈ 3500 points
+        assert!(estimate.num_points > 1000);
+        assert!(estimate.estimated_mb() > 0.0);
     }
 }

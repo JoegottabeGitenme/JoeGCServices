@@ -9,9 +9,10 @@ class EDRCoverageValidator {
     constructor() {
         this.endpoint = 'http://localhost:8083/edr';
         this.mode = 'full';
-        this.queryType = 'position'; // 'position' or 'area'
+        this.queryType = 'position'; // 'position', 'area', or 'radius'
         this.testPoint = { lon: -100, lat: 40 };
         this.testArea = { lon: -100, lat: 40 }; // Center of 1x1 degree test polygon
+        this.testRadius = { lon: -100, lat: 40, within: 50, units: 'km' }; // Radius query config
         this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
@@ -71,11 +72,13 @@ class EDRCoverageValidator {
         // Bind query type select
         document.getElementById('query-type-select').addEventListener('change', (e) => {
             this.queryType = e.target.value;
-            // Toggle visibility of point vs area config
+            // Toggle visibility of point vs area vs radius config
             document.getElementById('test-point-config').style.display = 
                 this.queryType === 'position' ? '' : 'none';
             document.getElementById('test-area-config').style.display = 
                 this.queryType === 'area' ? '' : 'none';
+            document.getElementById('test-radius-config').style.display = 
+                this.queryType === 'radius' ? '' : 'none';
         });
 
         // Bind filter buttons
@@ -99,14 +102,30 @@ class EDRCoverageValidator {
             this.testArea.lat = parseFloat(e.target.value) || 40;
         });
 
+        // Bind test radius inputs
+        document.getElementById('test-radius-lon').addEventListener('change', (e) => {
+            this.testRadius.lon = parseFloat(e.target.value) || -100;
+        });
+        document.getElementById('test-radius-lat').addEventListener('change', (e) => {
+            this.testRadius.lat = parseFloat(e.target.value) || 40;
+        });
+        document.getElementById('test-radius-within').addEventListener('change', (e) => {
+            this.testRadius.within = parseFloat(e.target.value) || 50;
+        });
+        document.getElementById('test-radius-units').addEventListener('change', (e) => {
+            this.testRadius.units = e.target.value || 'km';
+        });
+
         // Bind randomize toggle
         document.getElementById('randomize-toggle').addEventListener('change', (e) => {
             this.randomizeLocations = e.target.checked;
             // Disable/enable manual coordinate inputs when randomize is on
             const pointInputs = document.querySelectorAll('#test-point-config input');
             const areaInputs = document.querySelectorAll('#test-area-config input');
+            const radiusInputs = document.querySelectorAll('#test-radius-config input:not(#test-radius-within)');
             pointInputs.forEach(input => input.disabled = this.randomizeLocations);
             areaInputs.forEach(input => input.disabled = this.randomizeLocations);
+            radiusInputs.forEach(input => input.disabled = this.randomizeLocations);
         });
 
         // Bind collection filter controls
@@ -628,9 +647,14 @@ class EDRCoverageValidator {
      */
     async executeTask(task) {
         const { collId, param, level, time, levelCheck, paramCheck, coll } = task;
-        const result = this.queryType === 'area' 
-            ? await this.testAreaQuery(collId, param, level, time, coll)
-            : await this.testPositionQuery(collId, param, level, time, coll);
+        let result;
+        if (this.queryType === 'area') {
+            result = await this.testAreaQuery(collId, param, level, time, coll);
+        } else if (this.queryType === 'radius') {
+            result = await this.testRadiusQuery(collId, param, level, time, coll);
+        } else {
+            result = await this.testPositionQuery(collId, param, level, time, coll);
+        }
 
         // Update the level check result
         if (levelCheck) {
@@ -818,6 +842,87 @@ class EDRCoverageValidator {
                 level,
                 time,
                 queryType: 'area',
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Make a single radius query and check result
+     */
+    async testRadiusQuery(collectionId, parameter, level, time, coll) {
+        // Get coordinates (either from fixed config or random within collection bbox)
+        const { lon, lat } = this.getQueryCoordinates(coll);
+        const coords = `POINT(${lon} ${lat})`;
+        const within = this.testRadius.within;
+        const units = this.testRadius.units;
+        
+        let url = `${this.endpoint}/collections/${collectionId}/radius?coords=${encodeURIComponent(coords)}&within=${within}&within-units=${units}&parameter-name=${parameter}`;
+
+        if (level !== null) {
+            url += `&z=${level}`;
+        }
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    queryType: 'radius',
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            const values = data.ranges?.[parameter]?.values || [];
+            const nonNullValues = values.filter(v => v !== null);
+            const hasData = nonNullValues.length > 0;
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'radius',
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Radius data retrieved (${nonNullValues.length}/${values.length} non-null)` 
+                    : 'Query OK but all values null',
+                values: nonNullValues.slice(0, 10), // Show first 10 non-null values
+                valueCount: values.length,
+                nonNullCount: nonNullValues.length,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'radius',
                 status: 'fail',
                 message: error.message,
                 duration: Math.round(performance.now() - startTime),
@@ -1171,10 +1276,13 @@ class EDRCoverageValidator {
             return this.getRandomPointInBbox(coll.bbox);
         }
         
-        // Use fixed test point/area
-        return this.queryType === 'area' 
-            ? { lon: this.testArea.lon, lat: this.testArea.lat }
-            : { lon: this.testPoint.lon, lat: this.testPoint.lat };
+        // Use fixed test point/area/radius center
+        if (this.queryType === 'area') {
+            return { lon: this.testArea.lon, lat: this.testArea.lat };
+        } else if (this.queryType === 'radius') {
+            return { lon: this.testRadius.lon, lat: this.testRadius.lat };
+        }
+        return { lon: this.testPoint.lon, lat: this.testPoint.lat };
     }
 
     /**

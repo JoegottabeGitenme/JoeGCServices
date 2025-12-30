@@ -276,6 +276,11 @@ async function runAllTests() {
         'area-basic', 'area-covjson', 'area-small', 'area-complex',
         'area-too-large', 'area-invalid-polygon', 'area-with-params',
         'area-missing-coords', 'area-multipolygon', 'area-z-multiple',
+        // Radius Query
+        'radius-basic', 'radius-covjson', 'radius-missing-coords',
+        'radius-missing-within', 'radius-missing-within-units', 'radius-invalid-coords',
+        'radius-too-large', 'radius-units-km', 'radius-units-mi', 'radius-units-m',
+        'radius-multipoint', 'radius-z-parameter', 'radius-with-params', 'radius-datetime',
         // Error Handling
         'error-404-collection', 'error-400-coords', 'error-400-datetime', 'error-response-structure',
         // Metadata
@@ -421,6 +426,35 @@ async function executeTest(testName) {
             return testAreaMultipolygon();
         case 'area-z-multiple':
             return testAreaZMultiple();
+        // Radius Query tests
+        case 'radius-basic':
+            return testRadiusBasic();
+        case 'radius-covjson':
+            return testRadiusCovJson();
+        case 'radius-missing-coords':
+            return testRadiusMissingCoords();
+        case 'radius-missing-within':
+            return testRadiusMissingWithin();
+        case 'radius-missing-within-units':
+            return testRadiusMissingWithinUnits();
+        case 'radius-invalid-coords':
+            return testRadiusInvalidCoords();
+        case 'radius-too-large':
+            return testRadiusTooLarge();
+        case 'radius-units-km':
+            return testRadiusUnitsKm();
+        case 'radius-units-mi':
+            return testRadiusUnitsMi();
+        case 'radius-units-m':
+            return testRadiusUnitsM();
+        case 'radius-multipoint':
+            return testRadiusMultipoint();
+        case 'radius-z-parameter':
+            return testRadiusZParameter();
+        case 'radius-with-params':
+            return testRadiusWithParams();
+        case 'radius-datetime':
+            return testRadiusDatetime();
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
@@ -588,6 +622,35 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/area?coords=MULTIPOLYGON(((-98 35,-97 35,-97 36,-98 36,-98 35)),((-96 35,-95 35,-95 36,-96 36,-96 35)))`];
         case 'area-z-multiple':
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&z=850,700`];
+        // Radius query URLs
+        case 'radius-basic':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`];
+        case 'radius-covjson':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=km`];
+        case 'radius-missing-coords':
+            return [`${API_BASE}/collections/${colId}/radius?within=50&within-units=km`];
+        case 'radius-missing-within':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within-units=km`];
+        case 'radius-missing-within-units':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50`];
+        case 'radius-invalid-coords':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&within=50&within-units=km`];
+        case 'radius-too-large':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=1000&within-units=km`];
+        case 'radius-units-km':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`];
+        case 'radius-units-mi':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=mi`];
+        case 'radius-units-m':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50000&within-units=m`];
+        case 'radius-multipoint':
+            return [`${API_BASE}/collections/${colId}/radius?coords=MULTIPOINT((-97.5 35.2),(-98.0 36.0))&within=30&within-units=km`];
+        case 'radius-z-parameter':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&z=850`];
+        case 'radius-with-params':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&parameter-name=TMP`];
+        case 'radius-datetime':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&datetime={validtime}`];
         case 'error-404-collection':
             return [`${API_BASE}/collections/nonexistent-collection-12345`];
         case 'error-400-coords':
@@ -1728,6 +1791,366 @@ async function testAreaZMultiple() {
         { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has z axis in domain', passed: zAxis !== undefined },
         { name: 'Returns both requested z levels', passed: hasTwoZLevels }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// RADIUS QUERY TESTS
+// OGC EDR Spec: Section 8.2.4 Radius Query
+// ============================================================
+
+// Basic radius query
+async function testRadiusBasic() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query returns proper CoverageJSON Grid
+async function testRadiusCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=km`);
+    
+    // Check for non-null data values
+    const ranges = res.json?.ranges || {};
+    const paramKeys = Object.keys(ranges);
+    let hasNonNullData = false;
+    if (paramKeys.length > 0) {
+        const firstParam = paramKeys[0];
+        const values = ranges[firstParam]?.values || [];
+        hasNonNullData = values.some(v => v !== null);
+    }
+    
+    const checks = [
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' },
+        { name: 'Has x axis', passed: !!res.json?.domain?.axes?.x },
+        { name: 'Has y axis', passed: !!res.json?.domain?.axes?.y },
+        { name: 'Has ranges', passed: paramKeys.length > 0 },
+        { name: 'Has non-null data values', passed: hasNonNullData }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query missing coords parameter - should return 400
+async function testRadiusMissingCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?within=50&within-units=km`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions coords', passed: (res.json?.detail || '').toLowerCase().includes('coord') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query missing within parameter - should return 400
+async function testRadiusMissingWithin() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within-units=km`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions within', passed: (res.json?.detail || '').toLowerCase().includes('within') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query missing within-units parameter - should return 400
+async function testRadiusMissingWithinUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions within-units', passed: (res.json?.detail || '').toLowerCase().includes('within') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with invalid coords (POLYGON instead of POINT) - should return 400
+async function testRadiusInvalidCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=${encodeURIComponent(polygon)}&within=50&within-units=km`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error response', passed: res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius too large - should return 413
+async function testRadiusTooLarge() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Request 1000 km radius which should exceed limit
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=1000&within-units=km`);
+    const checks = [
+        { name: 'Status 413', passed: res.status === 413 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions radius', passed: (res.json?.detail || '').toLowerCase().includes('radius') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with km units
+async function testRadiusUnitsKm() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with miles units
+async function testRadiusUnitsMi() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=mi`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with meters units
+async function testRadiusUnitsM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50000&within-units=m`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with MULTIPOINT coords (union of circles)
+async function testRadiusMultipoint() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'MULTIPOINT((-97.5 35.2),(-98.0 36.0))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=${encodeURIComponent(coords)}&within=30&within-units=km`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' },
+        { name: 'Has ranges with data', passed: Object.keys(res.json?.ranges || {}).length > 0 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with z (vertical level) parameter
+async function testRadiusZParameter() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    
+    // Find a collection with vertical levels (isobaric)
+    const isobaricCol = collections.find(c => 
+        c.id.includes('isobaric') || 
+        c.extent?.vertical?.values?.length > 0
+    );
+    
+    if (!isobaricCol) {
+        return { passed: true, checks: [{ name: 'No isobaric collection available (test N/A)', passed: true }] };
+    }
+    
+    // Use 850 hPa as a common isobaric level
+    const res = await fetchJson(`${API_BASE}/collections/${isobaricCol.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&z=850`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' },
+        { name: 'Has ranges', passed: Object.keys(res.json?.ranges || {}).length > 0 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with parameter-name filtering
+async function testRadiusWithParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get the collection's parameters
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const params = colRes.json?.parameter_names || {};
+    const paramKeys = Object.keys(params);
+    
+    if (paramKeys.length === 0) {
+        return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
+    }
+    
+    // Request only the first parameter
+    const requestedParam = paramKeys[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&parameter-name=${requestedParam}`);
+    
+    const returnedParams = Object.keys(res.json?.ranges || {});
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has ranges', passed: returnedParams.length > 0 },
+        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === requestedParam }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius query with datetime parameter
+async function testRadiusDatetime() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    const datetime = times[0]; // Use first available time
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&datetime=${encodeURIComponent(datetime)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!res.json?.domain },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' }
     ];
     return {
         passed: checks.every(c => c.passed),

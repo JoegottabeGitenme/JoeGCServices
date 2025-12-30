@@ -116,6 +116,83 @@ area_queries:
     weight: 1.5
     description: "Random 1x1 degree polygon within CONUS"
 
+# Radius Query Scenarios
+radius_queries:
+  # Basic radius query - 50km circle
+  - name: radius_basic
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    within: 50
+    within_units: km
+    parameters: ["TMP"]
+    weight: 2.0
+    description: "50km radius over Kansas"
+    
+  # Small radius - high resolution extraction
+  - name: radius_small
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    within: 25
+    within_units: km
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "25km radius"
+    
+  # Medium radius with multiple parameters
+  - name: radius_multi_param
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    within: 50
+    within_units: km
+    parameters: ["TMP", "RH", "GUST", "UGRD", "VGRD"]
+    weight: 1.0
+    description: "50km radius with 5 parameters"
+    
+  # Radius with miles units
+  - name: radius_miles
+    collection: hrrr-surface
+    coords: "POINT(-97.5 35.2)"
+    within: 30
+    within_units: mi
+    parameters: ["TMP"]
+    weight: 1.0
+    description: "30 mile radius over Oklahoma"
+    
+  # Radius with isobaric level
+  - name: radius_isobaric
+    collection: hrrr-isobaric
+    coords: "POINT(-100 40)"
+    within: 50
+    within_units: km
+    parameters: ["TMP"]
+    z: "850"
+    weight: 1.0
+    description: "50km radius at 850 hPa"
+    
+  # MULTIPOINT radius (union of circles)
+  - name: radius_multipoint
+    collection: hrrr-surface
+    coords: "MULTIPOINT((-97.5 35.2),(-98.0 36.0))"
+    within: 30
+    within_units: km
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "Two 30km circles"
+    
+  # Random location radius
+  - name: radius_random_location
+    collection: hrrr-surface
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    within: 50
+    within_units: km
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Random 50km radius within CONUS"
+
 # Edge cases (lower weight, for validation)
 edge_cases:
   # Near maximum allowed size (should succeed)
@@ -135,6 +212,17 @@ edge_cases:
     weight: 0.1
     expected_status: [400, 413]
     description: "Full CONUS - should be rejected"
+    
+  # Radius too large (should fail with 413)
+  - name: radius_too_large
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    within: 1000
+    within_units: km
+    parameters: ["TMP"]
+    weight: 0.1
+    expected_status: 413
+    description: "1000km radius - should be rejected"
 
 # Test points for random location generation
 test_points:

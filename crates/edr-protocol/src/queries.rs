@@ -870,6 +870,197 @@ impl AreaQuery {
     }
 }
 
+/// Distance units supported for radius queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceUnit {
+    /// Kilometers
+    Kilometers,
+    /// Miles
+    Miles,
+    /// Meters
+    Meters,
+    /// Nautical miles
+    NauticalMiles,
+}
+
+impl DistanceUnit {
+    /// Parse a distance unit string.
+    ///
+    /// Accepts: "km", "kilometers", "mi", "miles", "m", "meters", "nm", "nautical_miles"
+    pub fn parse(unit: &str) -> Result<Self, CoordinateParseError> {
+        match unit.to_lowercase().trim() {
+            "km" | "kilometers" | "kilometre" | "kilometres" => Ok(DistanceUnit::Kilometers),
+            "mi" | "miles" | "mile" => Ok(DistanceUnit::Miles),
+            "m" | "meters" | "metre" | "metres" => Ok(DistanceUnit::Meters),
+            "nm" | "nautical_miles" | "nautical miles" | "nauticalmiles" => Ok(DistanceUnit::NauticalMiles),
+            _ => Err(CoordinateParseError::InvalidWkt(format!(
+                "Unknown distance unit '{}'. Supported units: km, mi, m, nm",
+                unit
+            ))),
+        }
+    }
+
+    /// Convert a value in this unit to meters.
+    pub fn to_meters(&self, value: f64) -> f64 {
+        match self {
+            DistanceUnit::Kilometers => value * 1000.0,
+            DistanceUnit::Miles => value * 1609.344,
+            DistanceUnit::Meters => value,
+            DistanceUnit::NauticalMiles => value * 1852.0,
+        }
+    }
+
+    /// Convert a value in this unit to kilometers.
+    pub fn to_kilometers(&self, value: f64) -> f64 {
+        self.to_meters(value) / 1000.0
+    }
+
+    /// Get the string representation of this unit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DistanceUnit::Kilometers => "km",
+            DistanceUnit::Miles => "mi",
+            DistanceUnit::Meters => "m",
+            DistanceUnit::NauticalMiles => "nm",
+        }
+    }
+}
+
+/// Radius query parameters (circle around a point).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RadiusQuery {
+    /// Center point longitude.
+    pub center_lon: f64,
+
+    /// Center point latitude.
+    pub center_lat: f64,
+
+    /// Radius value in meters (converted from original units).
+    pub radius_meters: f64,
+
+    /// Requested vertical level(s).
+    pub z: Option<Vec<f64>>,
+
+    /// Requested datetime or range.
+    pub datetime: Option<DateTimeQuery>,
+
+    /// Requested parameter names.
+    pub parameter_names: Option<Vec<String>>,
+
+    /// Coordinate reference system.
+    pub crs: Option<String>,
+}
+
+impl RadiusQuery {
+    /// Earth's radius in meters (WGS84 mean radius).
+    const EARTH_RADIUS_M: f64 = 6_371_008.8;
+
+    /// Parse the 'within' parameter (radius value).
+    ///
+    /// Accepts numeric string like "100" or "50.5"
+    pub fn parse_within(within: &str) -> Result<f64, CoordinateParseError> {
+        let within = within.trim();
+        within.parse::<f64>().map_err(|_| {
+            CoordinateParseError::InvalidCoordinate(format!(
+                "Invalid radius value '{}'. Expected a number.",
+                within
+            ))
+        }).and_then(|v| {
+            if v <= 0.0 {
+                Err(CoordinateParseError::OutOfRange(
+                    "Radius must be a positive number".to_string(),
+                ))
+            } else {
+                Ok(v)
+            }
+        })
+    }
+
+    /// Create a RadiusQuery from parsed parameters.
+    pub fn new(
+        center_lon: f64,
+        center_lat: f64,
+        within: f64,
+        within_units: DistanceUnit,
+    ) -> Self {
+        Self {
+            center_lon,
+            center_lat,
+            radius_meters: within_units.to_meters(within),
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        }
+    }
+
+    /// Get the radius in kilometers.
+    pub fn radius_km(&self) -> f64 {
+        self.radius_meters / 1000.0
+    }
+
+    /// Calculate the Haversine distance between two points in meters.
+    ///
+    /// Uses the Haversine formula for great-circle distance.
+    pub fn haversine_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
+        let lat1_rad = lat1.to_radians();
+        let lat2_rad = lat2.to_radians();
+        let delta_lat = (lat2 - lat1).to_radians();
+        let delta_lon = (lon2 - lon1).to_radians();
+
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().asin();
+
+        Self::EARTH_RADIUS_M * c
+    }
+
+    /// Check if a point is within the radius of the center point.
+    pub fn contains_point(&self, lon: f64, lat: f64) -> bool {
+        let distance = Self::haversine_distance(self.center_lon, self.center_lat, lon, lat);
+        distance <= self.radius_meters
+    }
+
+    /// Calculate the bounding box that encloses this radius.
+    ///
+    /// Returns (west, south, east, north) in degrees.
+    pub fn bounding_box(&self) -> BboxQuery {
+        // Convert radius to degrees (approximate, varies with latitude)
+        // At the equator, 1 degree ≈ 111.32 km
+        // For latitude: 1 degree ≈ 111.32 km (constant)
+        // For longitude: 1 degree ≈ 111.32 * cos(lat) km (varies with latitude)
+        
+        let lat_rad = self.center_lat.to_radians();
+        let radius_km = self.radius_km();
+        
+        // Degrees per km at this latitude
+        let deg_per_km_lat = 1.0 / 111.32;
+        let deg_per_km_lon = 1.0 / (111.32 * lat_rad.cos().max(0.01)); // Avoid division by zero near poles
+        
+        let delta_lat = radius_km * deg_per_km_lat;
+        let delta_lon = radius_km * deg_per_km_lon;
+        
+        BboxQuery {
+            west: (self.center_lon - delta_lon).max(-180.0),
+            south: (self.center_lat - delta_lat).max(-90.0),
+            east: (self.center_lon + delta_lon).min(180.0),
+            north: (self.center_lat + delta_lat).min(90.0),
+        }
+    }
+
+    /// Calculate approximate area of the circle in square degrees.
+    ///
+    /// Uses the bounding box as an approximation.
+    pub fn area_sq_degrees(&self) -> f64 {
+        // π * r² but in degree-space (approximate)
+        let bbox = self.bounding_box();
+        let width = bbox.east - bbox.west;
+        let height = bbox.north - bbox.south;
+        // Circle area ≈ π/4 of the bounding box area
+        std::f64::consts::PI / 4.0 * width * height
+    }
+}
+
 impl BboxQuery {
     /// Parse a bbox parameter.
     ///
@@ -1343,5 +1534,126 @@ mod tests {
         let area = area_query.area_sq_degrees();
         // 2 degrees x 2 degrees = 4 sq degrees
         assert!((area - 4.0).abs() < 0.01);
+    }
+
+    // =========== RadiusQuery tests ===========
+
+    #[test]
+    fn test_distance_unit_parse() {
+        assert_eq!(DistanceUnit::parse("km").unwrap(), DistanceUnit::Kilometers);
+        assert_eq!(DistanceUnit::parse("KM").unwrap(), DistanceUnit::Kilometers);
+        assert_eq!(DistanceUnit::parse("kilometers").unwrap(), DistanceUnit::Kilometers);
+        assert_eq!(DistanceUnit::parse("mi").unwrap(), DistanceUnit::Miles);
+        assert_eq!(DistanceUnit::parse("miles").unwrap(), DistanceUnit::Miles);
+        assert_eq!(DistanceUnit::parse("m").unwrap(), DistanceUnit::Meters);
+        assert_eq!(DistanceUnit::parse("meters").unwrap(), DistanceUnit::Meters);
+        assert_eq!(DistanceUnit::parse("nm").unwrap(), DistanceUnit::NauticalMiles);
+        assert_eq!(DistanceUnit::parse("nautical_miles").unwrap(), DistanceUnit::NauticalMiles);
+        
+        assert!(DistanceUnit::parse("invalid").is_err());
+    }
+
+    #[test]
+    fn test_distance_unit_conversions() {
+        // 1 km = 1000 m
+        assert!((DistanceUnit::Kilometers.to_meters(1.0) - 1000.0).abs() < 0.01);
+        
+        // 1 mile = 1609.344 m
+        assert!((DistanceUnit::Miles.to_meters(1.0) - 1609.344).abs() < 0.01);
+        
+        // 1 m = 1 m
+        assert!((DistanceUnit::Meters.to_meters(1.0) - 1.0).abs() < 0.01);
+        
+        // 1 nm = 1852 m
+        assert!((DistanceUnit::NauticalMiles.to_meters(1.0) - 1852.0).abs() < 0.01);
+        
+        // km conversion
+        assert!((DistanceUnit::Miles.to_kilometers(1.0) - 1.609344).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_radius_query_parse_within() {
+        assert!((RadiusQuery::parse_within("100").unwrap() - 100.0).abs() < 0.01);
+        assert!((RadiusQuery::parse_within("50.5").unwrap() - 50.5).abs() < 0.01);
+        assert!((RadiusQuery::parse_within(" 25 ").unwrap() - 25.0).abs() < 0.01);
+        
+        // Invalid values
+        assert!(RadiusQuery::parse_within("abc").is_err());
+        assert!(RadiusQuery::parse_within("-10").is_err());
+        assert!(RadiusQuery::parse_within("0").is_err());
+    }
+
+    #[test]
+    fn test_radius_query_new() {
+        let query = RadiusQuery::new(-97.5, 35.2, 100.0, DistanceUnit::Kilometers);
+        assert_eq!(query.center_lon, -97.5);
+        assert_eq!(query.center_lat, 35.2);
+        assert!((query.radius_meters - 100_000.0).abs() < 0.01);
+        assert!((query.radius_km() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_haversine_distance() {
+        // Distance from London to Paris is approximately 344 km
+        let london = (-0.1276, 51.5074);
+        let paris = (2.3522, 48.8566);
+        
+        let distance_m = RadiusQuery::haversine_distance(london.0, london.1, paris.0, paris.1);
+        let distance_km = distance_m / 1000.0;
+        
+        // Should be approximately 344 km (allow some tolerance)
+        assert!((distance_km - 344.0).abs() < 5.0, "Distance was {} km", distance_km);
+    }
+
+    #[test]
+    fn test_haversine_distance_same_point() {
+        let distance = RadiusQuery::haversine_distance(-97.5, 35.2, -97.5, 35.2);
+        assert!(distance.abs() < 0.001);
+    }
+
+    #[test]
+    fn test_radius_query_contains_point() {
+        // 100 km radius around Oklahoma City (-97.5, 35.5)
+        let query = RadiusQuery::new(-97.5, 35.5, 100.0, DistanceUnit::Kilometers);
+        
+        // Center point should be inside
+        assert!(query.contains_point(-97.5, 35.5));
+        
+        // Point 50 km away should be inside (approximately 0.5 degrees at this latitude)
+        assert!(query.contains_point(-97.0, 35.5));
+        
+        // Point 200 km away should be outside
+        assert!(!query.contains_point(-95.0, 35.5));
+    }
+
+    #[test]
+    fn test_radius_query_bounding_box() {
+        // 100 km radius around the equator
+        let query = RadiusQuery::new(0.0, 0.0, 100.0, DistanceUnit::Kilometers);
+        let bbox = query.bounding_box();
+        
+        // At the equator, 100 km ≈ 0.9 degrees
+        assert!(bbox.west < -0.8);
+        assert!(bbox.east > 0.8);
+        assert!(bbox.south < -0.8);
+        assert!(bbox.north > 0.8);
+        
+        // Should be symmetric around center
+        assert!((bbox.west + bbox.east).abs() < 0.01);
+        assert!((bbox.south + bbox.north).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_radius_query_bounding_box_high_latitude() {
+        // 100 km radius at 60° latitude - longitude degrees should be wider
+        let query = RadiusQuery::new(0.0, 60.0, 100.0, DistanceUnit::Kilometers);
+        let bbox = query.bounding_box();
+        
+        // At 60°N, 100 km ≈ 1.8 degrees longitude (twice as much as at equator)
+        assert!(bbox.west < -1.5);
+        assert!(bbox.east > 1.5);
+        
+        // Latitude should still be ~0.9 degrees
+        assert!((bbox.north - 60.0 - 0.9).abs() < 0.1);
     }
 }

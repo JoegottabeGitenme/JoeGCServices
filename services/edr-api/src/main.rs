@@ -124,6 +124,15 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/instances/:instance_id/area",
             get(handlers::area::instance_area_handler),
         )
+        // Radius query
+        .route(
+            "/edr/collections/:collection_id/radius",
+            get(handlers::radius::radius_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/radius",
+            get(handlers::radius::instance_radius_handler),
+        )
         // Health and metrics
         .route("/health", get(handlers::health::health_handler))
         .route("/ready", get(handlers::health::ready_handler))

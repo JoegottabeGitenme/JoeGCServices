@@ -38,7 +38,7 @@ pub use collections::{Collection, CollectionList, DataQueries, Instance, Instanc
 pub use coverage_json::{Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
 pub use errors::EdrError;
 pub use parameters::{ObservedProperty, Parameter, Unit};
-pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, DateTimeQuery, ParsedCoords, ParsedPolygons, PositionQuery};
+pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, DateTimeQuery, DistanceUnit, ParsedCoords, ParsedPolygons, PositionQuery, RadiusQuery};
 pub use responses::{ConformanceClasses, LandingPage};
 pub use types::{Crs, Extent, Link, SpatialExtent, TemporalExtent, VerticalExtent};
 

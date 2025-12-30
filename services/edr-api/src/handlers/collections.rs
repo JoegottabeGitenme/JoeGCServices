@@ -139,9 +139,10 @@ pub async fn list_collections_handler(
         // Build links
         collection.build_links(&state.base_url);
 
-        // Add data queries (position and area)
+        // Add data queries (position, area, and radius)
         let queries = DataQueries::with_position(&state.base_url, &collection_def.id)
-            .with_area(&state.base_url, &collection_def.id);
+            .with_area(&state.base_url, &collection_def.id)
+            .with_radius(&state.base_url, &collection_def.id);
         collection = collection.with_data_queries(queries);
 
         // Build extent from catalog data
@@ -205,9 +206,10 @@ pub async fn get_collection_handler(
     // Build links
     collection.build_links(&state.base_url);
 
-    // Add data queries (position and area)
+    // Add data queries (position, area, and radius)
     let queries = DataQueries::with_position(&state.base_url, &collection_def.id)
-        .with_area(&state.base_url, &collection_def.id);
+        .with_area(&state.base_url, &collection_def.id)
+        .with_radius(&state.base_url, &collection_def.id);
     collection = collection.with_data_queries(queries);
 
     // Build extent from catalog data

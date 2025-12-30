@@ -8,3 +8,4 @@ pub mod health;
 pub mod instances;
 pub mod landing;
 pub mod position;
+pub mod radius;

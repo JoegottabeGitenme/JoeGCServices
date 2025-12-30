@@ -228,6 +228,19 @@ impl DataQueries {
         });
         self
     }
+
+    /// Add radius query support.
+    pub fn with_radius(mut self, base_url: &str, collection_id: &str) -> Self {
+        self.radius = Some(QueryDescription {
+            link: Link::new(
+                format!("{}/collections/{}/radius", base_url, collection_id),
+                "data",
+            )
+            .with_type("application/vnd.cov+json")
+            .with_title("Radius query"),
+        });
+        self
+    }
 }
 
 /// Description of a query endpoint.

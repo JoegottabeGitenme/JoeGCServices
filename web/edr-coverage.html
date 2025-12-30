@@ -37,6 +37,7 @@
                 <select id="query-type-select">
                     <option value="position" selected>Position (Point)</option>
                     <option value="area">Area (Polygon)</option>
+                    <option value="radius">Radius (Circle)</option>
                 </select>
             </div>
             <div class="test-point-config" id="test-point-config">
@@ -48,6 +49,19 @@
                 <label>Test Area (1x1 deg):</label>
                 <input type="text" id="test-area-lon" value="-100" size="6" title="Center Longitude">
                 <input type="text" id="test-area-lat" value="40" size="6" title="Center Latitude">
+            </div>
+            <div class="test-radius-config" id="test-radius-config" style="display: none;">
+                <label>Radius Center:</label>
+                <input type="text" id="test-radius-lon" value="-100" size="6" title="Center Longitude">
+                <input type="text" id="test-radius-lat" value="40" size="6" title="Center Latitude">
+                <label>Within:</label>
+                <input type="text" id="test-radius-within" value="50" size="4" title="Radius distance">
+                <select id="test-radius-units" title="Distance units">
+                    <option value="km" selected>km</option>
+                    <option value="mi">mi</option>
+                    <option value="m">m</option>
+                    <option value="nm">nm</option>
+                </select>
             </div>
             <div class="randomize-config">
                 <label class="toggle-label">

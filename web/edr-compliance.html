@@ -418,6 +418,115 @@
                 </div>
             </div>
 
+            <!-- Radius Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="radius">
+                    <span class="toggle">+</span>
+                    Radius Query Conformance
+                    <span class="section-status" id="radius-status"></span>
+                </h3>
+                <div class="section-content" id="radius-tests">
+                    <div class="test-item" data-test="radius-basic">
+                        <span class="test-name">Radius Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_e9bce888-9ced-4764-9b4d-7b9ce47d1f22" target="_blank" class="spec-link" title="OGC EDR Spec: Radius Query (Section 8.2.4)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-covjson">
+                        <span class="test-name">Radius Query CoverageJSON Grid</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-coords">
+                        <span class="test-name">Missing coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 E">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-within">
+                        <span class="test-name">Missing within Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 G">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-within-units">
+                        <span class="test-name">Missing within-units Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 I">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-invalid-coords">
+                        <span class="test-name">Invalid coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Radius coords must be POINT or MULTIPOINT">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-too-large">
+                        <span class="test-name">Radius Too Large (413)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-km">
+                        <span class="test-name">Radius with km Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-mi">
+                        <span class="test-name">Radius with mi Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-m">
+                        <span class="test-name">Radius with m Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-multipoint">
+                        <span class="test-name">MULTIPOINT Radius Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Radius coords can be MULTIPOINT">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-z-parameter">
+                        <span class="test-name">Radius with z Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53 z-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-with-params">
+                        <span class="test-name">Radius with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.56 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-datetime">
+                        <span class="test-name">Radius with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Error Handling Tests -->
             <div class="test-section">
                 <h3 class="section-header" data-section="errors">
