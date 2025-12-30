@@ -947,6 +947,72 @@ impl Catalog {
             .collect())
     }
 
+    /// Get the temporal extent (min/max valid times) for a model.
+    /// Returns (oldest_valid_time, newest_valid_time) or None if no data exists.
+    pub async fn get_model_temporal_extent(
+        &self,
+        model: &str,
+    ) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let result = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+            "SELECT MIN(valid_time), MAX(valid_time) \
+             FROM datasets \
+             WHERE model = $1 AND status = 'available'",
+        )
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        match result {
+            (Some(min), Some(max)) => Ok(Some((min, max))),
+            _ => Ok(None),
+        }
+    }
+
+    /// Get all available valid times for a model (for populating temporal extent values).
+    /// Returns unique valid times sorted ascending.
+    pub async fn get_model_valid_times(
+        &self,
+        model: &str,
+    ) -> WmsResult<Vec<DateTime<Utc>>> {
+        let times = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT valid_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY valid_time ASC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(times)
+    }
+
+    /// Get the forecast time range for a specific model run.
+    /// Returns (start_time, end_time) where start_time is the run time
+    /// and end_time is the latest valid_time from all forecasts in that run.
+    pub async fn get_run_forecast_range(
+        &self,
+        model: &str,
+        reference_time: DateTime<Utc>,
+    ) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let result = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+            "SELECT MIN(valid_time), MAX(valid_time) \
+             FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        match result {
+            (Some(min), Some(max)) => Ok(Some((min, max))),
+            _ => Ok(None),
+        }
+    }
+
     /// Get availability information for a specific parameter.
     /// Returns None if no data exists for this model/parameter combination.
     /// Used by capabilities generation to ensure we only advertise available data.

@@ -19,12 +19,15 @@
     - this could be useful for a mobile app
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
 - some of the scripts in the scripts folder could be moved somewhere into validation
+- integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
 - style viewing and editing web app, view current styles and how they would look on the map
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
   how they impact performance
+- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
+  manage things like cold/warm cache etc.
 - need to consider actually deploying this to ec2 or something
     - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
 - implement renderer queue after we've deleted the renderer worker stuff???
@@ -61,3 +64,4 @@
   maybe a simple hashsum check? don't want to introduce too much overhead for something that ultimately may not happen
   often. Right now each blank tile is 0.5kb and returns in around 7ms
 - looping radar (only product that does this) absolutely eats up the chunk cache
+- let's try to get registered on the OGC implementation database

@@ -1,0 +1,14 @@
+[package]
+name = "edr-protocol"
+version.workspace = true
+edition.workspace = true
+description = "OGC API - Environmental Data Retrieval (EDR) protocol types and utilities"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
