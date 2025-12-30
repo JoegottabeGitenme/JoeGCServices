@@ -38,7 +38,7 @@ pub use collections::{Collection, CollectionList, DataQueries, Instance, Instanc
 pub use coverage_json::{Axis, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
 pub use errors::EdrError;
 pub use parameters::{ObservedProperty, Parameter, Unit};
-pub use queries::{CoordinateParseError, PositionQuery};
+pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, DateTimeQuery, PositionQuery};
 pub use responses::{ConformanceClasses, LandingPage};
 pub use types::{Crs, Extent, Link, SpatialExtent, TemporalExtent, VerticalExtent};
 
@@ -50,6 +50,16 @@ pub mod conformance {
     pub const COLLECTIONS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/collections";
     /// Position query conformance class
     pub const POSITION: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/position";
+    /// Area query conformance class
+    pub const AREA: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/area";
+    /// Radius query conformance class
+    pub const RADIUS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/radius";
+    /// Cube query conformance class
+    pub const CUBE: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube";
+    /// Trajectory query conformance class
+    pub const TRAJECTORY: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/trajectory";
+    /// Corridor query conformance class
+    pub const CORRIDOR: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/corridor";
     /// Instances conformance class
     pub const INSTANCES: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances";
     /// CoverageJSON conformance class

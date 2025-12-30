@@ -130,8 +130,9 @@ pub async fn list_collections_handler(Extension(state): Extension<Arc<AppState>>
         // Build links
         collection.build_links(&state.base_url);
 
-        // Add data queries
-        let queries = DataQueries::with_position(&state.base_url, &collection_def.id);
+        // Add data queries (position and area)
+        let queries = DataQueries::with_position(&state.base_url, &collection_def.id)
+            .with_area(&state.base_url, &collection_def.id);
         collection = collection.with_data_queries(queries);
 
         // Build extent from catalog data
@@ -189,8 +190,9 @@ pub async fn get_collection_handler(
     // Build links
     collection.build_links(&state.base_url);
 
-    // Add data queries
-    let queries = DataQueries::with_position(&state.base_url, &collection_def.id);
+    // Add data queries (position and area)
+    let queries = DataQueries::with_position(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
     collection = collection.with_data_queries(queries);
 
     // Build extent from catalog data

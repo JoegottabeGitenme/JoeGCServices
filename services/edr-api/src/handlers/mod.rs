@@ -1,5 +1,6 @@
 //! HTTP request handlers for the EDR API.
 
+pub mod area;
 pub mod catalog_check;
 pub mod collections;
 pub mod conformance;

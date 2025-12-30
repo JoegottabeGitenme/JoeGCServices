@@ -236,6 +236,32 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Find dataset closest to requested valid time at a specific level.
+    pub async fn find_by_time_and_level(
+        &self,
+        model: &str,
+        parameter: &str,
+        valid_time: DateTime<Utc>,
+        level: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size, zarr_metadata FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND level = $4 AND status = 'available' \
+             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(valid_time)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
     /// Find dataset by forecast hour.
     pub async fn find_by_forecast_hour(
         &self,

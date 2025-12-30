@@ -68,6 +68,13 @@ pub enum TimeSpecification {
         forecast_hour: Option<u32>,
     },
 
+    /// For forecast data: find by valid time (when the forecast is for).
+    /// This finds the forecast closest to the specified time regardless of run.
+    ValidTime {
+        /// The valid time to query for
+        valid_time: DateTime<Utc>,
+    },
+
     /// Get the latest available data regardless of type.
     /// For forecasts: latest run, earliest forecast hour.
     /// For observations: most recent observation.
@@ -174,6 +181,18 @@ impl DatasetQuery {
     /// * `time` - Observation timestamp
     pub fn at_time(mut self, time: DateTime<Utc>) -> Self {
         self.time_spec = TimeSpecification::Observation { time };
+        self
+    }
+
+    /// Specify the valid time for a forecast query.
+    ///
+    /// This will find the forecast that is valid at the specified time,
+    /// regardless of which model run produced it.
+    ///
+    /// # Arguments
+    /// * `time` - Valid time (when the forecast is for)
+    pub fn at_valid_time(mut self, time: DateTime<Utc>) -> Self {
+        self.time_spec = TimeSpecification::ValidTime { valid_time: time };
         self
     }
 

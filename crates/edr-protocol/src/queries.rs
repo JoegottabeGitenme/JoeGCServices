@@ -226,6 +226,9 @@ pub enum DateTimeQuery {
     /// A specific instant.
     Instant(String),
 
+    /// Multiple specific instants (comma-separated list).
+    List(Vec<String>),
+
     /// An interval with start and end.
     Interval {
         start: Option<String>,
@@ -238,13 +241,15 @@ impl DateTimeQuery {
     ///
     /// Accepts formats:
     /// - Instant: `2024-12-29T12:00:00Z`
+    /// - List: `2024-12-29T12:00:00Z,2024-12-29T13:00:00Z,2024-12-29T14:00:00Z`
     /// - Interval: `2024-12-29T00:00:00Z/2024-12-29T23:59:59Z`
     /// - Open start: `../2024-12-29T23:59:59Z`
     /// - Open end: `2024-12-29T00:00:00Z/..`
     pub fn parse(datetime: &str) -> Result<Self, CoordinateParseError> {
         let datetime = datetime.trim();
 
-        if datetime.contains('/') {
+        // Check for interval format first (contains / but not as part of a comma list)
+        if datetime.contains('/') && !datetime.contains(',') {
             let parts: Vec<&str> = datetime.split('/').collect();
             if parts.len() != 2 {
                 return Err(CoordinateParseError::InvalidWkt(
@@ -264,10 +269,132 @@ impl DateTimeQuery {
                 Some(parts[1].to_string())
             };
 
-            Ok(DateTimeQuery::Interval { start, end })
-        } else {
-            Ok(DateTimeQuery::Instant(datetime.to_string()))
+            return Ok(DateTimeQuery::Interval { start, end });
         }
+
+        // Check for comma-separated list
+        if datetime.contains(',') {
+            let times: Vec<String> = datetime
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            if times.len() == 1 {
+                return Ok(DateTimeQuery::Instant(times.into_iter().next().unwrap()));
+            }
+
+            return Ok(DateTimeQuery::List(times));
+        }
+
+        // Single instant
+        Ok(DateTimeQuery::Instant(datetime.to_string()))
+    }
+
+    /// Get all datetime values as a vector of strings.
+    ///
+    /// For instants, returns a single-element vector.
+    /// For lists, returns all values.
+    /// For intervals, returns start and end (if present).
+    pub fn to_vec(&self) -> Vec<String> {
+        match self {
+            DateTimeQuery::Instant(s) => vec![s.clone()],
+            DateTimeQuery::List(list) => list.clone(),
+            DateTimeQuery::Interval { start, end } => {
+                let mut result = Vec::new();
+                if let Some(s) = start {
+                    result.push(s.clone());
+                }
+                if let Some(e) = end {
+                    result.push(e.clone());
+                }
+                result
+            }
+        }
+    }
+
+    /// Check if this query contains multiple time values.
+    pub fn is_multi_time(&self) -> bool {
+        match self {
+            DateTimeQuery::Instant(_) => false,
+            DateTimeQuery::List(list) => list.len() > 1,
+            DateTimeQuery::Interval { .. } => true,
+        }
+    }
+
+    /// Get the number of discrete time values.
+    ///
+    /// For intervals, this returns 2 (start and end) - actual resolution
+    /// depends on the collection's temporal resolution.
+    pub fn len(&self) -> usize {
+        match self {
+            DateTimeQuery::Instant(_) => 1,
+            DateTimeQuery::List(list) => list.len(),
+            DateTimeQuery::Interval { start, end } => {
+                (start.is_some() as usize) + (end.is_some() as usize)
+            }
+        }
+    }
+
+    /// Check if the datetime query is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Expand an interval query against available times.
+    ///
+    /// For open-ended intervals (e.g., `2024-01-01/..` or `../2024-12-31`),
+    /// this resolves them to concrete time values from the provided list.
+    ///
+    /// Returns a list of time strings that fall within the interval.
+    pub fn expand_against_available_times(&self, available_times: &[String]) -> Vec<String> {
+        match self {
+            DateTimeQuery::Instant(s) => vec![s.clone()],
+            DateTimeQuery::List(list) => list.clone(),
+            DateTimeQuery::Interval { start, end } => {
+                // Filter available times to those within the interval
+                let start_bound = start.as_ref().and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                });
+                let end_bound = end.as_ref().and_then(|e| {
+                    chrono::DateTime::parse_from_rfc3339(e)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                });
+
+                available_times
+                    .iter()
+                    .filter(|t| {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
+                            let dt_utc = dt.with_timezone(&chrono::Utc);
+                            let after_start = start_bound.map_or(true, |s| dt_utc >= s);
+                            let before_end = end_bound.map_or(true, |e| dt_utc <= e);
+                            after_start && before_end
+                        } else {
+                            false
+                        }
+                    })
+                    .cloned()
+                    .collect()
+            }
+        }
+    }
+
+    /// Check if this is an interval query (with potential open ends).
+    pub fn is_interval(&self) -> bool {
+        matches!(self, DateTimeQuery::Interval { .. })
+    }
+
+    /// Check if this interval has an open end (no end bound).
+    pub fn has_open_end(&self) -> bool {
+        matches!(self, DateTimeQuery::Interval { end: None, .. })
+    }
+
+    /// Check if this interval has an open start (no start bound).
+    pub fn has_open_start(&self) -> bool {
+        matches!(self, DateTimeQuery::Interval { start: None, .. })
     }
 }
 
@@ -285,6 +412,146 @@ pub struct BboxQuery {
 
     /// Northern latitude.
     pub north: f64,
+}
+
+/// Area query parameters (polygon-based spatial query).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AreaQuery {
+    /// Polygon coordinates as a ring of (lon, lat) points.
+    /// The first and last point should be the same to close the ring.
+    pub polygon: Vec<(f64, f64)>,
+
+    /// Requested vertical level(s).
+    pub z: Option<Vec<f64>>,
+
+    /// Requested datetime or range.
+    pub datetime: Option<DateTimeQuery>,
+
+    /// Requested parameter names.
+    pub parameter_names: Option<Vec<String>>,
+
+    /// Coordinate reference system.
+    pub crs: Option<String>,
+}
+
+impl AreaQuery {
+    /// Parse a WKT POLYGON string.
+    ///
+    /// Accepts format: `POLYGON((lon1 lat1, lon2 lat2, lon3 lat3, lon1 lat1))`
+    pub fn parse_polygon(coords: &str) -> Result<Vec<(f64, f64)>, CoordinateParseError> {
+        let coords = coords.trim();
+        let upper = coords.to_uppercase();
+
+        if !upper.starts_with("POLYGON") {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Expected POLYGON format".to_string(),
+            ));
+        }
+
+        // Find the outer parentheses
+        let start = coords.find("((").ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing opening parentheses".to_string())
+        })?;
+        let end = coords.rfind("))").ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing closing parentheses".to_string())
+        })?;
+
+        if end <= start {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid parenthesis order".to_string(),
+            ));
+        }
+
+        // Extract the coordinate string (inside the double parens)
+        let coords_str = &coords[start + 2..end].trim();
+
+        // Split by comma to get individual coordinate pairs
+        let points: Result<Vec<(f64, f64)>, _> = coords_str
+            .split(',')
+            .map(|pair| {
+                let pair = pair.trim();
+                let parts: Vec<&str> = pair.split_whitespace().collect();
+                if parts.len() != 2 {
+                    return Err(CoordinateParseError::InvalidWkt(format!(
+                        "Expected 'lon lat' format, got '{}'",
+                        pair
+                    )));
+                }
+
+                let lon: f64 = parts[0]
+                    .parse()
+                    .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[0].to_string()))?;
+                let lat: f64 = parts[1]
+                    .parse()
+                    .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
+
+                // Validate ranges
+                PositionQuery::validate_coordinates(lon, lat)?;
+
+                Ok((lon, lat))
+            })
+            .collect();
+
+        let points = points?;
+
+        if points.len() < 4 {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Polygon must have at least 4 points (including closing point)".to_string(),
+            ));
+        }
+
+        Ok(points)
+    }
+
+    /// Calculate the bounding box of the polygon.
+    pub fn bbox(&self) -> BboxQuery {
+        let mut west = f64::MAX;
+        let mut south = f64::MAX;
+        let mut east = f64::MIN;
+        let mut north = f64::MIN;
+
+        for (lon, lat) in &self.polygon {
+            west = west.min(*lon);
+            east = east.max(*lon);
+            south = south.min(*lat);
+            north = north.max(*lat);
+        }
+
+        BboxQuery {
+            west,
+            south,
+            east,
+            north,
+        }
+    }
+
+    /// Calculate approximate area of the polygon's bounding box in square degrees.
+    pub fn area_sq_degrees(&self) -> f64 {
+        self.bbox().area_sq_degrees()
+    }
+
+    /// Check if a point is inside the polygon using ray casting algorithm.
+    pub fn contains_point(&self, lon: f64, lat: f64) -> bool {
+        let n = self.polygon.len();
+        if n < 3 {
+            return false;
+        }
+
+        let mut inside = false;
+        let mut j = n - 1;
+
+        for i in 0..n {
+            let (xi, yi) = self.polygon[i];
+            let (xj, yj) = self.polygon[j];
+
+            if ((yi > lat) != (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+                inside = !inside;
+            }
+            j = i;
+        }
+
+        inside
+    }
 }
 
 impl BboxQuery {
@@ -487,6 +754,136 @@ mod tests {
     }
 
     #[test]
+    fn test_datetime_list() {
+        let dt =
+            DateTimeQuery::parse("2024-12-29T12:00:00Z,2024-12-29T13:00:00Z,2024-12-29T14:00:00Z")
+                .unwrap();
+        if let DateTimeQuery::List(times) = dt {
+            assert_eq!(times.len(), 3);
+            assert_eq!(times[0], "2024-12-29T12:00:00Z");
+            assert_eq!(times[1], "2024-12-29T13:00:00Z");
+            assert_eq!(times[2], "2024-12-29T14:00:00Z");
+        } else {
+            panic!("Expected list, got {:?}", dt);
+        }
+    }
+
+    #[test]
+    fn test_datetime_list_with_spaces() {
+        let dt = DateTimeQuery::parse(
+            "2024-12-29T12:00:00Z , 2024-12-29T13:00:00Z , 2024-12-29T14:00:00Z",
+        )
+        .unwrap();
+        if let DateTimeQuery::List(times) = dt {
+            assert_eq!(times.len(), 3);
+            assert_eq!(times[0], "2024-12-29T12:00:00Z");
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
+    fn test_datetime_single_becomes_instant() {
+        let dt = DateTimeQuery::parse("2024-12-29T12:00:00Z,").unwrap();
+        assert!(matches!(dt, DateTimeQuery::Instant(_)));
+    }
+
+    #[test]
+    fn test_datetime_to_vec() {
+        let instant = DateTimeQuery::Instant("2024-12-29T12:00:00Z".to_string());
+        assert_eq!(instant.to_vec(), vec!["2024-12-29T12:00:00Z"]);
+
+        let list = DateTimeQuery::List(vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+        ]);
+        assert_eq!(
+            list.to_vec(),
+            vec!["2024-12-29T12:00:00Z", "2024-12-29T13:00:00Z"]
+        );
+
+        let interval = DateTimeQuery::Interval {
+            start: Some("2024-12-29T00:00:00Z".to_string()),
+            end: Some("2024-12-29T23:59:59Z".to_string()),
+        };
+        assert_eq!(
+            interval.to_vec(),
+            vec!["2024-12-29T00:00:00Z", "2024-12-29T23:59:59Z"]
+        );
+    }
+
+    #[test]
+    fn test_datetime_is_multi_time() {
+        let instant = DateTimeQuery::Instant("2024-12-29T12:00:00Z".to_string());
+        assert!(!instant.is_multi_time());
+
+        let list = DateTimeQuery::List(vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+        ]);
+        assert!(list.is_multi_time());
+
+        let interval = DateTimeQuery::Interval {
+            start: Some("2024-12-29T00:00:00Z".to_string()),
+            end: Some("2024-12-29T23:59:59Z".to_string()),
+        };
+        assert!(interval.is_multi_time());
+    }
+
+    #[test]
+    fn test_datetime_expand_open_end() {
+        // Test expanding an open-ended interval against available times
+        let available = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+            "2024-12-29T15:00:00Z".to_string(),
+            "2024-12-29T16:00:00Z".to_string(),
+        ];
+
+        // Open-ended: from 13:00 to the end
+        let open_end = DateTimeQuery::parse("2024-12-29T13:00:00Z/..").unwrap();
+        let expanded = open_end.expand_against_available_times(&available);
+        assert_eq!(expanded.len(), 4); // 13:00, 14:00, 15:00, 16:00
+        assert_eq!(expanded[0], "2024-12-29T13:00:00Z");
+        assert_eq!(expanded[3], "2024-12-29T16:00:00Z");
+    }
+
+    #[test]
+    fn test_datetime_expand_open_start() {
+        let available = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+            "2024-12-29T15:00:00Z".to_string(),
+        ];
+
+        // Open-start: from beginning to 14:00
+        let open_start = DateTimeQuery::parse("../2024-12-29T14:00:00Z").unwrap();
+        let expanded = open_start.expand_against_available_times(&available);
+        assert_eq!(expanded.len(), 3); // 12:00, 13:00, 14:00
+        assert_eq!(expanded[0], "2024-12-29T12:00:00Z");
+        assert_eq!(expanded[2], "2024-12-29T14:00:00Z");
+    }
+
+    #[test]
+    fn test_datetime_expand_closed_interval() {
+        let available = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+            "2024-12-29T15:00:00Z".to_string(),
+        ];
+
+        // Closed interval: from 13:00 to 14:00
+        let closed = DateTimeQuery::parse("2024-12-29T13:00:00Z/2024-12-29T14:00:00Z").unwrap();
+        let expanded = closed.expand_against_available_times(&available);
+        assert_eq!(expanded.len(), 2); // 13:00, 14:00
+        assert_eq!(expanded[0], "2024-12-29T13:00:00Z");
+        assert_eq!(expanded[1], "2024-12-29T14:00:00Z");
+    }
+
+    #[test]
     fn test_bbox_parse() {
         let bbox = BboxQuery::parse("-125,24,-66,50").unwrap();
         assert_eq!(bbox.west, -125.0);
@@ -522,5 +919,113 @@ mod tests {
         // Height: 50 - 24 = 26 degrees
         // Area: 59 * 26 = 1534 sq degrees
         assert!((area - 1534.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_polygon() {
+        let polygon =
+            AreaQuery::parse_polygon("POLYGON((-100 35, -98 35, -98 37, -100 37, -100 35))")
+                .unwrap();
+        assert_eq!(polygon.len(), 5);
+        assert_eq!(polygon[0], (-100.0, 35.0));
+        assert_eq!(polygon[1], (-98.0, 35.0));
+        assert_eq!(polygon[2], (-98.0, 37.0));
+        assert_eq!(polygon[3], (-100.0, 37.0));
+        assert_eq!(polygon[4], (-100.0, 35.0)); // Closed ring
+    }
+
+    #[test]
+    fn test_parse_polygon_lowercase() {
+        let polygon =
+            AreaQuery::parse_polygon("polygon((-100 35, -98 35, -98 37, -100 37, -100 35))")
+                .unwrap();
+        assert_eq!(polygon.len(), 5);
+    }
+
+    #[test]
+    fn test_parse_polygon_invalid() {
+        // Not enough points
+        let result = AreaQuery::parse_polygon("POLYGON((-100 35, -98 35, -100 35))");
+        assert!(result.is_err());
+
+        // Missing parentheses
+        let result = AreaQuery::parse_polygon("POLYGON(-100 35, -98 35, -98 37, -100 37, -100 35)");
+        assert!(result.is_err());
+
+        // Not a polygon
+        let result = AreaQuery::parse_polygon("POINT(-100 35)");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_area_query_bbox() {
+        let area_query = AreaQuery {
+            polygon: vec![
+                (-100.0, 35.0),
+                (-98.0, 35.0),
+                (-98.0, 37.0),
+                (-100.0, 37.0),
+                (-100.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+
+        let bbox = area_query.bbox();
+        assert_eq!(bbox.west, -100.0);
+        assert_eq!(bbox.east, -98.0);
+        assert_eq!(bbox.south, 35.0);
+        assert_eq!(bbox.north, 37.0);
+    }
+
+    #[test]
+    fn test_area_query_contains_point() {
+        let area_query = AreaQuery {
+            polygon: vec![
+                (-100.0, 35.0),
+                (-98.0, 35.0),
+                (-98.0, 37.0),
+                (-100.0, 37.0),
+                (-100.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+
+        // Point inside
+        assert!(area_query.contains_point(-99.0, 36.0));
+
+        // Point outside
+        assert!(!area_query.contains_point(-101.0, 36.0));
+        assert!(!area_query.contains_point(-99.0, 38.0));
+
+        // Point on edge (behavior may vary)
+        // We test a clearly inside point near the edge
+        assert!(area_query.contains_point(-99.99, 35.01));
+    }
+
+    #[test]
+    fn test_area_query_area() {
+        let area_query = AreaQuery {
+            polygon: vec![
+                (-100.0, 35.0),
+                (-98.0, 35.0),
+                (-98.0, 37.0),
+                (-100.0, 37.0),
+                (-100.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+
+        let area = area_query.area_sq_degrees();
+        // 2 degrees x 2 degrees = 4 sq degrees
+        assert!((area - 4.0).abs() < 0.01);
     }
 }

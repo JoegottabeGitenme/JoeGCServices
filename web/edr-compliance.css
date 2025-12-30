@@ -170,6 +170,58 @@ header .spec-ref a:hover {
     border: 1px solid var(--border-color);
 }
 
+/* Failed Tests List */
+.failed-tests-list {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+}
+
+.failed-tests-list h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    color: var(--error-color);
+}
+
+.failed-tests-list > ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    list-style: disc;
+}
+
+.failed-tests-list > ul > li {
+    margin-bottom: 0.5rem;
+}
+
+.failed-test-name {
+    color: var(--error-color);
+    font-weight: 600;
+}
+
+.failed-test-name:hover {
+    text-decoration: underline;
+}
+
+.failed-checks {
+    margin: 0.25rem 0 0 0;
+    padding-left: 1rem;
+    list-style: circle;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.failed-checks li {
+    margin: 0.15rem 0;
+}
+
+.error-msg {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 /* Main Content */
 .main-content {
     display: grid;

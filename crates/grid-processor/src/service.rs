@@ -322,6 +322,22 @@ impl GridDataService {
                 }
             }
 
+            TimeSpecification::ValidTime { valid_time } => {
+                // Find forecast closest to the requested valid time
+                match level {
+                    Some(lev) => self
+                        .catalog
+                        .find_by_time_and_level(&query.model, &query.parameter, *valid_time, lev)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    None => self
+                        .catalog
+                        .find_by_time(&query.model, &query.parameter, *valid_time)
+                        .await
+                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                }
+            }
+
             TimeSpecification::Latest => {
                 // Get latest available data
                 match level {

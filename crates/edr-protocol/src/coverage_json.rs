@@ -41,6 +41,16 @@ impl CoverageJson {
         }
     }
 
+    /// Create a new CoverageJSON document for a point series (time series at a point).
+    pub fn point_series(x: f64, y: f64, t_values: Vec<String>, z: Option<f64>) -> Self {
+        Self {
+            type_: CoverageType::Coverage,
+            domain: Domain::point_series(x, y, t_values, z),
+            parameters: Some(HashMap::new()),
+            ranges: Some(HashMap::new()),
+        }
+    }
+
     /// Add a parameter with its value.
     pub fn with_parameter(mut self, name: &str, param: CovJsonParameter, value: f32) -> Self {
         if let Some(ref mut params) = self.parameters {
@@ -67,7 +77,7 @@ impl CoverageJson {
         self
     }
 
-    /// Add a parameter with multiple values.
+    /// Add a parameter with multiple values (e.g., for time series).
     pub fn with_parameter_array(
         mut self,
         name: &str,
@@ -82,6 +92,52 @@ impl CoverageJson {
 
         if let Some(ref mut ranges) = self.ranges {
             ranges.insert(name.to_string(), NdArray::new(values, shape, axis_names));
+        }
+
+        self
+    }
+
+    /// Add a parameter with multiple values that may include nulls.
+    pub fn with_parameter_array_nullable(
+        mut self,
+        name: &str,
+        param: CovJsonParameter,
+        values: Vec<Option<f32>>,
+        shape: Vec<usize>,
+        axis_names: Vec<String>,
+    ) -> Self {
+        if let Some(ref mut params) = self.parameters {
+            params.insert(name.to_string(), param);
+        }
+
+        if let Some(ref mut ranges) = self.ranges {
+            ranges.insert(
+                name.to_string(),
+                NdArray::with_missing(values, shape, axis_names),
+            );
+        }
+
+        self
+    }
+
+    /// Add a parameter for a time series (1D array along time axis).
+    pub fn with_time_series(
+        mut self,
+        name: &str,
+        param: CovJsonParameter,
+        values: Vec<Option<f32>>,
+    ) -> Self {
+        if let Some(ref mut params) = self.parameters {
+            params.insert(name.to_string(), param);
+        }
+
+        if let Some(ref mut ranges) = self.ranges {
+            let shape = vec![values.len()];
+            let axis_names = vec!["t".to_string()];
+            ranges.insert(
+                name.to_string(),
+                NdArray::with_missing(values, shape, axis_names),
+            );
         }
 
         self
@@ -141,6 +197,45 @@ impl Domain {
         Self {
             type_: "Domain".to_string(),
             domain_type: DomainType::Point,
+            axes,
+            referencing: Some(referencing),
+        }
+    }
+
+    /// Create a point series domain (time series at a single point).
+    pub fn point_series(x: f64, y: f64, t_values: Vec<String>, z: Option<f64>) -> Self {
+        let mut axes = HashMap::new();
+        axes.insert("x".to_string(), Axis::Values(vec![AxisValue::Float(x)]));
+        axes.insert("y".to_string(), Axis::Values(vec![AxisValue::Float(y)]));
+
+        // Time axis with multiple values
+        axes.insert(
+            "t".to_string(),
+            Axis::Values(t_values.into_iter().map(AxisValue::String).collect()),
+        );
+
+        if let Some(z) = z {
+            axes.insert("z".to_string(), Axis::Values(vec![AxisValue::Float(z)]));
+        }
+
+        let mut referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::Geographic {
+                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
+            },
+        }];
+
+        // Add temporal reference system
+        referencing.push(ReferenceSystemConnection {
+            coordinates: vec!["t".to_string()],
+            system: ReferenceSystem::Temporal {
+                calendar: "Gregorian".to_string(),
+            },
+        });
+
+        Self {
+            type_: "Domain".to_string(),
+            domain_type: DomainType::PointSeries,
             axes,
             referencing: Some(referencing),
         }
@@ -588,5 +683,108 @@ mod tests {
 
         assert_eq!(parsed.type_, CoverageType::Coverage);
         assert_eq!(parsed.domain.domain_type, DomainType::Point);
+    }
+
+    #[test]
+    fn test_point_series_coverage() {
+        let times = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+        ];
+
+        let cov = CoverageJson::point_series(-97.5, 35.2, times.clone(), Some(2.0));
+
+        assert_eq!(cov.type_, CoverageType::Coverage);
+        assert_eq!(cov.domain.domain_type, DomainType::PointSeries);
+        assert_eq!(cov.domain.axes["t"].len(), 3);
+    }
+
+    #[test]
+    fn test_point_series_with_time_series_data() {
+        let times = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+        ];
+
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
+        let values = vec![Some(288.5), Some(289.0), Some(289.5)];
+
+        let cov = CoverageJson::point_series(-97.5, 35.2, times, Some(2.0))
+            .with_time_series("TMP", param, values);
+
+        let ranges = cov.ranges.unwrap();
+        assert!(ranges.contains_key("TMP"));
+        assert_eq!(ranges["TMP"].values.len(), 3);
+        assert_eq!(ranges["TMP"].shape, Some(vec![3]));
+        assert_eq!(ranges["TMP"].axis_names, Some(vec!["t".to_string()]));
+    }
+
+    #[test]
+    fn test_point_series_with_nulls() {
+        let times = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+        ];
+
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
+        let values = vec![Some(288.5), None, Some(289.5)]; // Middle value is missing
+
+        let cov = CoverageJson::point_series(-97.5, 35.2, times, None)
+            .with_time_series("TMP", param, values);
+
+        let ranges = cov.ranges.unwrap();
+        assert_eq!(ranges["TMP"].values[0], Some(288.5));
+        assert_eq!(ranges["TMP"].values[1], None);
+        assert_eq!(ranges["TMP"].values[2], Some(289.5));
+    }
+
+    #[test]
+    fn test_point_series_serialization() {
+        let times = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+        ];
+
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
+        let values = vec![Some(288.5), Some(289.0)];
+
+        let cov = CoverageJson::point_series(-97.5, 35.2, times, None)
+            .with_time_series("TMP", param, values);
+
+        let json = serde_json::to_string_pretty(&cov).unwrap();
+        assert!(
+            json.contains("\"domainType\": \"PointSeries\"")
+                || json.contains("\"domainType\":\"PointSeries\"")
+        );
+
+        // Verify it roundtrips
+        let parsed: CoverageJson = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.domain.domain_type, DomainType::PointSeries);
+    }
+
+    #[test]
+    fn test_domain_point_series() {
+        let domain = Domain::point_series(
+            -97.5,
+            35.2,
+            vec![
+                "2024-12-29T12:00:00Z".to_string(),
+                "2024-12-29T13:00:00Z".to_string(),
+            ],
+            Some(850.0),
+        );
+
+        assert_eq!(domain.domain_type, DomainType::PointSeries);
+        assert_eq!(domain.axes.len(), 4); // x, y, t, z
+        assert_eq!(domain.axes["t"].len(), 2);
+
+        // Check referencing includes temporal RS
+        let refs = domain.referencing.unwrap();
+        assert!(refs
+            .iter()
+            .any(|r| r.coordinates.contains(&"t".to_string())));
     }
 }

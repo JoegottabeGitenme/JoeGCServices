@@ -1,0 +1,155 @@
+# HRRR EDR Load Test Scenarios
+#
+# This file defines EDR API load test scenarios for HRRR collections.
+# Run with: scripts/run_edr_load_test.sh scenarios/hrrr-edr.yaml
+#
+# Query Types:
+# - position: Point query (fastest)
+# - area: Polygon query (tests area query implementation)
+
+name: hrrr-edr
+description: |
+  HRRR EDR API load test scenarios including position and area queries.
+  Tests various polygon sizes and parameters for area query performance.
+
+base_url: http://localhost:8083/edr
+duration_secs: 60
+concurrency: 10
+warmup_secs: 5
+
+# Collections to test
+collections:
+  - hrrr-surface
+  - hrrr-isobaric
+
+# Position Query Scenarios
+position_queries:
+  # Basic position queries
+  - name: position_single_param
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    parameters: ["TMP"]
+    weight: 2.0
+    
+  - name: position_multi_param
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    parameters: ["TMP", "RH", "GUST"]
+    weight: 1.5
+    
+  - name: position_with_level
+    collection: hrrr-isobaric
+    coords: "POINT(-100 40)"
+    parameters: ["TMP"]
+    z: "850"
+    weight: 1.0
+
+# Area Query Scenarios
+area_queries:
+  # Basic area query - small 1x1 degree polygon
+  - name: area_basic
+    collection: hrrr-surface
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP"]
+    weight: 2.0
+    description: "Small 1x1 degree polygon over Kansas"
+    
+  # Small area - high resolution data extraction
+  - name: area_small
+    collection: hrrr-surface
+    coords: "POLYGON((-100.5 39.5,-100.0 39.5,-100.0 40.0,-100.5 40.0,-100.5 39.5))"
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "0.5x0.5 degree polygon"
+    
+  # Medium area - 2x2 degrees
+  - name: area_medium
+    collection: hrrr-surface
+    coords: "POLYGON((-102 38,-100 38,-100 40,-102 40,-102 38))"
+    parameters: ["TMP", "RH"]
+    weight: 1.0
+    description: "2x2 degree polygon"
+    
+  # Area with multiple parameters
+  - name: area_multi_param
+    collection: hrrr-surface
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP", "RH", "GUST", "UGRD", "VGRD"]
+    weight: 1.0
+    description: "1x1 degree with 5 parameters"
+    
+  # Area with isobaric level
+  - name: area_isobaric
+    collection: hrrr-isobaric
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP"]
+    z: "850"
+    weight: 1.0
+    description: "1x1 degree at 850 hPa"
+    
+  # Complex polygon - L-shaped
+  - name: area_complex_L
+    collection: hrrr-surface
+    coords: "POLYGON((-102 38,-100 38,-100 40,-101 40,-101 39,-102 39,-102 38))"
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "L-shaped polygon"
+    
+  # Complex polygon - triangle
+  - name: area_triangle
+    collection: hrrr-surface
+    coords: "POLYGON((-101 38,-99 39,-101 40,-101 38))"
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "Triangular polygon"
+    
+  # Multiple locations (randomized in test)
+  - name: area_random_location
+    collection: hrrr-surface
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    polygon_size: 1.0  # 1 degree
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Random 1x1 degree polygon within CONUS"
+
+# Edge cases (lower weight, for validation)
+edge_cases:
+  # Near maximum allowed size (should succeed)
+  - name: area_near_max
+    collection: hrrr-surface
+    coords: "POLYGON((-105 35,-100 35,-100 40,-105 40,-105 35))"
+    parameters: ["TMP"]
+    weight: 0.3
+    expected_status: 200
+    description: "5x5 degree polygon - near max allowed"
+    
+  # Exceeds maximum size (should fail with 413 or 400)
+  - name: area_too_large
+    collection: hrrr-surface
+    coords: "POLYGON((-125 25,-70 25,-70 50,-125 50,-125 25))"
+    parameters: ["TMP"]
+    weight: 0.1
+    expected_status: [400, 413]
+    description: "Full CONUS - should be rejected"
+
+# Test points for random location generation
+test_points:
+  - name: oklahoma
+    lon: -97.5
+    lat: 35.5
+  - name: kansas
+    lon: -100.0
+    lat: 39.0
+  - name: colorado
+    lon: -105.0
+    lat: 40.0
+  - name: nebraska
+    lon: -100.0
+    lat: 41.0
+  - name: texas
+    lon: -97.0
+    lat: 32.0

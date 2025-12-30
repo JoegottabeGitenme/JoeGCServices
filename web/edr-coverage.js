@@ -9,7 +9,10 @@ class EDRCoverageValidator {
     constructor() {
         this.endpoint = 'http://localhost:8083/edr';
         this.mode = 'full';
+        this.queryType = 'position'; // 'position' or 'area'
         this.testPoint = { lon: -100, lat: 40 };
+        this.testArea = { lon: -100, lat: 40 }; // Center of 1x1 degree test polygon
+        this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
         this.concurrency = 20; // Max concurrent requests
@@ -34,6 +37,12 @@ class EDRCoverageValidator {
         
         // Whether catalog-check endpoint is available (our custom extension)
         this.hasCatalogCheck = false;
+        
+        // Collection filter - array of collection IDs to test (empty = all)
+        this.collectionFilter = [];
+        
+        // Available collections (loaded from API)
+        this.availableCollections = [];
     }
 
     /**
@@ -59,6 +68,16 @@ class EDRCoverageValidator {
             this.mode = e.target.value;
         });
 
+        // Bind query type select
+        document.getElementById('query-type-select').addEventListener('change', (e) => {
+            this.queryType = e.target.value;
+            // Toggle visibility of point vs area config
+            document.getElementById('test-point-config').style.display = 
+                this.queryType === 'position' ? '' : 'none';
+            document.getElementById('test-area-config').style.display = 
+                this.queryType === 'area' ? '' : 'none';
+        });
+
         // Bind filter buttons
         document.querySelectorAll('.filter-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.setFilter(e.target.dataset.filter));
@@ -71,6 +90,95 @@ class EDRCoverageValidator {
         document.getElementById('test-lat').addEventListener('change', (e) => {
             this.testPoint.lat = parseFloat(e.target.value) || 40;
         });
+
+        // Bind test area inputs
+        document.getElementById('test-area-lon').addEventListener('change', (e) => {
+            this.testArea.lon = parseFloat(e.target.value) || -100;
+        });
+        document.getElementById('test-area-lat').addEventListener('change', (e) => {
+            this.testArea.lat = parseFloat(e.target.value) || 40;
+        });
+
+        // Bind randomize toggle
+        document.getElementById('randomize-toggle').addEventListener('change', (e) => {
+            this.randomizeLocations = e.target.checked;
+            // Disable/enable manual coordinate inputs when randomize is on
+            const pointInputs = document.querySelectorAll('#test-point-config input');
+            const areaInputs = document.querySelectorAll('#test-area-config input');
+            pointInputs.forEach(input => input.disabled = this.randomizeLocations);
+            areaInputs.forEach(input => input.disabled = this.randomizeLocations);
+        });
+
+        // Bind collection filter controls
+        document.getElementById('select-all-btn').addEventListener('click', () => this.selectAllCollections());
+        document.getElementById('select-none-btn').addEventListener('click', () => this.selectNoCollections());
+        document.getElementById('refresh-collections-btn').addEventListener('click', () => this.loadCollectionList());
+        document.getElementById('collection-filter-select').addEventListener('change', (e) => {
+            this.updateCollectionFilter();
+        });
+
+        // Load collection list on init
+        this.loadCollectionList();
+    }
+
+    /**
+     * Load the list of available collections from the API
+     */
+    async loadCollectionList() {
+        const select = document.getElementById('collection-filter-select');
+        select.innerHTML = '<option value="" disabled>Loading...</option>';
+        
+        try {
+            const response = await fetch(`${this.endpoint}/collections`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            this.availableCollections = data.collections || [];
+            
+            // Populate select
+            select.innerHTML = '';
+            this.availableCollections.forEach(col => {
+                const option = document.createElement('option');
+                option.value = col.id;
+                option.textContent = col.title || col.id;
+                option.title = col.description || col.id;
+                select.appendChild(option);
+            });
+            
+            if (this.availableCollections.length === 0) {
+                select.innerHTML = '<option value="" disabled>No collections found</option>';
+            }
+        } catch (e) {
+            console.error('Failed to load collections:', e);
+            select.innerHTML = '<option value="" disabled>Error loading collections</option>';
+        }
+    }
+
+    /**
+     * Select all collections in the filter
+     */
+    selectAllCollections() {
+        const select = document.getElementById('collection-filter-select');
+        Array.from(select.options).forEach(opt => opt.selected = true);
+        this.updateCollectionFilter();
+    }
+
+    /**
+     * Clear collection filter selection
+     */
+    selectNoCollections() {
+        const select = document.getElementById('collection-filter-select');
+        Array.from(select.options).forEach(opt => opt.selected = false);
+        this.updateCollectionFilter();
+    }
+
+    /**
+     * Update the collection filter from the select element
+     */
+    updateCollectionFilter() {
+        const select = document.getElementById('collection-filter-select');
+        this.collectionFilter = Array.from(select.selectedOptions).map(opt => opt.value);
     }
 
     /**
@@ -200,7 +308,10 @@ class EDRCoverageValidator {
             timestamp: new Date().toISOString(),
             endpoint: this.endpoint,
             mode: this.mode,
-            testPoint: this.testPoint,
+            queryType: this.queryType,
+            collectionFilter: this.collectionFilter.length > 0 ? this.collectionFilter : 'all',
+            testPoint: this.queryType === 'position' ? this.testPoint : null,
+            testArea: this.queryType === 'area' ? this.testArea : null,
             hasCatalogCheck: this.hasCatalogCheck,
             summary: this.results.summary,
             advertised: this.results.advertised,
@@ -226,7 +337,18 @@ class EDRCoverageValidator {
     async discoverAdvertised() {
         const collectionsResp = await this.fetchJson(`${this.endpoint}/collections`);
         
-        for (const coll of collectionsResp.collections || []) {
+        // Get list of collections to process
+        let collectionsToProcess = collectionsResp.collections || [];
+        
+        // Apply collection filter if set
+        if (this.collectionFilter.length > 0) {
+            collectionsToProcess = collectionsToProcess.filter(
+                coll => this.collectionFilter.includes(coll.id)
+            );
+            this.updateStatus(`Phase 1: Discovering ${collectionsToProcess.length} selected collection(s)...`);
+        }
+        
+        for (const coll of collectionsToProcess) {
             if (!this.running) break;
 
             // Get full collection details
@@ -418,6 +540,7 @@ class EDRCoverageValidator {
 
     /**
      * Phase 4: Verify data retrieval with HTTP requests
+     * Now queries ALL parameters regardless of catalog status to confirm data exists
      */
     async verifyDataRetrieval() {
         const tasks = [];
@@ -426,11 +549,8 @@ class EDRCoverageValidator {
             for (const param of coll.parameters) {
                 const paramCheck = coll.parameterChecks[param];
                 
-                // When we have catalog data: skip if parameter not found (unless thorough mode)
-                // When we don't have catalog data (inCatalog === null): always test
-                if (paramCheck.inCatalog === false && this.mode !== 'thorough') {
-                    continue;
-                }
+                // Initialize parameter-level query tracking
+                paramCheck.queryResults = [];
 
                 // Determine which levels to test
                 const levels = Object.keys(paramCheck.levels).length > 0 
@@ -439,13 +559,6 @@ class EDRCoverageValidator {
 
                 for (const level of levels) {
                     const levelCheck = level !== null ? paramCheck.levels[level] : null;
-                    
-                    // When we have catalog data: skip if level not found (unless thorough mode)
-                    // When we don't have catalog data (inCatalog === null): always test
-                    if (levelCheck && levelCheck.inCatalog === false && this.mode !== 'thorough') {
-                        levelCheck.queryResult = 'skipped';
-                        continue;
-                    }
 
                     // Determine times to test
                     let timesToTest = [];
@@ -468,7 +581,9 @@ class EDRCoverageValidator {
                             param,
                             level,
                             time,
-                            levelCheck
+                            levelCheck,
+                            paramCheck,
+                            coll // Pass collection for bbox access
                         });
                     }
                 }
@@ -512,16 +627,30 @@ class EDRCoverageValidator {
      * Execute a single validation task
      */
     async executeTask(task) {
-        const { collId, param, level, time, levelCheck } = task;
-        const result = await this.testPositionQuery(collId, param, level, time);
+        const { collId, param, level, time, levelCheck, paramCheck, coll } = task;
+        const result = this.queryType === 'area' 
+            ? await this.testAreaQuery(collId, param, level, time, coll)
+            : await this.testPositionQuery(collId, param, level, time, coll);
 
-        // Update the check result
+        // Update the level check result
         if (levelCheck) {
             levelCheck.queryResult = result.status;
             levelCheck.queryMessage = result.message;
             levelCheck.queryValues = result.values;
             levelCheck.queryDuration = result.duration;
             levelCheck.queryUrl = result.url;
+        }
+
+        // Track at parameter level for summary display
+        if (paramCheck) {
+            paramCheck.queryResults.push(result);
+            // Update parameter-level summary
+            const passCount = paramCheck.queryResults.filter(r => r.status === 'pass').length;
+            const totalCount = paramCheck.queryResults.length;
+            paramCheck.queryPassCount = passCount;
+            paramCheck.queryTotalCount = totalCount;
+            paramCheck.queryStatus = passCount > 0 ? 'pass' : 
+                                     paramCheck.queryResults.some(r => r.status === 'warn') ? 'warn' : 'fail';
         }
 
         // Track in results
@@ -545,8 +674,9 @@ class EDRCoverageValidator {
     /**
      * Make a single position query and check result
      */
-    async testPositionQuery(collectionId, parameter, level, time) {
-        const coords = `POINT(${this.testPoint.lon} ${this.testPoint.lat})`;
+    async testPositionQuery(collectionId, parameter, level, time, coll) {
+        const { lon, lat } = this.getQueryCoordinates(coll);
+        const coords = `POINT(${lon} ${lat})`;
         let url = `${this.endpoint}/collections/${collectionId}/position?coords=${encodeURIComponent(coords)}&parameter-name=${parameter}`;
 
         if (level !== null) {
@@ -602,6 +732,92 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Make a single area query and check result
+     */
+    async testAreaQuery(collectionId, parameter, level, time, coll) {
+        // Create a 1x1 degree polygon centered on the test area (or random point)
+        const { lon, lat } = this.getQueryCoordinates(coll);
+        const halfDeg = 0.5;
+        const minLon = lon - halfDeg;
+        const maxLon = lon + halfDeg;
+        const minLat = lat - halfDeg;
+        const maxLat = lat + halfDeg;
+        
+        // WKT POLYGON format: POLYGON((lon1 lat1, lon2 lat2, lon3 lat3, lon4 lat4, lon1 lat1))
+        const polygon = `POLYGON((${minLon} ${minLat},${maxLon} ${minLat},${maxLon} ${maxLat},${minLon} ${maxLat},${minLon} ${minLat}))`;
+        
+        let url = `${this.endpoint}/collections/${collectionId}/area?coords=${encodeURIComponent(polygon)}&parameter-name=${parameter}`;
+
+        if (level !== null) {
+            url += `&z=${level}`;
+        }
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    queryType: 'area',
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            const values = data.ranges?.[parameter]?.values || [];
+            const nonNullValues = values.filter(v => v !== null);
+            const hasData = nonNullValues.length > 0;
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'area',
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Area data retrieved (${nonNullValues.length}/${values.length} non-null)` 
+                    : 'Query OK but all values null',
+                values: nonNullValues.slice(0, 10), // Show first 10 non-null values
+                valueCount: values.length,
+                nonNullCount: nonNullValues.length,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'area',
                 status: 'fail',
                 message: error.message,
                 duration: Math.round(performance.now() - startTime),
@@ -736,13 +952,24 @@ class EDRCoverageValidator {
         }
 
         const paramCoverage = Math.round((passCount / totalCount) * 100);
-        const inCatalogClass = paramCheck.inCatalog ? 'pass' : 'fail';
+        const inCatalogClass = paramCheck.inCatalog ? 'pass' : (paramCheck.inCatalog === null ? 'skip' : 'fail');
+        const inCatalogLabel = paramCheck.inCatalog ? 'In Catalog' : (paramCheck.inCatalog === null ? 'Unknown' : 'Missing');
+
+        // Query status at parameter level
+        let queryBadge = '';
+        if (paramCheck.queryResults && paramCheck.queryResults.length > 0) {
+            const queryClass = paramCheck.queryStatus || 'skip';
+            const queryPassCount = paramCheck.queryPassCount || 0;
+            const queryTotal = paramCheck.queryTotalCount || 0;
+            queryBadge = `<span class="status-badge ${queryClass}">Query: ${queryPassCount}/${queryTotal} OK</span>`;
+        }
 
         el.innerHTML = `
             <div class="parameter-header">
                 <span class="toggle">▶</span>
                 <span class="name">${param}</span>
-                <span class="status-badge ${inCatalogClass}">${paramCheck.inCatalog ? 'In Catalog' : 'Missing'}</span>
+                <span class="status-badge ${inCatalogClass}">${inCatalogLabel}</span>
+                ${queryBadge}
                 <span class="stats">${passCount}/${totalCount} levels</span>
             </div>
             <div class="parameter-content"></div>
@@ -756,15 +983,56 @@ class EDRCoverageValidator {
                 content.appendChild(levelEl);
             }
         } else {
-            // No levels - show single status
+            // No levels - show single status for surface parameters
             const statusEl = document.createElement('div');
             statusEl.className = 'tree-level';
+            
+            // DB status
+            let dbStatus = 'skip';
+            let dbLabel = 'unknown';
+            if (paramCheck.inCatalog === true) {
+                dbStatus = 'pass';
+                dbLabel = 'exists';
+            } else if (paramCheck.inCatalog === false) {
+                dbStatus = 'fail';
+                dbLabel = 'MISSING';
+            }
+            
+            // Query status for surface params
+            let queryStatus = 'skip';
+            let queryLabel = 'pending';
+            let queryUrl = null;
+            if (paramCheck.queryResults && paramCheck.queryResults.length > 0) {
+                const firstResult = paramCheck.queryResults[0];
+                queryStatus = firstResult.status;
+                queryLabel = firstResult.status === 'pass' ? 'OK' : 
+                            firstResult.status === 'warn' ? 'null' : 'ERROR';
+                queryUrl = firstResult.url;
+            }
+            
+            // Copy URL button
+            const copyBtn = queryUrl 
+                ? `<button class="copy-url-btn" title="Copy query URL to clipboard">Copy URL</button>`
+                : '';
+            
             statusEl.innerHTML = `
                 <span class="level-name">surface</span>
                 <span class="level-status">
-                    <span class="status-badge ${inCatalogClass}">DB: ${paramCheck.inCatalog ? 'exists' : 'MISSING'}</span>
+                    <span class="status-badge ${dbStatus}">DB: ${dbLabel}</span>
+                    <span class="status-badge ${queryStatus}">Query: ${queryLabel}</span>
+                    ${copyBtn}
                 </span>
             `;
+            
+            // Bind copy button
+            const copyBtnEl = statusEl.querySelector('.copy-url-btn');
+            if (copyBtnEl && queryUrl) {
+                copyBtnEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.copyToClipboard(queryUrl, copyBtnEl);
+                });
+            }
+            
             statusEl.addEventListener('click', () => {
                 this.showDetails(collId, param, null, paramCheck);
             });
@@ -788,24 +1056,55 @@ class EDRCoverageValidator {
         el.className = 'tree-level';
         el.dataset.level = level;
 
-        const dbStatus = levelCheck.inCatalog ? 'pass' : 'fail';
-        const dbLabel = levelCheck.inCatalog ? 'exists' : 'MISSING';
+        // DB status - may be unknown (null) if catalog check not available
+        let dbStatus = 'skip';
+        let dbLabel = 'unknown';
+        if (levelCheck.inCatalog === true) {
+            dbStatus = 'pass';
+            dbLabel = 'exists';
+        } else if (levelCheck.inCatalog === false) {
+            dbStatus = 'fail';
+            dbLabel = 'MISSING';
+        }
 
+        // Query status
         let queryStatus = 'skip';
-        let queryLabel = 'skipped';
+        let queryLabel = 'pending';
         if (levelCheck.queryResult) {
             queryStatus = levelCheck.queryResult;
-            queryLabel = levelCheck.queryResult === 'pass' ? 'OK' : 
-                        levelCheck.queryResult === 'warn' ? 'null' : 'ERROR';
+            if (levelCheck.queryResult === 'pass') {
+                queryLabel = 'OK';
+            } else if (levelCheck.queryResult === 'warn') {
+                queryLabel = 'null';
+            } else if (levelCheck.queryResult === 'fail') {
+                queryLabel = 'ERROR';
+            } else if (levelCheck.queryResult === 'skipped') {
+                queryLabel = 'skipped';
+            }
         }
+
+        // Copy URL button (only show if we have a URL)
+        const copyBtn = levelCheck.queryUrl 
+            ? `<button class="copy-url-btn" title="Copy query URL to clipboard">Copy URL</button>`
+            : '';
 
         el.innerHTML = `
             <span class="level-name">${level} ${collId.includes('isobaric') ? 'hPa' : ''}</span>
             <span class="level-status">
                 <span class="status-badge ${dbStatus}">DB: ${dbLabel}</span>
                 <span class="status-badge ${queryStatus}">Query: ${queryLabel}</span>
+                ${copyBtn}
             </span>
         `;
+
+        // Bind copy button
+        const copyBtnEl = el.querySelector('.copy-url-btn');
+        if (copyBtnEl) {
+            copyBtnEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.copyToClipboard(levelCheck.queryUrl, copyBtnEl);
+            });
+        }
 
         el.addEventListener('click', () => {
             this.showDetails(collId, param, level, levelCheck);
@@ -815,7 +1114,72 @@ class EDRCoverageValidator {
     }
 
     /**
-     * Calculate collection coverage percentage
+     * Copy text to clipboard and show feedback
+     */
+    copyToClipboard(text, buttonEl) {
+        navigator.clipboard.writeText(text).then(() => {
+            const originalText = buttonEl.textContent;
+            buttonEl.textContent = 'Copied!';
+            buttonEl.classList.add('copied');
+            setTimeout(() => {
+                buttonEl.textContent = originalText;
+                buttonEl.classList.remove('copied');
+            }, 1500);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            buttonEl.textContent = 'Failed';
+            setTimeout(() => {
+                buttonEl.textContent = 'Copy URL';
+            }, 1500);
+        });
+    }
+
+    /**
+     * Get random coordinates within a bounding box
+     * @param {Array} bbox - [minLon, minLat, maxLon, maxLat]
+     * @returns {Object} - { lon, lat }
+     */
+    getRandomPointInBbox(bbox) {
+        if (!bbox || bbox.length < 4) {
+            // Fallback to default test point if no bbox
+            return { lon: this.testPoint.lon, lat: this.testPoint.lat };
+        }
+        
+        const [minLon, minLat, maxLon, maxLat] = bbox;
+        
+        // Add some padding to avoid edge cases (5% inward from edges)
+        const lonPadding = (maxLon - minLon) * 0.05;
+        const latPadding = (maxLat - minLat) * 0.05;
+        
+        const lon = minLon + lonPadding + Math.random() * (maxLon - minLon - 2 * lonPadding);
+        const lat = minLat + latPadding + Math.random() * (maxLat - minLat - 2 * latPadding);
+        
+        // Round to 4 decimal places for cleaner URLs
+        return {
+            lon: Math.round(lon * 10000) / 10000,
+            lat: Math.round(lat * 10000) / 10000
+        };
+    }
+
+    /**
+     * Get coordinates for a query - either fixed or randomized
+     * @param {Object} coll - Collection object with bbox
+     * @returns {Object} - { lon, lat }
+     */
+    getQueryCoordinates(coll) {
+        if (this.randomizeLocations && coll.bbox) {
+            return this.getRandomPointInBbox(coll.bbox);
+        }
+        
+        // Use fixed test point/area
+        return this.queryType === 'area' 
+            ? { lon: this.testArea.lon, lat: this.testArea.lat }
+            : { lon: this.testPoint.lon, lat: this.testPoint.lat };
+    }
+
+    /**
+     * Calculate collection coverage percentage based on query results
+     * Now uses query results as the primary indicator, falling back to catalog status
      */
     calculateCollectionCoverage(coll) {
         let total = 0;
@@ -828,11 +1192,24 @@ class EDRCoverageValidator {
             if (levels.length > 0) {
                 for (const level of levels) {
                     total++;
-                    if (paramCheck.levels[level].inCatalog) available++;
+                    const levelCheck = paramCheck.levels[level];
+                    // Prefer query result over catalog status
+                    if (levelCheck.queryResult === 'pass') {
+                        available++;
+                    } else if (levelCheck.queryResult === null && levelCheck.inCatalog) {
+                        // Query not run yet, fall back to catalog
+                        available++;
+                    }
                 }
             } else {
                 total++;
-                if (paramCheck.inCatalog) available++;
+                // For surface params, check query results
+                if (paramCheck.queryStatus === 'pass') {
+                    available++;
+                } else if (!paramCheck.queryResults?.length && paramCheck.inCatalog) {
+                    // Query not run yet, fall back to catalog
+                    available++;
+                }
             }
         }
 
@@ -846,6 +1223,26 @@ class EDRCoverageValidator {
         this.selectedItem = { collId, param, level, check };
         const coll = this.results.advertised[collId];
         const container = document.getElementById('details-content');
+
+        // For surface params (level === null), check is paramCheck which has queryResults array
+        // For level params, check is levelCheck which has queryUrl directly
+        const isSurfaceParam = level === null && check.queryResults;
+        
+        // Get query info - either from levelCheck or first result in paramCheck.queryResults
+        let queryUrl = check.queryUrl;
+        let queryResult = check.queryResult;
+        let queryDuration = check.queryDuration;
+        let queryValues = check.queryValues;
+        let queryMessage = check.queryMessage;
+        
+        if (isSurfaceParam && check.queryResults.length > 0) {
+            const firstResult = check.queryResults[0];
+            queryUrl = firstResult.url;
+            queryResult = firstResult.status;
+            queryDuration = firstResult.duration;
+            queryValues = firstResult.values;
+            queryMessage = firstResult.message;
+        }
 
         let html = `
             <div class="detail-section">
@@ -870,39 +1267,60 @@ class EDRCoverageValidator {
                 <h3>Catalog Status</h3>
                 <div class="detail-item">
                     <span class="label">In Database</span>
-                    <span class="value">${check.inCatalog ? 'Yes' : 'No'}</span>
+                    <span class="value">${check.inCatalog ? 'Yes' : (check.inCatalog === false ? 'No' : 'Unknown')}</span>
                 </div>
                 <div class="detail-item">
                     <span class="label">Message</span>
-                    <span class="value">${check.message || check.queryMessage || '-'}</span>
+                    <span class="value">${check.message || queryMessage || '-'}</span>
                 </div>
             </div>
         `;
 
-        if (check.queryUrl) {
+        if (queryUrl) {
             html += `
                 <div class="detail-section">
                     <h3>HTTP Request</h3>
                     <div class="detail-item">
                         <span class="label">Status</span>
-                        <span class="value status-badge ${check.queryResult}">${check.queryResult?.toUpperCase()}</span>
+                        <span class="value status-badge ${queryResult}">${queryResult?.toUpperCase()}</span>
                     </div>
                     <div class="detail-item">
                         <span class="label">Duration</span>
-                        <span class="value">${check.queryDuration}ms</span>
+                        <span class="value">${queryDuration}ms</span>
                     </div>
-                    <div class="detail-request">${check.queryUrl}</div>
+                    <div class="detail-request">${queryUrl}</div>
                 </div>
             `;
 
-            if (check.queryValues) {
+            if (queryValues) {
                 html += `
                     <div class="detail-section">
                         <h3>Response Values</h3>
-                        <div class="detail-response">${JSON.stringify(check.queryValues, null, 2)}</div>
+                        <div class="detail-response">${JSON.stringify(queryValues, null, 2)}</div>
                     </div>
                 `;
             }
+        }
+
+        // For surface params with multiple query results, show all of them
+        if (isSurfaceParam && check.queryResults && check.queryResults.length > 1) {
+            html += `
+                <div class="detail-section">
+                    <h3>All Query Results (${check.queryResults.length})</h3>
+            `;
+            for (let i = 0; i < check.queryResults.length; i++) {
+                const result = check.queryResults[i];
+                html += `
+                    <div class="detail-item">
+                        <span class="label">#${i + 1} ${result.time || 'no datetime'}</span>
+                        <span class="value">
+                            <span class="status-badge ${result.status}">${result.status.toUpperCase()}</span>
+                            ${result.duration}ms
+                        </span>
+                    </div>
+                `;
+            }
+            html += `</div>`;
         }
 
         container.innerHTML = html;

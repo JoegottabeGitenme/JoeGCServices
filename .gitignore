@@ -27,7 +27,6 @@
 .env.*.local
 
 # OS files
-.DS_Store
 Thumbs.db
 .directory
 
@@ -104,3 +103,6 @@ compile_commands.json
 *.grib2
 /benchmark_results/
 /hammer_results/
+/edr_load_results/
+/lancedb/
+/models/

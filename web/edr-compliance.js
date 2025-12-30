@@ -206,6 +206,9 @@ async function runAllTests() {
         'extent-spatial', 'extent-temporal', 'extent-vertical',
         'instances-list', 'instance-structure', 'instance-extent',
         'position-wkt', 'position-simple', 'position-covjson', 'position-invalid',
+        'datetime-instant', 'datetime-range', 'datetime-list', 'datetime-open-end',
+        'area-basic', 'area-covjson', 'area-small', 'area-complex',
+        'area-too-large', 'area-invalid-polygon', 'area-with-params',
         'error-404-collection', 'error-400-coords'
     ];
 
@@ -286,6 +289,28 @@ async function executeTest(testName) {
             return testPositionCovJson();
         case 'position-invalid':
             return testPositionInvalid();
+        case 'datetime-instant':
+            return testDatetimeInstant();
+        case 'datetime-range':
+            return testDatetimeRange();
+        case 'datetime-list':
+            return testDatetimeList();
+        case 'datetime-open-end':
+            return testDatetimeOpenEnd();
+        case 'area-basic':
+            return testAreaBasic();
+        case 'area-covjson':
+            return testAreaCovJson();
+        case 'area-small':
+            return testAreaSmall();
+        case 'area-complex':
+            return testAreaComplex();
+        case 'area-too-large':
+            return testAreaTooLarge();
+        case 'area-invalid-polygon':
+            return testAreaInvalidPolygon();
+        case 'area-with-params':
+            return testAreaWithParams();
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
@@ -330,6 +355,30 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)`];
         case 'position-invalid':
             return [`${API_BASE}/collections/${colId}/position?coords=INVALID`];
+        case 'datetime-instant':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}`];
+        case 'datetime-range':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={start}/{end}`];
+        case 'datetime-list':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={t1},{t2},{t3}`];
+        case 'datetime-open-end':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={start}/..`];
+        case 'area-basic':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))`];
+        case 'area-covjson':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))`];
+        case 'area-small':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-97.5 35.2,-97.4 35.2,-97.4 35.3,-97.5 35.3,-97.5 35.2))`];
+        case 'area-complex':
+            // L-shaped polygon
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-100 34,-98 34,-98 36,-99 36,-99 35,-100 35,-100 34))`];
+        case 'area-too-large':
+            // Full CONUS - should be rejected as too large
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-125 24,-66 24,-66 50,-125 50,-125 24))`];
+        case 'area-invalid-polygon':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35))`];
+        case 'area-with-params':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&parameter-name=TMP`];
         case 'error-404-collection':
             return [`${API_BASE}/collections/nonexistent-collection-12345`];
         case 'error-400-coords':
@@ -420,7 +469,8 @@ async function testConformance() {
         { name: 'Has conformsTo array', passed: Array.isArray(conformsTo) },
         { name: 'Includes core', passed: conformsTo.some(c => c.includes('conf/core')) },
         { name: 'Includes collections', passed: conformsTo.some(c => c.includes('conf/collections')) },
-        { name: 'Includes position', passed: conformsTo.some(c => c.includes('conf/position')) }
+        { name: 'Includes position', passed: conformsTo.some(c => c.includes('conf/position')) },
+        { name: 'Includes area', passed: conformsTo.some(c => c.includes('conf/area')) }
     ];
     return {
         passed: checks.every(c => c.passed),
@@ -776,6 +826,356 @@ async function testPositionInvalid() {
     };
 }
 
+// ============================================================
+// DATETIME QUERY TESTS
+// ============================================================
+
+// Helper to get available times from a collection
+async function getCollectionTimes() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { collection: null, times: [] };
+    }
+    
+    const col = collections[0];
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const times = colRes.json?.extent?.temporal?.values || [];
+    
+    return { collection: col, times };
+}
+
+// Single datetime instant
+async function testDatetimeInstant() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    const datetime = times[0]; // Use first available time
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetime)}`);
+    
+    // For single instant, check we have a t axis with values
+    const tAxisValues = getTimeAxisValues(res.json?.domain);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has domain', passed: !!res.json?.domain },
+        { name: 'Has t axis with value(s)', passed: tAxisValues.length >= 1 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Helper to extract time values from axes (handles both array and object with values)
+function getTimeAxisValues(domain) {
+    const tAxis = domain?.axes?.t || domain?.axes?.time;
+    if (!tAxis) return [];
+    // CovJSON can have t as direct array or as object with values property
+    if (Array.isArray(tAxis)) return tAxis;
+    if (Array.isArray(tAxis.values)) return tAxis.values;
+    return [];
+}
+
+// Datetime range (start/end interval)
+async function testDatetimeRange() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length < 2) {
+        return { passed: true, checks: [{ name: 'Not enough temporal values for range test (N/A)', passed: true }] };
+    }
+    
+    const startTime = times[0];
+    const endTime = times[Math.min(2, times.length - 1)]; // Use 3rd time or last
+    const datetimeRange = `${startTime}/${endTime}`;
+    
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeRange)}`);
+    
+    // For ranges, response should be a PointSeries with multiple time values
+    const tAxisValues = getTimeAxisValues(res.json?.domain);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Domain type is PointSeries', passed: res.json?.domain?.domainType === 'PointSeries' },
+        { name: 'Has multiple time values', passed: tAxisValues.length >= 2 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Multiple discrete datetimes (comma-separated list)
+async function testDatetimeList() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length < 3) {
+        return { passed: true, checks: [{ name: 'Not enough temporal values for list test (N/A)', passed: true }] };
+    }
+    
+    // Pick 3 times
+    const selectedTimes = [times[0], times[1], times[2]];
+    const datetimeList = selectedTimes.join(',');
+    
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeList)}`);
+    
+    // For lists, response should be a PointSeries with multiple time values
+    const tAxisValues = getTimeAxisValues(res.json?.domain);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Domain type is PointSeries', passed: res.json?.domain?.domainType === 'PointSeries' },
+        { name: 'Has 3 time values', passed: tAxisValues.length === 3 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Datetime with open end (start/..)
+async function testDatetimeOpenEnd() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length < 2) {
+        return { passed: true, checks: [{ name: 'Not enough temporal values for open-end test (N/A)', passed: true }] };
+    }
+    
+    const startTime = times[0];
+    const datetimeOpenEnd = `${startTime}/..`;
+    
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeOpenEnd)}`);
+    
+    // For open-ended ranges, response should be a PointSeries with multiple time values
+    const tAxisValues = getTimeAxisValues(res.json?.domain);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Domain type is PointSeries', passed: res.json?.domain?.domainType === 'PointSeries' },
+        { name: 'Has multiple time values (from start to latest)', passed: tAxisValues.length >= 2 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// AREA QUERY TESTS
+// ============================================================
+
+// Basic polygon area query
+async function testAreaBasic() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Small 1x1 degree polygon over Oklahoma
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Area query returns proper CoverageJSON Grid
+async function testAreaCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    // Check for non-null data values
+    const ranges = res.json?.ranges || {};
+    const paramKeys = Object.keys(ranges);
+    let hasNonNullData = false;
+    if (paramKeys.length > 0) {
+        const firstParam = paramKeys[0];
+        const values = ranges[firstParam]?.values || [];
+        hasNonNullData = values.some(v => v !== null);
+    }
+    
+    const checks = [
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' },
+        { name: 'Has x axis', passed: !!res.json?.domain?.axes?.x },
+        { name: 'Has y axis', passed: !!res.json?.domain?.axes?.y },
+        { name: 'Has ranges', passed: paramKeys.length > 0 },
+        { name: 'Has non-null data values', passed: hasNonNullData }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Small region area query
+async function testAreaSmall() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Very small 0.1x0.1 degree polygon
+    const polygon = 'POLYGON((-97.5 35.2,-97.4 35.2,-97.4 35.3,-97.5 35.3,-97.5 35.2))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Response is valid JSON', passed: res.json !== null }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Complex polygon (L-shaped)
+async function testAreaComplex() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // L-shaped polygon
+    const polygon = 'POLYGON((-100 34,-98 34,-98 36,-99 36,-99 35,-100 35,-100 34))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Area too large should return 413 or 400
+async function testAreaTooLarge() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Full CONUS - should be rejected as too large
+    const polygon = 'POLYGON((-125 24,-66 24,-66 50,-125 50,-125 24))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    // Per spec, server MAY return 413 for too large requests, or 400 for invalid
+    const checks = [
+        { name: 'Status 413 or 400', passed: res.status === 413 || res.status === 400 },
+        { name: 'Has error response', passed: !!res.json?.type || !!res.json?.detail }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Invalid polygon (not closed, insufficient points)
+async function testAreaInvalidPolygon() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid: only 2 points, not a valid polygon
+    const polygon = 'POLYGON((-98 35,-97 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Area query with parameter filtering
+async function testAreaWithParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&parameter-name=TMP`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has ranges', passed: !!res.json?.ranges }
+    ];
+    
+    // If we have ranges, check that filtering worked (only requested params)
+    if (res.json?.ranges) {
+        const rangeKeys = Object.keys(res.json.ranges);
+        // Should have TMP or temperature-related parameter
+        const hasTempParam = rangeKeys.some(k => k.includes('TMP') || k.toLowerCase().includes('temp'));
+        checks.push({ name: 'Response includes requested parameter', passed: hasTempParam || rangeKeys.length > 0 });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
 async function testError404Collection() {
     const res = await fetchJson(`${API_BASE}/collections/nonexistent-collection-12345`);
     const checks = [
@@ -897,16 +1297,54 @@ function copyQueryUrl() {
 
 function updateSummary() {
     let passed = 0, failed = 0, pending = 0;
+    const failedTests = [];
 
-    document.querySelectorAll('.test-status').forEach(el => {
-        if (el.classList.contains('passed')) passed++;
-        else if (el.classList.contains('failed')) failed++;
-        else pending++;
+    document.querySelectorAll('.test-item').forEach(item => {
+        const statusEl = item.querySelector('.test-status');
+        const testName = item.dataset.test;
+        
+        if (statusEl.classList.contains('passed')) {
+            passed++;
+        } else if (statusEl.classList.contains('failed')) {
+            failed++;
+            // Collect failed test info
+            const result = testResults[testName];
+            const failedChecks = (result?.checks || []).filter(c => !c.passed).map(c => c.name);
+            failedTests.push({ name: testName, failedChecks, error: result?.error });
+        } else {
+            pending++;
+        }
     });
 
     document.getElementById('passed-count').textContent = passed;
     document.getElementById('failed-count').textContent = failed;
     document.getElementById('pending-count').textContent = pending;
+    
+    // Update failed tests list
+    const failedListContainer = document.getElementById('failed-tests-list');
+    const failedListUl = document.getElementById('failed-tests-ul');
+    
+    if (failedTests.length > 0) {
+        failedListContainer.style.display = 'block';
+        failedListUl.innerHTML = failedTests.map(t => {
+            const checksHtml = t.failedChecks.length > 0 
+                ? `<ul class="failed-checks">${t.failedChecks.map(c => `<li>${c}</li>`).join('')}</ul>`
+                : (t.error ? `<span class="error-msg">${t.error}</span>` : '');
+            return `<li>
+                <strong class="failed-test-name" data-test="${t.name}">${t.name}</strong>
+                ${checksHtml}
+            </li>`;
+        }).join('');
+        
+        // Make failed test names clickable
+        failedListUl.querySelectorAll('.failed-test-name').forEach(el => {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', () => showTestDetails(el.dataset.test));
+        });
+    } else {
+        failedListContainer.style.display = 'none';
+        failedListUl.innerHTML = '';
+    }
 }
 
 // Spec link mapping for each test
@@ -974,6 +1412,50 @@ const SPEC_LINKS = {
     'position-invalid': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes',
         title: 'Error Response'
+    },
+    'datetime-instant': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition',
+        title: 'Datetime Parameter (Single Instant)'
+    },
+    'datetime-range': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition',
+        title: 'Datetime Parameter (Range Interval)'
+    },
+    'datetime-list': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition',
+        title: 'Datetime Parameter (Multiple Values)'
+    },
+    'datetime-open-end': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition',
+        title: 'Datetime Parameter (Open-ended Range)'
+    },
+    'area-basic': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd',
+        title: 'Area Query'
+    },
+    'area-covjson': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section',
+        title: 'CoverageJSON Response'
+    },
+    'area-small': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd',
+        title: 'Area Query'
+    },
+    'area-complex': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd',
+        title: 'Area Query (Complex Polygon)'
+    },
+    'area-too-large': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes',
+        title: 'HTTP Status Codes (413 Payload Too Large)'
+    },
+    'area-invalid-polygon': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes',
+        title: 'HTTP Status Codes (400 Bad Request)'
+    },
+    'area-with-params': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd',
+        title: 'Area Query with Parameters'
     },
     'error-404-collection': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes',

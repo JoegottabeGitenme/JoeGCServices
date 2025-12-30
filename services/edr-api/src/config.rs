@@ -234,6 +234,22 @@ pub struct LimitsConfig {
     /// Maximum response size in MB.
     #[serde(default = "default_max_response_mb")]
     pub max_response_size_mb: usize,
+
+    /// Maximum area for area/cube queries in square degrees.
+    #[serde(default = "default_max_area")]
+    pub max_area_sq_degrees: Option<f64>,
+
+    /// Maximum radius for radius queries in km.
+    #[serde(default = "default_max_radius")]
+    pub max_radius_km: Option<f64>,
+
+    /// Maximum points in a trajectory.
+    #[serde(default = "default_max_trajectory_points")]
+    pub max_trajectory_points: Option<usize>,
+
+    /// Maximum corridor length in km.
+    #[serde(default = "default_max_corridor_length")]
+    pub max_corridor_length_km: Option<f64>,
 }
 
 impl Default for LimitsConfig {
@@ -243,6 +259,10 @@ impl Default for LimitsConfig {
             max_time_steps: default_max_time_steps(),
             max_vertical_levels: default_max_levels(),
             max_response_size_mb: default_max_response_mb(),
+            max_area_sq_degrees: default_max_area(),
+            max_radius_km: default_max_radius(),
+            max_trajectory_points: default_max_trajectory_points(),
+            max_corridor_length_km: default_max_corridor_length(),
         }
     }
 }
@@ -258,6 +278,18 @@ fn default_max_levels() -> usize {
 }
 fn default_max_response_mb() -> usize {
     50
+}
+fn default_max_area() -> Option<f64> {
+    Some(100.0) // ~1000km x 1000km at equator
+}
+fn default_max_radius() -> Option<f64> {
+    Some(500.0) // 500 km
+}
+fn default_max_trajectory_points() -> Option<usize> {
+    Some(100)
+}
+fn default_max_corridor_length() -> Option<f64> {
+    Some(2000.0) // 2000 km
 }
 
 #[cfg(test)]

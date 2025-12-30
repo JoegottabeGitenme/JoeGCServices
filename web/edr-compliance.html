@@ -52,6 +52,10 @@
             <button id="run-all-btn">Run All Tests</button>
             <button id="clear-results-btn">Clear Results</button>
         </div>
+        <div class="failed-tests-list" id="failed-tests-list" style="display: none;">
+            <h3>Failed Tests:</h3>
+            <ul id="failed-tests-ul"></ul>
+        </div>
     </section>
 
     <!-- Main Content -->
@@ -220,6 +224,105 @@
                     <div class="test-item" data-test="position-invalid">
                         <span class="test-name">Invalid Coordinates Error</span>
                         <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Datetime Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="datetime">
+                    <span class="toggle">+</span>
+                    Datetime Query Conformance
+                    <span class="section-status" id="datetime-status"></span>
+                </h3>
+                <div class="section-content" id="datetime-tests">
+                    <div class="test-item" data-test="datetime-instant">
+                        <span class="test-name">Single Datetime Instant</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-range">
+                        <span class="test-name">Datetime Range (start/end)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-list">
+                        <span class="test-name">Multiple Datetime List</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-open-end">
+                        <span class="test-name">Datetime Open End (start/..)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Area Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="area">
+                    <span class="toggle">+</span>
+                    Area Query Conformance
+                    <span class="section-status" id="area-status"></span>
+                </h3>
+                <div class="section-content" id="area-tests">
+                    <div class="test-item" data-test="area-basic">
+                        <span class="test-name">Area Query (Basic Polygon)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-covjson">
+                        <span class="test-name">Area Query CoverageJSON Grid</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-small">
+                        <span class="test-name">Area Query (Small Region)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-complex">
+                        <span class="test-name">Area Query (Complex Polygon)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-too-large">
+                        <span class="test-name">Area Query (Too Large - 413)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-invalid-polygon">
+                        <span class="test-name">Area Query (Invalid Polygon - 400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-with-params">
+                        <span class="test-name">Area Query with Parameters</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
                         <span class="test-status pending">Pending</span>
                         <button class="copy-url-btn" title="Copy test URL">URL</button>
                         <button class="run-test-btn">Run</button>

@@ -81,12 +81,69 @@ header nav a:hover {
     flex-wrap: wrap;
 }
 
+.config-row + .config-row {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
 .endpoint-config,
 .mode-config,
-.test-point-config {
+.test-point-config,
+.query-type-config,
+.test-area-config {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+.collection-filter-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.collection-filter-config > label {
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.collection-filter-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+}
+
+.collection-filter-config select {
+    min-width: 300px;
+    padding: 0.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+
+.collection-filter-config select option {
+    padding: 0.25rem;
+}
+
+.filter-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.filter-buttons button {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    min-width: 40px;
+}
+
+.filter-hint {
+    font-size: 0.7rem;
+    color: var(--text-light);
+    font-style: italic;
 }
 
 .endpoint-config label,
@@ -786,4 +843,77 @@ header nav a:hover {
 
 .running .progress-fill {
     animation: pulse 1s ease-in-out infinite;
+}
+
+/* Copy URL Button */
+.copy-url-btn {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.65rem;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    background: var(--card-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: 0.25rem;
+}
+
+.copy-url-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.copy-url-btn.copied {
+    background: var(--success-color);
+    color: white;
+    border-color: var(--success-color);
+}
+
+/* Randomize Toggle */
+.randomize-config {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text-color);
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.toggle-text {
+    user-select: none;
+}
+
+.config-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-light);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: bold;
+    cursor: help;
+}
+
+/* Disabled inputs when randomize is on */
+#test-point-config input:disabled,
+#test-area-config input:disabled {
+    background: var(--skip-bg);
+    color: var(--text-light);
+    cursor: not-allowed;
 }

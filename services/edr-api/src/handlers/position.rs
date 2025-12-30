@@ -5,6 +5,7 @@ use axum::{
     http::{header, StatusCode},
     response::Response,
 };
+use chrono::{DateTime, Utc};
 use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
     responses::ExceptionResponse, CoverageJson, PositionQuery as ParsedPositionQuery,
@@ -101,8 +102,8 @@ async fn position_query(
         None
     };
 
-    // Parse datetime
-    let _datetime = if let Some(ref dt) = params.datetime {
+    // Parse datetime - now supports lists and intervals
+    let datetime_query = if let Some(ref dt) = params.datetime {
         match DateTimeQuery::parse(dt) {
             Ok(dt) => Some(dt),
             Err(e) => {
@@ -152,9 +153,37 @@ async fn position_query(
         requested_params
     };
 
+    // Get the list of times to query
+    // For interval queries (especially open-ended ones), expand against available times
+    let time_strings: Vec<String> = if let Some(ref dq) = datetime_query {
+        if dq.is_interval() {
+            // Fetch available times from catalog to expand the interval
+            let model_name = &model_config.model;
+            let available_times: Vec<String> = state
+                .catalog
+                .get_model_valid_times(model_name)
+                .await
+                .ok()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .collect();
+
+            dq.expand_against_available_times(&available_times)
+        } else {
+            dq.to_vec()
+        }
+    } else {
+        Vec::new()
+    };
+
     // Check response size limits
     let num_levels = z_values.as_ref().map(|v| v.len()).unwrap_or(1);
-    let num_times = 1; // For now, single time
+    let num_times = if time_strings.is_empty() {
+        1
+    } else {
+        time_strings.len()
+    };
     let estimate = ResponseSizeEstimate::for_position(params_to_query.len(), num_times, num_levels);
 
     if let Err(limit_err) = estimate.check_limits(&model_config.limits) {
@@ -165,7 +194,7 @@ async fn position_query(
     }
 
     // Parse instance_id if provided
-    let _reference_time = if let Some(ref id) = instance_id {
+    let reference_time = if let Some(ref id) = instance_id {
         match chrono::DateTime::parse_from_rfc3339(id) {
             Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
             Err(_) => {
@@ -179,11 +208,28 @@ async fn position_query(
         None
     };
 
-    // Build CoverageJSON response
-    let datetime_str = params.datetime.clone();
     let z_val = z_values.as_ref().and_then(|v| v.first().copied());
 
-    let mut coverage = CoverageJson::point(lon, lat, datetime_str, z_val);
+    // Determine if this is a multi-time query (PointSeries) or single time (Point)
+    let is_multi_time = datetime_query
+        .as_ref()
+        .map(|dq| dq.is_multi_time())
+        .unwrap_or(false);
+
+    // Parse time strings to DateTime<Utc>
+    let parsed_times: Vec<DateTime<Utc>> = time_strings
+        .iter()
+        .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .collect();
+
+    // Build CoverageJSON response - either Point or PointSeries
+    let mut coverage = if is_multi_time && !time_strings.is_empty() {
+        CoverageJson::point_series(lon, lat, time_strings.clone(), z_val)
+    } else {
+        let datetime_str = time_strings.first().cloned();
+        CoverageJson::point(lon, lat, datetime_str, z_val)
+    };
 
     // For each parameter, query the data
     for param_name in &params_to_query {
@@ -196,53 +242,106 @@ async fn position_query(
         // Build the level string for catalog lookup
         let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
 
-        // Build the DatasetQuery
-        let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+        if is_multi_time && !parsed_times.is_empty() {
+            // Multi-time query: query each time and build an array
+            let mut values: Vec<Option<f32>> = Vec::with_capacity(parsed_times.len());
+            let mut units_str = String::new();
 
-        if let Some(level) = &level_str {
-            query = query.at_level(level);
-        }
+            for valid_time in &parsed_times {
+                // Build the DatasetQuery for this specific valid time
+                let mut query = DatasetQuery::forecast(&model_config.model, param_name)
+                    .at_valid_time(*valid_time);
 
-        // Use the reference time if provided
-        if let Some(ref_time) = _reference_time {
-            query = query.at_run(ref_time);
-        }
+                if let Some(level) = &level_str {
+                    query = query.at_level(level);
+                }
 
-        // Query the actual data
-        match state.grid_data_service.read_point(&query, lon, lat).await {
-            Ok(point_value) => {
-                let unit = Unit::from_symbol(&point_value.units);
-                let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
+                // Use the reference time if provided (instance query)
+                if let Some(ref_time) = reference_time {
+                    query = query.at_run(ref_time);
+                }
 
-                if let Some(val) = point_value.value {
-                    coverage = coverage.with_parameter(param_name, cov_param, val);
-                } else {
-                    // No data at this point (outside grid or fill value)
-                    tracing::debug!(
-                        "No data value at ({}, {}) for {}/{}",
-                        lon,
-                        lat,
-                        model_config.model,
-                        param_name
-                    );
-                    let cov_param = CovJsonParameter::new(param_name)
-                        .with_unit(Unit::from_symbol(&point_value.units));
-                    coverage = coverage.with_parameter_null(param_name, cov_param);
+                // Query the data for this time
+                match state.grid_data_service.read_point(&query, lon, lat).await {
+                    Ok(point_value) => {
+                        if units_str.is_empty() {
+                            units_str = point_value.units.clone();
+                        }
+                        values.push(point_value.value);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to query {}/{} at ({}, {}) for time {}: {}",
+                            model_config.model,
+                            param_name,
+                            lon,
+                            lat,
+                            valid_time,
+                            e
+                        );
+                        values.push(None);
+                    }
                 }
             }
-            Err(e) => {
-                // Log the error but continue with other parameters
-                tracing::warn!(
-                    "Failed to query {}/{} at ({}, {}): {}",
-                    model_config.model,
-                    param_name,
-                    lon,
-                    lat,
-                    e
-                );
-                // Add parameter with null value
-                let cov_param = CovJsonParameter::new(param_name);
-                coverage = coverage.with_parameter_null(param_name, cov_param);
+
+            // Add the time series data
+            let unit = Unit::from_symbol(&units_str);
+            let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
+            coverage = coverage.with_time_series(param_name, cov_param, values);
+        } else {
+            // Single time query (original behavior)
+            let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+
+            if let Some(level) = &level_str {
+                query = query.at_level(level);
+            }
+
+            // If we have a single parsed time, use it
+            if let Some(valid_time) = parsed_times.first() {
+                query = query.at_valid_time(*valid_time);
+            }
+
+            // Use the reference time if provided
+            if let Some(ref_time) = reference_time {
+                query = query.at_run(ref_time);
+            }
+
+            // Query the actual data
+            match state.grid_data_service.read_point(&query, lon, lat).await {
+                Ok(point_value) => {
+                    let unit = Unit::from_symbol(&point_value.units);
+                    let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
+
+                    if let Some(val) = point_value.value {
+                        coverage = coverage.with_parameter(param_name, cov_param, val);
+                    } else {
+                        // No data at this point (outside grid or fill value)
+                        tracing::debug!(
+                            "No data value at ({}, {}) for {}/{}",
+                            lon,
+                            lat,
+                            model_config.model,
+                            param_name
+                        );
+                        let cov_param = CovJsonParameter::new(param_name)
+                            .with_unit(Unit::from_symbol(&point_value.units));
+                        coverage = coverage.with_parameter_null(param_name, cov_param);
+                    }
+                }
+                Err(e) => {
+                    // Log the error but continue with other parameters
+                    tracing::warn!(
+                        "Failed to query {}/{} at ({}, {}): {}",
+                        model_config.model,
+                        param_name,
+                        lon,
+                        lat,
+                        e
+                    );
+                    // Add parameter with null value
+                    let cov_param = CovJsonParameter::new(param_name);
+                    coverage = coverage.with_parameter_null(param_name, cov_param);
+                }
             }
         }
     }
@@ -385,6 +484,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_datetime_list() {
+        let dt =
+            DateTimeQuery::parse("2024-12-29T12:00:00Z,2024-12-29T13:00:00Z,2024-12-29T14:00:00Z")
+                .unwrap();
+        assert!(matches!(dt, DateTimeQuery::List(_)));
+        assert!(dt.is_multi_time());
+        assert_eq!(dt.len(), 3);
+    }
+
+    #[test]
     fn test_coverage_json_creation() {
         let coverage = CoverageJson::point(
             -97.5,
@@ -396,5 +505,33 @@ mod tests {
         let json = serde_json::to_string(&coverage).unwrap();
         assert!(json.contains("\"type\":\"Coverage\""));
         assert!(json.contains("\"domainType\":\"Point\""));
+    }
+
+    #[test]
+    fn test_point_series_coverage_json_creation() {
+        let times = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T13:00:00Z".to_string(),
+            "2024-12-29T14:00:00Z".to_string(),
+        ];
+
+        let coverage = CoverageJson::point_series(-97.5, 35.2, times, Some(2.0));
+
+        let json = serde_json::to_string(&coverage).unwrap();
+        assert!(json.contains("\"type\":\"Coverage\""));
+        assert!(json.contains("\"domainType\":\"PointSeries\""));
+    }
+
+    #[test]
+    fn test_datetime_to_vec() {
+        let dt =
+            DateTimeQuery::parse("2024-12-29T12:00:00Z,2024-12-29T13:00:00Z,2024-12-29T14:00:00Z")
+                .unwrap();
+
+        let times = dt.to_vec();
+        assert_eq!(times.len(), 3);
+        assert_eq!(times[0], "2024-12-29T12:00:00Z");
+        assert_eq!(times[1], "2024-12-29T13:00:00Z");
+        assert_eq!(times[2], "2024-12-29T14:00:00Z");
     }
 }
