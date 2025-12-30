@@ -8,7 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
-    responses::ExceptionResponse, AreaQuery, CoverageJson,
+    responses::ExceptionResponse, AreaQuery, CoverageJson, ParsedPolygons,
 };
 use grid_processor::{BoundingBox, DatasetQuery};
 use serde::Deserialize;
@@ -21,8 +21,8 @@ use crate::state::AppState;
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
 pub struct AreaQueryParams {
-    /// Coordinates as WKT POLYGON.
-    pub coords: String,
+    /// Coordinates as WKT POLYGON. Required parameter.
+    pub coords: Option<String>,
 
     /// Vertical level(s).
     pub z: Option<String>,
@@ -76,8 +76,19 @@ async fn area_query(
         );
     };
 
-    // Parse polygon coordinates
-    let polygon = match AreaQuery::parse_polygon(&params.coords) {
+    // Check for required coords parameter
+    let coords_str = match &params.coords {
+        Some(c) if !c.trim().is_empty() => c.as_str(),
+        _ => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request("Missing required parameter: coords"),
+            );
+        }
+    };
+
+    // Parse polygon coordinates - supports both POLYGON and MULTIPOLYGON
+    let parsed_polygons = match AreaQuery::parse_polygon_multi(coords_str) {
         Ok(p) => p,
         Err(e) => {
             return error_response(
@@ -87,6 +98,15 @@ async fn area_query(
         }
     };
 
+    // Extract polygons for processing
+    let polygons: Vec<Vec<(f64, f64)>> = match &parsed_polygons {
+        ParsedPolygons::Single(polygon) => vec![polygon.clone()],
+        ParsedPolygons::Multi(polygons) => polygons.clone(),
+    };
+
+    // Use first polygon for primary calculations (union for point-in-polygon checks)
+    let polygon = polygons.first().cloned().unwrap_or_default();
+
     // Create AreaQuery for calculations
     let area_query_struct = AreaQuery {
         polygon: polygon.clone(),
@@ -95,6 +115,18 @@ async fn area_query(
         parameter_names: None,
         crs: None,
     };
+
+    // For MULTIPOLYGON, we create additional AreaQuery structs for contains_point checks
+    let all_area_queries: Vec<AreaQuery> = polygons
+        .iter()
+        .map(|p| AreaQuery {
+            polygon: p.clone(),
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        })
+        .collect();
 
     // Check area size limit
     let area_sq_degrees = area_query_struct.area_sq_degrees();
@@ -228,10 +260,35 @@ async fn area_query(
         );
     }
 
-    // Parse instance_id if provided
+    // Parse instance_id if provided and validate it exists
     let reference_time = if let Some(ref id) = instance_id {
         match chrono::DateTime::parse_from_rfc3339(id) {
-            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Ok(dt) => {
+                let ref_time = dt.with_timezone(&chrono::Utc);
+                
+                // Validate that this instance actually exists
+                let model_name = &model_config.model;
+                match state.catalog.get_model_runs_with_counts(model_name).await {
+                    Ok(runs) => {
+                        let run_exists = runs.iter().any(|(rt, _)| *rt == ref_time);
+                        if !run_exists {
+                            return error_response(
+                                StatusCode::NOT_FOUND,
+                                ExceptionResponse::not_found(format!(
+                                    "Instance not found: {} for collection {}",
+                                    id, collection_id
+                                )),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to validate instance: {}", e);
+                        // Continue anyway - the query will fail if instance doesn't exist
+                    }
+                }
+                
+                Some(ref_time)
+            }
             Err(_) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,
@@ -243,6 +300,9 @@ async fn area_query(
         None
     };
 
+    // For multi-z queries, we include all z values in the domain
+    // TODO: Full multi-z support would return a 3D grid (z, y, x) with data for each level
+    let is_multi_z = z_values.as_ref().map(|v| v.len() > 1).unwrap_or(false);
     let z_val = z_values.as_ref().and_then(|v| v.first().copied());
 
     // Parse time strings to DateTime<Utc>
@@ -323,8 +383,12 @@ async fn area_query(
         None
     };
 
-    // Build z axis
-    let z_axis = z_val.map(|z| vec![z]);
+    // Build z axis - include all requested z values
+    let z_axis = if is_multi_z {
+        z_values.clone()
+    } else {
+        z_val.map(|z| vec![z])
+    };
 
     // Create CoverageJSON with Grid domain
     let mut coverage = CoverageJson {
@@ -387,8 +451,9 @@ async fn area_query(
                     let lat =
                         param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
 
-                    // Check if point is inside polygon
-                    if area_query_struct.contains_point(lon, lat) {
+                    // Check if point is inside any polygon (union of all polygons for MULTIPOLYGON)
+                    let inside_any = all_area_queries.iter().any(|aq| aq.contains_point(lon, lat));
+                    if inside_any {
                         if value.is_nan() {
                             values.push(None);
                         } else {

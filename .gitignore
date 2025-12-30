@@ -106,3 +106,4 @@ compile_commands.json
 /edr_load_results/
 /lancedb/
 /models/
+/config.json

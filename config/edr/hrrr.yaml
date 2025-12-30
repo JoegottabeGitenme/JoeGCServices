@@ -104,11 +104,11 @@ collections:
 settings:
   output_formats:
     - application/vnd.cov+json
-    - application/geo+json
+    # TODO: Add application/geo+json when GeoJSON output is implemented
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
-    - "EPSG:4326"
+    # TODO: Add EPSG:4326 when axis order handling is implemented
 
 limits:
   max_parameters_per_request: 10

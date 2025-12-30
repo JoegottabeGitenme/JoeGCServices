@@ -51,6 +51,39 @@ impl CoverageJson {
         }
     }
 
+    /// Create a new CoverageJSON document for a vertical profile (multiple z levels at a point).
+    pub fn vertical_profile(x: f64, y: f64, t: Option<String>, z_values: Vec<f64>) -> Self {
+        Self {
+            type_: CoverageType::Coverage,
+            domain: Domain::vertical_profile(x, y, t, z_values),
+            parameters: Some(HashMap::new()),
+            ranges: Some(HashMap::new()),
+        }
+    }
+
+    /// Add a parameter with values for a vertical profile (1D array along z axis).
+    pub fn with_vertical_profile_data(
+        mut self,
+        name: &str,
+        param: CovJsonParameter,
+        values: Vec<Option<f32>>,
+    ) -> Self {
+        if let Some(ref mut params) = self.parameters {
+            params.insert(name.to_string(), param);
+        }
+
+        if let Some(ref mut ranges) = self.ranges {
+            let shape = vec![values.len()];
+            let axis_names = vec!["z".to_string()];
+            ranges.insert(
+                name.to_string(),
+                NdArray::with_missing(values, shape, axis_names),
+            );
+        }
+
+        self
+    }
+
     /// Add a parameter with its value.
     pub fn with_parameter(mut self, name: &str, param: CovJsonParameter, value: f32) -> Self {
         if let Some(ref mut params) = self.parameters {
@@ -153,6 +186,51 @@ pub enum CoverageType {
     CoverageCollection,
 }
 
+/// A CoverageJSON Collection containing multiple coverages.
+/// Used for MULTIPOINT queries where each point returns a separate coverage.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CoverageCollection {
+    /// Document type (always "CoverageCollection").
+    #[serde(rename = "type")]
+    pub type_: CoverageType,
+
+    /// Collection of individual coverages.
+    pub coverages: Vec<CoverageJson>,
+
+    /// Shared parameter definitions (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<HashMap<String, CovJsonParameter>>,
+}
+
+impl CoverageCollection {
+    /// Create a new empty CoverageCollection.
+    pub fn new() -> Self {
+        Self {
+            type_: CoverageType::CoverageCollection,
+            coverages: Vec::new(),
+            parameters: None,
+        }
+    }
+
+    /// Add a coverage to the collection.
+    pub fn with_coverage(mut self, coverage: CoverageJson) -> Self {
+        self.coverages.push(coverage);
+        self
+    }
+
+    /// Set the shared parameters.
+    pub fn with_parameters(mut self, params: HashMap<String, CovJsonParameter>) -> Self {
+        self.parameters = Some(params);
+        self
+    }
+}
+
+impl Default for CoverageCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The domain of a coverage.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Domain {
@@ -197,6 +275,45 @@ impl Domain {
         Self {
             type_: "Domain".to_string(),
             domain_type: DomainType::Point,
+            axes,
+            referencing: Some(referencing),
+        }
+    }
+
+    /// Create a point domain with multiple z values (vertical profile at a point).
+    pub fn vertical_profile(x: f64, y: f64, t: Option<String>, z_values: Vec<f64>) -> Self {
+        let mut axes = HashMap::new();
+        axes.insert("x".to_string(), Axis::Values(vec![AxisValue::Float(x)]));
+        axes.insert("y".to_string(), Axis::Values(vec![AxisValue::Float(y)]));
+
+        if let Some(t) = t {
+            axes.insert("t".to_string(), Axis::Values(vec![AxisValue::String(t)]));
+        }
+
+        // Multiple z values for vertical profile
+        axes.insert(
+            "z".to_string(),
+            Axis::Values(z_values.into_iter().map(AxisValue::Float).collect()),
+        );
+
+        let mut referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::Geographic {
+                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
+            },
+        }];
+
+        // Add vertical reference system
+        referencing.push(ReferenceSystemConnection {
+            coordinates: vec!["z".to_string()],
+            system: ReferenceSystem::Vertical {
+                id: "http://www.opengis.net/def/crs/OGC/0/Unknown".to_string(),
+            },
+        });
+
+        Self {
+            type_: "Domain".to_string(),
+            domain_type: DomainType::VerticalProfile,
             axes,
             referencing: Some(referencing),
         }

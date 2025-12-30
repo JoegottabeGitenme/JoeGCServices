@@ -8,7 +8,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
-    responses::ExceptionResponse, CoverageJson, PositionQuery as ParsedPositionQuery,
+    responses::ExceptionResponse, CoverageCollection, CoverageJson, ParsedCoords,
+    PositionQuery as ParsedPositionQuery,
 };
 use grid_processor::DatasetQuery;
 use serde::Deserialize;
@@ -21,8 +22,8 @@ use crate::state::AppState;
 /// Query parameters for position endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PositionQueryParams {
-    /// Coordinates as WKT POINT or lon,lat.
-    pub coords: String,
+    /// Coordinates as WKT POINT or lon,lat. Required parameter.
+    pub coords: Option<String>,
 
     /// Vertical level(s).
     pub z: Option<String>,
@@ -76,8 +77,19 @@ async fn position_query(
         );
     };
 
-    // Parse coordinates
-    let (lon, lat) = match ParsedPositionQuery::parse_coords(&params.coords) {
+    // Check for required coords parameter
+    let coords_str = match &params.coords {
+        Some(c) if !c.trim().is_empty() => c.as_str(),
+        _ => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request("Missing required parameter: coords"),
+            );
+        }
+    };
+
+    // Parse coordinates - supports both POINT and MULTIPOINT
+    let parsed_coords = match ParsedPositionQuery::parse_coords_multi(coords_str) {
         Ok(coords) => coords,
         Err(e) => {
             return error_response(
@@ -86,6 +98,23 @@ async fn position_query(
             );
         }
     };
+
+    // Extract points - single point or multiple points
+    let points: Vec<(f64, f64)> = match &parsed_coords {
+        ParsedCoords::Single(lon, lat) => vec![(*lon, *lat)],
+        ParsedCoords::Multi(pts) => {
+            if pts.is_empty() {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request("MULTIPOINT must contain at least one point"),
+                );
+            }
+            pts.clone()
+        }
+    };
+
+    let is_multipoint = points.len() > 1;
+    let (lon, lat) = points[0]; // Use first point for single-point calculations
 
     // Parse vertical levels
     let z_values = if let Some(ref z) = params.z {
@@ -193,10 +222,35 @@ async fn position_query(
         );
     }
 
-    // Parse instance_id if provided
+    // Parse instance_id if provided and validate it exists
     let reference_time = if let Some(ref id) = instance_id {
         match chrono::DateTime::parse_from_rfc3339(id) {
-            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Ok(dt) => {
+                let ref_time = dt.with_timezone(&chrono::Utc);
+                
+                // Validate that this instance actually exists
+                let model_name = &model_config.model;
+                match state.catalog.get_model_runs_with_counts(model_name).await {
+                    Ok(runs) => {
+                        let run_exists = runs.iter().any(|(rt, _)| *rt == ref_time);
+                        if !run_exists {
+                            return error_response(
+                                StatusCode::NOT_FOUND,
+                                ExceptionResponse::not_found(format!(
+                                    "Instance not found: {} for collection {}",
+                                    id, collection_id
+                                )),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to validate instance: {}", e);
+                        // Continue anyway - the query will fail if instance doesn't exist
+                    }
+                }
+                
+                Some(ref_time)
+            }
             Err(_) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,
@@ -208,6 +262,8 @@ async fn position_query(
         None
     };
 
+    // Determine if this is a multi-z query (VerticalProfile)
+    let is_multi_z = z_values.as_ref().map(|v| v.len() > 1).unwrap_or(false);
     let z_val = z_values.as_ref().and_then(|v| v.first().copied());
 
     // Determine if this is a multi-time query (PointSeries) or single time (Point)
@@ -223,8 +279,83 @@ async fn position_query(
         .map(|dt| dt.with_timezone(&Utc))
         .collect();
 
-    // Build CoverageJSON response - either Point or PointSeries
-    let mut coverage = if is_multi_time && !time_strings.is_empty() {
+    // Handle MULTIPOINT - return CoverageCollection with one Coverage per point
+    if is_multipoint {
+        let mut collection = CoverageCollection::new();
+        let datetime_str = time_strings.first().cloned();
+
+        for (pt_lon, pt_lat) in &points {
+            let mut point_coverage = CoverageJson::point(*pt_lon, *pt_lat, datetime_str.clone(), z_val);
+
+            // Query each parameter for this point
+            for param_name in &params_to_query {
+                let param_def = collection_def
+                    .parameters
+                    .iter()
+                    .find(|p| p.name == *param_name);
+
+                let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
+
+                let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+
+                if let Some(level) = &level_str {
+                    query = query.at_level(level);
+                }
+
+                if let Some(valid_time) = parsed_times.first() {
+                    query = query.at_valid_time(*valid_time);
+                }
+
+                if let Some(ref_time) = reference_time {
+                    query = query.at_run(ref_time);
+                }
+
+                match state.grid_data_service.read_point(&query, *pt_lon, *pt_lat).await {
+                    Ok(point_value) => {
+                        let unit = Unit::from_symbol(&point_value.units);
+                        let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
+
+                        if let Some(val) = point_value.value {
+                            point_coverage = point_coverage.with_parameter(param_name, cov_param, val);
+                        } else {
+                            point_coverage = point_coverage.with_parameter_null(param_name, cov_param);
+                        }
+                    }
+                    Err(_) => {
+                        let cov_param = CovJsonParameter::new(param_name);
+                        point_coverage = point_coverage.with_parameter_null(param_name, cov_param);
+                    }
+                }
+            }
+
+            collection = collection.with_coverage(point_coverage);
+        }
+
+        let json = match serde_json::to_string_pretty(&collection) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!("Failed to serialize CoverageCollection: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
+            }
+        };
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/vnd.cov+json")
+            .header(header::CACHE_CONTROL, "max-age=300")
+            .body(json.into())
+            .unwrap();
+    }
+
+    // Build CoverageJSON response - Point, PointSeries, or VerticalProfile
+    let mut coverage = if is_multi_z {
+        // VerticalProfile: multiple z levels at a single point
+        let datetime_str = time_strings.first().cloned();
+        CoverageJson::vertical_profile(lon, lat, datetime_str, z_values.clone().unwrap_or_default())
+    } else if is_multi_time && !time_strings.is_empty() {
         CoverageJson::point_series(lon, lat, time_strings.clone(), z_val)
     } else {
         let datetime_str = time_strings.first().cloned();
@@ -238,6 +369,62 @@ async fn position_query(
             .parameters
             .iter()
             .find(|p| p.name == *param_name);
+
+        // Handle multi-z queries (VerticalProfile)
+        if is_multi_z {
+            let z_vals = z_values.as_ref().unwrap();
+            let mut values: Vec<Option<f32>> = Vec::with_capacity(z_vals.len());
+            let mut units_str = String::new();
+
+            for z in z_vals {
+                // Build the level string for this z value
+                let level_str = build_level_string(&collection_def.level_filter, param_def, Some(*z));
+
+                let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+
+                if let Some(level) = &level_str {
+                    query = query.at_level(level);
+                }
+
+                // Use the first parsed time if available
+                if let Some(valid_time) = parsed_times.first() {
+                    query = query.at_valid_time(*valid_time);
+                }
+
+                // Use the reference time if provided (instance query)
+                if let Some(ref_time) = reference_time {
+                    query = query.at_run(ref_time);
+                }
+
+                // Query the data for this z level
+                match state.grid_data_service.read_point(&query, lon, lat).await {
+                    Ok(point_value) => {
+                        if units_str.is_empty() {
+                            units_str = point_value.units.clone();
+                        }
+                        values.push(point_value.value);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to query {}/{} at ({}, {}) for z={}: {}",
+                            model_config.model,
+                            param_name,
+                            lon,
+                            lat,
+                            z,
+                            e
+                        );
+                        values.push(None);
+                    }
+                }
+            }
+
+            // Add the vertical profile data
+            let unit = Unit::from_symbol(&units_str);
+            let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
+            coverage = coverage.with_vertical_profile_data(param_name, cov_param, values);
+            continue;
+        }
 
         // Build the level string for catalog lookup
         let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);

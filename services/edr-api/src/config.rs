@@ -202,10 +202,9 @@ impl Default for ModelSettings {
 }
 
 fn default_output_formats() -> Vec<String> {
-    vec![
-        "application/vnd.cov+json".to_string(),
-        "application/geo+json".to_string(),
-    ]
+    // Only advertise formats that are actually implemented
+    // TODO: Add "application/geo+json" when GeoJSON output is implemented
+    vec!["application/vnd.cov+json".to_string()]
 }
 
 fn default_crs() -> String {
@@ -213,7 +212,10 @@ fn default_crs() -> String {
 }
 
 fn default_supported_crs() -> Vec<String> {
-    vec!["CRS:84".to_string(), "EPSG:4326".to_string()]
+    // Only advertise CRS that are actually implemented
+    // Currently we only support WGS84/CRS:84 (coordinates are always lon/lat)
+    // TODO: Add "EPSG:4326" when axis order handling is implemented (lat/lon vs lon/lat)
+    vec!["CRS:84".to_string()]
 }
 
 /// Response size limit configuration.

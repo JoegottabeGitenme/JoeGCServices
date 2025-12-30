@@ -35,10 +35,10 @@ pub mod types;
 
 // Re-export commonly used types
 pub use collections::{Collection, CollectionList, DataQueries, Instance, InstanceList};
-pub use coverage_json::{Axis, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
+pub use coverage_json::{Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
 pub use errors::EdrError;
 pub use parameters::{ObservedProperty, Parameter, Unit};
-pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, DateTimeQuery, PositionQuery};
+pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, DateTimeQuery, ParsedCoords, ParsedPolygons, PositionQuery};
 pub use responses::{ConformanceClasses, LandingPage};
 pub use types::{Crs, Extent, Link, SpatialExtent, TemporalExtent, VerticalExtent};
 

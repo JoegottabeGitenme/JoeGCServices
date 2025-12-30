@@ -51,7 +51,52 @@ pub struct PositionQuery {
     pub format: Option<String>,
 }
 
+/// Result of parsing position coordinates - can be single point or multiple points.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsedCoords {
+    /// Single point (lon, lat).
+    Single(f64, f64),
+    /// Multiple points.
+    Multi(Vec<(f64, f64)>),
+}
+
 impl PositionQuery {
+    /// Parse a WKT POINT or MULTIPOINT string.
+    ///
+    /// Accepts formats:
+    /// - `POINT(lon lat)`
+    /// - `POINT (lon lat)` (with space)
+    /// - `MULTIPOINT((lon1 lat1),(lon2 lat2))`
+    /// - Just `lon,lat`
+    ///
+    /// Returns ParsedCoords to handle both single and multi-point cases.
+    pub fn parse_coords_multi(coords: &str) -> Result<ParsedCoords, CoordinateParseError> {
+        let coords = coords.trim();
+        let upper = coords.to_uppercase();
+
+        // Try WKT MULTIPOINT format first
+        if upper.starts_with("MULTIPOINT") {
+            let points = Self::parse_wkt_multipoint(coords)?;
+            return Ok(ParsedCoords::Multi(points));
+        }
+
+        // Try WKT POINT format
+        if upper.starts_with("POINT") {
+            let (lon, lat) = Self::parse_wkt_point(coords)?;
+            return Ok(ParsedCoords::Single(lon, lat));
+        }
+
+        // Try simple lon,lat format
+        if coords.contains(',') {
+            let (lon, lat) = Self::parse_simple_coords(coords)?;
+            return Ok(ParsedCoords::Single(lon, lat));
+        }
+
+        Err(CoordinateParseError::InvalidWkt(
+            "Expected POINT(lon lat), MULTIPOINT((lon1 lat1),(lon2 lat2)), or lon,lat format".to_string(),
+        ))
+    }
+
     /// Parse a WKT POINT string into a PositionQuery.
     ///
     /// Accepts formats:
@@ -74,6 +119,87 @@ impl PositionQuery {
         Err(CoordinateParseError::InvalidWkt(
             "Expected POINT(lon lat) or lon,lat format".to_string(),
         ))
+    }
+
+    /// Parse a WKT MULTIPOINT string.
+    ///
+    /// Accepts format: `MULTIPOINT((lon1 lat1),(lon2 lat2),...)`
+    fn parse_wkt_multipoint(wkt: &str) -> Result<Vec<(f64, f64)>, CoordinateParseError> {
+        // Find the outer parentheses
+        let start = wkt.find('(').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing opening parenthesis".to_string())
+        })?;
+        let end = wkt.rfind(')').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing closing parenthesis".to_string())
+        })?;
+
+        if end <= start {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid parenthesis order".to_string(),
+            ));
+        }
+
+        let inner = &wkt[start + 1..end].trim();
+        
+        // Parse each point - they are enclosed in parentheses and separated by commas
+        // Format: (lon1 lat1),(lon2 lat2)
+        let mut points = Vec::new();
+        let mut depth = 0;
+        let mut current_point = String::new();
+        
+        for ch in inner.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    if depth > 1 {
+                        current_point.push(ch);
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // End of a point
+                        let coords = current_point.trim();
+                        if !coords.is_empty() {
+                            let parts: Vec<&str> = coords.split_whitespace().collect();
+                            if parts.len() != 2 {
+                                return Err(CoordinateParseError::InvalidWkt(format!(
+                                    "Expected 'lon lat' format, got '{}'",
+                                    coords
+                                )));
+                            }
+                            let lon: f64 = parts[0].parse().map_err(|_| {
+                                CoordinateParseError::InvalidCoordinate(parts[0].to_string())
+                            })?;
+                            let lat: f64 = parts[1].parse().map_err(|_| {
+                                CoordinateParseError::InvalidCoordinate(parts[1].to_string())
+                            })?;
+                            Self::validate_coordinates(lon, lat)?;
+                            points.push((lon, lat));
+                        }
+                        current_point.clear();
+                    } else {
+                        current_point.push(ch);
+                    }
+                }
+                ',' if depth == 0 => {
+                    // Skip comma between points
+                }
+                _ => {
+                    if depth > 0 {
+                        current_point.push(ch);
+                    }
+                }
+            }
+        }
+
+        if points.is_empty() {
+            return Err(CoordinateParseError::InvalidWkt(
+                "MULTIPOINT must contain at least one point".to_string(),
+            ));
+        }
+
+        Ok(points)
     }
 
     fn parse_wkt_point(wkt: &str) -> Result<(f64, f64), CoordinateParseError> {
@@ -164,8 +290,14 @@ impl PositionQuery {
     /// - Single value: `850`
     /// - Multiple values: `850,700,500`
     /// - Range: `1000/250` (from/to)
+    /// - Recurring intervals: `R5/1000/100` (R{count}/{start}/{increment})
     pub fn parse_z(z_param: &str) -> Result<Vec<f64>, CoordinateParseError> {
         let z_param = z_param.trim();
+
+        // Check for recurring interval format: R{count}/{start}/{increment}
+        if z_param.starts_with('R') || z_param.starts_with('r') {
+            return Self::parse_z_recurring(&z_param[1..]);
+        }
 
         // Check for range format
         if z_param.contains('/') {
@@ -210,6 +342,44 @@ impl PositionQuery {
         Ok(vec![value])
     }
 
+    /// Parse recurring z interval format: {count}/{start}/{increment}
+    /// Example: "5/1000/100" -> [1000, 900, 800, 700, 600]
+    fn parse_z_recurring(s: &str) -> Result<Vec<f64>, CoordinateParseError> {
+        let parts: Vec<&str> = s.split('/').collect();
+        if parts.len() != 3 {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid recurring z format, expected R{count}/{start}/{increment}".to_string(),
+            ));
+        }
+
+        let count: usize = parts[0]
+            .trim()
+            .parse()
+            .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[0].to_string()))?;
+        let start: f64 = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
+        let increment: f64 = parts[2]
+            .trim()
+            .parse()
+            .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[2].to_string()))?;
+
+        if count == 0 || count > 100 {
+            return Err(CoordinateParseError::OutOfRange(
+                "Recurring count must be between 1 and 100".to_string(),
+            ));
+        }
+
+        // Generate the levels: start, start-increment, start-2*increment, etc.
+        // (For pressure levels, we typically decrement)
+        let levels: Vec<f64> = (0..count)
+            .map(|i| start - (i as f64 * increment))
+            .collect();
+
+        Ok(levels)
+    }
+
     /// Parse parameter-name query parameter.
     pub fn parse_parameter_names(param: &str) -> Vec<String> {
         param
@@ -237,6 +407,34 @@ pub enum DateTimeQuery {
 }
 
 impl DateTimeQuery {
+    /// Validate that a datetime string is a valid ISO 8601 format.
+    fn validate_datetime(dt: &str) -> Result<(), CoordinateParseError> {
+        // Allow ".." for open intervals
+        if dt == ".." {
+            return Ok(());
+        }
+        
+        // Try to parse as RFC 3339 (ISO 8601 subset)
+        if chrono::DateTime::parse_from_rfc3339(dt).is_ok() {
+            return Ok(());
+        }
+        
+        // Also try without timezone (common format)
+        if chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%dT%H:%M:%S").is_ok() {
+            return Ok(());
+        }
+        
+        // Try date-only format
+        if chrono::NaiveDate::parse_from_str(dt, "%Y-%m-%d").is_ok() {
+            return Ok(());
+        }
+        
+        Err(CoordinateParseError::InvalidWkt(format!(
+            "Invalid datetime format '{}'. Expected ISO 8601 format (e.g., 2024-12-29T12:00:00Z)",
+            dt
+        )))
+    }
+
     /// Parse a datetime parameter.
     ///
     /// Accepts formats:
@@ -260,12 +458,14 @@ impl DateTimeQuery {
             let start = if parts[0] == ".." {
                 None
             } else {
+                Self::validate_datetime(parts[0])?;
                 Some(parts[0].to_string())
             };
 
             let end = if parts[1] == ".." {
                 None
             } else {
+                Self::validate_datetime(parts[1])?;
                 Some(parts[1].to_string())
             };
 
@@ -279,6 +479,11 @@ impl DateTimeQuery {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+            
+            // Validate each datetime in the list
+            for t in &times {
+                Self::validate_datetime(t)?;
+            }
 
             if times.len() == 1 {
                 return Ok(DateTimeQuery::Instant(times.into_iter().next().unwrap()));
@@ -287,7 +492,8 @@ impl DateTimeQuery {
             return Ok(DateTimeQuery::List(times));
         }
 
-        // Single instant
+        // Single instant - validate it
+        Self::validate_datetime(datetime)?;
         Ok(DateTimeQuery::Instant(datetime.to_string()))
     }
 
@@ -434,7 +640,42 @@ pub struct AreaQuery {
     pub crs: Option<String>,
 }
 
+/// Result of parsing polygon coordinates - can be single polygon or multiple polygons.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsedPolygons {
+    /// Single polygon (ring of points).
+    Single(Vec<(f64, f64)>),
+    /// Multiple polygons.
+    Multi(Vec<Vec<(f64, f64)>>),
+}
+
 impl AreaQuery {
+    /// Parse a WKT POLYGON or MULTIPOLYGON string.
+    ///
+    /// Accepts formats:
+    /// - `POLYGON((lon1 lat1, lon2 lat2, lon3 lat3, lon1 lat1))`
+    /// - `MULTIPOLYGON(((ring1)),((ring2)))`
+    ///
+    /// Returns ParsedPolygons to handle both cases.
+    pub fn parse_polygon_multi(coords: &str) -> Result<ParsedPolygons, CoordinateParseError> {
+        let coords = coords.trim();
+        let upper = coords.to_uppercase();
+
+        if upper.starts_with("MULTIPOLYGON") {
+            let polygons = Self::parse_wkt_multipolygon(coords)?;
+            return Ok(ParsedPolygons::Multi(polygons));
+        }
+
+        if upper.starts_with("POLYGON") {
+            let polygon = Self::parse_polygon(coords)?;
+            return Ok(ParsedPolygons::Single(polygon));
+        }
+
+        Err(CoordinateParseError::InvalidWkt(
+            "Expected POLYGON or MULTIPOLYGON format".to_string(),
+        ))
+    }
+
     /// Parse a WKT POLYGON string.
     ///
     /// Accepts format: `POLYGON((lon1 lat1, lon2 lat2, lon3 lat3, lon1 lat1))`
@@ -464,7 +705,12 @@ impl AreaQuery {
 
         // Extract the coordinate string (inside the double parens)
         let coords_str = &coords[start + 2..end].trim();
+        
+        Self::parse_ring(coords_str)
+    }
 
+    /// Parse a single polygon ring from coordinate string.
+    fn parse_ring(coords_str: &str) -> Result<Vec<(f64, f64)>, CoordinateParseError> {
         // Split by comma to get individual coordinate pairs
         let points: Result<Vec<(f64, f64)>, _> = coords_str
             .split(',')
@@ -501,6 +747,76 @@ impl AreaQuery {
         }
 
         Ok(points)
+    }
+
+    /// Parse a WKT MULTIPOLYGON string.
+    ///
+    /// Accepts format: `MULTIPOLYGON(((ring1)),((ring2)))`
+    fn parse_wkt_multipolygon(coords: &str) -> Result<Vec<Vec<(f64, f64)>>, CoordinateParseError> {
+        // Find content after MULTIPOLYGON
+        let start = coords.find('(').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing opening parenthesis".to_string())
+        })?;
+        let end = coords.rfind(')').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing closing parenthesis".to_string())
+        })?;
+
+        if end <= start {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid parenthesis order".to_string(),
+            ));
+        }
+
+        let inner = &coords[start + 1..end];
+        
+        // Parse each polygon - they are enclosed in double parentheses
+        // Format: ((ring1)),((ring2))
+        let mut polygons = Vec::new();
+        let mut depth = 0;
+        let mut current_polygon = String::new();
+        
+        for ch in inner.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    if depth > 1 {
+                        current_polygon.push(ch);
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 1 {
+                        // End of a polygon's ring
+                        let ring_str = current_polygon.trim();
+                        if !ring_str.is_empty() {
+                            // Remove extra parentheses if present
+                            let ring_str = ring_str.trim_start_matches('(').trim_end_matches(')');
+                            let ring = Self::parse_ring(ring_str)?;
+                            polygons.push(ring);
+                        }
+                        current_polygon.clear();
+                    } else if depth > 1 {
+                        current_polygon.push(ch);
+                    }
+                }
+                ',' if depth <= 1 => {
+                    // Skip comma between polygons
+                }
+                _ => {
+                    if depth > 1 {
+                        current_polygon.push(ch);
+                    }
+                }
+            }
+        }
+
+        if polygons.is_empty() {
+            return Err(CoordinateParseError::InvalidWkt(
+                "MULTIPOLYGON must contain at least one polygon".to_string(),
+            ));
+        }
+
+        Ok(polygons)
     }
 
     /// Calculate the bounding box of the polygon.
