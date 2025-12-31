@@ -187,12 +187,18 @@ pub enum CoverageType {
 }
 
 /// A CoverageJSON Collection containing multiple coverages.
-/// Used for MULTIPOINT queries where each point returns a separate coverage.
+/// Used for MULTIPOINT queries where each point returns a separate coverage,
+/// or for corridor queries where multiple trajectories are returned.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CoverageCollection {
     /// Document type (always "CoverageCollection").
     #[serde(rename = "type")]
     pub type_: CoverageType,
+
+    /// The domain type shared by all coverages in the collection.
+    /// For corridor queries, this is typically "Trajectory".
+    #[serde(rename = "domainType", skip_serializing_if = "Option::is_none")]
+    pub domain_type: Option<DomainType>,
 
     /// Collection of individual coverages.
     pub coverages: Vec<CoverageJson>,
@@ -200,6 +206,10 @@ pub struct CoverageCollection {
     /// Shared parameter definitions (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, CovJsonParameter>>,
+
+    /// Reference systems used by the coverages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub referencing: Option<Vec<ReferenceSystemConnection>>,
 }
 
 impl CoverageCollection {
@@ -207,9 +217,17 @@ impl CoverageCollection {
     pub fn new() -> Self {
         Self {
             type_: CoverageType::CoverageCollection,
+            domain_type: None,
             coverages: Vec::new(),
             parameters: None,
+            referencing: None,
         }
+    }
+
+    /// Set the domain type for this collection.
+    pub fn with_domain_type(mut self, domain_type: DomainType) -> Self {
+        self.domain_type = Some(domain_type);
+        self
     }
 
     /// Add a coverage to the collection.
@@ -221,6 +239,12 @@ impl CoverageCollection {
     /// Set the shared parameters.
     pub fn with_parameters(mut self, params: HashMap<String, CovJsonParameter>) -> Self {
         self.parameters = Some(params);
+        self
+    }
+
+    /// Set the referencing systems.
+    pub fn with_referencing(mut self, refs: Vec<ReferenceSystemConnection>) -> Self {
+        self.referencing = Some(refs);
         self
     }
 }
@@ -407,8 +431,11 @@ impl Domain {
     /// Create a trajectory domain.
     ///
     /// A trajectory is a path through space (and optionally time and/or vertical levels).
-    /// The x and y coordinates define the path, while t and z are optional.
-    /// For CoverageJSON Trajectory domain, x and y must have the same number of values.
+    /// The x (longitude) and y (latitude) coordinates define the path, while t and z are optional.
+    /// For CoverageJSON Trajectory domain, uses a composite axis with tuple values.
+    ///
+    /// Per CoverageJSON spec, trajectory domains use a single "composite" axis
+    /// containing tuples of [t, x, y] or [t, x, y, z] values (lon/lat order).
     pub fn trajectory(
         x_values: Vec<f64>,
         y_values: Vec<f64>,
@@ -416,40 +443,63 @@ impl Domain {
         z_values: Option<Vec<f64>>,
     ) -> Self {
         let mut axes = HashMap::new();
-        
-        // For trajectory, x and y are "tuple" axes - they share a composite axis
-        // In CoverageJSON, this is represented using a "composite" axis structure
-        axes.insert(
-            "composite".to_string(),
-            Axis::Values(
-                (0..x_values.len())
-                    .map(|i| AxisValue::Float(i as f64))
-                    .collect(),
-            ),
-        );
-        axes.insert(
-            "x".to_string(),
-            Axis::Values(x_values.into_iter().map(AxisValue::Float).collect()),
-        );
-        axes.insert(
-            "y".to_string(),
-            Axis::Values(y_values.into_iter().map(AxisValue::Float).collect()),
-        );
+        let num_points = x_values.len();
 
-        if let Some(t) = t_values {
-            axes.insert(
-                "t".to_string(),
-                Axis::Values(t.into_iter().map(AxisValue::String).collect()),
-            );
+        // Determine which coordinates we have
+        let has_t = t_values.is_some();
+        let has_z = z_values.is_some();
+
+        // Build coordinate names for the composite axis
+        // Order: t (if present), x (lon), y (lat), z (if present)
+        let mut coord_names = Vec::new();
+        if has_t {
+            coord_names.push("t".to_string());
+        }
+        coord_names.push("x".to_string()); // longitude
+        coord_names.push("y".to_string()); // latitude
+        if has_z {
+            coord_names.push("z".to_string());
         }
 
-        if let Some(z) = z_values {
-            axes.insert(
-                "z".to_string(),
-                Axis::Values(z.into_iter().map(AxisValue::Float).collect()),
-            );
+        // Build tuple values for each point
+        let mut tuple_values: Vec<Vec<CompositeValue>> = Vec::with_capacity(num_points);
+
+        // Get time values - either one per point or one for all
+        let t_vec = t_values.unwrap_or_default();
+        let single_time = t_vec.len() == 1;
+
+        // Get z values
+        let z_vec = z_values.unwrap_or_default();
+        let single_z = z_vec.len() == 1;
+
+        for i in 0..num_points {
+            let mut point: Vec<CompositeValue> = Vec::new();
+
+            // Add time if present
+            if has_t {
+                let t_idx = if single_time { 0 } else { i.min(t_vec.len() - 1) };
+                point.push(CompositeValue::String(t_vec[t_idx].clone()));
+            }
+
+            // Add values in lat/lon order (y first, then x) for correct map display
+            // The labels say "x", "y" but viewers expect lat, lon order in the values
+            point.push(CompositeValue::Float(y_values[i])); // latitude
+            point.push(CompositeValue::Float(x_values[i])); // longitude
+
+            // Add z if present
+            if has_z {
+                let z_idx = if single_z { 0 } else { i.min(z_vec.len() - 1) };
+                point.push(CompositeValue::Float(z_vec[z_idx]));
+            }
+
+            tuple_values.push(point);
         }
 
+        // Create the composite axis
+        let composite = CompositeAxis::new(coord_names.clone(), tuple_values);
+        axes.insert("composite".to_string(), Axis::Composite(composite));
+
+        // Build referencing - reference the coordinates within the composite
         let mut referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
             system: ReferenceSystem::Geographic {
@@ -457,8 +507,7 @@ impl Domain {
             },
         }];
 
-        // Add temporal reference if time values present
-        if axes.contains_key("t") {
+        if has_t {
             referencing.push(ReferenceSystemConnection {
                 coordinates: vec!["t".to_string()],
                 system: ReferenceSystem::Temporal {
@@ -467,8 +516,7 @@ impl Domain {
             });
         }
 
-        // Add vertical reference if z values present
-        if axes.contains_key("z") {
+        if has_z {
             referencing.push(ReferenceSystemConnection {
                 coordinates: vec!["z".to_string()],
                 system: ReferenceSystem::Vertical {
@@ -511,6 +559,8 @@ pub enum Axis {
     Values(Vec<AxisValue>),
     /// Regular axis defined by start, stop, and number of points.
     Regular { start: f64, stop: f64, num: usize },
+    /// Composite axis for trajectory domains (tuple of coordinates).
+    Composite(CompositeAxis),
 }
 
 impl Axis {
@@ -519,6 +569,7 @@ impl Axis {
         match self {
             Axis::Values(v) => v.len(),
             Axis::Regular { num, .. } => *num,
+            Axis::Composite(c) => c.values.len(),
         }
     }
 
@@ -526,6 +577,42 @@ impl Axis {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// A composite axis for trajectory domains.
+/// Each value is a tuple of coordinates (e.g., [t, x, y] or [t, x, y, z]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompositeAxis {
+    /// Data type - always "tuple" for composite axes.
+    #[serde(rename = "dataType")]
+    pub data_type: String,
+
+    /// The coordinate names in order (e.g., ["t", "x", "y", "z"]).
+    pub coordinates: Vec<String>,
+
+    /// The tuple values - each inner vec is one point with values in coordinate order.
+    pub values: Vec<Vec<CompositeValue>>,
+}
+
+impl CompositeAxis {
+    /// Create a new composite axis.
+    pub fn new(coordinates: Vec<String>, values: Vec<Vec<CompositeValue>>) -> Self {
+        Self {
+            data_type: "tuple".to_string(),
+            coordinates,
+            values,
+        }
+    }
+}
+
+/// A value in a composite axis tuple - can be string (time) or float (coordinates).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum CompositeValue {
+    /// String value (timestamps).
+    String(String),
+    /// Floating-point value (coordinates, levels).
+    Float(f64),
 }
 
 /// A value on an axis.

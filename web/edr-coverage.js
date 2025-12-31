@@ -14,6 +14,13 @@ class EDRCoverageValidator {
         this.testArea = { lon: -100, lat: 40 }; // Center of 1x1 degree test polygon
         this.testRadius = { lon: -100, lat: 40, within: 50, units: 'km' }; // Radius query config
         this.testTrajectory = { coords: 'LINESTRING(-100 40,-99 40.5,-98 41)' }; // Trajectory query config
+        this.testCorridor = { 
+            coords: 'LINESTRING(-100 40,-99 40.5,-98 41)', 
+            corridorWidth: 10, 
+            widthUnits: 'km',
+            corridorHeight: 1000,
+            heightUnits: 'm'
+        }; // Corridor query config
         this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
@@ -73,7 +80,7 @@ class EDRCoverageValidator {
         // Bind query type select
         document.getElementById('query-type-select').addEventListener('change', (e) => {
             this.queryType = e.target.value;
-            // Toggle visibility of point vs area vs radius vs trajectory config
+            // Toggle visibility of point vs area vs radius vs trajectory vs corridor config
             document.getElementById('test-point-config').style.display = 
                 this.queryType === 'position' ? '' : 'none';
             document.getElementById('test-area-config').style.display = 
@@ -82,11 +89,8 @@ class EDRCoverageValidator {
                 this.queryType === 'radius' ? '' : 'none';
             document.getElementById('test-trajectory-config').style.display = 
                 this.queryType === 'trajectory' ? '' : 'none';
-        });
-
-        // Bind filter buttons
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => this.setFilter(e.target.dataset.filter));
+            document.getElementById('test-corridor-config').style.display = 
+                this.queryType === 'corridor' ? '' : 'none';
         });
 
         // Bind test point inputs
@@ -124,6 +128,23 @@ class EDRCoverageValidator {
             this.testTrajectory.coords = e.target.value || 'LINESTRING(-100 40,-99 40.5,-98 41)';
         });
 
+        // Bind test corridor inputs
+        document.getElementById('test-corridor-coords').addEventListener('change', (e) => {
+            this.testCorridor.coords = e.target.value || 'LINESTRING(-100 40,-99 40.5,-98 41)';
+        });
+        document.getElementById('test-corridor-width').addEventListener('change', (e) => {
+            this.testCorridor.corridorWidth = parseFloat(e.target.value) || 10;
+        });
+        document.getElementById('test-corridor-width-units').addEventListener('change', (e) => {
+            this.testCorridor.widthUnits = e.target.value || 'km';
+        });
+        document.getElementById('test-corridor-height').addEventListener('change', (e) => {
+            this.testCorridor.corridorHeight = parseFloat(e.target.value) || 1000;
+        });
+        document.getElementById('test-corridor-height-units').addEventListener('change', (e) => {
+            this.testCorridor.heightUnits = e.target.value || 'm';
+        });
+
         // Bind randomize toggle
         document.getElementById('randomize-toggle').addEventListener('change', (e) => {
             this.randomizeLocations = e.target.checked;
@@ -132,10 +153,12 @@ class EDRCoverageValidator {
             const areaInputs = document.querySelectorAll('#test-area-config input');
             const radiusInputs = document.querySelectorAll('#test-radius-config input:not(#test-radius-within)');
             const trajectoryInputs = document.querySelectorAll('#test-trajectory-config input');
+            const corridorCoordInputs = document.querySelectorAll('#test-corridor-config input[type="text"]');
             pointInputs.forEach(input => input.disabled = this.randomizeLocations);
             areaInputs.forEach(input => input.disabled = this.randomizeLocations);
             radiusInputs.forEach(input => input.disabled = this.randomizeLocations);
             trajectoryInputs.forEach(input => input.disabled = this.randomizeLocations);
+            corridorCoordInputs.forEach(input => input.disabled = this.randomizeLocations);
         });
 
         // Bind collection filter controls
@@ -144,6 +167,23 @@ class EDRCoverageValidator {
         document.getElementById('refresh-collections-btn').addEventListener('click', () => this.loadCollectionList());
         document.getElementById('collection-filter-select').addEventListener('change', (e) => {
             this.updateCollectionFilter();
+        });
+
+        // Bind summary stat clicks to filter the tree view
+        document.querySelectorAll('.summary-stats .stat').forEach(stat => {
+            stat.style.cursor = 'pointer';
+            stat.addEventListener('click', (e) => {
+                const statEl = e.currentTarget;
+                if (statEl.classList.contains('pass')) {
+                    this.setFilter('pass');
+                } else if (statEl.classList.contains('fail')) {
+                    this.setFilter('fail');
+                } else if (statEl.classList.contains('warn')) {
+                    this.setFilter('warn');
+                } else if (statEl.classList.contains('skip')) {
+                    this.setFilter('all'); // Skip shows all (no specific skip filter)
+                }
+            });
         });
 
         // Load collection list on init
@@ -342,6 +382,7 @@ class EDRCoverageValidator {
             testPoint: this.queryType === 'position' ? this.testPoint : null,
             testArea: this.queryType === 'area' ? this.testArea : null,
             testTrajectory: this.queryType === 'trajectory' ? this.testTrajectory : null,
+            testCorridor: this.queryType === 'corridor' ? this.testCorridor : null,
             hasCatalogCheck: this.hasCatalogCheck,
             summary: this.results.summary,
             advertised: this.results.advertised,
@@ -665,6 +706,8 @@ class EDRCoverageValidator {
             result = await this.testRadiusQuery(collId, param, level, time, coll);
         } else if (this.queryType === 'trajectory') {
             result = await this.testTrajectoryQuery(collId, param, level, time, coll);
+        } else if (this.queryType === 'corridor') {
+            result = await this.testCorridorQuery(collId, param, level, time, coll);
         } else {
             result = await this.testPositionQuery(collId, param, level, time, coll);
         }
@@ -1026,6 +1069,142 @@ class EDRCoverageValidator {
                 url
             };
         }
+    }
+
+    /**
+     * Make a single corridor query and check result
+     * Corridor returns a CoverageCollection with multiple trajectories
+     */
+    async testCorridorQuery(collectionId, parameter, level, time, coll) {
+        // Get corridor coordinates - either fixed or generate random within bbox
+        const coords = this.getCorridorCoordinates(coll);
+        const corridorWidth = this.testCorridor.corridorWidth;
+        const widthUnits = this.testCorridor.widthUnits;
+        const corridorHeight = this.testCorridor.corridorHeight;
+        const heightUnits = this.testCorridor.heightUnits;
+        
+        let url = `${this.endpoint}/collections/${collectionId}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=${corridorWidth}&width-units=${widthUnits}&corridor-height=${corridorHeight}&height-units=${heightUnits}&parameter-name=${parameter}`;
+
+        if (level !== null) {
+            url += `&z=${level}`;
+        }
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    queryType: 'corridor',
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            
+            // Corridor returns CoverageCollection with multiple coverages (trajectories)
+            const isCoverageCollection = data.type === 'CoverageCollection';
+            const coverages = data.coverages || [];
+            const numCoverages = coverages.length;
+            
+            // Collect values from all coverages
+            let totalValues = 0;
+            let totalNonNull = 0;
+            for (const cov of coverages) {
+                const values = cov.ranges?.[parameter]?.values || [];
+                totalValues += values.length;
+                totalNonNull += values.filter(v => v !== null).length;
+            }
+            
+            const hasData = totalNonNull > 0;
+
+            // Verify domain type is Trajectory at the collection level
+            const domainType = data.domainType;
+            const isTrajectory = domainType === 'Trajectory';
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'corridor',
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Corridor data retrieved (${numCoverages} trajectories, ${totalNonNull}/${totalValues} non-null, domainType: ${domainType})` 
+                    : 'Query OK but all values null',
+                values: coverages[0]?.ranges?.[parameter]?.values?.filter(v => v !== null).slice(0, 10) || [],
+                valueCount: totalValues,
+                nonNullCount: totalNonNull,
+                numCoverages: numCoverages,
+                domainType: domainType,
+                isValidDomainType: isTrajectory,
+                isCoverageCollection: isCoverageCollection,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'corridor',
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Get corridor coordinates - either fixed or generate random path within bbox
+     * @param {Object} coll - Collection object with bbox
+     * @returns {string} - WKT LINESTRING
+     */
+    getCorridorCoordinates(coll) {
+        if (!this.randomizeLocations) {
+            return this.testCorridor.coords;
+        }
+        
+        // Generate a random corridor path within the collection's bbox
+        if (!coll.bbox || coll.bbox.length < 4) {
+            return this.testCorridor.coords; // Fallback to default
+        }
+        
+        const [minLon, minLat, maxLon, maxLat] = coll.bbox;
+        
+        // Add padding (10% inward from edges)
+        const lonPadding = (maxLon - minLon) * 0.1;
+        const latPadding = (maxLat - minLat) * 0.1;
+        
+        // Generate 3 waypoints for the corridor centerline
+        const waypoints = [];
+        for (let i = 0; i < 3; i++) {
+            const lon = minLon + lonPadding + Math.random() * (maxLon - minLon - 2 * lonPadding);
+            const lat = minLat + latPadding + Math.random() * (maxLat - minLat - 2 * latPadding);
+            waypoints.push(`${Math.round(lon * 10000) / 10000} ${Math.round(lat * 10000) / 10000}`);
+        }
+        
+        return `LINESTRING(${waypoints.join(',')})`;
     }
 
     /**
@@ -1619,11 +1798,6 @@ class EDRCoverageValidator {
      * Set the filter for the tree view
      */
     setFilter(filter) {
-        // Update button states
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.filter === filter);
-        });
-
         // Apply filter
         document.querySelectorAll('.tree-collection').forEach(collEl => {
             const collId = collEl.dataset.collId;
@@ -1632,26 +1806,95 @@ class EDRCoverageValidator {
             if (!coll) return;
 
             let show = filter === 'all';
+            let shouldExpand = false;
 
             if (!show) {
                 // Check if collection has any items matching the filter
                 for (const param of coll.parameters) {
                     const paramCheck = coll.parameterChecks[param];
                     
+                    // Check parameter-level status
                     if (filter === 'fail' && !paramCheck.inCatalog) {
                         show = true;
-                        break;
+                        shouldExpand = true;
+                    }
+                    
+                    // Check parameter-level query status (for surface params without levels)
+                    if (filter === 'warn' && paramCheck.queryStatus === 'warn') {
+                        show = true;
+                        shouldExpand = true;
+                    }
+                    if (filter === 'pass' && paramCheck.queryStatus === 'pass') {
+                        show = true;
                     }
 
+                    // Check level-specific statuses
                     for (const levelCheck of Object.values(paramCheck.levels || {})) {
-                        if (filter === 'fail' && !levelCheck.inCatalog) show = true;
-                        if (filter === 'warn' && levelCheck.queryResult === 'warn') show = true;
-                        if (filter === 'pass' && levelCheck.inCatalog) show = true;
+                        if (filter === 'fail' && !levelCheck.inCatalog) {
+                            show = true;
+                            shouldExpand = true;
+                        }
+                        if (filter === 'warn' && levelCheck.queryResult === 'warn') {
+                            show = true;
+                            shouldExpand = true;
+                        }
+                        if (filter === 'pass' && levelCheck.inCatalog) {
+                            show = true;
+                        }
+                    }
+                    
+                    // Also check queryResults array for warnings
+                    if (filter === 'warn' && paramCheck.queryResults) {
+                        const hasWarn = paramCheck.queryResults.some(r => r.status === 'warn');
+                        if (hasWarn) {
+                            show = true;
+                            shouldExpand = true;
+                        }
                     }
                 }
             }
 
             collEl.style.display = show ? '' : 'none';
+            
+            // Auto-expand collections that have matching items for fail/warn filters
+            if (show && shouldExpand && (filter === 'fail' || filter === 'warn')) {
+                collEl.classList.add('expanded');
+                
+                // Also expand parameters that have the matching status
+                collEl.querySelectorAll('.tree-parameter').forEach(paramEl => {
+                    const paramName = paramEl.dataset.param;
+                    const paramCheck = coll.parameterChecks[paramName];
+                    
+                    let paramHasMatch = false;
+                    
+                    if (filter === 'fail' && !paramCheck.inCatalog) {
+                        paramHasMatch = true;
+                    }
+                    if (filter === 'warn') {
+                        if (paramCheck.queryStatus === 'warn') {
+                            paramHasMatch = true;
+                        }
+                        if (paramCheck.queryResults?.some(r => r.status === 'warn')) {
+                            paramHasMatch = true;
+                        }
+                        for (const levelCheck of Object.values(paramCheck.levels || {})) {
+                            if (levelCheck.queryResult === 'warn') {
+                                paramHasMatch = true;
+                            }
+                        }
+                    }
+                    
+                    if (paramHasMatch) {
+                        paramEl.classList.add('expanded');
+                    }
+                });
+            } else if (filter === 'all') {
+                // When showing all, collapse everything
+                collEl.classList.remove('expanded');
+                collEl.querySelectorAll('.tree-parameter').forEach(paramEl => {
+                    paramEl.classList.remove('expanded');
+                });
+            }
         });
     }
 

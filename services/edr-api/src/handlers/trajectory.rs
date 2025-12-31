@@ -19,7 +19,7 @@ use axum::{
 use chrono::{DateTime, TimeZone, Utc};
 use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
-    responses::ExceptionResponse, CoverageJson, LineStringType, PositionQuery, TrajectoryQuery,
+    responses::ExceptionResponse, CoverageJson, PositionQuery, TrajectoryQuery,
 };
 use grid_processor::DatasetQuery;
 use serde::Deserialize;
@@ -138,6 +138,18 @@ async fn trajectory_query(
             ExceptionResponse::bad_request(
                 "Cannot specify 'z' parameter when coords contains Z coordinates (LINESTRINGZ/LINESTRINGZM). \
                  Use either embedded Z coordinates or the z query parameter, not both."
+            ),
+        );
+    }
+
+    // Check for conflicting datetime parameter when coords already has M
+    // Per OGC EDR spec: An error SHALL be thrown if coords=LINESTRINGM and datetime is specified
+    if line_type.has_m() && params.datetime.is_some() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(
+                "Cannot specify 'datetime' parameter when coords contains M coordinates (LINESTRINGM/LINESTRINGZM). \
+                 Use either embedded M coordinates or the datetime query parameter, not both."
             ),
         );
     }
@@ -520,6 +532,7 @@ fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use edr_protocol::LineStringType;
 
     #[test]
     fn test_parse_linestring() {

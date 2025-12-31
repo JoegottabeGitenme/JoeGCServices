@@ -39,6 +39,7 @@
                     <option value="area">Area (Polygon)</option>
                     <option value="radius">Radius (Circle)</option>
                     <option value="trajectory">Trajectory (LineString)</option>
+                    <option value="corridor">Corridor</option>
                 </select>
             </div>
             <div class="test-point-config" id="test-point-config">
@@ -68,6 +69,29 @@
                 <label>Trajectory:</label>
                 <input type="text" id="test-trajectory-coords" value="LINESTRING(-100 40,-99 40.5,-98 41)" size="50" title="WKT LINESTRING coordinates">
                 <span class="config-hint" title="Enter LINESTRING, LINESTRINGZ, LINESTRINGM, or LINESTRINGZM WKT. Example: LINESTRING(-100 40,-99 40.5,-98 41)">?</span>
+            </div>
+            <div class="test-corridor-config" id="test-corridor-config" style="display: none;">
+                <label>Corridor Path:</label>
+                <input type="text" id="test-corridor-coords" value="LINESTRING(-100 40,-99 40.5,-98 41)" size="40" title="WKT LINESTRING for corridor centerline">
+                <label>Width:</label>
+                <input type="number" id="test-corridor-width" value="10" size="4" title="Corridor width">
+                <select id="test-corridor-width-units" title="Width units">
+                    <option value="km" selected>km</option>
+                    <option value="m">m</option>
+                    <option value="mi">mi</option>
+                    <option value="nm">nm</option>
+                </select>
+                <label>Height:</label>
+                <input type="number" id="test-corridor-height" value="1000" size="6" title="Corridor height">
+                <select id="test-corridor-height-units" title="Height units">
+                    <option value="m" selected>m</option>
+                    <option value="km">km</option>
+                    <option value="hPa">hPa</option>
+                    <option value="mb">mb</option>
+                    <option value="Pa">Pa</option>
+                    <option value="ft">ft</option>
+                </select>
+                <span class="config-hint" title="Corridor query: retrieves data along a path with specified width and height envelope">?</span>
             </div>
             <div class="randomize-config">
                 <label class="toggle-label">
@@ -135,12 +159,6 @@
         <section class="collections-panel">
             <div class="panel-header">
                 <h2>Collections Coverage</h2>
-                <div class="filter-bar">
-                    <button class="filter-btn active" data-filter="all">All</button>
-                    <button class="filter-btn" data-filter="fail">Failures</button>
-                    <button class="filter-btn" data-filter="warn">Warnings</button>
-                    <button class="filter-btn" data-filter="pass">Passed</button>
-                </div>
             </div>
             <div class="collections-tree" id="collections-tree">
                 <div class="loading">Click "Run Validation" to start...</div>

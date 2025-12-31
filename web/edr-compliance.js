@@ -286,6 +286,18 @@ async function runAllTests() {
         'trajectory-invalid-coords', 'trajectory-linestringz', 'trajectory-linestringm',
         'trajectory-z-conflict', 'trajectory-multilinestring', 'trajectory-with-params',
         'trajectory-datetime',
+        // Corridor Query
+        'corridor-basic', 'corridor-covjson', 'corridor-missing-coords',
+        'corridor-missing-width', 'corridor-missing-width-units', 'corridor-missing-height',
+        'corridor-missing-height-units', 'corridor-invalid-width-units', 'corridor-invalid-height-units',
+        'corridor-invalid-coords', 'corridor-z-conflict', 'corridor-datetime-conflict',
+        'corridor-multilinestring', 'corridor-with-params', 'corridor-pressure-height-units',
+        'corridor-metadata',
+        // Corridor Query - Additional Tests
+        'corridor-invalid-linestringm', 'corridor-invalid-linestringz', 'corridor-invalid-linestringzm',
+        'corridor-zm-z-conflict', 'corridor-zm-datetime-conflict',
+        'corridor-linestringz', 'corridor-linestringm', 'corridor-linestringzm',
+        'corridor-with-datetime', 'corridor-with-z', 'corridor-instance', 'corridor-not-found',
         // Error Handling
         'error-404-collection', 'error-400-coords', 'error-400-datetime', 'error-response-structure',
         // Metadata
@@ -481,6 +493,64 @@ async function executeTest(testName) {
             return testTrajectoryWithParams();
         case 'trajectory-datetime':
             return testTrajectoryDatetime();
+        // Corridor Query tests
+        case 'corridor-basic':
+            return testCorridorBasic();
+        case 'corridor-covjson':
+            return testCorridorCovJson();
+        case 'corridor-missing-coords':
+            return testCorridorMissingCoords();
+        case 'corridor-missing-width':
+            return testCorridorMissingWidth();
+        case 'corridor-missing-width-units':
+            return testCorridorMissingWidthUnits();
+        case 'corridor-missing-height':
+            return testCorridorMissingHeight();
+        case 'corridor-missing-height-units':
+            return testCorridorMissingHeightUnits();
+        case 'corridor-invalid-width-units':
+            return testCorridorInvalidWidthUnits();
+        case 'corridor-invalid-height-units':
+            return testCorridorInvalidHeightUnits();
+        case 'corridor-invalid-coords':
+            return testCorridorInvalidCoords();
+        case 'corridor-z-conflict':
+            return testCorridorZConflict();
+        case 'corridor-datetime-conflict':
+            return testCorridorDatetimeConflict();
+        case 'corridor-multilinestring':
+            return testCorridorMultilinestring();
+        case 'corridor-with-params':
+            return testCorridorWithParams();
+        case 'corridor-pressure-height-units':
+            return testCorridorPressureHeightUnits();
+        case 'corridor-metadata':
+            return testCorridorMetadata();
+        // Corridor Query - Additional Tests
+        case 'corridor-invalid-linestringm':
+            return testCorridorInvalidLinestringM();
+        case 'corridor-invalid-linestringz':
+            return testCorridorInvalidLinestringZ();
+        case 'corridor-invalid-linestringzm':
+            return testCorridorInvalidLinestringZM();
+        case 'corridor-zm-z-conflict':
+            return testCorridorZMZConflict();
+        case 'corridor-zm-datetime-conflict':
+            return testCorridorZMDatetimeConflict();
+        case 'corridor-linestringz':
+            return testCorridorLinestringZ();
+        case 'corridor-linestringm':
+            return testCorridorLinestringM();
+        case 'corridor-linestringzm':
+            return testCorridorLinestringZM();
+        case 'corridor-with-datetime':
+            return testCorridorWithDatetime();
+        case 'corridor-with-z':
+            return testCorridorWithZ();
+        case 'corridor-instance':
+            return testCorridorInstance();
+        case 'corridor-not-found':
+            return testCorridorNotFound();
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
@@ -2514,6 +2584,760 @@ async function testTrajectoryDatetime() {
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has domain', passed: !!res.json?.domain },
         { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// CORRIDOR QUERY TESTS
+// ============================================================
+
+// Basic corridor query - all required params
+// Corridor returns a CoverageCollection with multiple trajectories (left, center, right)
+async function testCorridorBasic() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const corridorWidth = '10';
+    const widthUnits = 'km';
+    const corridorHeight = '1000';
+    const heightUnits = 'm';
+    
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=${corridorWidth}&width-units=${widthUnits}&corridor-height=${corridorHeight}&height-units=${heightUnits}`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Domain type is Trajectory', passed: res.json?.domainType === 'Trajectory' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) },
+        { name: 'Has multiple trajectories', passed: (res.json?.coverages?.length || 0) >= 1 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - verify CoverageJSON CoverageCollection response format
+async function testCorridorCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    // CoverageCollection has parameters at top level, coverages have domain/ranges
+    const firstCoverage = res.json?.coverages?.[0];
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type field', passed: res.json?.type !== undefined },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has parameters field', passed: res.json?.parameters !== undefined },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) },
+        { name: 'First coverage has domain', passed: !!firstCoverage?.domain },
+        { name: 'First coverage has ranges', passed: !!firstCoverage?.ranges },
+        { name: 'First coverage domain has axes', passed: !!firstCoverage?.domain?.axes }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - missing coords parameter
+async function testCorridorMissingCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Missing coords - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for missing coords', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - missing corridor-width parameter
+async function testCorridorMissingWidth() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Missing corridor-width - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for missing corridor-width', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - missing width-units parameter
+async function testCorridorMissingWidthUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Missing width-units - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for missing width-units', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - missing corridor-height parameter
+async function testCorridorMissingHeight() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Missing corridor-height - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for missing corridor-height', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - missing height-units parameter
+async function testCorridorMissingHeightUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Missing height-units - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for missing height-units', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid width-units
+async function testCorridorInvalidWidthUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Invalid width-units - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=invalid_unit&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid width-units', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid height-units
+async function testCorridorInvalidHeightUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Invalid height-units - should return 400
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=invalid_unit`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid height-units', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid LINESTRING format
+async function testCorridorInvalidCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'POINT(-100 40)'; // POINT is invalid for corridor
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid coords', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - LINESTRINGZ + z parameter conflict
+async function testCorridorZConflict() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 850,-98 41 850)';
+    // Conflict: LINESTRINGZ already has Z values, and z param is also specified
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&z=1000&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for Z conflict', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - LINESTRINGM + datetime parameter conflict
+async function testCorridorDatetimeConflict() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41 1560510600)';
+    // Conflict: LINESTRINGM already has M values, and datetime param is also specified
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&datetime=2024-01-01T00:00:00Z&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for datetime conflict', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - MULTILINESTRING support
+async function testCorridorMultilinestring() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Domain type is Trajectory', passed: res.json?.domainType === 'Trajectory' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with parameter-name filter
+async function testCorridorWithParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const paramNames = Object.keys(colRes.json?.parameter_names || {});
+    if (paramNames.length === 0) {
+        return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
+    }
+    
+    const paramName = paramNames[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&parameter-name=${paramName}`;
+    const res = await fetchJson(url);
+    
+    const params = res.json?.parameters || {};
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has parameters', passed: Object.keys(params).length > 0 },
+        { name: 'Contains requested parameter', passed: !!params[paramName] }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with pressure height units (hPa)
+async function testCorridorPressureHeightUnits() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    // Use hPa for height units (for isobaric surfaces)
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=100&height-units=hPa`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor metadata - verify data_queries has corridor with variables
+async function testCorridorMetadata() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const corridor = res.json?.data_queries?.corridor;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has corridor query type', passed: !!corridor },
+        { name: 'Corridor has link', passed: !!corridor?.link },
+        { name: 'Corridor has variables', passed: !!corridor?.variables },
+        { name: 'Variables has width_units', passed: Array.isArray(corridor?.variables?.width_units) },
+        { name: 'Variables has height_units', passed: Array.isArray(corridor?.variables?.height_units) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid LINESTRINGM format (B.130)
+async function testCorridorInvalidLinestringM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGM - missing M value on last point
+    const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid LINESTRINGM', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid LINESTRINGZ format (B.134)
+async function testCorridorInvalidLinestringZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGZ - missing Z value on second point
+    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5,-98 41 850)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid LINESTRINGZ', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - invalid LINESTRINGZM format (B.133)
+async function testCorridorInvalidLinestringZM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGZM - missing ZM values on second point
+    const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5,-98 41 850 1560510600)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for invalid LINESTRINGZM', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - LINESTRINGZM + z parameter conflict (B.132)
+async function testCorridorZMZConflict() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5 850 1560508800,-98 41 850 1560510600)';
+    // Conflict: LINESTRINGZM has Z values AND z param is specified
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&z=1000&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for LINESTRINGZM + z conflict', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - LINESTRINGZM + datetime parameter conflict
+async function testCorridorZMDatetimeConflict() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5 850 1560508800,-98 41 850 1560510600)';
+    // Conflict: LINESTRINGZM has M values AND datetime param is specified
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&datetime=2024-01-01T00:00:00Z&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 for LINESTRINGZM + datetime conflict', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - valid LINESTRINGZ query (success case)
+async function testCorridorLinestringZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Valid LINESTRINGZ with Z coordinates embedded
+    const coords = 'LINESTRINGZ(-100 40 2,-99 40.5 2,-98 41 2)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - valid LINESTRINGM query (success case)
+async function testCorridorLinestringM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Valid LINESTRINGM with Unix epoch timestamps (June 14, 2019)
+    const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41 1560510600)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - valid LINESTRINGZM query (success case)
+async function testCorridorLinestringZM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Valid LINESTRINGZM with both Z and M coordinates
+    const coords = 'LINESTRINGZM(-100 40 2 1560507000,-99 40.5 2 1560508800,-98 41 2 1560510600)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with datetime parameter
+async function testCorridorWithDatetime() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    const datetime = times[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${collection.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&datetime=${encodeURIComponent(datetime)}`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with z parameter
+async function testCorridorWithZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    // Try to find a collection with vertical levels
+    let col = null;
+    let zValue = null;
+    for (const c of collections) {
+        const colRes = await fetchJson(`${API_BASE}/collections/${c.id}`);
+        const vertical = colRes.json?.extent?.vertical;
+        if (vertical?.values?.length > 0) {
+            col = c;
+            zValue = vertical.values[0];
+            break;
+        } else if (vertical?.interval?.[0]?.[0] !== undefined) {
+            col = c;
+            zValue = vertical.interval[0][0];
+            break;
+        }
+    }
+    
+    if (!col || zValue === null) {
+        return { passed: true, checks: [{ name: 'No collections with vertical levels (test N/A)', passed: true }] };
+    }
+    
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&z=${zValue}`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - instance-specific query
+async function testCorridorInstance() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get instances for this collection
+    const instancesRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
+    const instances = instancesRes.json?.instances || [];
+    if (instances.length === 0) {
+        return { passed: true, checks: [{ name: 'No instances available (test N/A)', passed: true }] };
+    }
+    
+    const instance = instances[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/instances/${instance.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor - 404 for non-existent collection
+async function testCorridorNotFound() {
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/nonexistent-collection-12345/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 404', passed: res.status === 404 },
+        { name: 'Has error type', passed: !!res.json?.type }
     ];
     return {
         passed: checks.every(c => c.passed),

@@ -871,9 +871,10 @@ impl AreaQuery {
 }
 
 /// Distance units supported for radius queries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DistanceUnit {
     /// Kilometers
+    #[default]
     Kilometers,
     /// Miles
     Miles,
@@ -1500,6 +1501,304 @@ impl TrajectoryQuery {
     /// Check if the trajectory coordinates include time (M).
     pub fn has_embedded_m(&self) -> bool {
         self.line_type.map_or(false, |lt| lt.has_m())
+    }
+}
+
+/// Vertical/height units for corridor queries.
+///
+/// Supports both distance units (meters, kilometers) and pressure units (hPa, mb, Pa)
+/// for atmospheric data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerticalUnit {
+    /// Meters
+    #[default]
+    Meters,
+    /// Kilometers
+    Kilometers,
+    /// Feet
+    Feet,
+    /// Hectopascals (same as millibars)
+    Hectopascals,
+    /// Millibars (same as hectopascals)
+    Millibars,
+    /// Pascals
+    Pascals,
+}
+
+impl VerticalUnit {
+    /// Parse a vertical unit string.
+    ///
+    /// Accepts: "m", "meters", "km", "kilometers", "ft", "feet",
+    ///          "hPa", "hectopascals", "mb", "millibars", "Pa", "pascals"
+    pub fn parse(unit: &str) -> Result<Self, CoordinateParseError> {
+        match unit.to_lowercase().trim() {
+            "m" | "meters" | "metre" | "metres" => Ok(VerticalUnit::Meters),
+            "km" | "kilometers" | "kilometre" | "kilometres" => Ok(VerticalUnit::Kilometers),
+            "ft" | "feet" | "foot" => Ok(VerticalUnit::Feet),
+            "hpa" | "hectopascals" | "hectopascal" => Ok(VerticalUnit::Hectopascals),
+            "mb" | "millibars" | "millibar" => Ok(VerticalUnit::Millibars),
+            "pa" | "pascals" | "pascal" => Ok(VerticalUnit::Pascals),
+            _ => Err(CoordinateParseError::InvalidWkt(format!(
+                "Unknown vertical unit '{}'. Supported units: m, km, ft, hPa, mb, Pa",
+                unit
+            ))),
+        }
+    }
+
+    /// Check if this is a pressure unit.
+    pub fn is_pressure(&self) -> bool {
+        matches!(
+            self,
+            VerticalUnit::Hectopascals | VerticalUnit::Millibars | VerticalUnit::Pascals
+        )
+    }
+
+    /// Check if this is a distance unit.
+    pub fn is_distance(&self) -> bool {
+        !self.is_pressure()
+    }
+
+    /// Convert a value in this unit to meters (only valid for distance units).
+    ///
+    /// Returns None for pressure units.
+    pub fn to_meters(&self, value: f64) -> Option<f64> {
+        match self {
+            VerticalUnit::Meters => Some(value),
+            VerticalUnit::Kilometers => Some(value * 1000.0),
+            VerticalUnit::Feet => Some(value * 0.3048),
+            _ => None, // Pressure units can't be converted to meters
+        }
+    }
+
+    /// Get the string representation of this unit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VerticalUnit::Meters => "m",
+            VerticalUnit::Kilometers => "km",
+            VerticalUnit::Feet => "ft",
+            VerticalUnit::Hectopascals => "hPa",
+            VerticalUnit::Millibars => "mb",
+            VerticalUnit::Pascals => "Pa",
+        }
+    }
+
+    /// Get a list of all supported vertical unit strings.
+    pub fn supported_units() -> Vec<&'static str> {
+        vec!["m", "km", "ft", "hPa", "mb", "Pa"]
+    }
+
+    /// Get a list of supported distance unit strings (for width).
+    pub fn supported_distance_units() -> Vec<&'static str> {
+        vec!["m", "km", "ft"]
+    }
+
+    /// Get a list of supported pressure unit strings (for height in atmospheric data).
+    pub fn supported_pressure_units() -> Vec<&'static str> {
+        vec!["hPa", "mb", "Pa"]
+    }
+}
+
+/// Corridor query parameters.
+///
+/// A corridor is a volumetric region around a trajectory path with specified
+/// width (horizontal) and height (vertical) dimensions. Think of it as a "tube"
+/// around a flight path where the trajectory is the centerline.
+///
+/// Per OGC EDR spec, corridor queries require:
+/// - coords: LINESTRING/MULTILINESTRING (path centerline)
+/// - corridor-width: Total width of corridor (trajectory is center)
+/// - width-units: Units for width (km, mi, m, nm)
+/// - corridor-height: Total height of corridor (trajectory is center)
+/// - height-units: Units for height (m, km, hPa, mb, Pa)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CorridorQuery {
+    /// The waypoints defining the corridor centerline (trajectory path).
+    pub waypoints: Vec<TrajectoryWaypoint>,
+
+    /// The type of LINESTRING (indicates what coordinates are embedded).
+    #[serde(skip)]
+    pub line_type: Option<LineStringType>,
+
+    /// Corridor width value (total width, trajectory is center).
+    pub corridor_width: f64,
+
+    /// Units for corridor width.
+    #[serde(skip)]
+    pub width_units: DistanceUnit,
+
+    /// Corridor height value (total height, trajectory is center).
+    pub corridor_height: f64,
+
+    /// Units for corridor height.
+    #[serde(skip)]
+    pub height_units: VerticalUnit,
+
+    /// Requested vertical level(s) - only valid if coords doesn't include Z.
+    pub z: Option<Vec<f64>>,
+
+    /// Requested datetime or range - only valid if coords doesn't include M.
+    pub datetime: Option<DateTimeQuery>,
+
+    /// Requested parameter names.
+    pub parameter_names: Option<Vec<String>>,
+
+    /// Coordinate reference system.
+    pub crs: Option<String>,
+
+    /// Output format.
+    pub format: Option<String>,
+}
+
+impl CorridorQuery {
+    /// Create a new corridor query with required parameters.
+    pub fn new(
+        waypoints: Vec<TrajectoryWaypoint>,
+        corridor_width: f64,
+        width_units: DistanceUnit,
+        corridor_height: f64,
+        height_units: VerticalUnit,
+    ) -> Self {
+        Self {
+            waypoints,
+            line_type: None,
+            corridor_width,
+            width_units,
+            corridor_height,
+            height_units,
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+            format: None,
+        }
+    }
+
+    /// Parse corridor coordinates using the same logic as TrajectoryQuery.
+    pub fn parse_coords(coords: &str) -> Result<ParsedTrajectory, CoordinateParseError> {
+        TrajectoryQuery::parse_coords(coords)
+    }
+
+    /// Get the corridor width in meters.
+    pub fn width_meters(&self) -> f64 {
+        self.width_units.to_meters(self.corridor_width)
+    }
+
+    /// Get the corridor width in kilometers.
+    pub fn width_km(&self) -> f64 {
+        self.width_units.to_kilometers(self.corridor_width)
+    }
+
+    /// Get the corridor height in meters (only valid for distance-based height units).
+    ///
+    /// Returns None for pressure-based height units.
+    pub fn height_meters(&self) -> Option<f64> {
+        self.height_units.to_meters(self.corridor_height)
+    }
+
+    /// Get the half-width of the corridor in meters (distance from centerline to edge).
+    pub fn half_width_meters(&self) -> f64 {
+        self.width_meters() / 2.0
+    }
+
+    /// Get the half-height of the corridor (distance from centerline to top/bottom).
+    ///
+    /// For pressure units, this is in the original pressure units.
+    /// For distance units, this is in meters.
+    pub fn half_height(&self) -> f64 {
+        self.corridor_height / 2.0
+    }
+
+    /// Calculate the bounding box that encloses this corridor (including buffer).
+    ///
+    /// Expands the trajectory bounding box by the corridor half-width.
+    pub fn bounding_box_with_buffer(&self) -> BboxQuery {
+        let mut west = f64::MAX;
+        let mut south = f64::MAX;
+        let mut east = f64::MIN;
+        let mut north = f64::MIN;
+
+        for wp in &self.waypoints {
+            west = west.min(wp.lon);
+            east = east.max(wp.lon);
+            south = south.min(wp.lat);
+            north = north.max(wp.lat);
+        }
+
+        // Calculate buffer in degrees (approximate)
+        let half_width_km = self.width_km() / 2.0;
+        let center_lat = (north + south) / 2.0;
+        let lat_rad = center_lat.to_radians();
+
+        // Degrees per km at this latitude
+        let deg_per_km_lat = 1.0 / 111.32;
+        let deg_per_km_lon = 1.0 / (111.32 * lat_rad.cos().max(0.01));
+
+        let delta_lat = half_width_km * deg_per_km_lat;
+        let delta_lon = half_width_km * deg_per_km_lon;
+
+        BboxQuery {
+            west: (west - delta_lon).max(-180.0),
+            south: (south - delta_lat).max(-90.0),
+            east: (east + delta_lon).min(180.0),
+            north: (north + delta_lat).min(90.0),
+        }
+    }
+
+    /// Get the number of waypoints in the corridor centerline.
+    pub fn len(&self) -> usize {
+        self.waypoints.len()
+    }
+
+    /// Check if the corridor has no waypoints.
+    pub fn is_empty(&self) -> bool {
+        self.waypoints.is_empty()
+    }
+
+    /// Calculate approximate total path length in meters using Haversine distance.
+    pub fn path_length_meters(&self) -> f64 {
+        if self.waypoints.len() < 2 {
+            return 0.0;
+        }
+
+        let mut total = 0.0;
+        for i in 1..self.waypoints.len() {
+            let prev = &self.waypoints[i - 1];
+            let curr = &self.waypoints[i];
+            total += RadiusQuery::haversine_distance(prev.lon, prev.lat, curr.lon, curr.lat);
+        }
+        total
+    }
+
+    /// Check if the corridor coordinates include height (Z).
+    pub fn has_embedded_z(&self) -> bool {
+        self.line_type.map_or(false, |lt| lt.has_z())
+    }
+
+    /// Check if the corridor coordinates include time (M).
+    pub fn has_embedded_m(&self) -> bool {
+        self.line_type.map_or(false, |lt| lt.has_m())
+    }
+
+    /// Check if a point is within the corridor's horizontal extent.
+    ///
+    /// Uses Haversine distance to check if the point is within half-width
+    /// of any segment of the trajectory centerline.
+    pub fn contains_point_horizontal(&self, lon: f64, lat: f64) -> bool {
+        let half_width = self.half_width_meters();
+
+        // Check distance to each segment
+        for i in 0..self.waypoints.len() {
+            let wp = &self.waypoints[i];
+            let distance = RadiusQuery::haversine_distance(wp.lon, wp.lat, lon, lat);
+            if distance <= half_width {
+                return true;
+            }
+        }
+
+        // TODO: Also check distance to line segments between waypoints
+        // For now, we only check distance to waypoints themselves
+
+        false
     }
 }
 

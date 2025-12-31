@@ -608,6 +608,213 @@
                 </div>
             </div>
 
+            <!-- Corridor Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="corridor">
+                    <span class="toggle">+</span>
+                    Corridor Query Conformance
+                    <span class="section-status" id="corridor-status"></span>
+                </h3>
+                <div class="section-content" id="corridor-tests">
+                    <div class="test-item" data-test="corridor-basic">
+                        <span class="test-name">Corridor Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Corridor Query (Requirement A.30)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-covjson">
+                        <span class="test-name">Corridor CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-coords">
+                        <span class="test-name">Corridor Missing coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_124" target="_blank" class="spec-link" title="OGC EDR Spec: B.124 coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-width">
+                        <span class="test-name">Corridor Missing corridor-width (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_125" target="_blank" class="spec-link" title="OGC EDR Spec: B.125 corridor-width required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-width-units">
+                        <span class="test-name">Corridor Missing width-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_127" target="_blank" class="spec-link" title="OGC EDR Spec: B.127 width-units required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-height">
+                        <span class="test-name">Corridor Missing corridor-height (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_126" target="_blank" class="spec-link" title="OGC EDR Spec: B.126 corridor-height required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-height-units">
+                        <span class="test-name">Corridor Missing height-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_128" target="_blank" class="spec-link" title="OGC EDR Spec: B.128 height-units required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-width-units">
+                        <span class="test-name">Corridor Invalid width-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_136" target="_blank" class="spec-link" title="OGC EDR Spec: B.136 width-units validation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-height-units">
+                        <span class="test-name">Corridor Invalid height-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_137" target="_blank" class="spec-link" title="OGC EDR Spec: B.137 height-units validation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-coords">
+                        <span class="test-name">Corridor Invalid coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_129" target="_blank" class="spec-link" title="OGC EDR Spec: B.129 LINESTRING required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-z-conflict">
+                        <span class="test-name">Corridor Z Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_131" target="_blank" class="spec-link" title="OGC EDR Spec: B.131 z param conflict with LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-datetime-conflict">
+                        <span class="test-name">Corridor Datetime Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: datetime conflict with LINESTRINGM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-multilinestring">
+                        <span class="test-name">MULTILINESTRING Corridor</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: MULTILINESTRING support">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-params">
+                        <span class="test-name">Corridor with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-pressure-height-units">
+                        <span class="test-name">Corridor with hPa height-units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_height-units-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.68 height-units response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-metadata">
+                        <span class="test-name">Corridor Metadata (variables)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor-variables" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.19 corridor-variables">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringm">
+                        <span class="test-name">Invalid LINESTRINGM Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_130" target="_blank" class="spec-link" title="OGC EDR Spec: B.130 Invalid LINESTRINGM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringz">
+                        <span class="test-name">Invalid LINESTRINGZ Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_134" target="_blank" class="spec-link" title="OGC EDR Spec: B.134 Invalid LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringzm">
+                        <span class="test-name">Invalid LINESTRINGZM Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_133" target="_blank" class="spec-link" title="OGC EDR Spec: B.133 Invalid LINESTRINGZM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-zm-z-conflict">
+                        <span class="test-name">LINESTRINGZM + z Conflict</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_132" target="_blank" class="spec-link" title="OGC EDR Spec: B.132 LINESTRINGZM + z conflict">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-zm-datetime-conflict">
+                        <span class="test-name">LINESTRINGZM + datetime Conflict</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: LINESTRINGZM datetime conflict">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringz">
+                        <span class="test-name">Valid LINESTRINGZ Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGZ corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringm">
+                        <span class="test-name">Valid LINESTRINGM Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGM corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringzm">
+                        <span class="test-name">Valid LINESTRINGZM Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGZM corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-datetime">
+                        <span class="test-name">Corridor with datetime Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: datetime parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-z">
+                        <span class="test-name">Corridor with z Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: z parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-instance">
+                        <span class="test-name">Instance Corridor Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Instance corridor query">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-not-found">
+                        <span class="test-name">Corridor 404 Not Found</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: 404 for non-existent collection">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Error Handling Tests -->
             <div class="test-section">
                 <h3 class="section-header" data-section="errors">

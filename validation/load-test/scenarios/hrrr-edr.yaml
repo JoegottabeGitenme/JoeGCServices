@@ -116,6 +116,99 @@ area_queries:
     weight: 1.5
     description: "Random 1x1 degree polygon within CONUS"
 
+# Corridor Query Scenarios
+corridor_queries:
+  # Basic corridor query - 3-point linestring
+  - name: corridor_basic
+    collection: hrrr-surface
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    corridor_width: 10
+    width_units: km
+    corridor_height: 1000
+    height_units: m
+    parameters: ["TMP"]
+    weight: 2.0
+    description: "10km wide corridor across Kansas"
+    
+  # Small corridor - narrow path
+  - name: corridor_narrow
+    collection: hrrr-surface
+    coords: "LINESTRING(-100.5 39.5,-100.0 40.0)"
+    corridor_width: 5
+    width_units: km
+    corridor_height: 500
+    height_units: m
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "5km narrow corridor"
+    
+  # Corridor with multiple parameters
+  - name: corridor_multi_param
+    collection: hrrr-surface
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    corridor_width: 10
+    width_units: km
+    corridor_height: 1000
+    height_units: m
+    parameters: ["TMP", "RH", "GUST", "UGRD", "VGRD"]
+    weight: 1.0
+    description: "10km corridor with 5 parameters"
+    
+  # Corridor with miles units
+  - name: corridor_miles
+    collection: hrrr-surface
+    coords: "LINESTRING(-97.5 35.2,-97.0 35.5,-96.5 35.8)"
+    corridor_width: 10
+    width_units: mi
+    corridor_height: 3000
+    height_units: ft
+    parameters: ["TMP"]
+    weight: 1.0
+    description: "10 mile wide corridor over Oklahoma"
+    
+  # Corridor with isobaric level
+  - name: corridor_isobaric
+    collection: hrrr-isobaric
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    corridor_width: 10
+    width_units: km
+    corridor_height: 1000
+    height_units: m
+    parameters: ["TMP"]
+    z: "850"
+    weight: 1.0
+    description: "10km corridor at 850 hPa"
+    
+  # Long corridor - 5 point path
+  - name: corridor_long
+    collection: hrrr-surface
+    coords: "LINESTRING(-102 38,-101 39,-100 39.5,-99 39,-98 40)"
+    corridor_width: 15
+    width_units: km
+    corridor_height: 2000
+    height_units: m
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "Long 5-point corridor path"
+    
+  # Random location corridor
+  - name: corridor_random_location
+    collection: hrrr-surface
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    linestring_length: 2.0  # degrees
+    linestring_points: 3
+    corridor_width: 10
+    width_units: km
+    corridor_height: 1000
+    height_units: m
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Random corridor within CONUS"
+
 # Radius Query Scenarios
 radius_queries:
   # Basic radius query - 50km circle
@@ -192,6 +285,71 @@ radius_queries:
     parameters: ["TMP"]
     weight: 1.5
     description: "Random 50km radius within CONUS"
+
+# Trajectory Query Scenarios
+trajectory_queries:
+  # Basic trajectory query - 3-point linestring
+  - name: trajectory_basic
+    collection: hrrr-surface
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    parameters: ["TMP"]
+    weight: 2.0
+    description: "Basic 3-point trajectory across Kansas"
+    
+  # Short trajectory - 2 points
+  - name: trajectory_short
+    collection: hrrr-surface
+    coords: "LINESTRING(-100.5 39.5,-100.0 40.0)"
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Short 2-point trajectory"
+    
+  # Trajectory with multiple parameters
+  - name: trajectory_multi_param
+    collection: hrrr-surface
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    parameters: ["TMP", "RH", "GUST", "UGRD", "VGRD"]
+    weight: 1.0
+    description: "Trajectory with 5 parameters"
+    
+  # Trajectory with isobaric level
+  - name: trajectory_isobaric
+    collection: hrrr-isobaric
+    coords: "LINESTRING(-101 39,-100 39.5,-99 40)"
+    parameters: ["TMP"]
+    z: "850"
+    weight: 1.0
+    description: "Trajectory at 850 hPa"
+    
+  # Long trajectory - 5 point path
+  - name: trajectory_long
+    collection: hrrr-surface
+    coords: "LINESTRING(-102 38,-101 39,-100 39.5,-99 39,-98 40)"
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "Long 5-point trajectory path"
+    
+  # LINESTRINGZ trajectory (with z coordinates)
+  - name: trajectory_linestringz
+    collection: hrrr-isobaric
+    coords: "LINESTRINGZ(-101 39 850,-100 39.5 850,-99 40 850)"
+    parameters: ["TMP"]
+    weight: 0.5
+    description: "Trajectory with Z coordinates at 850 hPa"
+    
+  # Random location trajectory
+  - name: trajectory_random_location
+    collection: hrrr-surface
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    linestring_length: 2.0  # degrees
+    linestring_points: 3
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Random trajectory within CONUS"
 
 # Edge cases (lower weight, for validation)
 edge_cases:

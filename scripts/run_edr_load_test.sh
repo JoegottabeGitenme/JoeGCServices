@@ -12,7 +12,7 @@
 #   --url URL         EDR API base URL (default: http://localhost:8083/edr)
 #   --duration SECS   Test duration in seconds (default: 60)
 #   --concurrency N   Number of concurrent requests (default: 10)
-#   --query-type TYPE Only run position or area queries (default: both)
+#   --query-type TYPE Only run position, area, radius, trajectory, corridor, or all (default: all)
 #   --output DIR      Output directory for results (default: ./edr_load_results)
 #   --validate        Validate discovered endpoints before load testing
 #   --verbose         Show detailed output
@@ -27,7 +27,7 @@ set -euo pipefail
 BASE_URL="${EDR_BASE_URL:-http://localhost:8083/edr}"
 DURATION=60
 CONCURRENCY=10
-QUERY_TYPE="both"  # position, area, or both
+QUERY_TYPE="all"  # position, area, radius, trajectory, corridor, or all
 OUTPUT_DIR="./edr_load_results"
 VALIDATE=false
 VERBOSE=false
@@ -168,6 +168,9 @@ for coll in collections:
     data_queries = coll_detail.get('data_queries', {})
     supports_position = 'position' in data_queries
     supports_area = 'area' in data_queries
+    supports_radius = 'radius' in data_queries
+    supports_trajectory = 'trajectory' in data_queries
+    supports_corridor = 'corridor' in data_queries
     
     # Generate scenarios for each parameter
     for param in params:
@@ -180,13 +183,33 @@ for coll in collections:
         # Area query scenario
         if supports_area:
             scenarios.append(f"area|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
+        
+        # Radius query scenario
+        if supports_radius:
+            scenarios.append(f"radius|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
+        
+        # Trajectory query scenario
+        if supports_trajectory:
+            scenarios.append(f"trajectory|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
+        
+        # Corridor query scenario
+        if supports_corridor:
+            scenarios.append(f"corridor|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
 
 # Write scenarios to file
 with open("$SCENARIOS_FILE", 'w') as f:
     for s in scenarios:
         f.write(s + '\n')
 
+# Count scenarios by query type
+position_count = sum(1 for s in scenarios if s.startswith('position|'))
+area_count = sum(1 for s in scenarios if s.startswith('area|'))
+radius_count = sum(1 for s in scenarios if s.startswith('radius|'))
+trajectory_count = sum(1 for s in scenarios if s.startswith('trajectory|'))
+corridor_count = sum(1 for s in scenarios if s.startswith('corridor|'))
+
 print(f"Discovered {len(collections)} collections, {total_params} parameters, {len(scenarios)} test scenarios")
+print(f"  Query types: {position_count} position, {area_count} area, {radius_count} radius, {trajectory_count} trajectory, {corridor_count} corridor")
 PYTHON
     
     local scenario_count=$(wc -l < "$SCENARIOS_FILE")
@@ -220,7 +243,7 @@ validate_endpoints() {
         if [[ "$query_type" == "position" ]]; then
             url="$BASE_URL/collections/$coll_id/position?coords=$(urlencode "POINT($center_lon $center_lat)")&parameter-name=$param"
             [[ -n "$level" ]] && url+="&z=$level"
-        else
+        elif [[ "$query_type" == "area" ]]; then
             # Small test polygon
             local half=0.5
             local p_min_lon=$(python3 -c "print($center_lon - $half)")
@@ -229,6 +252,26 @@ validate_endpoints() {
             local p_max_lat=$(python3 -c "print($center_lat + $half)")
             local polygon="POLYGON(($p_min_lon $p_min_lat,$p_max_lon $p_min_lat,$p_max_lon $p_max_lat,$p_min_lon $p_max_lat,$p_min_lon $p_min_lat))"
             url="$BASE_URL/collections/$coll_id/area?coords=$(urlencode "$polygon")&parameter-name=$param"
+            [[ -n "$level" ]] && url+="&z=$level"
+        elif [[ "$query_type" == "radius" ]]; then
+            # Radius query with 50km radius
+            url="$BASE_URL/collections/$coll_id/radius?coords=$(urlencode "POINT($center_lon $center_lat)")&within=50&within-units=km&parameter-name=$param"
+            [[ -n "$level" ]] && url+="&z=$level"
+        elif [[ "$query_type" == "trajectory" ]]; then
+            # Small test linestring for trajectory
+            local half=0.5
+            local lon1=$(python3 -c "print($center_lon - $half)")
+            local lon2=$(python3 -c "print($center_lon + $half)")
+            local linestring="LINESTRING($lon1 $center_lat,$lon2 $center_lat)"
+            url="$BASE_URL/collections/$coll_id/trajectory?coords=$(urlencode "$linestring")&parameter-name=$param"
+            [[ -n "$level" ]] && url+="&z=$level"
+        elif [[ "$query_type" == "corridor" ]]; then
+            # Small test linestring for corridor
+            local half=0.5
+            local lon1=$(python3 -c "print($center_lon - $half)")
+            local lon2=$(python3 -c "print($center_lon + $half)")
+            local linestring="LINESTRING($lon1 $center_lat,$lon2 $center_lat)"
+            url="$BASE_URL/collections/$coll_id/corridor?coords=$(urlencode "$linestring")&parameter-name=$param&corridor-width=10&width-units=km&corridor-height=1000&height-units=m"
             [[ -n "$level" ]] && url+="&z=$level"
         fi
         
@@ -352,6 +395,60 @@ print(f'POLYGON(({min_x:.4f} {min_y:.4f},{max_x:.4f} {min_y:.4f},{max_x:.4f} {ma
 "
 }
 
+# Generate random linestring within bbox (for corridor queries)
+random_linestring() {
+    local min_lon=$1 max_lon=$2 min_lat=$3 max_lat=$4 length=${5:-2.0} points=${6:-3}
+    python3 -c "
+import random
+import math
+
+length = $length
+num_points = $points
+
+# Ensure we have room for the linestring
+effective_min_lon = $min_lon + length/2
+effective_max_lon = $max_lon - length/2
+effective_min_lat = $min_lat + length/2
+effective_max_lat = $max_lat - length/2
+
+# Handle case where bbox is smaller than line length
+if effective_min_lon >= effective_max_lon:
+    effective_min_lon = $min_lon
+    effective_max_lon = $max_lon
+    length = min(length, ($max_lon - $min_lon) * 0.8)
+if effective_min_lat >= effective_max_lat:
+    effective_min_lat = $min_lat
+    effective_max_lat = $max_lat
+    length = min(length, ($max_lat - $min_lat) * 0.8)
+
+# Start point
+start_lon = random.uniform(effective_min_lon, effective_max_lon)
+start_lat = random.uniform(effective_min_lat, effective_max_lat)
+
+# Random direction (angle in radians)
+angle = random.uniform(0, 2 * math.pi)
+
+# Generate points along a somewhat curved path
+coords = []
+for i in range(num_points):
+    t = i / (num_points - 1) if num_points > 1 else 0
+    # Add some curvature
+    curve_offset = math.sin(t * math.pi) * (length * 0.2)
+    perp_angle = angle + math.pi / 2
+    
+    lon = start_lon + t * length * math.cos(angle) + curve_offset * math.cos(perp_angle)
+    lat = start_lat + t * length * math.sin(angle) + curve_offset * math.sin(perp_angle)
+    
+    # Clamp to bbox
+    lon = max($min_lon, min($max_lon, lon))
+    lat = max($min_lat, min($max_lat, lat))
+    
+    coords.append(f'{lon:.4f} {lat:.4f}')
+
+print(f'LINESTRING({chr(44).join(coords)})')
+"
+}
+
 # Execute a single test scenario
 run_scenario() {
     local scenario="$1"
@@ -363,9 +460,23 @@ run_scenario() {
         local point=$(random_point "$min_lon" "$max_lon" "$min_lat" "$max_lat")
         url="$BASE_URL/collections/$coll_id/position?coords=$(urlencode "$point")&parameter-name=$param"
         [[ -n "$level" ]] && url+="&z=$level"
-    else
+    elif [[ "$query_type" == "area" ]]; then
         local polygon=$(random_polygon "$min_lon" "$max_lon" "$min_lat" "$max_lat" 1.0)
         url="$BASE_URL/collections/$coll_id/area?coords=$(urlencode "$polygon")&parameter-name=$param"
+        [[ -n "$level" ]] && url+="&z=$level"
+    elif [[ "$query_type" == "radius" ]]; then
+        local point=$(random_point "$min_lon" "$max_lon" "$min_lat" "$max_lat")
+        # Random radius between 25-100km
+        local radius=$(python3 -c "import random; print(random.randint(25, 100))")
+        url="$BASE_URL/collections/$coll_id/radius?coords=$(urlencode "$point")&within=$radius&within-units=km&parameter-name=$param"
+        [[ -n "$level" ]] && url+="&z=$level"
+    elif [[ "$query_type" == "trajectory" ]]; then
+        local linestring=$(random_linestring "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0 3)
+        url="$BASE_URL/collections/$coll_id/trajectory?coords=$(urlencode "$linestring")&parameter-name=$param"
+        [[ -n "$level" ]] && url+="&z=$level"
+    elif [[ "$query_type" == "corridor" ]]; then
+        local linestring=$(random_linestring "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0 3)
+        url="$BASE_URL/collections/$coll_id/corridor?coords=$(urlencode "$linestring")&parameter-name=$param&corridor-width=10&width-units=km&corridor-height=1000&height-units=m"
         [[ -n "$level" ]] && url+="&z=$level"
     fi
     
@@ -382,15 +493,36 @@ run_tests() {
     log_info "  Duration: ${DURATION}s"
     log_info "  Concurrency: $CONCURRENCY"
     log_info "  Query Type: $QUERY_TYPE"
-    echo ""
     
     # Load scenarios into array
     local -a scenarios
     mapfile -t scenarios < "$SCENARIOS_FILE"
     local scenario_count=${#scenarios[@]}
     
+    # Count and display query types breakdown
+    local position_count=0
+    local area_count=0
+    local radius_count=0
+    local trajectory_count=0
+    local corridor_count=0
+    for s in "${scenarios[@]}"; do
+        if [[ "$s" == "position|"* ]]; then
+            position_count=$((position_count + 1))
+        elif [[ "$s" == "area|"* ]]; then
+            area_count=$((area_count + 1))
+        elif [[ "$s" == "radius|"* ]]; then
+            radius_count=$((radius_count + 1))
+        elif [[ "$s" == "trajectory|"* ]]; then
+            trajectory_count=$((trajectory_count + 1))
+        elif [[ "$s" == "corridor|"* ]]; then
+            corridor_count=$((corridor_count + 1))
+        fi
+    done
+    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor)"
+    echo ""
+    
     # Filter by query type if specified
-    if [[ "$QUERY_TYPE" != "both" ]]; then
+    if [[ "$QUERY_TYPE" != "all" ]]; then
         local -a filtered_scenarios
         for s in "${scenarios[@]}"; do
             if [[ "$s" == "$QUERY_TYPE|"* ]]; then

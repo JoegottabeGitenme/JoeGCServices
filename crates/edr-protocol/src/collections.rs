@@ -198,6 +198,7 @@ impl DataQueries {
                 )
                 .with_type("application/json")
                 .with_title("Position query"),
+                variables: None,
             }),
             ..Default::default()
         }
@@ -212,6 +213,7 @@ impl DataQueries {
             )
             .with_type("application/json")
             .with_title("Area query"),
+            variables: None,
         });
         self
     }
@@ -225,6 +227,7 @@ impl DataQueries {
             )
             .with_type("application/json")
             .with_title("Cube query"),
+            variables: None,
         });
         self
     }
@@ -238,6 +241,7 @@ impl DataQueries {
             )
             .with_type("application/vnd.cov+json")
             .with_title("Radius query"),
+            variables: None,
         });
         self
     }
@@ -251,6 +255,38 @@ impl DataQueries {
             )
             .with_type("application/vnd.cov+json")
             .with_title("Trajectory query"),
+            variables: None,
+        });
+        self
+    }
+
+    /// Add corridor query support.
+    ///
+    /// Per OGC EDR spec, corridor queries must advertise supported width_units and height_units.
+    pub fn with_corridor(mut self, base_url: &str, collection_id: &str) -> Self {
+        self.corridor = Some(QueryDescription {
+            link: Link::new(
+                format!("{}/collections/{}/corridor", base_url, collection_id),
+                "data",
+            )
+            .with_type("application/vnd.cov+json")
+            .with_title("Corridor query"),
+            variables: Some(QueryVariables {
+                // Supported width units (distance units)
+                width_units: Some(vec![
+                    "km".to_string(),
+                    "m".to_string(),
+                    "mi".to_string(),
+                    "nm".to_string(),
+                ]),
+                // Supported height units (distance + pressure units)
+                height_units: Some(vec![
+                    "m".to_string(),
+                    "km".to_string(),
+                    "hPa".to_string(),
+                    "mb".to_string(),
+                ]),
+            }),
         });
         self
     }
@@ -261,6 +297,25 @@ impl DataQueries {
 pub struct QueryDescription {
     /// Link to the query endpoint.
     pub link: Link,
+
+    /// Variables/settings specific to this query type.
+    /// For corridor queries, this includes width_units and height_units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<QueryVariables>,
+}
+
+/// Variables/settings specific to a query type.
+///
+/// Per OGC EDR spec, corridor queries must advertise supported width_units and height_units.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct QueryVariables {
+    /// Supported width units for corridor queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_units: Option<Vec<String>>,
+
+    /// Supported height units for corridor queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_units: Option<Vec<String>>,
 }
 
 /// A list of instances (model runs) for a collection.
