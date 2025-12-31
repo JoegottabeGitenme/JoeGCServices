@@ -36,6 +36,15 @@ const SPEED_LABELS = ['0.5x', '1x', '2x', '3x'];
 let layerControl = null; // Leaflet layer control
 let preloadedLayers = {}; // Cache of preloaded tile layers for animation
 
+// Interval references for cleanup (prevents memory leaks on page refresh/SPA navigation)
+let backendMetricsInterval = null;
+let containerStatsInterval = null;
+let dataStatsInterval = null;
+let wmsLayerCountsInterval = null;
+let serviceStatusInterval = null;
+let clockInterval = null;
+let heatmapPollingInterval = null;
+
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
 const wmtsStatusEl = document.getElementById('wmts-status');
@@ -1705,13 +1714,13 @@ function initIngestionStatus() {
         checkIngestionStatus();
     }, 10000);
     // Refresh backend metrics every 2 seconds
-    setInterval(fetchBackendMetrics, 2000);
+    backendMetricsInterval = setInterval(fetchBackendMetrics, 2000);
     // Refresh container stats every 5 seconds
-    setInterval(fetchContainerStats, 5000);
+    containerStatsInterval = setInterval(fetchContainerStats, 5000);
     // Refresh data stats every 30 seconds
-    setInterval(fetchDataStats, 30000);
+    dataStatsInterval = setInterval(fetchDataStats, 30000);
     // Refresh WMS layer counts every 60 seconds
-    setInterval(fetchWmsLayerCounts, 60000);
+    wmsLayerCountsInterval = setInterval(fetchWmsLayerCounts, 60000);
 }
 
 // Fetch WMS layer counts from GetCapabilities
@@ -2466,7 +2475,7 @@ function updatePerformanceDisplay() {
 }
 
 // Auto-refresh status every 30 seconds
-setInterval(() => {
+serviceStatusInterval = setInterval(() => {
     checkServiceStatus();
 }, 30000);
 
@@ -2774,10 +2783,21 @@ document.addEventListener('DOMContentLoaded', () => {
     startValidationAutoRefresh();
 });
 
-// Clean up on page unload
+// Clean up on page unload - centralized interval cleanup to prevent memory leaks
 window.addEventListener('beforeunload', () => {
     stopValidationAutoRefresh();
     stopPlayback();
+
+    // Clear all polling intervals
+    if (backendMetricsInterval) clearInterval(backendMetricsInterval);
+    if (containerStatsInterval) clearInterval(containerStatsInterval);
+    if (dataStatsInterval) clearInterval(dataStatsInterval);
+    if (wmsLayerCountsInterval) clearInterval(wmsLayerCountsInterval);
+    if (serviceStatusInterval) clearInterval(serviceStatusInterval);
+    if (clockInterval) clearInterval(clockInterval);
+    if (heatmapPollingInterval) clearInterval(heatmapPollingInterval);
+    if (ingestionStatusInterval) clearInterval(ingestionStatusInterval);
+    if (fadeInterval) clearInterval(fadeInterval);
 });
 
 // ============================================================================
@@ -2979,6 +2999,42 @@ let fadeTimeoutSecs = 10;
 let fadeInterval = null;
 let lastServerCounts = {};  // Track last known count per tile to detect new requests
 
+// Memory management constants to prevent unbounded growth
+const MAX_HEATMAP_ENTRIES = 500;  // Max entries in tileRequestHeatmap
+const MAX_SERVER_COUNTS_ENTRIES = 1000;  // Max base keys in lastServerCounts (4 entries per key)
+let lastServerCountsPruneTime = 0;  // Track when we last pruned
+
+// Prune lastServerCounts to prevent unbounded memory growth
+function pruneLastServerCounts() {
+    const keys = Object.keys(lastServerCounts);
+    // Count base keys (without _l1, _l2, _miss suffixes)
+    const baseKeys = keys.filter(k => !k.includes('_l1') && !k.includes('_l2') && !k.includes('_miss'));
+
+    if (baseKeys.length > MAX_SERVER_COUNTS_ENTRIES) {
+        // Remove oldest entries (first ones added)
+        const keysToRemove = baseKeys.slice(0, baseKeys.length - MAX_SERVER_COUNTS_ENTRIES);
+        keysToRemove.forEach(key => {
+            delete lastServerCounts[key];
+            delete lastServerCounts[`${key}_l1`];
+            delete lastServerCounts[`${key}_l2`];
+            delete lastServerCounts[`${key}_miss`];
+        });
+        console.debug(`Pruned ${keysToRemove.length} old entries from lastServerCounts`);
+    }
+}
+
+// Prune tileRequestHeatmap to prevent unbounded memory growth
+function pruneHeatmapEntries() {
+    const entries = Object.entries(tileRequestHeatmap);
+    if (entries.length > MAX_HEATMAP_ENTRIES) {
+        // Sort by lastSeen (oldest first) and remove excess
+        entries.sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
+        const toRemove = entries.slice(0, entries.length - MAX_HEATMAP_ENTRIES);
+        toRemove.forEach(([key]) => delete tileRequestHeatmap[key]);
+        console.debug(`Pruned ${toRemove.length} old entries from tileRequestHeatmap`);
+    }
+}
+
 // Initialize the minimap
 function initMinimap() {
     const minimapEl = document.getElementById('minimap');
@@ -3038,6 +3094,9 @@ function initMinimap() {
                 startFadeInterval();
             } else {
                 stopFadeInterval();
+                // Clear fade-mode timestamped entries to free memory
+                // Non-fade mode will repopulate from server on next fetch
+                tileRequestHeatmap = {};
             }
         });
         // Initialize slider state
@@ -3060,12 +3119,12 @@ function initMinimap() {
 // Start the fade interval timer
 function startFadeInterval() {
     if (fadeInterval) return;
-    // Update display frequently for smooth fade animation
+    // Update display for fade animation (reduced frequency to lower memory/CPU usage)
     fadeInterval = setInterval(() => {
         if (fadeEnabled) {
             pruneAndUpdateFadingTiles();
         }
-    }, 200); // Update 5x per second for smooth fading
+    }, 500); // Update 2x per second (reduced from 5x to lower memory pressure)
 }
 
 // Stop the fade interval timer
@@ -3304,6 +3363,13 @@ async function fetchServerHeatmap() {
             updateHeatmapDisplay();
         }
         updateMinimapStats();
+
+        // Periodically prune data structures to prevent memory leaks (every 30 seconds)
+        if (now - lastServerCountsPruneTime > 30000) {
+            pruneLastServerCounts();
+            pruneHeatmapEntries();
+            lastServerCountsPruneTime = now;
+        }
     } catch (error) {
         // Silently fail - server might not support this endpoint yet
         console.debug('Heatmap API not available:', error.message);
@@ -3317,7 +3383,7 @@ function setupTileRequestTracking() {
     map.on('zoomend', syncMinimapViewport);
     
     // Poll server for heatmap updates every 2 seconds
-    setInterval(fetchServerHeatmap, 2000);
+    heatmapPollingInterval = setInterval(fetchServerHeatmap, 2000);
     
     // Initial fetch
     fetchServerHeatmap();
@@ -4438,7 +4504,7 @@ function updateClocks() {
 // Initialize clocks
 document.addEventListener('DOMContentLoaded', () => {
     updateClocks();
-    setInterval(updateClocks, 1000); // Update every second
+    clockInterval = setInterval(updateClocks, 1000); // Update every second
 });
 
 // ============================================================================

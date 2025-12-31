@@ -40,6 +40,7 @@
                     <option value="radius">Radius (Circle)</option>
                     <option value="trajectory">Trajectory (LineString)</option>
                     <option value="corridor">Corridor</option>
+                    <option value="cube">Cube (3D Volume)</option>
                 </select>
             </div>
             <div class="test-point-config" id="test-point-config">
@@ -92,6 +93,17 @@
                     <option value="ft">ft</option>
                 </select>
                 <span class="config-hint" title="Corridor query: retrieves data along a path with specified width and height envelope">?</span>
+            </div>
+            <div class="test-cube-config" id="test-cube-config" style="display: none;">
+                <label>BBox:</label>
+                <input type="text" id="test-cube-bbox" value="-101,39,-100,40" size="20" title="Bounding box: minLon,minLat,maxLon,maxLat">
+                <label>Z Levels:</label>
+                <input type="text" id="test-cube-z" value="850" size="12" title="Vertical level(s), e.g., 850 or 850,700,500">
+                <label>Resolution:</label>
+                <input type="number" id="test-cube-resolution-x" value="10" size="3" title="Grid resolution X">
+                <span>x</span>
+                <input type="number" id="test-cube-resolution-y" value="10" size="3" title="Grid resolution Y">
+                <span class="config-hint" title="Cube query: retrieves 3D volumetric data within a bounding box at specified vertical levels. Only available for collections with vertical extent (isobaric, height_above_ground).">?</span>
             </div>
             <div class="randomize-config">
                 <label class="toggle-label">

@@ -298,6 +298,11 @@ async function runAllTests() {
         'corridor-zm-z-conflict', 'corridor-zm-datetime-conflict',
         'corridor-linestringz', 'corridor-linestringm', 'corridor-linestringzm',
         'corridor-with-datetime', 'corridor-with-z', 'corridor-instance', 'corridor-not-found',
+        // Cube Query
+        'cube-basic', 'cube-covjson', 'cube-missing-bbox', 'cube-missing-z',
+        'cube-invalid-bbox', 'cube-multi-z', 'cube-with-datetime', 'cube-with-resolution',
+        'cube-instance', 'cube-not-found', 'cube-no-query-params', 'cube-z-range',
+        'cube-z-recurring', 'cube-invalid-z', 'cube-crs-valid', 'cube-f-covjson',
         // Error Handling
         'error-404-collection', 'error-400-coords', 'error-400-datetime', 'error-response-structure',
         // Metadata
@@ -634,6 +639,39 @@ async function executeTest(testName) {
             return testLinksAlternateFormats();
         case 'links-landing-alternate':
             return testLinksLandingAlternate();
+        // Cube Query tests
+        case 'cube-basic':
+            return testCubeBasic();
+        case 'cube-covjson':
+            return testCubeCovJson();
+        case 'cube-missing-bbox':
+            return testCubeMissingBbox();
+        case 'cube-missing-z':
+            return testCubeMissingZ();
+        case 'cube-invalid-bbox':
+            return testCubeInvalidBbox();
+        case 'cube-multi-z':
+            return testCubeMultiZ();
+        case 'cube-with-datetime':
+            return testCubeWithDatetime();
+        case 'cube-with-resolution':
+            return testCubeWithResolution();
+        case 'cube-instance':
+            return testCubeInstance();
+        case 'cube-not-found':
+            return testCubeNotFound();
+        case 'cube-no-query-params':
+            return testCubeNoQueryParams();
+        case 'cube-z-range':
+            return testCubeZRange();
+        case 'cube-z-recurring':
+            return testCubeZRecurring();
+        case 'cube-invalid-z':
+            return testCubeInvalidZ();
+        case 'cube-crs-valid':
+            return testCubeCrsValid();
+        case 'cube-f-covjson':
+            return testCubeFCovJson();
         default:
             return { passed: false, error: 'Unknown test' };
     }
@@ -837,6 +875,39 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}`];
         case 'links-landing-alternate':
             return [`${API_BASE}`];
+        // Cube Query URLs
+        case 'cube-basic':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850`];
+        case 'cube-covjson':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&parameter-name=TMP`];
+        case 'cube-missing-bbox':
+            return [`${API_BASE}/collections/${colId}/cube?z=850`];
+        case 'cube-missing-z':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36`];
+        case 'cube-invalid-bbox':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=invalid&z=850`];
+        case 'cube-multi-z':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850,700,500`];
+        case 'cube-with-datetime':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&datetime={validtime}`];
+        case 'cube-with-resolution':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&resolution-x=5&resolution-y=5`];
+        case 'cube-instance':
+            return [`${API_BASE}/collections/${colId}/instances/{instanceId}/cube?bbox=-98,35,-97,36&z=850`];
+        case 'cube-not-found':
+            return [`${API_BASE}/collections/nonexistent-collection-12345/cube?bbox=-98,35,-97,36&z=850`];
+        case 'cube-no-query-params':
+            return [`${API_BASE}/collections/${colId}/cube`];
+        case 'cube-z-range':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=1000/500`];
+        case 'cube-z-recurring':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=R5/1000/100`];
+        case 'cube-invalid-z':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=invalid`];
+        case 'cube-crs-valid':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&crs=CRS:84`];
+        case 'cube-f-covjson':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&f=CoverageJSON`];
         default:
             return [];
     }
@@ -4569,6 +4640,504 @@ async function testLinksLandingAlternate() {
         { name: 'Self link has type', passed: selfHasType },
         { name: 'Has alternate links OR only one format supported', passed: hasAlternateLinks || true },
         { name: 'Alternate links have href and type (if present)', passed: !hasAlternateLinks || alternatesValid }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// CUBE QUERY TESTS
+// OGC EDR Spec: Section 8.2.7 Cube Query, Requirement A.28
+// ============================================================
+
+// Helper to find a collection that supports cube queries (has vertical levels)
+async function findCubeCollection() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    
+    // Look for a collection that supports cube (has vertical levels)
+    const cubeCol = collections.find(c => 
+        c.id.includes('isobaric') || 
+        c.id.includes('height') ||
+        c.data_queries?.cube ||
+        c.extent?.vertical?.values?.length > 0
+    );
+    
+    return cubeCol || null;
+}
+
+// Basic cube query
+async function testCubeBasic() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values from collection extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query returns proper CoverageJSON CoverageCollection with Grid domain
+async function testCubeCovJson() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values from collection extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&parameter-name=TMP`);
+    
+    // Check for coverages array
+    const coverages = res.json?.coverages || [];
+    const hasCoverages = coverages.length > 0;
+    
+    // Check first coverage has Grid domain
+    const firstCoverage = coverages[0];
+    const domainType = firstCoverage?.domain?.domainType;
+    
+    // Check for non-null data values
+    let hasNonNullData = false;
+    if (firstCoverage?.ranges) {
+        const rangeKeys = Object.keys(firstCoverage.ranges);
+        if (rangeKeys.length > 0) {
+            const values = firstCoverage.ranges[rangeKeys[0]]?.values || [];
+            hasNonNullData = values.some(v => v !== null);
+        }
+    }
+    
+    const checks = [
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'domainType is Grid', passed: res.json?.domainType === 'Grid' },
+        { name: 'Has coverages array', passed: hasCoverages },
+        { name: 'Coverage has Grid domain', passed: domainType === 'Grid' },
+        { name: 'Has non-null data values', passed: hasNonNullData }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query missing bbox parameter - should return 400 (Requirement A.28)
+async function testCubeMissingBbox() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?z=850`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions bbox', passed: (res.json?.detail || '').toLowerCase().includes('bbox') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query missing z parameter - should return 400 (Requirement A.28.G/H)
+async function testCubeMissingZ() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions z', passed: (res.json?.detail || '').toLowerCase().includes('z') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with invalid bbox - should return 400
+async function testCubeInvalidBbox() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=invalid&z=850`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with multiple z levels - should return one coverage per z level (Requirement A.60)
+async function testCubeMultiZ() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values from collection extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    
+    // Need at least 2 z levels to test multi-z
+    if (verticalValues.length < 2) {
+        return { passed: true, checks: [{ name: 'Collection has less than 2 z levels (test N/A)', passed: true }] };
+    }
+
+    const z1 = verticalValues[0];
+    const z2 = verticalValues[1];
+    const z3 = verticalValues[2] || z2;
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${z1},${z2},${z3}`);
+    
+    // Check coverages count matches z levels
+    const coverages = res.json?.coverages || [];
+    const expectedCount = verticalValues.length >= 3 ? 3 : 2;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages array', passed: coverages.length > 0 },
+        { name: `Returns ${expectedCount} coverages for ${expectedCount} z levels`, passed: coverages.length === expectedCount }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with datetime parameter
+async function testCubeWithDatetime() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values and temporal extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+    
+    // Get temporal extent
+    const temporal = colRes.json?.extent?.temporal?.values || colRes.json?.extent?.temporal?.interval || [];
+    let datetime = '';
+    if (temporal.length > 0) {
+        if (Array.isArray(temporal[0])) {
+            datetime = temporal[0][0];
+        } else {
+            datetime = temporal[0];
+        }
+    }
+    
+    if (!datetime) {
+        return { passed: true, checks: [{ name: 'No temporal values available (test N/A)', passed: true }] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&datetime=${encodeURIComponent(datetime)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with resolution-x and resolution-y parameters
+async function testCubeWithResolution() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&resolution-x=5&resolution-y=5`);
+    
+    // Check that grid dimensions match requested resolution
+    const coverages = res.json?.coverages || [];
+    let gridMatchesResolution = false;
+    if (coverages.length > 0) {
+        const domain = coverages[0]?.domain;
+        const xAxis = domain?.axes?.x;
+        const yAxis = domain?.axes?.y;
+        
+        // Check if axes have num property (Regular axis) or values array
+        const xCount = xAxis?.num || xAxis?.values?.length || 0;
+        const yCount = yAxis?.num || yAxis?.values?.length || 0;
+        
+        // With resolution 5, we expect approximately 5 points in each dimension
+        gridMatchesResolution = (xCount >= 2 && xCount <= 10) && (yCount >= 2 && yCount <= 10);
+    }
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Grid dimensions match resolution', passed: gridMatchesResolution }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query on instance endpoint
+async function testCubeInstance() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get instances for this collection
+    const instancesRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
+    const instances = instancesRes.json?.instances || [];
+    
+    if (instances.length === 0) {
+        return { passed: true, checks: [{ name: 'No instances available (test N/A)', passed: true }] };
+    }
+
+    const instanceId = instances[0].id;
+
+    // Get available z values
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/instances/${instanceId}/cube?bbox=-98,35,-97,36&z=${zValue}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query on non-existent collection - should return 404
+async function testCubeNotFound() {
+    const res = await fetchJson(`${API_BASE}/collections/nonexistent-collection-12345/cube?bbox=-98,35,-97,36&z=850`);
+    const checks = [
+        { name: 'Status 404', passed: res.status === 404 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with no query parameters - should return 400 (Abstract Test B.91)
+async function testCubeNoQueryParams() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Call cube endpoint with NO query parameters at all
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Has error detail', passed: !!res.json?.detail }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with z range (min/max) - Requirement A.53.B
+async function testCubeZRange() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values from collection extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    
+    if (verticalValues.length < 2) {
+        return { passed: true, checks: [{ name: 'Collection has less than 2 z levels for range test (test N/A)', passed: true }] };
+    }
+
+    // Sort values to get min and max
+    const sortedValues = [...verticalValues].sort((a, b) => b - a); // Descending for pressure levels
+    const maxZ = sortedValues[0];
+    const minZ = sortedValues[sortedValues.length - 1];
+    
+    // Use z range syntax: min/max
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${maxZ}/${minZ}`);
+    
+    // Check coverages - should include multiple z levels within the range
+    const coverages = res.json?.coverages || [];
+    
+    const checks = [
+        { name: 'Status 200 or 400 (if range not supported)', passed: res.status === 200 || res.status === 400 },
+        { name: 'If 200, type is CoverageCollection', passed: res.status !== 200 || res.json?.type === 'CoverageCollection' },
+        { name: 'If 200, has coverages', passed: res.status !== 200 || coverages.length > 0 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with z recurring interval (R syntax) - Requirement A.53.D
+async function testCubeZRecurring() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values from collection extent
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    
+    if (verticalValues.length < 3) {
+        return { passed: true, checks: [{ name: 'Collection has less than 3 z levels for recurring test (test N/A)', passed: true }] };
+    }
+
+    // Use recurring interval syntax: R{count}/{start}/{interval}
+    // Example: R5/1000/100 = 5 levels starting at 1000, incrementing by 100 (1000, 900, 800, 700, 600)
+    const sortedValues = [...verticalValues].sort((a, b) => b - a);
+    const startZ = sortedValues[0];
+    const interval = sortedValues.length > 1 ? Math.abs(sortedValues[0] - sortedValues[1]) : 100;
+    const count = Math.min(5, sortedValues.length);
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=R${count}/${startZ}/${interval}`);
+    
+    const checks = [
+        { name: 'Status 200 or 400 (if recurring not supported)', passed: res.status === 200 || res.status === 400 },
+        { name: 'If 200, type is CoverageCollection', passed: res.status !== 200 || res.json?.type === 'CoverageCollection' },
+        { name: 'If 400, has error detail', passed: res.status !== 400 || !!res.json?.detail }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with invalid z parameter - should return 400
+async function testCubeInvalidZ() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=invalid_z_value`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with crs parameter - Requirement A.28.K
+async function testCubeCrsValid() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    // Test with CRS:84 (standard WGS84 lon/lat)
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200 (CRS:84 supported)', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Has coverages', passed: (res.json?.coverages?.length || 0) > 0 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Cube query with f=CoverageJSON parameter - Requirement A.28.L
+async function testCubeFCovJson() {
+    const col = await findCubeCollection();
+    if (!col) {
+        return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
+    }
+
+    // Get available z values
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const zValue = verticalValues[0] || 850;
+
+    // Test with f=CoverageJSON format parameter
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&f=CoverageJSON`);
+    
+    // Check Content-Type header
+    const contentType = res.headers?.get('content-type') || '';
+    const isCovJson = contentType.includes('cov+json') || 
+                      contentType.includes('coverage+json') ||
+                      res.json?.type === 'CoverageCollection';
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Response is CoverageJSON', passed: isCovJson },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
     ];
     return {
         passed: checks.every(c => c.passed),

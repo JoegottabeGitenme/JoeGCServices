@@ -21,6 +21,12 @@ class EDRCoverageValidator {
             corridorHeight: 1000,
             heightUnits: 'm'
         }; // Corridor query config
+        this.testCube = {
+            bbox: '-101,39,-100,40',
+            z: '850',
+            resolutionX: 10,
+            resolutionY: 10
+        }; // Cube query config
         this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
@@ -80,7 +86,7 @@ class EDRCoverageValidator {
         // Bind query type select
         document.getElementById('query-type-select').addEventListener('change', (e) => {
             this.queryType = e.target.value;
-            // Toggle visibility of point vs area vs radius vs trajectory vs corridor config
+            // Toggle visibility of point vs area vs radius vs trajectory vs corridor vs cube config
             document.getElementById('test-point-config').style.display = 
                 this.queryType === 'position' ? '' : 'none';
             document.getElementById('test-area-config').style.display = 
@@ -91,6 +97,8 @@ class EDRCoverageValidator {
                 this.queryType === 'trajectory' ? '' : 'none';
             document.getElementById('test-corridor-config').style.display = 
                 this.queryType === 'corridor' ? '' : 'none';
+            document.getElementById('test-cube-config').style.display = 
+                this.queryType === 'cube' ? '' : 'none';
         });
 
         // Bind test point inputs
@@ -143,6 +151,20 @@ class EDRCoverageValidator {
         });
         document.getElementById('test-corridor-height-units').addEventListener('change', (e) => {
             this.testCorridor.heightUnits = e.target.value || 'm';
+        });
+
+        // Bind test cube inputs
+        document.getElementById('test-cube-bbox').addEventListener('change', (e) => {
+            this.testCube.bbox = e.target.value || '-101,39,-100,40';
+        });
+        document.getElementById('test-cube-z').addEventListener('change', (e) => {
+            this.testCube.z = e.target.value || '850';
+        });
+        document.getElementById('test-cube-resolution-x').addEventListener('change', (e) => {
+            this.testCube.resolutionX = parseInt(e.target.value) || 10;
+        });
+        document.getElementById('test-cube-resolution-y').addEventListener('change', (e) => {
+            this.testCube.resolutionY = parseInt(e.target.value) || 10;
         });
 
         // Bind randomize toggle
@@ -383,6 +405,7 @@ class EDRCoverageValidator {
             testArea: this.queryType === 'area' ? this.testArea : null,
             testTrajectory: this.queryType === 'trajectory' ? this.testTrajectory : null,
             testCorridor: this.queryType === 'corridor' ? this.testCorridor : null,
+            testCube: this.queryType === 'cube' ? this.testCube : null,
             hasCatalogCheck: this.hasCatalogCheck,
             summary: this.results.summary,
             advertised: this.results.advertised,
@@ -708,6 +731,8 @@ class EDRCoverageValidator {
             result = await this.testTrajectoryQuery(collId, param, level, time, coll);
         } else if (this.queryType === 'corridor') {
             result = await this.testCorridorQuery(collId, param, level, time, coll);
+        } else if (this.queryType === 'cube') {
+            result = await this.testCubeQuery(collId, param, level, time, coll);
         } else {
             result = await this.testPositionQuery(collId, param, level, time, coll);
         }
@@ -1173,6 +1198,172 @@ class EDRCoverageValidator {
                 url
             };
         }
+    }
+
+    /**
+     * Make a single cube query and check result
+     * Cube returns a CoverageCollection with one Coverage per z-level
+     */
+    async testCubeQuery(collectionId, parameter, level, time, coll) {
+        // Get cube parameters - either fixed or generate random bbox within collection bounds
+        const bbox = this.getCubeBbox(coll);
+        const z = this.getCubeZ(coll, level);
+        const resX = this.testCube.resolutionX;
+        const resY = this.testCube.resolutionY;
+        
+        let url = `${this.endpoint}/collections/${collectionId}/cube?bbox=${bbox}&z=${z}&parameter-name=${parameter}`;
+        
+        // Add resolution if specified
+        if (resX > 0) {
+            url += `&resolution-x=${resX}`;
+        }
+        if (resY > 0) {
+            url += `&resolution-y=${resY}`;
+        }
+        
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    queryType: 'cube',
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            
+            // Cube returns CoverageCollection with one coverage per z-level
+            const isCoverageCollection = data.type === 'CoverageCollection';
+            const coverages = data.coverages || [];
+            const numCoverages = coverages.length;
+            
+            // Collect values from all coverages
+            let totalValues = 0;
+            let totalNonNull = 0;
+            for (const cov of coverages) {
+                const values = cov.ranges?.[parameter]?.values || [];
+                totalValues += values.length;
+                totalNonNull += values.filter(v => v !== null).length;
+            }
+            
+            const hasData = totalNonNull > 0;
+
+            // Verify domain type is Grid at the collection level
+            const domainType = data.domainType;
+            const isGrid = domainType === 'Grid';
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'cube',
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Cube data retrieved (${numCoverages} z-levels, ${totalNonNull}/${totalValues} non-null, domainType: ${domainType})` 
+                    : 'Query OK but all values null',
+                values: coverages[0]?.ranges?.[parameter]?.values?.filter(v => v !== null).slice(0, 10) || [],
+                valueCount: totalValues,
+                nonNullCount: totalNonNull,
+                numCoverages: numCoverages,
+                domainType: domainType,
+                isValidDomainType: isGrid,
+                isCoverageCollection: isCoverageCollection,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'cube',
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Get cube bbox - either fixed or generate random within collection bounds
+     * @param {Object} coll - Collection object with bbox
+     * @returns {string} - bbox string "minLon,minLat,maxLon,maxLat"
+     */
+    getCubeBbox(coll) {
+        if (!this.randomizeLocations) {
+            return this.testCube.bbox;
+        }
+        
+        // Generate a random 1x1 degree bbox within the collection's bounds
+        if (!coll.bbox || coll.bbox.length < 4) {
+            return this.testCube.bbox; // Fallback to default
+        }
+        
+        const [minLon, minLat, maxLon, maxLat] = coll.bbox;
+        
+        // Add padding (10% inward from edges) and ensure 1 degree for bbox size
+        const lonPadding = (maxLon - minLon) * 0.1;
+        const latPadding = (maxLat - minLat) * 0.1;
+        const bboxSize = 1.0; // 1 degree
+        
+        // Calculate valid range for bbox corner
+        const validMinLon = minLon + lonPadding;
+        const validMaxLon = maxLon - lonPadding - bboxSize;
+        const validMinLat = minLat + latPadding;
+        const validMaxLat = maxLat - latPadding - bboxSize;
+        
+        if (validMaxLon <= validMinLon || validMaxLat <= validMinLat) {
+            return this.testCube.bbox; // Fallback if collection too small
+        }
+        
+        const cornerLon = validMinLon + Math.random() * (validMaxLon - validMinLon);
+        const cornerLat = validMinLat + Math.random() * (validMaxLat - validMinLat);
+        
+        const bboxMinLon = Math.round(cornerLon * 100) / 100;
+        const bboxMinLat = Math.round(cornerLat * 100) / 100;
+        const bboxMaxLon = Math.round((cornerLon + bboxSize) * 100) / 100;
+        const bboxMaxLat = Math.round((cornerLat + bboxSize) * 100) / 100;
+        
+        return `${bboxMinLon},${bboxMinLat},${bboxMaxLon},${bboxMaxLat}`;
+    }
+
+    /**
+     * Get cube z parameter - use level from task if provided, otherwise use config
+     * @param {Object} coll - Collection object
+     * @param {string|number|null} level - Level from task
+     * @returns {string} - z parameter value
+     */
+    getCubeZ(coll, level) {
+        // If a specific level is being tested, use it
+        if (level !== null && level !== undefined) {
+            return String(level);
+        }
+        // Otherwise use the configured z value
+        return this.testCube.z;
     }
 
     /**

@@ -12,7 +12,7 @@
 #   --url URL         EDR API base URL (default: http://localhost:8083/edr)
 #   --duration SECS   Test duration in seconds (default: 60)
 #   --concurrency N   Number of concurrent requests (default: 10)
-#   --query-type TYPE Only run position, area, radius, trajectory, corridor, or all (default: all)
+#   --query-type TYPE Only run position, area, radius, trajectory, corridor, cube, or all (default: all)
 #   --output DIR      Output directory for results (default: ./edr_load_results)
 #   --validate        Validate discovered endpoints before load testing
 #   --verbose         Show detailed output
@@ -27,7 +27,7 @@ set -euo pipefail
 BASE_URL="${EDR_BASE_URL:-http://localhost:8083/edr}"
 DURATION=60
 CONCURRENCY=10
-QUERY_TYPE="all"  # position, area, radius, trajectory, corridor, or all
+QUERY_TYPE="all"  # position, area, radius, trajectory, corridor, cube, or all
 OUTPUT_DIR="./edr_load_results"
 VALIDATE=false
 VERBOSE=false
@@ -171,6 +171,7 @@ for coll in collections:
     supports_radius = 'radius' in data_queries
     supports_trajectory = 'trajectory' in data_queries
     supports_corridor = 'corridor' in data_queries
+    supports_cube = 'cube' in data_queries
     
     # Generate scenarios for each parameter
     for param in params:
@@ -195,6 +196,10 @@ for coll in collections:
         # Corridor query scenario
         if supports_corridor:
             scenarios.append(f"corridor|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
+        
+        # Cube query scenario (only for collections with vertical levels)
+        if supports_cube and level:
+            scenarios.append(f"cube|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
 
 # Write scenarios to file
 with open("$SCENARIOS_FILE", 'w') as f:
@@ -207,9 +212,10 @@ area_count = sum(1 for s in scenarios if s.startswith('area|'))
 radius_count = sum(1 for s in scenarios if s.startswith('radius|'))
 trajectory_count = sum(1 for s in scenarios if s.startswith('trajectory|'))
 corridor_count = sum(1 for s in scenarios if s.startswith('corridor|'))
+cube_count = sum(1 for s in scenarios if s.startswith('cube|'))
 
 print(f"Discovered {len(collections)} collections, {total_params} parameters, {len(scenarios)} test scenarios")
-print(f"  Query types: {position_count} position, {area_count} area, {radius_count} radius, {trajectory_count} trajectory, {corridor_count} corridor")
+print(f"  Query types: {position_count} position, {area_count} area, {radius_count} radius, {trajectory_count} trajectory, {corridor_count} corridor, {cube_count} cube")
 PYTHON
     
     local scenario_count=$(wc -l < "$SCENARIOS_FILE")
@@ -273,6 +279,14 @@ validate_endpoints() {
             local linestring="LINESTRING($lon1 $center_lat,$lon2 $center_lat)"
             url="$BASE_URL/collections/$coll_id/corridor?coords=$(urlencode "$linestring")&parameter-name=$param&corridor-width=10&width-units=km&corridor-height=1000&height-units=m"
             [[ -n "$level" ]] && url+="&z=$level"
+        elif [[ "$query_type" == "cube" ]]; then
+            # Small test bbox for cube query
+            local half=1.0
+            local bbox_w=$(python3 -c "print($center_lon - $half)")
+            local bbox_e=$(python3 -c "print($center_lon + $half)")
+            local bbox_s=$(python3 -c "print($center_lat - $half)")
+            local bbox_n=$(python3 -c "print($center_lat + $half)")
+            url="$BASE_URL/collections/$coll_id/cube?bbox=$bbox_w,$bbox_s,$bbox_e,$bbox_n&parameter-name=$param&z=$level&resolution-x=3&resolution-y=3"
         fi
         
         local http_code
@@ -395,6 +409,43 @@ print(f'POLYGON(({min_x:.4f} {min_y:.4f},{max_x:.4f} {min_y:.4f},{max_x:.4f} {ma
 "
 }
 
+# Generate random bbox within bounds (for cube queries)
+random_bbox() {
+    local min_lon=$1 max_lon=$2 min_lat=$3 max_lat=$4 size=${5:-2.0}
+    python3 -c "
+import random
+
+size = $size
+# Ensure we have room for the bbox
+effective_min_lon = $min_lon + size/2
+effective_max_lon = $max_lon - size/2
+effective_min_lat = $min_lat + size/2
+effective_max_lat = $max_lat - size/2
+
+# Handle case where bounds are smaller than bbox size
+if effective_min_lon >= effective_max_lon:
+    effective_min_lon = $min_lon
+    effective_max_lon = $max_lon
+    size = min(size, ($max_lon - $min_lon) * 0.8)
+if effective_min_lat >= effective_max_lat:
+    effective_min_lat = $min_lat
+    effective_max_lat = $max_lat
+    size = min(size, ($max_lat - $min_lat) * 0.8)
+
+center_lon = random.uniform(effective_min_lon, effective_max_lon)
+center_lat = random.uniform(effective_min_lat, effective_max_lat)
+half = size / 2
+
+west = center_lon - half
+east = center_lon + half
+south = center_lat - half
+north = center_lat + half
+
+# Format: west,south,east,north
+print(f'{west:.4f},{south:.4f},{east:.4f},{north:.4f}')
+"
+}
+
 # Generate random linestring within bbox (for corridor queries)
 random_linestring() {
     local min_lon=$1 max_lon=$2 min_lat=$3 max_lat=$4 length=${5:-2.0} points=${6:-3}
@@ -478,6 +529,9 @@ run_scenario() {
         local linestring=$(random_linestring "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0 3)
         url="$BASE_URL/collections/$coll_id/corridor?coords=$(urlencode "$linestring")&parameter-name=$param&corridor-width=10&width-units=km&corridor-height=1000&height-units=m"
         [[ -n "$level" ]] && url+="&z=$level"
+    elif [[ "$query_type" == "cube" ]]; then
+        local bbox=$(random_bbox "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0)
+        url="$BASE_URL/collections/$coll_id/cube?bbox=$bbox&parameter-name=$param&z=$level&resolution-x=5&resolution-y=5"
     fi
     
     make_request "$query_type:$coll_id:$param" "$url"
@@ -505,6 +559,7 @@ run_tests() {
     local radius_count=0
     local trajectory_count=0
     local corridor_count=0
+    local cube_count=0
     for s in "${scenarios[@]}"; do
         if [[ "$s" == "position|"* ]]; then
             position_count=$((position_count + 1))
@@ -516,9 +571,11 @@ run_tests() {
             trajectory_count=$((trajectory_count + 1))
         elif [[ "$s" == "corridor|"* ]]; then
             corridor_count=$((corridor_count + 1))
+        elif [[ "$s" == "cube|"* ]]; then
+            cube_count=$((cube_count + 1))
         fi
     done
-    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor)"
+    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor, $cube_count cube)"
     echo ""
     
     # Filter by query type if specified

@@ -278,22 +278,20 @@ impl Domain {
     /// Create a point domain.
     pub fn point(x: f64, y: f64, t: Option<String>, z: Option<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values(vec![AxisValue::Float(x)]));
-        axes.insert("y".to_string(), Axis::Values(vec![AxisValue::Float(y)]));
+        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
+        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
 
         if let Some(t) = t {
-            axes.insert("t".to_string(), Axis::Values(vec![AxisValue::String(t)]));
+            axes.insert("t".to_string(), Axis::Values { values: vec![AxisValue::String(t)] });
         }
 
         if let Some(z) = z {
-            axes.insert("z".to_string(), Axis::Values(vec![AxisValue::Float(z)]));
+            axes.insert("z".to_string(), Axis::Values { values: vec![AxisValue::Float(z)] });
         }
 
         let referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
-            system: ReferenceSystem::Geographic {
-                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-            },
+            system: ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326"),
         }];
 
         Self {
@@ -307,32 +305,28 @@ impl Domain {
     /// Create a point domain with multiple z values (vertical profile at a point).
     pub fn vertical_profile(x: f64, y: f64, t: Option<String>, z_values: Vec<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values(vec![AxisValue::Float(x)]));
-        axes.insert("y".to_string(), Axis::Values(vec![AxisValue::Float(y)]));
+        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
+        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
 
         if let Some(t) = t {
-            axes.insert("t".to_string(), Axis::Values(vec![AxisValue::String(t)]));
+            axes.insert("t".to_string(), Axis::Values { values: vec![AxisValue::String(t)] });
         }
 
         // Multiple z values for vertical profile
         axes.insert(
             "z".to_string(),
-            Axis::Values(z_values.into_iter().map(AxisValue::Float).collect()),
+            Axis::Values { values: z_values.into_iter().map(AxisValue::Float).collect() },
         );
 
         let mut referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
-            system: ReferenceSystem::Geographic {
-                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-            },
+            system: ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326"),
         }];
 
         // Add vertical reference system
         referencing.push(ReferenceSystemConnection {
             coordinates: vec!["z".to_string()],
-            system: ReferenceSystem::Vertical {
-                id: "http://www.opengis.net/def/crs/OGC/0/Unknown".to_string(),
-            },
+            system: ReferenceSystem::vertical("http://www.opengis.net/def/crs/OGC/0/Unknown"),
         });
 
         Self {
@@ -346,32 +340,28 @@ impl Domain {
     /// Create a point series domain (time series at a single point).
     pub fn point_series(x: f64, y: f64, t_values: Vec<String>, z: Option<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values(vec![AxisValue::Float(x)]));
-        axes.insert("y".to_string(), Axis::Values(vec![AxisValue::Float(y)]));
+        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
+        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
 
         // Time axis with multiple values
         axes.insert(
             "t".to_string(),
-            Axis::Values(t_values.into_iter().map(AxisValue::String).collect()),
+            Axis::Values { values: t_values.into_iter().map(AxisValue::String).collect() },
         );
 
         if let Some(z) = z {
-            axes.insert("z".to_string(), Axis::Values(vec![AxisValue::Float(z)]));
+            axes.insert("z".to_string(), Axis::Values { values: vec![AxisValue::Float(z)] });
         }
 
         let mut referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
-            system: ReferenceSystem::Geographic {
-                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-            },
+            system: ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326"),
         }];
 
         // Add temporal reference system
         referencing.push(ReferenceSystemConnection {
             coordinates: vec!["t".to_string()],
-            system: ReferenceSystem::Temporal {
-                calendar: "Gregorian".to_string(),
-            },
+            system: ReferenceSystem::temporal_gregorian(),
         });
 
         Self {
@@ -392,32 +382,30 @@ impl Domain {
         let mut axes = HashMap::new();
         axes.insert(
             "x".to_string(),
-            Axis::Values(x_values.into_iter().map(AxisValue::Float).collect()),
+            Axis::Values { values: x_values.into_iter().map(AxisValue::Float).collect() },
         );
         axes.insert(
             "y".to_string(),
-            Axis::Values(y_values.into_iter().map(AxisValue::Float).collect()),
+            Axis::Values { values: y_values.into_iter().map(AxisValue::Float).collect() },
         );
 
         if let Some(t) = t_values {
             axes.insert(
                 "t".to_string(),
-                Axis::Values(t.into_iter().map(AxisValue::String).collect()),
+                Axis::Values { values: t.into_iter().map(AxisValue::String).collect() },
             );
         }
 
         if let Some(z) = z_values {
             axes.insert(
                 "z".to_string(),
-                Axis::Values(z.into_iter().map(AxisValue::Float).collect()),
+                Axis::Values { values: z.into_iter().map(AxisValue::Float).collect() },
             );
         }
 
         let referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
-            system: ReferenceSystem::Geographic {
-                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-            },
+            system: ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326"),
         }];
 
         Self {
@@ -502,26 +490,20 @@ impl Domain {
         // Build referencing - reference the coordinates within the composite
         let mut referencing = vec![ReferenceSystemConnection {
             coordinates: vec!["x".to_string(), "y".to_string()],
-            system: ReferenceSystem::Geographic {
-                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-            },
+            system: ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326"),
         }];
 
         if has_t {
             referencing.push(ReferenceSystemConnection {
                 coordinates: vec!["t".to_string()],
-                system: ReferenceSystem::Temporal {
-                    calendar: "Gregorian".to_string(),
-                },
+                system: ReferenceSystem::temporal_gregorian(),
             });
         }
 
         if has_z {
             referencing.push(ReferenceSystemConnection {
                 coordinates: vec!["z".to_string()],
-                system: ReferenceSystem::Vertical {
-                    id: "http://www.opengis.net/def/crs/OGC/0/Unknown".to_string(),
-                },
+                system: ReferenceSystem::vertical("http://www.opengis.net/def/crs/OGC/0/Unknown"),
             });
         }
 
@@ -530,6 +512,62 @@ impl Domain {
             domain_type: DomainType::Trajectory,
             axes,
             referencing: Some(referencing),
+        }
+    }
+
+    /// Create a cube grid domain with regular axes (start/stop/num format).
+    ///
+    /// This is used for cube queries where we want to express the grid as a bounding box
+    /// with a specific number of grid points.
+    pub fn cube_grid(
+        x_start: f64,
+        x_stop: f64,
+        x_num: usize,
+        y_start: f64,
+        y_stop: f64,
+        y_num: usize,
+        t_value: Option<String>,
+        z_value: f64,
+    ) -> Self {
+        let mut axes = HashMap::new();
+
+        // Use Regular axis format for x and y
+        axes.insert(
+            "x".to_string(),
+            Axis::Regular {
+                start: x_start,
+                stop: x_stop,
+                num: x_num,
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Regular {
+                start: y_start,
+                stop: y_stop,
+                num: y_num,
+            },
+        );
+
+        // Z is a single value for each coverage in the collection
+        axes.insert(
+            "z".to_string(),
+            Axis::Values { values: vec![AxisValue::Float(z_value)] },
+        );
+
+        // Time if provided
+        if let Some(t) = t_value {
+            axes.insert(
+                "t".to_string(),
+                Axis::Values { values: vec![AxisValue::String(t)] },
+            );
+        }
+
+        Self {
+            type_: "Domain".to_string(),
+            domain_type: DomainType::Grid,
+            axes,
+            referencing: None, // Referencing is at collection level for cube
         }
     }
 }
@@ -555,8 +593,10 @@ pub enum DomainType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Axis {
-    /// Explicit list of values.
-    Values(Vec<AxisValue>),
+    /// Explicit list of values with "values" key.
+    Values {
+        values: Vec<AxisValue>,
+    },
     /// Regular axis defined by start, stop, and number of points.
     Regular { start: f64, stop: f64, num: usize },
     /// Composite axis for trajectory domains (tuple of coordinates).
@@ -567,7 +607,7 @@ impl Axis {
     /// Get the number of values in this axis.
     pub fn len(&self) -> usize {
         match self {
-            Axis::Values(v) => v.len(),
+            Axis::Values { values } => values.len(),
             Axis::Regular { num, .. } => *num,
             Axis::Composite(c) => c.values.len(),
         }
@@ -643,7 +683,11 @@ pub enum ReferenceSystem {
     #[serde(rename = "GeographicCRS")]
     Geographic {
         /// CRS identifier URI.
-        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Optional WKT representation.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wkt: Option<String>,
     },
 
     /// Temporal reference system.
@@ -656,8 +700,12 @@ pub enum ReferenceSystem {
     /// Vertical reference system.
     #[serde(rename = "VerticalCRS")]
     Vertical {
-        /// CRS identifier URI.
-        id: String,
+        /// CRS identifier URI (optional if cs is provided).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Coordinate system definition (optional).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cs: Option<VerticalCoordinateSystem>,
     },
 
     /// Identifier-based reference system.
@@ -667,6 +715,98 @@ pub enum ReferenceSystem {
         #[serde(rename = "targetConcept")]
         target_concept: String,
     },
+}
+
+impl ReferenceSystem {
+    /// Create a simple geographic CRS with just an ID.
+    pub fn geographic(id: &str) -> Self {
+        ReferenceSystem::Geographic {
+            id: Some(id.to_string()),
+            wkt: None,
+        }
+    }
+
+    /// Create a geographic CRS with ID and WKT.
+    pub fn geographic_with_wkt(id: &str, wkt: &str) -> Self {
+        ReferenceSystem::Geographic {
+            id: Some(id.to_string()),
+            wkt: Some(wkt.to_string()),
+        }
+    }
+
+    /// Create a temporal CRS with Gregorian calendar.
+    pub fn temporal_gregorian() -> Self {
+        ReferenceSystem::Temporal {
+            calendar: "Gregorian".to_string(),
+        }
+    }
+
+    /// Create a simple vertical CRS with just an ID.
+    pub fn vertical(id: &str) -> Self {
+        ReferenceSystem::Vertical {
+            id: Some(id.to_string()),
+            cs: None,
+        }
+    }
+
+    /// Create a vertical CRS with coordinate system details.
+    pub fn vertical_with_cs(cs: VerticalCoordinateSystem) -> Self {
+        ReferenceSystem::Vertical { id: None, cs: Some(cs) }
+    }
+}
+
+/// Vertical coordinate system definition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VerticalCoordinateSystem {
+    /// Coordinate system axes.
+    #[serde(rename = "csAxes")]
+    pub cs_axes: Vec<VerticalCSAxis>,
+}
+
+impl VerticalCoordinateSystem {
+    /// Create a vertical coordinate system for isobaric (pressure) levels.
+    pub fn isobaric() -> Self {
+        Self {
+            cs_axes: vec![VerticalCSAxis {
+                name: I18nString::english("Isobaric level"),
+                direction: "down".to_string(),
+                unit: VerticalUnit {
+                    symbol: "hPa".to_string(),
+                },
+            }],
+        }
+    }
+
+    /// Create a vertical coordinate system for height above ground.
+    pub fn height_above_ground() -> Self {
+        Self {
+            cs_axes: vec![VerticalCSAxis {
+                name: I18nString::english("Height above ground"),
+                direction: "up".to_string(),
+                unit: VerticalUnit {
+                    symbol: "m".to_string(),
+                },
+            }],
+        }
+    }
+}
+
+/// An axis in a vertical coordinate system.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VerticalCSAxis {
+    /// Name of the axis.
+    pub name: I18nString,
+    /// Direction of positive values (up, down).
+    pub direction: String,
+    /// Unit of measurement.
+    pub unit: VerticalUnit,
+}
+
+/// Unit for vertical axis.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VerticalUnit {
+    /// Unit symbol (e.g., "hPa", "m").
+    pub symbol: String,
 }
 
 /// A parameter in CoverageJSON format.
@@ -862,7 +1002,7 @@ mod tests {
         assert_eq!(domain.axes.len(), 4);
 
         let x = &domain.axes["x"];
-        if let Axis::Values(values) = x {
+        if let Axis::Values { values } = x {
             if let AxisValue::Float(v) = &values[0] {
                 assert_eq!(*v, -97.5);
             } else {
@@ -926,18 +1066,20 @@ mod tests {
 
     #[test]
     fn test_reference_systems() {
-        let geo = ReferenceSystem::Geographic {
-            id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
-        };
+        let geo = ReferenceSystem::geographic("http://www.opengis.net/def/crs/EPSG/0/4326");
         let json = serde_json::to_string(&geo).unwrap();
         assert!(json.contains("GeographicCRS"));
 
-        let temporal = ReferenceSystem::Temporal {
-            calendar: "Gregorian".to_string(),
-        };
+        let temporal = ReferenceSystem::temporal_gregorian();
         let json = serde_json::to_string(&temporal).unwrap();
         assert!(json.contains("TemporalRS"));
         assert!(json.contains("Gregorian"));
+
+        // Test vertical with CS
+        let vertical = ReferenceSystem::vertical_with_cs(VerticalCoordinateSystem::isobaric());
+        let json = serde_json::to_string(&vertical).unwrap();
+        assert!(json.contains("VerticalCRS"));
+        assert!(json.contains("hPa"));
     }
 
     #[test]

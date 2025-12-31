@@ -286,6 +286,78 @@ radius_queries:
     weight: 1.5
     description: "Random 50km radius within CONUS"
 
+# Cube Query Scenarios
+cube_queries:
+  # Basic cube query - 1x1 degree bbox at 850 hPa
+  - name: cube_basic
+    collection: hrrr-isobaric
+    bbox: "-101,39,-100,40"
+    z: "850"
+    parameters: ["TMP"]
+    weight: 2.0
+    description: "Basic 1x1 degree cube at 850 hPa"
+    
+  # Small cube - high resolution extraction
+  - name: cube_small
+    collection: hrrr-isobaric
+    bbox: "-100.5,39.5,-100.0,40.0"
+    z: "850"
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Small 0.5x0.5 degree cube"
+    
+  # Multi-level cube - 3 pressure levels
+  - name: cube_multi_level
+    collection: hrrr-isobaric
+    bbox: "-101,39,-100,40"
+    z: "850,700,500"
+    parameters: ["TMP"]
+    weight: 1.0
+    description: "Cube with 3 pressure levels"
+    
+  # Cube with multiple parameters
+  - name: cube_multi_param
+    collection: hrrr-isobaric
+    bbox: "-101,39,-100,40"
+    z: "850"
+    parameters: ["TMP", "RH", "UGRD", "VGRD"]
+    weight: 1.0
+    description: "Cube with 4 parameters"
+    
+  # Cube with resolution control
+  - name: cube_with_resolution
+    collection: hrrr-isobaric
+    bbox: "-102,38,-100,40"
+    z: "850"
+    parameters: ["TMP"]
+    resolution_x: 10
+    resolution_y: 10
+    weight: 1.0
+    description: "2x2 degree cube with 10x10 grid"
+    
+  # Medium cube - 2x2 degrees
+  - name: cube_medium
+    collection: hrrr-isobaric
+    bbox: "-102,38,-100,40"
+    z: "850,700"
+    parameters: ["TMP", "RH"]
+    weight: 0.8
+    description: "2x2 degree cube at 2 levels"
+    
+  # Random location cube
+  - name: cube_random_location
+    collection: hrrr-isobaric
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    bbox_size: 1.0  # 1 degree
+    z: "850"
+    parameters: ["TMP"]
+    weight: 1.5
+    description: "Random 1x1 degree cube within CONUS"
+
 # Trajectory Query Scenarios
 trajectory_queries:
   # Basic trajectory query - 3-point linestring

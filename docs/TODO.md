@@ -65,3 +65,7 @@
   often. Right now each blank tile is 0.5kb and returns in around 7ms
 - looping radar (only product that does this) absolutely eats up the chunk cache
 - let's try to get registered on the OGC implementation database
+- add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
+  that will run some of the various security scanners and display some results
+- add another optional docker compose image that will run the OGC compliance testing suite, we may need to figure out a
+  way to ingest some of the canned data they provide

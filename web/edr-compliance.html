@@ -815,6 +815,129 @@
                 </div>
             </div>
 
+            <!-- Cube Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="cube">
+                    <span class="toggle">+</span>
+                    Cube Queries
+                    <span class="section-status" id="cube-status"></span>
+                </h3>
+                <div class="section-content" id="cube-tests">
+                    <div class="test-item" data-test="cube-basic">
+                        <span class="test-name">Cube Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Cube Query (Requirement A.28)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-covjson">
+                        <span class="test-name">Cube CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-missing-bbox">
+                        <span class="test-name">Cube Missing bbox (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_92" target="_blank" class="spec-link" title="OGC EDR Spec: B.92 bbox required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-missing-z">
+                        <span class="test-name">Cube Missing z (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.G/H z required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-invalid-bbox">
+                        <span class="test-name">Cube Invalid bbox (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_93" target="_blank" class="spec-link" title="OGC EDR Spec: B.93 invalid bbox">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-multi-z">
+                        <span class="test-name">Cube Multi-Level Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_cube-z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.60 cube-z-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-with-datetime">
+                        <span class="test-name">Cube with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-with-resolution">
+                        <span class="test-name">Cube with resolution-x/y</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_resolution-x-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.59 resolution-x response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-instance">
+                        <span class="test-name">Instance Cube Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Instance cube query">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-not-found">
+                        <span class="test-name">Cube 404 Not Found</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: 404 for non-existent collection">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-no-query-params">
+                        <span class="test-name">Cube No Query Params (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_91" target="_blank" class="spec-link" title="OGC EDR Spec: B.91 no query params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-z-range">
+                        <span class="test-name">Cube z Range (min/max)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53.B z range syntax">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-z-recurring">
+                        <span class="test-name">Cube z Recurring Interval</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53.D recurring z syntax">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-invalid-z">
+                        <span class="test-name">Cube Invalid z (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28 invalid z parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-crs-valid">
+                        <span class="test-name">Cube with CRS Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.K crs parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-f-covjson">
+                        <span class="test-name">Cube with f=CoverageJSON</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.L format parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Error Handling Tests -->
             <div class="test-section">
                 <h3 class="section-header" data-section="errors">
