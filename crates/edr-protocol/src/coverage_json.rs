@@ -403,6 +403,87 @@ impl Domain {
             referencing: Some(referencing),
         }
     }
+
+    /// Create a trajectory domain.
+    ///
+    /// A trajectory is a path through space (and optionally time and/or vertical levels).
+    /// The x and y coordinates define the path, while t and z are optional.
+    /// For CoverageJSON Trajectory domain, x and y must have the same number of values.
+    pub fn trajectory(
+        x_values: Vec<f64>,
+        y_values: Vec<f64>,
+        t_values: Option<Vec<String>>,
+        z_values: Option<Vec<f64>>,
+    ) -> Self {
+        let mut axes = HashMap::new();
+        
+        // For trajectory, x and y are "tuple" axes - they share a composite axis
+        // In CoverageJSON, this is represented using a "composite" axis structure
+        axes.insert(
+            "composite".to_string(),
+            Axis::Values(
+                (0..x_values.len())
+                    .map(|i| AxisValue::Float(i as f64))
+                    .collect(),
+            ),
+        );
+        axes.insert(
+            "x".to_string(),
+            Axis::Values(x_values.into_iter().map(AxisValue::Float).collect()),
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values(y_values.into_iter().map(AxisValue::Float).collect()),
+        );
+
+        if let Some(t) = t_values {
+            axes.insert(
+                "t".to_string(),
+                Axis::Values(t.into_iter().map(AxisValue::String).collect()),
+            );
+        }
+
+        if let Some(z) = z_values {
+            axes.insert(
+                "z".to_string(),
+                Axis::Values(z.into_iter().map(AxisValue::Float).collect()),
+            );
+        }
+
+        let mut referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::Geographic {
+                id: "http://www.opengis.net/def/crs/EPSG/0/4326".to_string(),
+            },
+        }];
+
+        // Add temporal reference if time values present
+        if axes.contains_key("t") {
+            referencing.push(ReferenceSystemConnection {
+                coordinates: vec!["t".to_string()],
+                system: ReferenceSystem::Temporal {
+                    calendar: "Gregorian".to_string(),
+                },
+            });
+        }
+
+        // Add vertical reference if z values present
+        if axes.contains_key("z") {
+            referencing.push(ReferenceSystemConnection {
+                coordinates: vec!["z".to_string()],
+                system: ReferenceSystem::Vertical {
+                    id: "http://www.opengis.net/def/crs/OGC/0/Unknown".to_string(),
+                },
+            });
+        }
+
+        Self {
+            type_: "Domain".to_string(),
+            domain_type: DomainType::Trajectory,
+            axes,
+            referencing: Some(referencing),
+        }
+    }
 }
 
 /// Domain types supported by CoverageJSON.

@@ -241,6 +241,19 @@ impl DataQueries {
         });
         self
     }
+
+    /// Add trajectory query support.
+    pub fn with_trajectory(mut self, base_url: &str, collection_id: &str) -> Self {
+        self.trajectory = Some(QueryDescription {
+            link: Link::new(
+                format!("{}/collections/{}/trajectory", base_url, collection_id),
+                "data",
+            )
+            .with_type("application/vnd.cov+json")
+            .with_title("Trajectory query"),
+        });
+        self
+    }
 }
 
 /// Description of a query endpoint.

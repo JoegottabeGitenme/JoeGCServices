@@ -133,6 +133,15 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/instances/:instance_id/radius",
             get(handlers::radius::instance_radius_handler),
         )
+        // Trajectory query
+        .route(
+            "/edr/collections/:collection_id/trajectory",
+            get(handlers::trajectory::trajectory_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/trajectory",
+            get(handlers::trajectory::instance_trajectory_handler),
+        )
         // Health and metrics
         .route("/health", get(handlers::health::health_handler))
         .route("/ready", get(handlers::health::ready_handler))

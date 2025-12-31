@@ -108,6 +108,34 @@ impl ResponseSizeEstimate {
         }
     }
 
+    /// Estimate the response size for a trajectory query.
+    ///
+    /// Trajectory queries sample data at each waypoint along the path.
+    /// The number of points is simply the number of waypoints.
+    pub fn for_trajectory(
+        num_parameters: usize,
+        num_waypoints: usize,
+        num_time_steps: usize,
+        num_vertical_levels: usize,
+    ) -> Self {
+        // For trajectory, num_points = num_waypoints
+        // If time is embedded in coords (LINESTRINGM), num_time_steps should be 1
+        // since each waypoint has its own time
+        let num_points = num_waypoints;
+
+        let data_bytes = num_parameters * num_time_steps * num_vertical_levels * num_points * 4;
+        let json_overhead = num_parameters * 200 + num_points * 50; // More overhead per point for trajectory
+        let base_overhead = 1500; // Slightly more for trajectory domain
+
+        Self {
+            num_parameters,
+            num_time_steps,
+            num_vertical_levels,
+            num_points,
+            estimated_bytes: data_bytes + json_overhead + base_overhead,
+        }
+    }
+
     /// Get estimated size in megabytes.
     pub fn estimated_mb(&self) -> f64 {
         self.estimated_bytes as f64 / (1024.0 * 1024.0)
@@ -279,6 +307,17 @@ mod tests {
         // 100km ≈ 1 degree, so area ≈ π square degrees
         // At 0.03 degree resolution, that's roughly π / 0.0009 ≈ 3500 points
         assert!(estimate.num_points > 1000);
+        assert!(estimate.estimated_mb() > 0.0);
+    }
+
+    #[test]
+    fn test_trajectory_estimate() {
+        // Trajectory with 100 waypoints, 3 parameters
+        let estimate = ResponseSizeEstimate::for_trajectory(3, 100, 1, 1);
+
+        assert_eq!(estimate.num_points, 100);
+        assert_eq!(estimate.num_parameters, 3);
+        assert!(estimate.estimated_bytes > 0);
         assert!(estimate.estimated_mb() > 0.0);
     }
 }

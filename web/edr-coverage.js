@@ -13,6 +13,7 @@ class EDRCoverageValidator {
         this.testPoint = { lon: -100, lat: 40 };
         this.testArea = { lon: -100, lat: 40 }; // Center of 1x1 degree test polygon
         this.testRadius = { lon: -100, lat: 40, within: 50, units: 'km' }; // Radius query config
+        this.testTrajectory = { coords: 'LINESTRING(-100 40,-99 40.5,-98 41)' }; // Trajectory query config
         this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
@@ -72,13 +73,15 @@ class EDRCoverageValidator {
         // Bind query type select
         document.getElementById('query-type-select').addEventListener('change', (e) => {
             this.queryType = e.target.value;
-            // Toggle visibility of point vs area vs radius config
+            // Toggle visibility of point vs area vs radius vs trajectory config
             document.getElementById('test-point-config').style.display = 
                 this.queryType === 'position' ? '' : 'none';
             document.getElementById('test-area-config').style.display = 
                 this.queryType === 'area' ? '' : 'none';
             document.getElementById('test-radius-config').style.display = 
                 this.queryType === 'radius' ? '' : 'none';
+            document.getElementById('test-trajectory-config').style.display = 
+                this.queryType === 'trajectory' ? '' : 'none';
         });
 
         // Bind filter buttons
@@ -116,6 +119,11 @@ class EDRCoverageValidator {
             this.testRadius.units = e.target.value || 'km';
         });
 
+        // Bind test trajectory input
+        document.getElementById('test-trajectory-coords').addEventListener('change', (e) => {
+            this.testTrajectory.coords = e.target.value || 'LINESTRING(-100 40,-99 40.5,-98 41)';
+        });
+
         // Bind randomize toggle
         document.getElementById('randomize-toggle').addEventListener('change', (e) => {
             this.randomizeLocations = e.target.checked;
@@ -123,9 +131,11 @@ class EDRCoverageValidator {
             const pointInputs = document.querySelectorAll('#test-point-config input');
             const areaInputs = document.querySelectorAll('#test-area-config input');
             const radiusInputs = document.querySelectorAll('#test-radius-config input:not(#test-radius-within)');
+            const trajectoryInputs = document.querySelectorAll('#test-trajectory-config input');
             pointInputs.forEach(input => input.disabled = this.randomizeLocations);
             areaInputs.forEach(input => input.disabled = this.randomizeLocations);
             radiusInputs.forEach(input => input.disabled = this.randomizeLocations);
+            trajectoryInputs.forEach(input => input.disabled = this.randomizeLocations);
         });
 
         // Bind collection filter controls
@@ -331,6 +341,7 @@ class EDRCoverageValidator {
             collectionFilter: this.collectionFilter.length > 0 ? this.collectionFilter : 'all',
             testPoint: this.queryType === 'position' ? this.testPoint : null,
             testArea: this.queryType === 'area' ? this.testArea : null,
+            testTrajectory: this.queryType === 'trajectory' ? this.testTrajectory : null,
             hasCatalogCheck: this.hasCatalogCheck,
             summary: this.results.summary,
             advertised: this.results.advertised,
@@ -652,6 +663,8 @@ class EDRCoverageValidator {
             result = await this.testAreaQuery(collId, param, level, time, coll);
         } else if (this.queryType === 'radius') {
             result = await this.testRadiusQuery(collId, param, level, time, coll);
+        } else if (this.queryType === 'trajectory') {
+            result = await this.testTrajectoryQuery(collId, param, level, time, coll);
         } else {
             result = await this.testPositionQuery(collId, param, level, time, coll);
         }
@@ -929,6 +942,122 @@ class EDRCoverageValidator {
                 url
             };
         }
+    }
+
+    /**
+     * Make a single trajectory query and check result
+     */
+    async testTrajectoryQuery(collectionId, parameter, level, time, coll) {
+        // Get trajectory coordinates - either fixed or generate random within bbox
+        const coords = this.getTrajectoryCoordinates(coll);
+        
+        let url = `${this.endpoint}/collections/${collectionId}/trajectory?coords=${encodeURIComponent(coords)}&parameter-name=${parameter}`;
+
+        if (level !== null) {
+            url += `&z=${level}`;
+        }
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    queryType: 'trajectory',
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            const values = data.ranges?.[parameter]?.values || [];
+            const nonNullValues = values.filter(v => v !== null);
+            const hasData = nonNullValues.length > 0;
+
+            // Verify domain type is Trajectory
+            const domainType = data.domain?.domainType;
+            const isTrajectory = domainType === 'Trajectory';
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'trajectory',
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Trajectory data retrieved (${nonNullValues.length}/${values.length} non-null, domainType: ${domainType})` 
+                    : 'Query OK but all values null',
+                values: nonNullValues.slice(0, 10), // Show first 10 non-null values
+                valueCount: values.length,
+                nonNullCount: nonNullValues.length,
+                domainType: domainType,
+                isValidDomainType: isTrajectory,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                queryType: 'trajectory',
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Get trajectory coordinates - either fixed or generate random path within bbox
+     * @param {Object} coll - Collection object with bbox
+     * @returns {string} - WKT LINESTRING
+     */
+    getTrajectoryCoordinates(coll) {
+        if (!this.randomizeLocations) {
+            return this.testTrajectory.coords;
+        }
+        
+        // Generate a random trajectory within the collection's bbox
+        if (!coll.bbox || coll.bbox.length < 4) {
+            return this.testTrajectory.coords; // Fallback to default
+        }
+        
+        const [minLon, minLat, maxLon, maxLat] = coll.bbox;
+        
+        // Add padding (10% inward from edges)
+        const lonPadding = (maxLon - minLon) * 0.1;
+        const latPadding = (maxLat - minLat) * 0.1;
+        
+        // Generate 3 waypoints for the trajectory
+        const waypoints = [];
+        for (let i = 0; i < 3; i++) {
+            const lon = minLon + lonPadding + Math.random() * (maxLon - minLon - 2 * lonPadding);
+            const lat = minLat + latPadding + Math.random() * (maxLat - minLat - 2 * latPadding);
+            waypoints.push(`${Math.round(lon * 10000) / 10000} ${Math.round(lat * 10000) / 10000}`);
+        }
+        
+        return `LINESTRING(${waypoints.join(',')})`;
     }
 
     /**

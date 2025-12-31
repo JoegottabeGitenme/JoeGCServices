@@ -38,6 +38,7 @@
                     <option value="position" selected>Position (Point)</option>
                     <option value="area">Area (Polygon)</option>
                     <option value="radius">Radius (Circle)</option>
+                    <option value="trajectory">Trajectory (LineString)</option>
                 </select>
             </div>
             <div class="test-point-config" id="test-point-config">
@@ -62,6 +63,11 @@
                     <option value="m">m</option>
                     <option value="nm">nm</option>
                 </select>
+            </div>
+            <div class="test-trajectory-config" id="test-trajectory-config" style="display: none;">
+                <label>Trajectory:</label>
+                <input type="text" id="test-trajectory-coords" value="LINESTRING(-100 40,-99 40.5,-98 41)" size="50" title="WKT LINESTRING coordinates">
+                <span class="config-hint" title="Enter LINESTRING, LINESTRINGZ, LINESTRINGM, or LINESTRINGZM WKT. Example: LINESTRING(-100 40,-99 40.5,-98 41)">?</span>
             </div>
             <div class="randomize-config">
                 <label class="toggle-label">

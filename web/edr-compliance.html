@@ -527,6 +527,87 @@
                 </div>
             </div>
 
+            <!-- Trajectory Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="trajectory">
+                    <span class="toggle">+</span>
+                    Trajectory Query Conformance
+                    <span class="section-status" id="trajectory-status"></span>
+                </h3>
+                <div class="section-content" id="trajectory-tests">
+                    <div class="test-item" data-test="trajectory-basic">
+                        <span class="test-name">Trajectory Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_e9bce888-9ced-4764-9b4d-7b9ce47d1f23" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory Query (Section 8.2.5)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-covjson">
+                        <span class="test-name">Trajectory CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-missing-coords">
+                        <span class="test-name">Trajectory Missing coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-trajectory" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.29 trajectory coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-coords">
+                        <span class="test-name">Trajectory Invalid coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.43 LINESTRING coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-linestringz">
+                        <span class="test-name">Trajectory with LINESTRINGZ</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_trajectory_query" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory with Z coordinates">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-linestringm">
+                        <span class="test-name">Trajectory with LINESTRINGM</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_trajectory_query" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory with M (time) coordinates">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-z-conflict">
+                        <span class="test-name">Trajectory Z Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_109" target="_blank" class="spec-link" title="OGC EDR Spec: B.109 z param conflict with LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-multilinestring">
+                        <span class="test-name">MULTILINESTRING Trajectory</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: MULTILINESTRING support">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-with-params">
+                        <span class="test-name">Trajectory with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-datetime">
+                        <span class="test-name">Trajectory with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Error Handling Tests -->
             <div class="test-section">
                 <h3 class="section-header" data-section="errors">

@@ -1061,6 +1061,448 @@ impl RadiusQuery {
     }
 }
 
+/// A single waypoint in a trajectory.
+///
+/// Supports 2D (lon, lat), 3D with height (lon, lat, z), 3D with time (lon, lat, m),
+/// and 4D (lon, lat, z, m) waypoints.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrajectoryWaypoint {
+    /// Longitude in degrees.
+    pub lon: f64,
+
+    /// Latitude in degrees.
+    pub lat: f64,
+
+    /// Optional height/vertical level (from LINESTRINGZ or LINESTRINGZM).
+    /// Units depend on CRS, defaults to meters above sea level.
+    pub z: Option<f64>,
+
+    /// Optional time as Unix epoch seconds (from LINESTRINGM or LINESTRINGZM).
+    pub m: Option<i64>,
+}
+
+impl TrajectoryWaypoint {
+    /// Create a 2D waypoint (lon, lat).
+    pub fn new_2d(lon: f64, lat: f64) -> Self {
+        Self { lon, lat, z: None, m: None }
+    }
+
+    /// Create a 3D waypoint with height (lon, lat, z).
+    pub fn new_3d_z(lon: f64, lat: f64, z: f64) -> Self {
+        Self { lon, lat, z: Some(z), m: None }
+    }
+
+    /// Create a 3D waypoint with time (lon, lat, m).
+    pub fn new_3d_m(lon: f64, lat: f64, m: i64) -> Self {
+        Self { lon, lat, z: None, m: Some(m) }
+    }
+
+    /// Create a 4D waypoint (lon, lat, z, m).
+    pub fn new_4d(lon: f64, lat: f64, z: f64, m: i64) -> Self {
+        Self { lon, lat, z: Some(z), m: Some(m) }
+    }
+}
+
+/// Type of LINESTRING in the trajectory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineStringType {
+    /// 2D: LINESTRING (lon lat, lon lat, ...)
+    LineString,
+    /// 3D with height: LINESTRINGZ (lon lat z, lon lat z, ...)
+    LineStringZ,
+    /// 3D with time: LINESTRINGM (lon lat m, lon lat m, ...)
+    LineStringM,
+    /// 4D: LINESTRINGZM (lon lat z m, lon lat z m, ...)
+    LineStringZM,
+}
+
+impl LineStringType {
+    /// Check if this type includes height (Z) coordinates.
+    pub fn has_z(&self) -> bool {
+        matches!(self, LineStringType::LineStringZ | LineStringType::LineStringZM)
+    }
+
+    /// Check if this type includes time (M) coordinates.
+    pub fn has_m(&self) -> bool {
+        matches!(self, LineStringType::LineStringM | LineStringType::LineStringZM)
+    }
+}
+
+/// Result of parsing trajectory coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedTrajectory {
+    /// The type of LINESTRING parsed.
+    pub line_type: LineStringType,
+
+    /// The waypoints along the trajectory.
+    pub waypoints: Vec<TrajectoryWaypoint>,
+
+    /// Whether this is a MULTI* variant (multiple line segments).
+    pub is_multi: bool,
+}
+
+/// Trajectory query parameters.
+///
+/// Represents a path through space (and optionally time) along which
+/// data should be sampled.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrajectoryQuery {
+    /// The waypoints defining the trajectory path.
+    pub waypoints: Vec<TrajectoryWaypoint>,
+
+    /// The type of LINESTRING (indicates what coordinates are embedded).
+    #[serde(skip)]
+    pub line_type: Option<LineStringType>,
+
+    /// Requested vertical level(s) - only valid if coords doesn't include Z.
+    pub z: Option<Vec<f64>>,
+
+    /// Requested datetime or range - only valid if coords doesn't include M.
+    pub datetime: Option<DateTimeQuery>,
+
+    /// Requested parameter names.
+    pub parameter_names: Option<Vec<String>>,
+
+    /// Coordinate reference system.
+    pub crs: Option<String>,
+
+    /// Output format.
+    pub format: Option<String>,
+}
+
+impl Default for TrajectoryQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TrajectoryQuery {
+    /// Create an empty trajectory query.
+    pub fn new() -> Self {
+        Self {
+            waypoints: Vec::new(),
+            line_type: None,
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+            format: None,
+        }
+    }
+
+    /// Parse a WKT LINESTRING or MULTILINESTRING coordinate string.
+    ///
+    /// Supports:
+    /// - LINESTRING(lon lat, lon lat, ...)
+    /// - LINESTRINGZ(lon lat z, lon lat z, ...)
+    /// - LINESTRINGM(lon lat m, lon lat m, ...)
+    /// - LINESTRINGZM(lon lat z m, lon lat z m, ...)
+    /// - MULTILINESTRING((lon lat, ...),(lon lat, ...))
+    /// - And MULTI variants of Z, M, ZM
+    pub fn parse_coords(coords: &str) -> Result<ParsedTrajectory, CoordinateParseError> {
+        let coords = coords.trim();
+        let upper = coords.to_uppercase();
+
+        // Determine the type and whether it's a MULTI variant
+        let (line_type, is_multi) = Self::detect_linestring_type(&upper)?;
+
+        // Parse based on whether it's MULTI or single
+        let waypoints = if is_multi {
+            Self::parse_multi_linestring(coords, line_type)?
+        } else {
+            Self::parse_single_linestring(coords, line_type)?
+        };
+
+        if waypoints.is_empty() {
+            return Err(CoordinateParseError::InvalidWkt(
+                "LINESTRING must contain at least one waypoint".to_string(),
+            ));
+        }
+
+        Ok(ParsedTrajectory {
+            line_type,
+            waypoints,
+            is_multi,
+        })
+    }
+
+    /// Detect the LINESTRING type from the WKT string.
+    fn detect_linestring_type(upper: &str) -> Result<(LineStringType, bool), CoordinateParseError> {
+        // Check for MULTI variants first (they contain the non-MULTI type name)
+        let is_multi = upper.starts_with("MULTI");
+        let check_str = if is_multi { &upper[5..] } else { upper };
+
+        let line_type = if check_str.starts_with("LINESTRINGZM") {
+            LineStringType::LineStringZM
+        } else if check_str.starts_with("LINESTRINGZ") {
+            LineStringType::LineStringZ
+        } else if check_str.starts_with("LINESTRINGM") {
+            LineStringType::LineStringM
+        } else if check_str.starts_with("LINESTRING") {
+            LineStringType::LineString
+        } else {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Expected LINESTRING, LINESTRINGZ, LINESTRINGM, LINESTRINGZM, or MULTI* variant".to_string(),
+            ));
+        };
+
+        Ok((line_type, is_multi))
+    }
+
+    /// Parse a single LINESTRING.
+    fn parse_single_linestring(
+        coords: &str,
+        line_type: LineStringType,
+    ) -> Result<Vec<TrajectoryWaypoint>, CoordinateParseError> {
+        // Find the parentheses
+        let start = coords.find('(').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing opening parenthesis".to_string())
+        })?;
+        let end = coords.rfind(')').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing closing parenthesis".to_string())
+        })?;
+
+        if end <= start {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid parenthesis order".to_string(),
+            ));
+        }
+
+        let coords_str = &coords[start + 1..end].trim();
+        Self::parse_waypoints(coords_str, line_type)
+    }
+
+    /// Parse a MULTILINESTRING into waypoints (concatenates all segments).
+    fn parse_multi_linestring(
+        coords: &str,
+        line_type: LineStringType,
+    ) -> Result<Vec<TrajectoryWaypoint>, CoordinateParseError> {
+        // Find content after MULTI*LINESTRING*
+        let start = coords.find('(').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing opening parenthesis".to_string())
+        })?;
+        let end = coords.rfind(')').ok_or_else(|| {
+            CoordinateParseError::InvalidWkt("Missing closing parenthesis".to_string())
+        })?;
+
+        if end <= start {
+            return Err(CoordinateParseError::InvalidWkt(
+                "Invalid parenthesis order".to_string(),
+            ));
+        }
+
+        let inner = &coords[start + 1..end];
+        
+        // Parse each linestring segment
+        let mut all_waypoints = Vec::new();
+        let mut depth = 0;
+        let mut current_segment = String::new();
+
+        for ch in inner.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    if depth > 1 {
+                        current_segment.push(ch);
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // End of a segment
+                        let segment_str = current_segment.trim();
+                        if !segment_str.is_empty() {
+                            let waypoints = Self::parse_waypoints(segment_str, line_type)?;
+                            all_waypoints.extend(waypoints);
+                        }
+                        current_segment.clear();
+                    } else if depth > 0 {
+                        current_segment.push(ch);
+                    }
+                }
+                ',' if depth == 0 => {
+                    // Skip comma between segments
+                }
+                _ => {
+                    if depth > 0 {
+                        current_segment.push(ch);
+                    }
+                }
+            }
+        }
+
+        if all_waypoints.is_empty() {
+            return Err(CoordinateParseError::InvalidWkt(
+                "MULTILINESTRING must contain at least one linestring with waypoints".to_string(),
+            ));
+        }
+
+        Ok(all_waypoints)
+    }
+
+    /// Parse waypoints from a coordinate string based on the LINESTRING type.
+    fn parse_waypoints(
+        coords_str: &str,
+        line_type: LineStringType,
+    ) -> Result<Vec<TrajectoryWaypoint>, CoordinateParseError> {
+        let expected_coords = match line_type {
+            LineStringType::LineString => 2,
+            LineStringType::LineStringZ | LineStringType::LineStringM => 3,
+            LineStringType::LineStringZM => 4,
+        };
+
+        // Split by comma to get individual waypoints
+        coords_str
+            .split(',')
+            .map(|waypoint_str| {
+                let waypoint_str = waypoint_str.trim();
+                let parts: Vec<&str> = waypoint_str.split_whitespace().collect();
+
+                if parts.len() != expected_coords {
+                    return Err(CoordinateParseError::InvalidWkt(format!(
+                        "Expected {} coordinates for {:?}, got {} in '{}'",
+                        expected_coords, line_type, parts.len(), waypoint_str
+                    )));
+                }
+
+                let lon: f64 = parts[0].parse().map_err(|_| {
+                    CoordinateParseError::InvalidCoordinate(parts[0].to_string())
+                })?;
+                let lat: f64 = parts[1].parse().map_err(|_| {
+                    CoordinateParseError::InvalidCoordinate(parts[1].to_string())
+                })?;
+
+                // Validate lon/lat ranges
+                PositionQuery::validate_coordinates(lon, lat)?;
+
+                let waypoint = match line_type {
+                    LineStringType::LineString => TrajectoryWaypoint::new_2d(lon, lat),
+                    LineStringType::LineStringZ => {
+                        let z: f64 = parts[2].parse().map_err(|_| {
+                            CoordinateParseError::InvalidCoordinate(parts[2].to_string())
+                        })?;
+                        TrajectoryWaypoint::new_3d_z(lon, lat, z)
+                    }
+                    LineStringType::LineStringM => {
+                        let m: i64 = parts[2].parse().map_err(|_| {
+                            CoordinateParseError::InvalidCoordinate(format!(
+                                "Invalid Unix epoch time: {}",
+                                parts[2]
+                            ))
+                        })?;
+                        TrajectoryWaypoint::new_3d_m(lon, lat, m)
+                    }
+                    LineStringType::LineStringZM => {
+                        let z: f64 = parts[2].parse().map_err(|_| {
+                            CoordinateParseError::InvalidCoordinate(parts[2].to_string())
+                        })?;
+                        let m: i64 = parts[3].parse().map_err(|_| {
+                            CoordinateParseError::InvalidCoordinate(format!(
+                                "Invalid Unix epoch time: {}",
+                                parts[3]
+                            ))
+                        })?;
+                        TrajectoryWaypoint::new_4d(lon, lat, z, m)
+                    }
+                };
+
+                Ok(waypoint)
+            })
+            .collect()
+    }
+
+    /// Calculate the bounding box that encloses this trajectory.
+    pub fn bounding_box(&self) -> BboxQuery {
+        let mut west = f64::MAX;
+        let mut south = f64::MAX;
+        let mut east = f64::MIN;
+        let mut north = f64::MIN;
+
+        for wp in &self.waypoints {
+            west = west.min(wp.lon);
+            east = east.max(wp.lon);
+            south = south.min(wp.lat);
+            north = north.max(wp.lat);
+        }
+
+        BboxQuery {
+            west: west.max(-180.0),
+            south: south.max(-90.0),
+            east: east.min(180.0),
+            north: north.min(90.0),
+        }
+    }
+
+    /// Get the number of waypoints in the trajectory.
+    pub fn len(&self) -> usize {
+        self.waypoints.len()
+    }
+
+    /// Check if the trajectory is empty.
+    pub fn is_empty(&self) -> bool {
+        self.waypoints.is_empty()
+    }
+
+    /// Calculate approximate total path length in meters using Haversine distance.
+    pub fn path_length_meters(&self) -> f64 {
+        if self.waypoints.len() < 2 {
+            return 0.0;
+        }
+
+        let mut total = 0.0;
+        for i in 1..self.waypoints.len() {
+            let prev = &self.waypoints[i - 1];
+            let curr = &self.waypoints[i];
+            total += RadiusQuery::haversine_distance(prev.lon, prev.lat, curr.lon, curr.lat);
+        }
+        total
+    }
+
+    /// Get the time range covered by this trajectory (if M coordinates present).
+    ///
+    /// Returns (min_epoch, max_epoch) in seconds.
+    pub fn time_range(&self) -> Option<(i64, i64)> {
+        let times: Vec<i64> = self.waypoints.iter()
+            .filter_map(|wp| wp.m)
+            .collect();
+
+        if times.is_empty() {
+            return None;
+        }
+
+        let min = *times.iter().min().unwrap();
+        let max = *times.iter().max().unwrap();
+        Some((min, max))
+    }
+
+    /// Get the vertical level range covered by this trajectory (if Z coordinates present).
+    ///
+    /// Returns (min_z, max_z).
+    pub fn z_range(&self) -> Option<(f64, f64)> {
+        let z_values: Vec<f64> = self.waypoints.iter()
+            .filter_map(|wp| wp.z)
+            .collect();
+
+        if z_values.is_empty() {
+            return None;
+        }
+
+        let min = z_values.iter().cloned().fold(f64::MAX, f64::min);
+        let max = z_values.iter().cloned().fold(f64::MIN, f64::max);
+        Some((min, max))
+    }
+
+    /// Check if the trajectory coordinates include height (Z).
+    pub fn has_embedded_z(&self) -> bool {
+        self.line_type.map_or(false, |lt| lt.has_z())
+    }
+
+    /// Check if the trajectory coordinates include time (M).
+    pub fn has_embedded_m(&self) -> bool {
+        self.line_type.map_or(false, |lt| lt.has_m())
+    }
+}
+
 impl BboxQuery {
     /// Parse a bbox parameter.
     ///
@@ -1655,5 +2097,192 @@ mod tests {
         
         // Latitude should still be ~0.9 degrees
         assert!((bbox.north - 60.0 - 0.9).abs() < 0.1);
+    }
+
+    // =========== TrajectoryQuery tests ===========
+
+    #[test]
+    fn test_parse_linestring_2d() {
+        let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72, -3.35 50.92, -3.11 51.02)").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineString);
+        assert_eq!(result.waypoints.len(), 3);
+        assert!(!result.is_multi);
+        
+        assert_eq!(result.waypoints[0].lon, -3.53);
+        assert_eq!(result.waypoints[0].lat, 50.72);
+        assert!(result.waypoints[0].z.is_none());
+        assert!(result.waypoints[0].m.is_none());
+    }
+
+    #[test]
+    fn test_parse_linestring_lowercase() {
+        let result = TrajectoryQuery::parse_coords("linestring(-3.53 50.72, -3.35 50.92)").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineString);
+        assert_eq!(result.waypoints.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_linestringz() {
+        let result = TrajectoryQuery::parse_coords("LINESTRINGZ(-3.53 50.72 100, -3.35 50.92 200, -3.11 51.02 300)").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineStringZ);
+        assert_eq!(result.waypoints.len(), 3);
+        
+        assert_eq!(result.waypoints[0].lon, -3.53);
+        assert_eq!(result.waypoints[0].lat, 50.72);
+        assert_eq!(result.waypoints[0].z, Some(100.0));
+        assert!(result.waypoints[0].m.is_none());
+        
+        assert_eq!(result.waypoints[2].z, Some(300.0));
+    }
+
+    #[test]
+    fn test_parse_linestringm() {
+        // Unix epoch times (e.g., 1560507000 = 2019-06-14T07:30:00Z)
+        let result = TrajectoryQuery::parse_coords("LINESTRINGM(-3.53 50.72 1560507000, -3.35 50.92 1560508800)").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineStringM);
+        assert_eq!(result.waypoints.len(), 2);
+        
+        assert_eq!(result.waypoints[0].lon, -3.53);
+        assert_eq!(result.waypoints[0].lat, 50.72);
+        assert!(result.waypoints[0].z.is_none());
+        assert_eq!(result.waypoints[0].m, Some(1560507000));
+        
+        assert_eq!(result.waypoints[1].m, Some(1560508800));
+    }
+
+    #[test]
+    fn test_parse_linestringzm() {
+        let result = TrajectoryQuery::parse_coords("LINESTRINGZM(-3.53 50.72 100 1560507000, -3.35 50.92 200 1560508800)").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineStringZM);
+        assert_eq!(result.waypoints.len(), 2);
+        
+        assert_eq!(result.waypoints[0].lon, -3.53);
+        assert_eq!(result.waypoints[0].lat, 50.72);
+        assert_eq!(result.waypoints[0].z, Some(100.0));
+        assert_eq!(result.waypoints[0].m, Some(1560507000));
+    }
+
+    #[test]
+    fn test_parse_multilinestring() {
+        let result = TrajectoryQuery::parse_coords("MULTILINESTRING((-3.53 50.72, -3.35 50.92), (-3.11 51.02, -2.85 51.42))").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineString);
+        assert_eq!(result.waypoints.len(), 4); // Concatenated
+        assert!(result.is_multi);
+        
+        assert_eq!(result.waypoints[0].lon, -3.53);
+        assert_eq!(result.waypoints[2].lon, -3.11);
+    }
+
+    #[test]
+    fn test_parse_multilinestringz() {
+        let result = TrajectoryQuery::parse_coords("MULTILINESTRINGZ((-3.53 50.72 100, -3.35 50.92 200), (-3.11 51.02 300, -2.85 51.42 400))").unwrap();
+        assert_eq!(result.line_type, LineStringType::LineStringZ);
+        assert_eq!(result.waypoints.len(), 4);
+        assert!(result.is_multi);
+        
+        assert_eq!(result.waypoints[0].z, Some(100.0));
+        assert_eq!(result.waypoints[3].z, Some(400.0));
+    }
+
+    #[test]
+    fn test_parse_linestring_invalid_not_linestring() {
+        let result = TrajectoryQuery::parse_coords("POINT(-3.53 50.72)");
+        assert!(result.is_err());
+        
+        let result = TrajectoryQuery::parse_coords("POLYGON((-3.53 50.72, -3.35 50.92, -3.11 51.02, -3.53 50.72))");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_linestring_invalid_coords() {
+        // Wrong number of coordinates for type
+        let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72 100, -3.35 50.92 200)"); // 3 coords but not Z type
+        assert!(result.is_err());
+        
+        let result = TrajectoryQuery::parse_coords("LINESTRINGZ(-3.53 50.72, -3.35 50.92)"); // Missing Z
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_linestring_out_of_range() {
+        // Longitude out of range
+        let result = TrajectoryQuery::parse_coords("LINESTRING(-200 50.72, -3.35 50.92)");
+        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+        
+        // Latitude out of range
+        let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 100, -3.35 50.92)");
+        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+    }
+
+    #[test]
+    fn test_trajectory_query_bounding_box() {
+        let mut query = TrajectoryQuery::new();
+        query.waypoints = vec![
+            TrajectoryWaypoint::new_2d(-100.0, 35.0),
+            TrajectoryWaypoint::new_2d(-98.0, 37.0),
+            TrajectoryWaypoint::new_2d(-96.0, 36.0),
+        ];
+        
+        let bbox = query.bounding_box();
+        assert_eq!(bbox.west, -100.0);
+        assert_eq!(bbox.east, -96.0);
+        assert_eq!(bbox.south, 35.0);
+        assert_eq!(bbox.north, 37.0);
+    }
+
+    #[test]
+    fn test_trajectory_query_path_length() {
+        let mut query = TrajectoryQuery::new();
+        // Approximately 100 km apart at mid-latitudes
+        query.waypoints = vec![
+            TrajectoryWaypoint::new_2d(0.0, 0.0),
+            TrajectoryWaypoint::new_2d(1.0, 0.0), // ~111 km at equator
+        ];
+        
+        let length = query.path_length_meters();
+        assert!((length - 111_000.0).abs() < 1000.0); // Within 1 km
+    }
+
+    #[test]
+    fn test_trajectory_query_time_range() {
+        let mut query = TrajectoryQuery::new();
+        query.waypoints = vec![
+            TrajectoryWaypoint::new_3d_m(-3.53, 50.72, 1560507000),
+            TrajectoryWaypoint::new_3d_m(-3.35, 50.92, 1560510600),
+            TrajectoryWaypoint::new_3d_m(-3.11, 51.02, 1560508800),
+        ];
+        
+        let (min, max) = query.time_range().unwrap();
+        assert_eq!(min, 1560507000);
+        assert_eq!(max, 1560510600);
+    }
+
+    #[test]
+    fn test_trajectory_query_z_range() {
+        let mut query = TrajectoryQuery::new();
+        query.waypoints = vec![
+            TrajectoryWaypoint::new_3d_z(-3.53, 50.72, 100.0),
+            TrajectoryWaypoint::new_3d_z(-3.35, 50.92, 500.0),
+            TrajectoryWaypoint::new_3d_z(-3.11, 51.02, 300.0),
+        ];
+        
+        let (min, max) = query.z_range().unwrap();
+        assert_eq!(min, 100.0);
+        assert_eq!(max, 500.0);
+    }
+
+    #[test]
+    fn test_linestring_type_has_z_m() {
+        assert!(!LineStringType::LineString.has_z());
+        assert!(!LineStringType::LineString.has_m());
+        
+        assert!(LineStringType::LineStringZ.has_z());
+        assert!(!LineStringType::LineStringZ.has_m());
+        
+        assert!(!LineStringType::LineStringM.has_z());
+        assert!(LineStringType::LineStringM.has_m());
+        
+        assert!(LineStringType::LineStringZM.has_z());
+        assert!(LineStringType::LineStringZM.has_m());
     }
 }

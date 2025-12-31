@@ -9,3 +9,4 @@ pub mod instances;
 pub mod landing;
 pub mod position;
 pub mod radius;
+pub mod trajectory;

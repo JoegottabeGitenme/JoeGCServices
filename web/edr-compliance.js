@@ -281,6 +281,11 @@ async function runAllTests() {
         'radius-missing-within', 'radius-missing-within-units', 'radius-invalid-coords',
         'radius-too-large', 'radius-units-km', 'radius-units-mi', 'radius-units-m',
         'radius-multipoint', 'radius-z-parameter', 'radius-with-params', 'radius-datetime',
+        // Trajectory Query
+        'trajectory-basic', 'trajectory-covjson', 'trajectory-missing-coords',
+        'trajectory-invalid-coords', 'trajectory-linestringz', 'trajectory-linestringm',
+        'trajectory-z-conflict', 'trajectory-multilinestring', 'trajectory-with-params',
+        'trajectory-datetime',
         // Error Handling
         'error-404-collection', 'error-400-coords', 'error-400-datetime', 'error-response-structure',
         // Metadata
@@ -455,6 +460,27 @@ async function executeTest(testName) {
             return testRadiusWithParams();
         case 'radius-datetime':
             return testRadiusDatetime();
+        // Trajectory Query tests
+        case 'trajectory-basic':
+            return testTrajectoryBasic();
+        case 'trajectory-covjson':
+            return testTrajectoryCovJson();
+        case 'trajectory-missing-coords':
+            return testTrajectoryMissingCoords();
+        case 'trajectory-invalid-coords':
+            return testTrajectoryInvalidCoords();
+        case 'trajectory-linestringz':
+            return testTrajectoryLinestringZ();
+        case 'trajectory-linestringm':
+            return testTrajectoryLinestringM();
+        case 'trajectory-z-conflict':
+            return testTrajectoryZConflict();
+        case 'trajectory-multilinestring':
+            return testTrajectoryMultilinestring();
+        case 'trajectory-with-params':
+            return testTrajectoryWithParams();
+        case 'trajectory-datetime':
+            return testTrajectoryDatetime();
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
@@ -651,6 +677,27 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&parameter-name=TMP`];
         case 'radius-datetime':
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&datetime={validtime}`];
+        // Trajectory query URLs
+        case 'trajectory-basic':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)`];
+        case 'trajectory-covjson':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)`];
+        case 'trajectory-missing-coords':
+            return [`${API_BASE}/collections/${colId}/trajectory`];
+        case 'trajectory-invalid-coords':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=POLYGON((-100 40,-99 40,-99 41,-100 41,-100 40))`];
+        case 'trajectory-linestringz':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZ(-100 40 850,-99 40.5 700,-98 41 500)`];
+        case 'trajectory-linestringm':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGM(-100 40 1735574400,-99 40.5 1735578000,-98 41 1735581600)`];
+        case 'trajectory-z-conflict':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZ(-100 40 850,-99 40.5 700)&z=850`];
+        case 'trajectory-multilinestring':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))`];
+        case 'trajectory-with-params':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&parameter-name=TMP`];
+        case 'trajectory-datetime':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&datetime={validtime}`];
         case 'error-404-collection':
             return [`${API_BASE}/collections/nonexistent-collection-12345`];
         case 'error-400-coords':
@@ -2151,6 +2198,322 @@ async function testRadiusDatetime() {
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has domain', passed: !!res.json?.domain },
         { name: 'Domain type is Grid', passed: res.json?.domain?.domainType === 'Grid' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// TRAJECTORY QUERY TESTS
+// OGC EDR Spec: Section 8.2.5 Trajectory Query
+// ============================================================
+
+// Basic trajectory query with LINESTRING
+async function testTrajectoryBasic() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query returns proper CoverageJSON with Trajectory domain
+async function testTrajectoryCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Check for non-null data values
+    const ranges = res.json?.ranges || {};
+    const paramKeys = Object.keys(ranges);
+    let hasNonNullData = false;
+    if (paramKeys.length > 0) {
+        const firstParam = paramKeys[0];
+        const values = ranges[firstParam]?.values || [];
+        hasNonNullData = values.some(v => v !== null);
+    }
+    
+    const checks = [
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' },
+        { name: 'Has composite axis', passed: !!res.json?.domain?.axes?.composite },
+        { name: 'Has ranges', passed: paramKeys.length > 0 },
+        { name: 'Has non-null data values', passed: hasNonNullData }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query missing coords parameter - should return 400
+async function testTrajectoryMissingCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions coords', passed: (res.json?.detail || '').toLowerCase().includes('coord') }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with invalid coords (POLYGON instead of LINESTRING) - should return 400
+async function testTrajectoryInvalidCoords() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-100 40,-99 40,-99 41,-100 41,-100 40))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(polygon)}`);
+    const checks = [
+        { name: 'Status 400', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error response', passed: res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with LINESTRINGZ (embedded vertical levels)
+async function testTrajectoryLinestringZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    // Find an isobaric collection that supports z levels
+    const isobaricCol = collections.find(c => 
+        c.id.includes('isobaric') || 
+        c.extent?.vertical?.values?.length > 0
+    );
+    
+    if (!isobaricCol) {
+        return { passed: true, checks: [{ name: 'No isobaric collection available (test N/A)', passed: true }] };
+    }
+
+    // LINESTRINGZ with embedded z values (height in meters)
+    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 700,-98 41 500)';
+    const res = await fetchJson(`${API_BASE}/collections/${isobaricCol.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Should return 200 and have z axis data
+    const hasZAxis = !!res.json?.domain?.axes?.z || !!res.json?.domain?.axes?.composite;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' },
+        { name: 'Has z axis or composite axis', passed: hasZAxis }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with LINESTRINGM (embedded time values as Unix epoch)
+async function testTrajectoryLinestringM() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    // Convert first three times to Unix epoch (seconds since 1970-01-01)
+    // Use valid epoch times in the future for testing
+    const epoch1 = Math.floor(new Date(times[0]).getTime() / 1000);
+    const epoch2 = epoch1 + 3600;  // +1 hour
+    const epoch3 = epoch1 + 7200;  // +2 hours
+    
+    // LINESTRINGM with embedded M values (Unix epoch time)
+    const coords = `LINESTRINGM(-100 40 ${epoch1},-99 40.5 ${epoch2},-98 41 ${epoch3})`;
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Should return 200 and have time axis data
+    const hasTAxis = !!res.json?.domain?.axes?.t || !!res.json?.domain?.axes?.composite;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' },
+        { name: 'Has t axis or composite axis', passed: hasTAxis }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with LINESTRINGZ and z parameter - should return 400 (conflict)
+async function testTrajectoryZConflict() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRINGZ has embedded Z, but we're also providing z query param - this is a conflict
+    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 700)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&z=850`);
+    
+    // Per OGC spec, when coords contain Z values, providing z param is invalid
+    const checks = [
+        { name: 'Status 400 (z conflict)', passed: res.status === 400 },
+        { name: 'Has error type', passed: !!res.json?.type },
+        { name: 'Error mentions z or conflict', passed: 
+            (res.json?.detail || '').toLowerCase().includes('z') || 
+            (res.json?.detail || '').toLowerCase().includes('conflict') ||
+            (res.json?.detail || '').toLowerCase().includes('embed')
+        }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with MULTILINESTRING (multiple trajectory segments)
+async function testTrajectoryMultilinestring() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Two separate trajectory segments
+    const coords = 'MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // MULTILINESTRING can return either:
+    // 1. CoverageCollection with multiple coverages (one per segment) - strict interpretation
+    // 2. Single Coverage with merged Trajectory domain - permissive interpretation
+    // Both are valid per OGC spec
+    const isCoverageCollection = res.json?.type === 'CoverageCollection';
+    const hasCoverages = Array.isArray(res.json?.coverages) && res.json.coverages.length >= 2;
+    const isSingleCoverage = res.json?.type === 'Coverage';
+    const isTrajectoryDomain = res.json?.domain?.domainType === 'Trajectory';
+    
+    // Accept either approach
+    const validResponse = isCoverageCollection ? hasCoverages : (isSingleCoverage && isTrajectoryDomain);
+    
+    const checks = [
+        { name: 'Status 200 (or 400 if not supported)', passed: res.status === 200 || res.status === 400 },
+        { name: 'If 200, valid response type', passed: res.status !== 200 || validResponse },
+        { name: 'If 200, has Coverage or CoverageCollection', passed: res.status !== 200 || isSingleCoverage || isCoverageCollection }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with parameter-name filtering
+async function testTrajectoryWithParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get the collection's parameters
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const params = colRes.json?.parameter_names || {};
+    const paramKeys = Object.keys(params);
+    
+    if (paramKeys.length === 0) {
+        return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
+    }
+    
+    // Request only the first parameter
+    const requestedParam = paramKeys[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&parameter-name=${requestedParam}`);
+    
+    const returnedParams = Object.keys(res.json?.ranges || {});
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has ranges', passed: returnedParams.length > 0 },
+        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === requestedParam }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory query with datetime parameter
+async function testTrajectoryDatetime() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    const datetime = times[0]; // Use first available time
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(coords)}&datetime=${encodeURIComponent(datetime)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!res.json?.domain },
+        { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' }
     ];
     return {
         passed: checks.every(c => c.passed),
@@ -3787,6 +4150,47 @@ const SPEC_LINKS = {
     'area-no-params': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_conf_area_no-query-params',
         title: 'Area - No Query Params (Test B.75)'
+    },
+    // Trajectory Query tests
+    'trajectory-basic': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_trajectory-section',
+        title: 'Trajectory Query (Req A.29)'
+    },
+    'trajectory-covjson': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_trajectory-section',
+        title: 'Trajectory Query - CoverageJSON Response'
+    },
+    'trajectory-missing-coords': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-trajectory',
+        title: 'Trajectory Query - coords required (Req A.29 E)'
+    },
+    'trajectory-invalid-coords': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-definition',
+        title: 'Trajectory Query - LINESTRING required (Req A.109)'
+    },
+    'trajectory-linestringz': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-definition',
+        title: 'Trajectory Query - LINESTRINGZ (Req A.109)'
+    },
+    'trajectory-linestringm': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-definition',
+        title: 'Trajectory Query - LINESTRINGM (Req A.109)'
+    },
+    'trajectory-z-conflict': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-z-definition',
+        title: 'Trajectory Query - Z parameter conflict (Req A.113)'
+    },
+    'trajectory-multilinestring': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response',
+        title: 'Trajectory Query - MULTILINESTRING (Req A.110)'
+    },
+    'trajectory-with-params': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_trajectory-section',
+        title: 'Trajectory Query - parameter-name filter'
+    },
+    'trajectory-datetime': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_trajectory-section',
+        title: 'Trajectory Query - datetime parameter'
     },
     // Accept Header Content Negotiation
     'accept-covjson': {
