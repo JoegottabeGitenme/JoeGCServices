@@ -306,6 +306,11 @@ async function runAllTests() {
         'cube-invalid-bbox', 'cube-multi-z', 'cube-with-datetime', 'cube-with-resolution',
         'cube-instance', 'cube-not-found', 'cube-no-query-params', 'cube-z-range',
         'cube-z-recurring', 'cube-invalid-z', 'cube-crs-valid', 'cube-f-covjson',
+        // Locations Query
+        'locations-list', 'locations-geojson-structure', 'locations-query-basic',
+        'locations-query-covjson', 'locations-invalid-id', 'locations-with-params',
+        'locations-with-datetime', 'locations-cache-header', 'locations-instance',
+        'locations-crs-valid', 'locations-f-covjson',
         // Error Handling
         'error-404-collection', 'error-400-coords', 'error-400-datetime', 'error-response-structure',
         // Metadata
@@ -720,6 +725,29 @@ async function executeTest(testName) {
             return testCubeCrsValid();
         case 'cube-f-covjson':
             return testCubeFCovJson();
+        // Locations Query tests
+        case 'locations-list':
+            return testLocationsList();
+        case 'locations-geojson-structure':
+            return testLocationsGeoJsonStructure();
+        case 'locations-query-basic':
+            return testLocationsQueryBasic();
+        case 'locations-query-covjson':
+            return testLocationsQueryCovJson();
+        case 'locations-invalid-id':
+            return testLocationsInvalidId();
+        case 'locations-with-params':
+            return testLocationsWithParams();
+        case 'locations-with-datetime':
+            return testLocationsWithDatetime();
+        case 'locations-cache-header':
+            return testLocationsCacheHeader();
+        case 'locations-instance':
+            return testLocationsInstance();
+        case 'locations-crs-valid':
+            return testLocationsCrsValid();
+        case 'locations-f-covjson':
+            return testLocationsFCovJson();
         default:
             return { passed: false, error: 'Unknown test' };
     }
@@ -1002,6 +1030,29 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&crs=CRS:84`];
         case 'cube-f-covjson':
             return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850&f=CoverageJSON`];
+        // Locations Query URLs
+        case 'locations-list':
+            return [`${API_BASE}/collections/${colId}/locations`];
+        case 'locations-geojson-structure':
+            return [`${API_BASE}/collections/${colId}/locations`];
+        case 'locations-query-basic':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK`];
+        case 'locations-query-covjson':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK`];
+        case 'locations-invalid-id':
+            return [`${API_BASE}/collections/${colId}/locations/NONEXISTENT_LOCATION_12345`];
+        case 'locations-with-params':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK?parameter-name=TMP`];
+        case 'locations-with-datetime':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK?datetime={validtime}`];
+        case 'locations-cache-header':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK`];
+        case 'locations-instance':
+            return [`${API_BASE}/collections/${colId}/instances/{instanceId}/locations/KJFK`];
+        case 'locations-crs-valid':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK?crs=CRS:84`];
+        case 'locations-f-covjson':
+            return [`${API_BASE}/collections/${colId}/locations/KJFK?f=CoverageJSON`];
         default:
             return [];
     }
@@ -5820,6 +5871,448 @@ async function testCubeFCovJson() {
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Response is CoverageJSON', passed: isCovJson },
         { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// LOCATIONS QUERY TESTS
+// OGC EDR Spec: Section 8.2.8 Locations Query
+// ============================================================
+
+// Helper to get a location ID from the locations list
+async function getFirstLocationId(collectionId) {
+    const res = await fetchJson(`${API_BASE}/collections/${collectionId}/locations`);
+    if (res.status === 200 && res.json?.features?.length > 0) {
+        // Get the first location ID from GeoJSON features
+        return res.json.features[0]?.id || res.json.features[0]?.properties?.id;
+    }
+    return null;
+}
+
+// Test listing all locations - should return GeoJSON FeatureCollection
+async function testLocationsList() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
+    
+    // Check if locations endpoint is supported (may return 404 if not configured)
+    if (res.status === 404) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'Locations endpoint not configured (test N/A)', passed: true }],
+            response: res
+        };
+    }
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type field', passed: !!res.json?.type },
+        { name: 'Type is FeatureCollection', passed: res.json?.type === 'FeatureCollection' },
+        { name: 'Has features array', passed: Array.isArray(res.json?.features) }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test GeoJSON FeatureCollection structure for locations
+async function testLocationsGeoJsonStructure() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
+    
+    if (res.status === 404) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'Locations endpoint not configured (test N/A)', passed: true }],
+            response: res
+        };
+    }
+    
+    const features = res.json?.features || [];
+    
+    // Check each feature structure
+    let featuresValid = true;
+    if (features.length > 0) {
+        for (const feature of features) {
+            if (feature.type !== 'Feature' || 
+                !feature.geometry || 
+                !feature.properties) {
+                featuresValid = false;
+                break;
+            }
+        }
+    }
+    
+    // Check first feature details
+    const firstFeature = features[0];
+    const hasValidGeometry = firstFeature?.geometry?.type && 
+                             firstFeature?.geometry?.coordinates;
+    const hasId = firstFeature?.id !== undefined || firstFeature?.properties?.id !== undefined;
+    const hasName = !!firstFeature?.properties?.name || !!firstFeature?.properties?.label;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is FeatureCollection', passed: res.json?.type === 'FeatureCollection' },
+        { name: 'Has features array', passed: features.length > 0 },
+        { name: 'Features have valid structure', passed: featuresValid },
+        { name: 'Feature has geometry with type and coordinates', passed: hasValidGeometry },
+        { name: 'Feature has id', passed: hasId },
+        { name: 'Feature has name or label property', passed: hasName }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Basic location query - get data at a named location
+async function testLocationsQueryBasic() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get first location ID
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available or endpoint not configured (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type', passed: !!res.json?.type },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query returns proper CoverageJSON
+async function testLocationsQueryCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`);
+    
+    // Check for non-null data values
+    const ranges = res.json?.ranges || {};
+    const paramKeys = Object.keys(ranges);
+    let hasNonNullData = false;
+    if (paramKeys.length > 0) {
+        const firstParam = paramKeys[0];
+        const values = ranges[firstParam]?.values || [];
+        hasNonNullData = values.some(v => v !== null);
+    }
+    
+    const checks = [
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Domain type is Point', passed: res.json?.domain?.domainType === 'Point' },
+        { name: 'Has axes', passed: !!res.json?.domain?.axes },
+        { name: 'Has ranges', passed: paramKeys.length > 0 },
+        { name: 'Has non-null data values', passed: hasNonNullData }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Invalid location ID should return 404
+async function testLocationsInvalidId() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // First check if locations endpoint exists at all
+    const locationsRes = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
+    if (locationsRes.status === 404) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'Locations endpoint not configured (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/NONEXISTENT_LOCATION_12345`);
+    
+    const checks = [
+        { name: 'Status 404', passed: res.status === 404 },
+        { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query with parameter-name filter
+async function testLocationsWithParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    // Get collection's parameters
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const paramNames = colRes.json?.parameter_names || {};
+    const availableParams = Object.keys(paramNames);
+    
+    if (availableParams.length === 0) {
+        return { passed: true, checks: [{ name: 'No parameters defined (test N/A)', passed: true }] };
+    }
+    
+    const requestedParam = availableParams[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}?parameter-name=${requestedParam}`);
+    
+    const returnedParams = Object.keys(res.json?.ranges || {});
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has ranges', passed: returnedParams.length > 0 },
+        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === requestedParam }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query with datetime parameter
+async function testLocationsWithDatetime() {
+    const { collection, times } = await getCollectionTimes();
+    if (!collection) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+    if (times.length === 0) {
+        return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
+    }
+    
+    const locationId = await getFirstLocationId(collection.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const datetime = times[0];
+    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/locations/${locationId}?datetime=${encodeURIComponent(datetime)}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query has X-Cache header (tests our caching implementation)
+async function testLocationsCacheHeader() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    // Make two requests - second one should be cached
+    // Use cache: 'no-store' to bypass browser caching and ensure requests hit the server
+    const res1 = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`, { cache: 'no-store' });
+    const res2 = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`, { cache: 'no-store' });
+    
+    // Check for X-Cache header on second request
+    const xCacheHeader = res2.headers?.get('x-cache') || '';
+    const hasCacheHeader = xCacheHeader.length > 0;
+    const isCacheHit = xCacheHeader.toLowerCase().includes('hit');
+    
+    const checks = [
+        { name: 'Status 200', passed: res2.status === 200 },
+        { name: 'Has X-Cache header', passed: hasCacheHeader },
+        { name: 'Second request is cache HIT', passed: isCacheHit }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res2
+    };
+}
+
+// Location query via instance path
+async function testLocationsInstance() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get instances for this collection
+    const instancesRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
+    const instances = instancesRes.json?.instances || [];
+    
+    if (instances.length === 0) {
+        return { passed: true, checks: [{ name: 'No instances available (test N/A)', passed: true }] };
+    }
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const instance = instances[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/instances/${instance.id}/locations/${locationId}`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Query via instance path works', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!res.json?.domain }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query with crs parameter
+async function testLocationsCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}?crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Location query with f=CoverageJSON parameter
+async function testLocationsFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    const locationId = await getFirstLocationId(col.id);
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}?f=CoverageJSON`);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
     ];
     return {
         passed: checks.every(c => c.passed),

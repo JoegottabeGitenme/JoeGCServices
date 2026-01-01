@@ -38,6 +38,8 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 dotenvy = { workspace = true }
+bytes = { workspace = true }
+lru = "0.12"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

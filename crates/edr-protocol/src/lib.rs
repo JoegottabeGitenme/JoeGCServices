@@ -29,6 +29,7 @@ pub mod collections;
 pub mod coverage_json;
 pub mod errors;
 pub mod geojson;
+pub mod locations;
 pub mod parameters;
 pub mod queries;
 pub mod responses;
@@ -41,6 +42,7 @@ pub use coverage_json::{
 };
 pub use errors::EdrError;
 pub use geojson::{EdrFeature, EdrFeatureCollection, EdrGeometry, EdrProperties, ParameterValue};
+pub use locations::{Location, LocationFeature, LocationFeatureCollection, LocationsConfig};
 pub use parameters::{ObservedProperty, Parameter, Unit};
 pub use queries::{
     AreaQuery, BboxQuery, CoordinateParseError, CorridorQuery, DateTimeQuery, DistanceUnit,
@@ -68,6 +70,8 @@ pub mod conformance {
     pub const TRAJECTORY: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/trajectory";
     /// Corridor query conformance class
     pub const CORRIDOR: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/corridor";
+    /// Locations query conformance class
+    pub const LOCATIONS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/locations";
     /// Instances conformance class
     pub const INSTANCES: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances";
     /// CoverageJSON conformance class

@@ -28,6 +28,10 @@ class EDRCoverageValidator {
             resolutionX: 10,
             resolutionY: 10
         }; // Cube query config
+        this.testLocations = {
+            locationId: 'KJFK',
+            availableLocations: [] // Populated from API
+        }; // Locations query config
         this.randomizeLocations = false; // When true, pick random coords within collection bbox
         this.running = false;
         this.abortController = null;
@@ -92,7 +96,7 @@ class EDRCoverageValidator {
         // Bind query type select
         document.getElementById('query-type-select').addEventListener('change', (e) => {
             this.queryType = e.target.value;
-            // Toggle visibility of point vs area vs radius vs trajectory vs corridor vs cube config
+            // Toggle visibility of point vs area vs radius vs trajectory vs corridor vs cube vs locations config
             document.getElementById('test-point-config').style.display = 
                 this.queryType === 'position' ? '' : 'none';
             document.getElementById('test-area-config').style.display = 
@@ -105,6 +109,13 @@ class EDRCoverageValidator {
                 this.queryType === 'corridor' ? '' : 'none';
             document.getElementById('test-cube-config').style.display = 
                 this.queryType === 'cube' ? '' : 'none';
+            document.getElementById('test-locations-config').style.display = 
+                this.queryType === 'locations' ? '' : 'none';
+            
+            // Load available locations when switching to locations query type
+            if (this.queryType === 'locations') {
+                this.loadAvailableLocations();
+            }
         });
 
         // Bind test point inputs
@@ -171,6 +182,20 @@ class EDRCoverageValidator {
         });
         document.getElementById('test-cube-resolution-y').addEventListener('change', (e) => {
             this.testCube.resolutionY = parseInt(e.target.value) || 10;
+        });
+
+        // Bind test locations inputs
+        document.getElementById('test-location-id').addEventListener('change', (e) => {
+            this.testLocations.locationId = e.target.value || 'KJFK';
+        });
+        document.getElementById('refresh-locations-btn').addEventListener('click', () => {
+            this.loadAvailableLocations();
+        });
+        document.getElementById('location-select').addEventListener('change', (e) => {
+            if (e.target.value) {
+                this.testLocations.locationId = e.target.value;
+                document.getElementById('test-location-id').value = e.target.value;
+            }
         });
 
         // Bind randomize toggle
@@ -412,6 +437,7 @@ class EDRCoverageValidator {
             testTrajectory: this.queryType === 'trajectory' ? this.testTrajectory : null,
             testCorridor: this.queryType === 'corridor' ? this.testCorridor : null,
             testCube: this.queryType === 'cube' ? this.testCube : null,
+            testLocations: this.queryType === 'locations' ? { locationId: this.testLocations.locationId } : null,
             hasCatalogCheck: this.hasCatalogCheck,
             summary: this.results.summary,
             advertised: this.results.advertised,
@@ -748,6 +774,8 @@ class EDRCoverageValidator {
                 result = await this.testCorridorQuery(collId, param, level, time, coll, format);
             } else if (this.queryType === 'cube') {
                 result = await this.testCubeQuery(collId, param, level, time, coll, format);
+            } else if (this.queryType === 'locations') {
+                result = await this.testLocationsQuery(collId, param, level, time, coll, format);
             } else {
                 result = await this.testPositionQuery(collId, param, level, time, coll, format);
             }
@@ -1504,6 +1532,177 @@ class EDRCoverageValidator {
                 duration: Math.round(performance.now() - startTime),
                 url
             };
+        }
+    }
+
+    /**
+     * Make a single locations query and check result
+     * Uses a named location ID instead of coordinates
+     * @param {string} format - 'covjson' or 'geojson'
+     */
+    async testLocationsQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
+        // Get location ID - either fixed or pick random from available locations
+        const locationId = this.getLocationId(collectionId);
+        
+        let url = `${this.endpoint}/collections/${collectionId}/locations/${locationId}?parameter-name=${parameter}`;
+
+        if (level !== null) {
+            url += `&z=${level}`;
+        }
+        if (time) {
+            url += `&datetime=${encodeURIComponent(time)}`;
+        }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, { 
+                signal: this.abortController?.signal 
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format,
+                    queryType: 'locations',
+                    locationId,
+                    status: 'fail',
+                    message: `HTTP ${response.status}: ${response.statusText}`,
+                    duration,
+                    url
+                };
+            }
+
+            const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                const result = this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+                result.locationId = locationId;
+                return result;
+            }
+            
+            const values = data.ranges?.[parameter]?.values || [];
+            const nonNullValues = values.filter(v => v !== null);
+            const hasData = nonNullValues.length > 0;
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format: 'covjson',
+                queryType: 'locations',
+                locationId,
+                status: hasData ? 'pass' : 'warn',
+                message: hasData 
+                    ? `Location "${locationId}" data retrieved (${nonNullValues.length}/${values.length} non-null)` 
+                    : `Query OK but all values null for location "${locationId}"`,
+                values: nonNullValues.slice(0, 10), // Show first 10 non-null values
+                valueCount: values.length,
+                nonNullCount: nonNullValues.length,
+                duration,
+                url,
+                response: data
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format,
+                queryType: 'locations',
+                locationId,
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Get the location ID to use for a query
+     * If randomize is enabled, picks a random location from available ones
+     * @param {string} collectionId - Collection ID (used for per-collection location caching in future)
+     * @returns {string} - Location ID
+     */
+    getLocationId(collectionId) {
+        if (this.randomizeLocations && this.testLocations.availableLocations.length > 0) {
+            const randomIndex = Math.floor(Math.random() * this.testLocations.availableLocations.length);
+            return this.testLocations.availableLocations[randomIndex];
+        }
+        return this.testLocations.locationId;
+    }
+
+    /**
+     * Load available locations from the first collection
+     * Populates the location select dropdown
+     */
+    async loadAvailableLocations() {
+        const select = document.getElementById('location-select');
+        select.innerHTML = '<option value="">Loading...</option>';
+        
+        try {
+            // Get the first collection to query its locations
+            const collectionsResp = await fetch(`${this.endpoint}/collections`);
+            if (!collectionsResp.ok) {
+                throw new Error(`HTTP ${collectionsResp.status}`);
+            }
+            const collectionsData = await collectionsResp.json();
+            const collections = collectionsData.collections || [];
+            
+            if (collections.length === 0) {
+                select.innerHTML = '<option value="">No collections</option>';
+                return;
+            }
+            
+            // Try to get locations from the first collection
+            const firstCollId = collections[0].id;
+            const locationsResp = await fetch(`${this.endpoint}/collections/${firstCollId}/locations`);
+            
+            if (!locationsResp.ok) {
+                throw new Error(`HTTP ${locationsResp.status}`);
+            }
+            
+            const locationsData = await locationsResp.json();
+            const features = locationsData.features || [];
+            
+            // Extract location IDs from features
+            const locationIds = features.map(f => f.id || f.properties?.id).filter(Boolean);
+            this.testLocations.availableLocations = locationIds;
+            
+            // Populate select
+            select.innerHTML = '<option value="">-- or select --</option>';
+            locationIds.forEach(id => {
+                const option = document.createElement('option');
+                option.value = id;
+                // Try to get a nice label from feature properties
+                const feature = features.find(f => (f.id || f.properties?.id) === id);
+                const name = feature?.properties?.name || id;
+                option.textContent = name !== id ? `${id} - ${name}` : id;
+                select.appendChild(option);
+            });
+            
+            if (locationIds.length === 0) {
+                select.innerHTML = '<option value="">No locations found</option>';
+            }
+        } catch (e) {
+            console.error('Failed to load locations:', e);
+            select.innerHTML = '<option value="">Error loading</option>';
         }
     }
 

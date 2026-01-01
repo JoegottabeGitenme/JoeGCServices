@@ -41,6 +41,7 @@
                     <option value="trajectory">Trajectory (LineString)</option>
                     <option value="corridor">Corridor</option>
                     <option value="cube">Cube (3D Volume)</option>
+                    <option value="locations">Locations (Named)</option>
                 </select>
             </div>
             <div class="format-config">
@@ -113,6 +114,15 @@
                 <span>x</span>
                 <input type="number" id="test-cube-resolution-y" value="10" size="3" title="Grid resolution Y">
                 <span class="config-hint" title="Cube query: retrieves 3D volumetric data within a bounding box at specified vertical levels. Only available for collections with vertical extent (isobaric, height_above_ground).">?</span>
+            </div>
+            <div class="test-locations-config" id="test-locations-config" style="display: none;">
+                <label>Location ID:</label>
+                <input type="text" id="test-location-id" value="KJFK" size="10" title="Named location ID (e.g., KJFK, KLAX)">
+                <button type="button" id="refresh-locations-btn" title="Refresh available locations">↻</button>
+                <select id="location-select" title="Select from available locations">
+                    <option value="">-- or select --</option>
+                </select>
+                <span class="config-hint" title="Enter a location ID from the locations endpoint (e.g., KJFK, KLAX, new_york). When randomize is enabled, a random location will be picked from available locations.">?</span>
             </div>
             <div class="randomize-config">
                 <label class="toggle-label">

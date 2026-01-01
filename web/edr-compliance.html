@@ -1057,6 +1057,94 @@
                 </div>
             </div>
 
+            <!-- Locations Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="locations">
+                    <span class="toggle">+</span>
+                    Locations Query Conformance
+                    <span class="section-status" id="locations-status"></span>
+                </h3>
+                <div class="section-content" id="locations-tests">
+                    <div class="test-item" data-test="locations-list">
+                        <span class="test-name">List All Locations (GeoJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_locations-section" target="_blank" class="spec-link" title="OGC EDR Spec: Locations Query (Section 8.2.8)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-geojson-structure">
+                        <span class="test-name">GeoJSON FeatureCollection Structure</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON Format">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-query-basic">
+                        <span class="test-name">Query Data at Named Location</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_locations-section" target="_blank" class="spec-link" title="OGC EDR Spec: Locations Query (Section 8.2.8)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-query-covjson">
+                        <span class="test-name">Location Query CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-invalid-id">
+                        <span class="test-name">Invalid Location ID Returns 404</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-with-params">
+                        <span class="test-name">Location Query with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-with-datetime">
+                        <span class="test-name">Location Query with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-cache-header">
+                        <span class="test-name">Location Query Has X-Cache Header</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="HTTP Caching Headers">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-instance">
+                        <span class="test-name">Instance Locations Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instances (Section 8.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="OGC EDR Spec: CRS Definition">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Format Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Error Handling Tests -->
             <div class="test-section">
                 <h3 class="section-header" data-section="errors">

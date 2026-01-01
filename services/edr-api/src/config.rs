@@ -1,6 +1,7 @@
 //! EDR configuration loading and types.
 
 use anyhow::{Context, Result};
+use edr_protocol::LocationsConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -10,6 +11,9 @@ use std::path::Path;
 pub struct EdrConfig {
     /// Collection definitions by model.
     pub models: HashMap<String, ModelEdrConfig>,
+
+    /// Global named locations for EDR queries.
+    pub locations: LocationsConfig,
 }
 
 impl EdrConfig {
@@ -27,6 +31,7 @@ impl EdrConfig {
         }
 
         let mut models = HashMap::new();
+        let mut locations = LocationsConfig::default();
 
         // Read all YAML files in the directory
         for entry in
@@ -37,18 +42,38 @@ impl EdrConfig {
 
             if let Some(ext) = file_path.extension() {
                 if ext == "yaml" || ext == "yml" {
-                    let content = std::fs::read_to_string(&file_path)
-                        .with_context(|| format!("Failed to read: {:?}", file_path))?;
+                    // Check if this is the locations config file
+                    let file_name = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-                    let config: ModelEdrConfig = serde_yaml::from_str(&content)
-                        .with_context(|| format!("Failed to parse: {:?}", file_path))?;
+                    if file_name == "locations" {
+                        // Parse as locations config
+                        let content = std::fs::read_to_string(&file_path)
+                            .with_context(|| format!("Failed to read: {:?}", file_path))?;
 
-                    models.insert(config.model.clone(), config);
+                        locations = serde_yaml::from_str(&content).with_context(|| {
+                            format!("Failed to parse locations config: {:?}", file_path)
+                        })?;
+
+                        tracing::info!(
+                            "Loaded {} EDR locations from {:?}",
+                            locations.locations.len(),
+                            file_path
+                        );
+                    } else {
+                        // Parse as model EDR config
+                        let content = std::fs::read_to_string(&file_path)
+                            .with_context(|| format!("Failed to read: {:?}", file_path))?;
+
+                        let config: ModelEdrConfig = serde_yaml::from_str(&content)
+                            .with_context(|| format!("Failed to parse: {:?}", file_path))?;
+
+                        models.insert(config.model.clone(), config);
+                    }
                 }
             }
         }
 
-        Ok(Self { models })
+        Ok(Self { models, locations })
     }
 
     /// Get all collection definitions across all models.

@@ -172,6 +172,23 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/instances/:instance_id/cube",
             get(handlers::cube::instance_cube_handler),
         )
+        // Locations query
+        .route(
+            "/edr/collections/:collection_id/locations",
+            get(handlers::locations::locations_list_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/locations/:location_id",
+            get(handlers::locations::location_query_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/locations",
+            get(handlers::locations::instance_locations_list_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/locations/:location_id",
+            get(handlers::locations::instance_location_query_handler),
+        )
         // Health and metrics
         .route("/health", get(handlers::health::health_handler))
         .route("/ready", get(handlers::health::ready_handler))

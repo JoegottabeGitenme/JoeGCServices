@@ -8,6 +8,7 @@ use grid_processor::{GridDataService, MinioConfig};
 use storage::Catalog;
 
 use crate::config::EdrConfig;
+use crate::location_cache::LocationCache;
 
 /// Shared application state.
 pub struct AppState {
@@ -22,6 +23,9 @@ pub struct AppState {
 
     /// Base URL for building links.
     pub base_url: String,
+
+    /// Cache for location query responses.
+    pub location_cache: Arc<LocationCache>,
 }
 
 impl AppState {
@@ -71,11 +75,26 @@ impl AppState {
         // Load EDR config
         let edr_config = EdrConfig::load_from_dir("config/edr")?;
 
+        // Create location cache
+        // TODO: Make these configurable via environment variables
+        let location_cache_mb: usize = std::env::var("EDR_LOCATION_CACHE_MB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64); // 64 MB default
+
+        let location_cache_ttl: u64 = std::env::var("EDR_LOCATION_CACHE_TTL_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(300); // 5 minutes default
+
+        let location_cache = Arc::new(LocationCache::new(location_cache_mb, location_cache_ttl));
+
         Ok(Self {
             catalog,
             grid_data_service,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
+            location_cache,
         })
     }
 

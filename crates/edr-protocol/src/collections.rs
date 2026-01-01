@@ -321,6 +321,26 @@ impl DataQueries {
         });
         self
     }
+
+    /// Add locations query support.
+    ///
+    /// Locations allow querying data at pre-defined named points of interest
+    /// (e.g., airports, cities, weather stations) using human-readable identifiers.
+    pub fn with_locations(mut self, base_url: &str, collection_id: &str) -> Self {
+        self.locations = Some(QueryDescription {
+            link: Link::new(
+                format!("{}/collections/{}/locations", base_url, collection_id),
+                "data",
+            )
+            .with_type("application/geo+json")
+            .with_title("Locations query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
+                ..Default::default()
+            }),
+        });
+        self
+    }
 }
 
 /// Description of a query endpoint.
