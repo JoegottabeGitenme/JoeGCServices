@@ -19,19 +19,16 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
     exit 1
 fi
 
-# 1. Check and fix formatting
+# 1. Check formatting (do NOT auto-fix during push - causes commit divergence)
 echo "  Checking formatting..."
 if ! cargo fmt --check > /dev/null 2>&1; then
-    echo -e "${YELLOW}  Formatting issues found, auto-fixing...${NC}"
-    cargo fmt
-    git add -u
-    git commit --amend --no-edit
-    echo -e "  ${GREEN}Formatting fixed and commit amended${NC}"
-else
-    echo -e "  ${GREEN}Formatting OK${NC}"
+    echo -e "${RED}Formatting issues found!${NC}"
+    echo -e "Run '${YELLOW}cargo fmt${NC}' to fix formatting, then commit and push again."
+    exit 1
 fi
+echo -e "  ${GREEN}Formatting OK${NC}"
 
-# 2. Check and fix trailing whitespace in Rust files
+# 2. Check for trailing whitespace in Rust files (do NOT auto-fix during push)
 echo "  Checking for trailing whitespace..."
 WHITESPACE_FILES=""
 RS_FILES=$(find . -name "*.rs" -not -path "./target/*" 2>/dev/null || true)
@@ -42,18 +39,16 @@ for file in $RS_FILES; do
 done
 
 if [ -n "$WHITESPACE_FILES" ]; then
-    echo -e "${YELLOW}  Trailing whitespace found, auto-fixing...${NC}"
+    echo -e "${RED}Trailing whitespace found in:${NC}"
     for file in $WHITESPACE_FILES; do
-        sed -i 's/[[:space:]]*$//' "$file"
-        echo -e "    Fixed: $file"
+        echo -e "  ${YELLOW}$file${NC}"
     done
-    # Stage and amend the commit
-    git add -u
-    git commit --amend --no-edit
-    echo -e "  ${GREEN}Whitespace fixed and commit amended${NC}"
-else
-    echo -e "  ${GREEN}No trailing whitespace${NC}"
+    echo -e "Run the following to fix:"
+    echo -e "  ${YELLOW}sed -i 's/[[:space:]]*\$//' <file>${NC}"
+    echo -e "Then commit and push again."
+    exit 1
 fi
+echo -e "  ${GREEN}No trailing whitespace${NC}"
 
 # 3. Cargo check
 echo "  Running cargo check..."
