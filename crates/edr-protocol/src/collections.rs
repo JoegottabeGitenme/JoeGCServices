@@ -196,7 +196,10 @@ pub struct DataQueries {
 
 /// Default output formats for EDR queries.
 fn default_output_formats() -> Vec<String> {
-    vec!["application/vnd.cov+json".to_string()]
+    vec![
+        "application/vnd.cov+json".to_string(),
+        "application/geo+json".to_string(),
+    ]
 }
 
 impl DataQueries {

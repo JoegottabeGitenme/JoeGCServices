@@ -71,4 +71,4 @@
 - is the EDR compliance github action going to start ingesting data while it's running? will the compliance testing even work without data? We might have to get some dummy data or something, does this break upon trying to do the same thing with WMS or WMTS?
 - the edr compliance test script can be a bit less verbose
 - need to implement geojson output in edr
-- for some reason it seems like 
+- for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types

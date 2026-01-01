@@ -62,7 +62,7 @@ pub struct ConformanceClasses {
 impl ConformanceClasses {
     /// Create conformance classes for the current implementation.
     ///
-    /// Includes: Core, Collections, Position, Area, Radius, Trajectory, Corridor, Cube, Instances, CoverageJSON
+    /// Includes: Core, Collections, Position, Area, Radius, Trajectory, Corridor, Cube, Instances, CoverageJSON, GeoJSON
     pub fn current() -> Self {
         Self {
             conforms_to: vec![
@@ -76,6 +76,10 @@ impl ConformanceClasses {
                 conformance::CUBE.to_string(),
                 conformance::INSTANCES.to_string(),
                 conformance::COVJSON.to_string(),
+                // Note: conf/geojson requires the 'locations' query endpoint which returns
+                // GeoJSON FeatureCollections for named locations. We don't implement this yet.
+                // We DO support GeoJSON as an output format for data queries via f=geojson.
+                // conformance::GEOJSON.to_string(),
             ],
         }
     }

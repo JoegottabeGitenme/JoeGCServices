@@ -202,9 +202,11 @@ impl Default for ModelSettings {
 }
 
 fn default_output_formats() -> Vec<String> {
-    // Only advertise formats that are actually implemented
-    // TODO: Add "application/geo+json" when GeoJSON output is implemented
-    vec!["application/vnd.cov+json".to_string()]
+    // Supported output formats for EDR data queries
+    vec![
+        "application/vnd.cov+json".to_string(),
+        "application/geo+json".to_string(),
+    ]
 }
 
 fn default_crs() -> String {

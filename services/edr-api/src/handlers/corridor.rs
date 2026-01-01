@@ -38,14 +38,14 @@ use edr_protocol::{
     parameters::Unit,
     queries::DateTimeQuery,
     responses::ExceptionResponse,
-    CoverageJson, DistanceUnit, PositionQuery, TrajectoryQuery, VerticalUnit,
+    CoverageJson, DistanceUnit, EdrFeatureCollection, PositionQuery, TrajectoryQuery, VerticalUnit,
 };
 use grid_processor::DatasetQuery;
 use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::LevelValue;
-use crate::content_negotiation::check_data_query_accept;
+use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 
@@ -219,10 +219,13 @@ async fn corridor_query(
     params: CorridorQueryParams,
     headers: HeaderMap,
 ) -> Response {
-    // Check Accept header - return 406 if unsupported format requested
-    if let Err(response) = check_data_query_accept(&headers) {
-        return response;
-    }
+    // Negotiate output format based on Accept header and f parameter
+    let output_format = match negotiate_format(&headers, params.f.as_deref()) {
+        Ok(format) => format,
+        Err(response) => {
+            return response;
+        }
+    };
 
     let config = state.edr_config.read().await;
 
@@ -838,21 +841,38 @@ async fn corridor_query(
         collection = collection.with_coverage(cov);
     }
 
-    // Serialize response
-    let json = match serde_json::to_string_pretty(&collection) {
-        Ok(j) => j,
-        Err(e) => {
-            tracing::error!("Failed to serialize CoverageJSON: {}", e);
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ExceptionResponse::internal_error("Failed to serialize response"),
-            );
+    // Serialize response based on requested format
+    let (json, content_type) = match output_format {
+        OutputFormat::GeoJson => {
+            let geojson = EdrFeatureCollection::from(&collection);
+            match serde_json::to_string_pretty(&geojson) {
+                Ok(j) => (j, output_format.content_type()),
+                Err(e) => {
+                    tracing::error!("Failed to serialize GeoJSON: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error("Failed to serialize response"),
+                    );
+                }
+            }
+        }
+        OutputFormat::CoverageJson => {
+            match serde_json::to_string_pretty(&collection) {
+                Ok(j) => (j, output_format.content_type()),
+                Err(e) => {
+                    tracing::error!("Failed to serialize CoverageJSON: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error("Failed to serialize response"),
+                    );
+                }
+            }
         }
     };
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/vnd.cov+json")
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "max-age=300")
         .body(json.into())
         .unwrap()

@@ -104,7 +104,7 @@ collections:
 settings:
   output_formats:
     - application/vnd.cov+json
-    # TODO: Add application/geo+json when GeoJSON output is implemented
+    - application/geo+json
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"

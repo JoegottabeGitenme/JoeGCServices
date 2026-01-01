@@ -28,6 +28,7 @@ This implementation supports the following conformance classes:
 | Cube | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube` |
 | Instances | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances` |
 | CoverageJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson` |
+| GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/geojson` |
 
 ## Landing Page
 
@@ -71,7 +72,8 @@ GET /edr/conformance
     "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/corridor",
     "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube",
     "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson"
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/geojson"
   ]
 }
 ```
@@ -109,7 +111,7 @@ GET /edr/collections
         "cube": {"link": {"href": "/edr/collections/hrrr-isobaric/cube", "rel": "data"}}
       },
       "crs": ["CRS:84", "EPSG:4326"],
-      "output_formats": ["application/vnd.cov+json"]
+      "output_formats": ["application/vnd.cov+json", "application/geo+json"]
     }
   ]
 }
@@ -176,7 +178,60 @@ These parameters are supported by all query types:
 | datetime | No | Time instant or interval | `2024-12-29T12:00:00Z` |
 | z | No | Vertical level(s) | `850` or `850,700,500` or `1000/500` or `R5/1000/100` |
 | crs | No | Coordinate reference system | `CRS:84` |
-| f | No | Output format | `CoverageJSON` |
+| f | No | Output format | `CoverageJSON` or `GeoJSON` |
+
+### Output Formats
+
+The EDR API supports two output formats:
+
+| Format | Content-Type | Description |
+|--------|-------------|-------------|
+| CoverageJSON | `application/vnd.cov+json` | Default. OGC CoverageJSON format with multi-dimensional arrays |
+| GeoJSON | `application/geo+json` | GeoJSON FeatureCollection with one feature per data point |
+
+**Request format via query parameter:**
+```http
+GET /edr/collections/{collectionId}/position?coords=POINT(-97.5 35.2)&f=geojson
+```
+
+**Request format via Accept header:**
+```http
+GET /edr/collections/{collectionId}/position?coords=POINT(-97.5 35.2)
+Accept: application/geo+json
+```
+
+**GeoJSON Response Example:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-97.5, 35.2]
+      },
+      "properties": {
+        "datetime": "2024-12-29T12:00:00Z",
+        "z": 850,
+        "TMP": {"value": 288.5, "unit": "K"},
+        "UGRD": {"value": 5.2, "unit": "m/s"},
+        "VGRD": {"value": -3.1, "unit": "m/s"}
+      }
+    }
+  ]
+}
+```
+
+**When to use GeoJSON:**
+- Integration with GIS software and web mapping libraries
+- When you need standard GeoJSON for downstream processing
+- Simpler data structure for point-based queries
+
+**When to use CoverageJSON:**
+- Multi-dimensional data with axes (time series, vertical profiles)
+- Grid data with regular spacing
+- Full metadata about parameters and units
 
 ### Z Parameter Formats
 

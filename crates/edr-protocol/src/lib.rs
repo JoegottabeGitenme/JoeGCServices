@@ -28,6 +28,7 @@
 pub mod collections;
 pub mod coverage_json;
 pub mod errors;
+pub mod geojson;
 pub mod parameters;
 pub mod queries;
 pub mod responses;
@@ -39,6 +40,7 @@ pub use coverage_json::{
     Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem,
 };
 pub use errors::EdrError;
+pub use geojson::{EdrFeature, EdrFeatureCollection, EdrGeometry, EdrProperties, ParameterValue};
 pub use parameters::{ObservedProperty, Parameter, Unit};
 pub use queries::{
     AreaQuery, BboxQuery, CoordinateParseError, CorridorQuery, DateTimeQuery, DistanceUnit,
