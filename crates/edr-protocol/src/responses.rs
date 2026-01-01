@@ -62,7 +62,7 @@ pub struct ConformanceClasses {
 impl ConformanceClasses {
     /// Create conformance classes for the current implementation.
     ///
-    /// Includes: Core, Collections, Position, Area, Radius, Trajectory, Instances, CoverageJSON
+    /// Includes: Core, Collections, Position, Area, Radius, Trajectory, Corridor, Cube, Instances, CoverageJSON
     pub fn current() -> Self {
         Self {
             conforms_to: vec![
@@ -72,6 +72,8 @@ impl ConformanceClasses {
                 conformance::AREA.to_string(),
                 conformance::RADIUS.to_string(),
                 conformance::TRAJECTORY.to_string(),
+                conformance::CORRIDOR.to_string(),
+                conformance::CUBE.to_string(),
                 conformance::INSTANCES.to_string(),
                 conformance::COVJSON.to_string(),
             ],
@@ -233,6 +235,10 @@ mod tests {
         assert!(conf.contains(conformance::COLLECTIONS));
         assert!(conf.contains(conformance::POSITION));
         assert!(conf.contains(conformance::AREA));
+        assert!(conf.contains(conformance::RADIUS));
+        assert!(conf.contains(conformance::TRAJECTORY));
+        assert!(conf.contains(conformance::CORRIDOR));
+        assert!(conf.contains(conformance::CUBE));
         assert!(conf.contains(conformance::INSTANCES));
         assert!(conf.contains(conformance::COVJSON));
     }

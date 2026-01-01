@@ -83,6 +83,9 @@ async fn run_server(args: Args) {
         // Landing page
         .route("/edr", get(handlers::landing::landing_handler))
         .route("/edr/", get(handlers::landing::landing_handler))
+        // API definition (OpenAPI)
+        .route("/edr/api", get(handlers::api::api_handler))
+        .route("/edr/api.html", get(handlers::api::api_html_handler))
         // Conformance
         .route(
             "/edr/conformance",

@@ -1948,6 +1948,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_z_recurring() {
+        // R5/1000/100 means: 5 values starting at 1000, decrementing by 100
+        let z = PositionQuery::parse_z("R5/1000/100").unwrap();
+        assert_eq!(z, vec![1000.0, 900.0, 800.0, 700.0, 600.0]);
+    }
+
+    #[test]
+    fn test_parse_z_recurring_lowercase() {
+        // Also support lowercase 'r'
+        let z = PositionQuery::parse_z("r3/500/50").unwrap();
+        assert_eq!(z, vec![500.0, 450.0, 400.0]);
+    }
+
+    #[test]
     fn test_parse_parameter_names() {
         let params = PositionQuery::parse_parameter_names("TMP,UGRD,VGRD");
         assert_eq!(params, vec!["TMP", "UGRD", "VGRD"]);

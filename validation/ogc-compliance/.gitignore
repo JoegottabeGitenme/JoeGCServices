@@ -1,0 +1,9 @@
+# OGC Compliance Test Results
+# These are generated during test runs and should not be committed
+results/
+
+# ETS JAR file (downloaded from Maven on first run)
+lib/*.jar
+
+# Logs
+*.log

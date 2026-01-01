@@ -268,6 +268,7 @@ async function runAllTests() {
         // Position Query
         'position-wkt', 'position-simple', 'position-covjson', 'position-invalid',
         'position-missing-coords', 'position-multipoint',
+        'position-no-query-params', 'position-crs-valid', 'position-f-covjson',
         // Z Parameter
         'z-single', 'z-multiple', 'z-range', 'z-recurring', 'z-invalid',
         // Datetime Parameter
@@ -276,16 +277,21 @@ async function runAllTests() {
         'area-basic', 'area-covjson', 'area-small', 'area-complex',
         'area-too-large', 'area-invalid-polygon', 'area-with-params',
         'area-missing-coords', 'area-multipolygon', 'area-z-multiple',
+        'area-crs-valid', 'area-f-covjson',
         // Radius Query
         'radius-basic', 'radius-covjson', 'radius-missing-coords',
         'radius-missing-within', 'radius-missing-within-units', 'radius-invalid-coords',
         'radius-too-large', 'radius-units-km', 'radius-units-mi', 'radius-units-m',
         'radius-multipoint', 'radius-z-parameter', 'radius-with-params', 'radius-datetime',
+        'radius-no-query-params', 'radius-crs-valid', 'radius-f-covjson',
         // Trajectory Query
         'trajectory-basic', 'trajectory-covjson', 'trajectory-missing-coords',
         'trajectory-invalid-coords', 'trajectory-linestringz', 'trajectory-linestringm',
         'trajectory-z-conflict', 'trajectory-multilinestring', 'trajectory-with-params',
         'trajectory-datetime',
+        'trajectory-no-query-params', 'trajectory-invalid-linestringm', 'trajectory-invalid-linestringz',
+        'trajectory-invalid-linestringzm', 'trajectory-invalid-time',
+        'trajectory-crs-valid', 'trajectory-f-covjson',
         // Corridor Query
         'corridor-basic', 'corridor-covjson', 'corridor-missing-coords',
         'corridor-missing-width', 'corridor-missing-width-units', 'corridor-missing-height',
@@ -298,6 +304,7 @@ async function runAllTests() {
         'corridor-zm-z-conflict', 'corridor-zm-datetime-conflict',
         'corridor-linestringz', 'corridor-linestringm', 'corridor-linestringzm',
         'corridor-with-datetime', 'corridor-with-z', 'corridor-instance', 'corridor-not-found',
+        'corridor-crs-valid', 'corridor-f-covjson',
         // Cube Query
         'cube-basic', 'cube-covjson', 'cube-missing-bbox', 'cube-missing-z',
         'cube-invalid-bbox', 'cube-multi-z', 'cube-with-datetime', 'cube-with-resolution',
@@ -410,6 +417,12 @@ async function executeTest(testName) {
             return testPositionMissingCoords();
         case 'position-multipoint':
             return testPositionMultipoint();
+        case 'position-no-query-params':
+            return testPositionNoQueryParams();
+        case 'position-crs-valid':
+            return testPositionCrsValid();
+        case 'position-f-covjson':
+            return testPositionFCovJson();
         case 'z-single':
             return testZSingle();
         case 'z-multiple':
@@ -448,6 +461,10 @@ async function executeTest(testName) {
             return testAreaMultipolygon();
         case 'area-z-multiple':
             return testAreaZMultiple();
+        case 'area-crs-valid':
+            return testAreaCrsValid();
+        case 'area-f-covjson':
+            return testAreaFCovJson();
         // Radius Query tests
         case 'radius-basic':
             return testRadiusBasic();
@@ -477,6 +494,12 @@ async function executeTest(testName) {
             return testRadiusWithParams();
         case 'radius-datetime':
             return testRadiusDatetime();
+        case 'radius-no-query-params':
+            return testRadiusNoQueryParams();
+        case 'radius-crs-valid':
+            return testRadiusCrsValid();
+        case 'radius-f-covjson':
+            return testRadiusFCovJson();
         // Trajectory Query tests
         case 'trajectory-basic':
             return testTrajectoryBasic();
@@ -498,6 +521,20 @@ async function executeTest(testName) {
             return testTrajectoryWithParams();
         case 'trajectory-datetime':
             return testTrajectoryDatetime();
+        case 'trajectory-no-query-params':
+            return testTrajectoryNoQueryParams();
+        case 'trajectory-invalid-linestringm':
+            return testTrajectoryInvalidLinestringM();
+        case 'trajectory-invalid-linestringz':
+            return testTrajectoryInvalidLinestringZ();
+        case 'trajectory-invalid-linestringzm':
+            return testTrajectoryInvalidLinestringZM();
+        case 'trajectory-invalid-time':
+            return testTrajectoryInvalidTime();
+        case 'trajectory-crs-valid':
+            return testTrajectoryCrsValid();
+        case 'trajectory-f-covjson':
+            return testTrajectoryFCovJson();
         // Corridor Query tests
         case 'corridor-basic':
             return testCorridorBasic();
@@ -556,6 +593,10 @@ async function executeTest(testName) {
             return testCorridorInstance();
         case 'corridor-not-found':
             return testCorridorNotFound();
+        case 'corridor-crs-valid':
+            return testCorridorCrsValid();
+        case 'corridor-f-covjson':
+            return testCorridorFCovJson();
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
@@ -716,6 +757,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position`];
         case 'position-multipoint':
             return [`${API_BASE}/collections/${colId}/position?coords=MULTIPOINT((-97.5 35.2),(-98.0 36.0))`];
+        case 'position-no-query-params':
+            return [`${API_BASE}/collections/${colId}/position`];
+        case 'position-crs-valid':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`];
+        case 'position-f-covjson':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`];
         case 'z-single':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=850`];
         case 'z-multiple':
@@ -756,6 +803,10 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/area?coords=MULTIPOLYGON(((-98 35,-97 35,-97 36,-98 36,-98 35)),((-96 35,-95 35,-95 36,-96 36,-96 35)))`];
         case 'area-z-multiple':
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&z=850,700`];
+        case 'area-crs-valid':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&crs=CRS:84`];
+        case 'area-f-covjson':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&f=CoverageJSON`];
         // Radius query URLs
         case 'radius-basic':
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`];
@@ -785,6 +836,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&parameter-name=TMP`];
         case 'radius-datetime':
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&datetime={validtime}`];
+        case 'radius-no-query-params':
+            return [`${API_BASE}/collections/${colId}/radius`];
+        case 'radius-crs-valid':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&crs=CRS:84`];
+        case 'radius-f-covjson':
+            return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&f=CoverageJSON`];
         // Trajectory query URLs
         case 'trajectory-basic':
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)`];
@@ -806,6 +863,27 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&parameter-name=TMP`];
         case 'trajectory-datetime':
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&datetime={validtime}`];
+        case 'trajectory-no-query-params':
+            return [`${API_BASE}/collections/${colId}/trajectory`];
+        case 'trajectory-invalid-linestringm':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGM(-100 40,-99 40.5)`];
+        case 'trajectory-invalid-linestringz':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZ(-100 40,-99 40.5)`];
+        case 'trajectory-invalid-linestringzm':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZM(-100 40 850,-99 40.5 850)`];
+        case 'trajectory-invalid-time':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGM(-100 40 invalid,-99 40.5 notadate,-98 41 alsonotadate)`];
+        case 'trajectory-crs-valid':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&crs=CRS:84`];
+        case 'trajectory-f-covjson':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&f=CoverageJSON`];
+        // Corridor query URLs
+        case 'corridor-basic':
+            return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`];
+        case 'corridor-crs-valid':
+            return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&crs=CRS:84`];
+        case 'corridor-f-covjson':
+            return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&f=CoverageJSON`];
         case 'error-404-collection':
             return [`${API_BASE}/collections/nonexistent-collection-12345`];
         case 'error-400-coords':
@@ -1401,6 +1479,77 @@ async function testPositionMultipoint() {
     };
 }
 
+// Position with no query params - should return 400 (Abstract Test B.41)
+async function testPositionNoQueryParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position`);
+    
+    const checks = [
+        { name: 'Status 400 (no query params)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Position with crs parameter - should accept CRS:84 (Abstract Test B.53/B.54)
+async function testPositionCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Position with f=CoverageJSON parameter (Abstract Test B.55/B.56)
+async function testPositionFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
 // ============================================================
 // Z PARAMETER TESTS
 // ============================================================
@@ -1987,6 +2136,57 @@ async function testAreaZMultiple() {
     };
 }
 
+// Area with crs parameter - should accept CRS:84 (Abstract Test B.87/B.88)
+async function testAreaCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Area with f=CoverageJSON parameter (Abstract Test B.89/B.90)
+async function testAreaFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=CoverageJSON`);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
 // ============================================================
 // RADIUS QUERY TESTS
 // OGC EDR Spec: Section 8.2.4 Radius Query
@@ -2347,6 +2547,77 @@ async function testRadiusDatetime() {
     };
 }
 
+// Radius with no query params - should return 400 (Abstract Test B.57)
+async function testRadiusNoQueryParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius`);
+    
+    const checks = [
+        { name: 'Status 400 (no query params)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius with crs parameter - should accept CRS:84 (Abstract Test B.71/B.72)
+async function testRadiusCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Radius with f=CoverageJSON parameter (Abstract Test B.73/B.74)
+async function testRadiusFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&f=CoverageJSON`);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
 // ============================================================
 // TRAJECTORY QUERY TESTS
 // OGC EDR Spec: Section 8.2.5 Trajectory Query
@@ -2655,6 +2926,175 @@ async function testTrajectoryDatetime() {
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has domain', passed: !!res.json?.domain },
         { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with no query params - should return 400 (Abstract Test B.105)
+async function testTrajectoryNoQueryParams() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory`);
+    
+    const checks = [
+        { name: 'Status 400 (no query params)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with invalid LINESTRINGM (Abstract Test B.108)
+async function testTrajectoryInvalidLinestringM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGM - wrong number of coordinates (should have 3 per point for M)
+    const coords = 'LINESTRINGM(-100 40,-99 40.5)'; // Missing M values
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    const checks = [
+        { name: 'Status 400 (invalid LINESTRINGM)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with invalid LINESTRINGZ (Abstract Test B.112)
+async function testTrajectoryInvalidLinestringZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGZ - wrong number of coordinates (should have 3 per point for Z)
+    const coords = 'LINESTRINGZ(-100 40,-99 40.5)'; // Missing Z values
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    const checks = [
+        { name: 'Status 400 (invalid LINESTRINGZ)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with invalid LINESTRINGZM (Abstract Test B.111)
+async function testTrajectoryInvalidLinestringZM() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // Invalid LINESTRINGZM - wrong number of coordinates (should have 4 per point for ZM)
+    const coords = 'LINESTRINGZM(-100 40 850,-99 40.5 850)'; // Missing M values
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    const checks = [
+        { name: 'Status 400 (invalid LINESTRINGZM)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with invalid time coordinates (Abstract Test B.113)
+async function testTrajectoryInvalidTime() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRINGM with non-numeric time value
+    const coords = 'LINESTRINGM(-100 40 invalid,-99 40.5 notadate,-98 41 alsonotadate)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    const checks = [
+        { name: 'Status 400 (invalid time coords)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with crs parameter - should accept CRS:84 (Abstract Test B.119/B.120)
+async function testTrajectoryCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&crs=CRS:84`);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory with f=CoverageJSON parameter (Abstract Test B.121/B.122)
+async function testTrajectoryFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&f=CoverageJSON`);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
     ];
     return {
         passed: checks.every(c => c.passed),
@@ -3409,6 +3849,59 @@ async function testCorridorNotFound() {
     const checks = [
         { name: 'Status 404', passed: res.status === 404 },
         { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with crs parameter - should accept CRS:84 (Abstract Test B.151/B.152)
+async function testCorridorCrsValid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&crs=CRS:84`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'CRS parameter accepted', passed: res.status === 200 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor with f=CoverageJSON parameter (Abstract Test B.153/B.154)
+async function testCorridorFCovJson() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&f=CoverageJSON`;
+    const res = await fetchJson(url);
+    
+    const contentType = res.headers?.get('content-type') || '';
+    const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
+        { name: 'Content-Type is CoverageJSON or JSON', passed: isCoverageJSON }
     ];
     return {
         passed: checks.every(c => c.passed),

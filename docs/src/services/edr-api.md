@@ -1,6 +1,6 @@
 # EDR API Service
 
-The EDR API service implements the OGC API - Environmental Data Retrieval specification, providing point-based and area-based data queries for weather model data.
+The EDR API service implements the OGC API - Environmental Data Retrieval specification, providing point-based, area-based, and volumetric data queries for weather model data.
 
 ## Overview
 
@@ -12,8 +12,8 @@ The EDR API service implements the OGC API - Environmental Data Retrieval specif
 
 ## Responsibilities
 
-1. **OGC Compliance**: Implements EDR v1.1 specification with conformance testing
-2. **Data Queries**: Supports position queries returning CoverageJSON
+1. **OGC Compliance**: Implements EDR v1.1 specification with comprehensive conformance testing
+2. **Data Queries**: Supports 6 query types: Position, Area, Radius, Trajectory, Corridor, Cube
 3. **Collection Management**: Exposes weather data collections grouped by level type
 4. **Instance Support**: Provides access to specific model runs as instances
 5. **Response Limits**: Enforces configurable limits to prevent resource exhaustion
@@ -31,6 +31,11 @@ graph TB
         Collections["Collections Handler"]
         Instances["Instances Handler"]
         Position["Position Handler"]
+        Area["Area Handler"]
+        Radius["Radius Handler"]
+        Trajectory["Trajectory Handler"]
+        Corridor["Corridor Handler"]
+        Cube["Cube Handler"]
     end
     
     subgraph Data["Data Layer"]
@@ -45,10 +50,20 @@ graph TB
     Router --> Collections
     Router --> Instances
     Router --> Position
+    Router --> Area
+    Router --> Radius
+    Router --> Trajectory
+    Router --> Corridor
+    Router --> Cube
     
     Collections --> PG
     Instances --> PG
     Position --> GridProc
+    Area --> GridProc
+    Radius --> GridProc
+    Trajectory --> GridProc
+    Corridor --> GridProc
+    Cube --> GridProc
     GridProc --> MINIO
 ```
 
@@ -74,8 +89,20 @@ graph TB
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/edr/collections/{id}/position` | GET | Position query (latest run) |
-| `/edr/collections/{id}/instances/{instId}/position` | GET | Position query (specific run) |
+| `/edr/collections/{id}/position` | GET | Position query (point data) |
+| `/edr/collections/{id}/area` | GET | Area query (polygon data) |
+| `/edr/collections/{id}/radius` | GET | Radius query (circular area) |
+| `/edr/collections/{id}/trajectory` | GET | Trajectory query (path data) |
+| `/edr/collections/{id}/corridor` | GET | Corridor query (buffered path) |
+| `/edr/collections/{id}/cube` | GET | Cube query (3D volume) |
+
+All query endpoints also support instance-specific versions:
+- `/edr/collections/{id}/instances/{instId}/position`
+- `/edr/collections/{id}/instances/{instId}/area`
+- `/edr/collections/{id}/instances/{instId}/radius`
+- `/edr/collections/{id}/instances/{instId}/trajectory`
+- `/edr/collections/{id}/instances/{instId}/corridor`
+- `/edr/collections/{id}/instances/{instId}/cube`
 
 ### Diagnostic Endpoints
 
@@ -151,6 +178,7 @@ limits:
   max_time_steps: 48
   max_vertical_levels: 20
   max_response_size_mb: 50
+  max_area_sq_degrees: 100
 ```
 
 ### Configuration Hot-Reload
@@ -170,6 +198,7 @@ services/edr-api/src/
 ├── state.rs                # Application state (catalog, grid-processor)
 ├── config.rs               # EDR config loading
 ├── limits.rs               # Response size estimation
+├── content_negotiation.rs  # Accept header handling
 ├── handlers/
 │   ├── mod.rs              # Handler module exports
 │   ├── landing.rs          # Landing page handler
@@ -177,6 +206,11 @@ services/edr-api/src/
 │   ├── collections.rs      # Collections handlers
 │   ├── instances.rs        # Instances handlers
 │   ├── position.rs         # Position query handler
+│   ├── area.rs             # Area query handler
+│   ├── radius.rs           # Radius query handler
+│   ├── trajectory.rs       # Trajectory query handler
+│   ├── corridor.rs         # Corridor query handler
+│   ├── cube.rs             # Cube query handler
 │   ├── catalog_check.rs    # Database contents diagnostic endpoint
 │   └── health.rs           # Health/metrics handlers
 └── Dockerfile
@@ -227,6 +261,17 @@ The primary response format for data queries:
 }
 ```
 
+### Domain Types by Query
+
+| Query Type | Domain Type | Description |
+|------------|-------------|-------------|
+| Position | Point | Single point |
+| Area | Grid | 2D grid within polygon |
+| Radius | Grid | 2D grid within circle |
+| Trajectory | Trajectory | Path with composite axis |
+| Corridor | CoverageCollection | Multiple cross-sections |
+| Cube | CoverageCollection | Grid per z-level |
+
 ## Performance
 
 ### Caching Strategy
@@ -240,6 +285,8 @@ The primary response format for data queries:
 |----------|--------------|---------------|
 | Position (1 param) | 500+ | <50ms |
 | Position (10 params) | 200 | <100ms |
+| Area (small polygon) | 100 | <200ms |
+| Trajectory | 150 | <150ms |
 
 ### Scaling
 
@@ -252,6 +299,8 @@ The service can be horizontally scaled. Each instance maintains its own chunk ca
 ```
 # Request counts
 edr_requests_total{endpoint="position"}
+edr_requests_total{endpoint="area"}
+edr_requests_total{endpoint="trajectory"}
 
 # Latency
 edr_request_duration_seconds_bucket{endpoint="position",le="0.1"}
@@ -265,16 +314,18 @@ grid_processor_chunk_cache_misses_total
 
 ### High Latency
 
-**Symptoms**: Position queries taking >100ms
+**Symptoms**: Queries taking >100ms
 
 **Causes**:
 1. Cold chunk cache
 2. Large number of parameters requested
-3. Database slow
+3. Large area/trajectory
+4. Database slow
 
 **Solutions**:
 - Increase chunk cache size
 - Limit parameters per request
+- Reduce query area
 - Check database connectivity
 
 ### Memory Usage
@@ -288,6 +339,19 @@ grid_processor_chunk_cache_misses_total
 **Solutions**:
 - Reduce `EDR_CHUNK_CACHE_MB`
 - Lower response size limits in config
+
+### 413 Errors
+
+**Symptoms**: Clients getting "Payload Too Large"
+
+**Causes**:
+1. Requesting too many parameters
+2. Area/bbox too large
+3. Too many time steps
+
+**Solutions**:
+- Break large requests into smaller ones
+- Check limits in collection config
 
 ## See Also
 

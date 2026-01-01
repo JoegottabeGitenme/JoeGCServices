@@ -42,3 +42,8 @@ dotenvy = { workspace = true }
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "edr_api_benchmarks"
+harness = false

@@ -1488,6 +1488,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "criterion",
  "dotenvy",
  "edr-protocol",
  "grid-processor",

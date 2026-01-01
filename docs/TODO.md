@@ -41,6 +41,7 @@
 - web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
     - this may have been due to the 10s of thousands of objects in minio
     - see if this happens again after we fixed the orphaned files issue
+    - it still happens and its still happening after claude 'fixed' the memory leaks
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - need to give the swagger docs a human pass to catch some of the errors
 - why are we getting orphaned files constantly?
@@ -67,5 +68,4 @@
 - let's try to get registered on the OGC implementation database
 - add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
   that will run some of the various security scanners and display some results
-- add another optional docker compose image that will run the OGC compliance testing suite, we may need to figure out a
-  way to ingest some of the canned data they provide
+- add another optional docker compose image that will run the OGC WMS and WMTS compliance testing suite, we may need to figure out a way to ingest some of the canned data they provide, look at the EDR implementation 
