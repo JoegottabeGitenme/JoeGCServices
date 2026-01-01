@@ -1,7 +1,7 @@
 //! OGC API - Environmental Data Retrieval (EDR) Protocol
 //!
 //! This crate provides types and utilities for implementing an OGC EDR API server.
-//! It follows the OGC API - Environmental Data Retrieval specification v1.1.
+//! It follows the OGC API - Environmental Data Retrieval specification v1.0.
 //!
 //! # Conformance Classes
 //!
@@ -35,37 +35,43 @@ pub mod types;
 
 // Re-export commonly used types
 pub use collections::{Collection, CollectionList, DataQueries, Instance, InstanceList};
-pub use coverage_json::{Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem};
+pub use coverage_json::{
+    Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem,
+};
 pub use errors::EdrError;
 pub use parameters::{ObservedProperty, Parameter, Unit};
-pub use queries::{AreaQuery, BboxQuery, CoordinateParseError, CorridorQuery, DateTimeQuery, DistanceUnit, LineStringType, ParsedCoords, ParsedPolygons, ParsedTrajectory, PositionQuery, RadiusQuery, TrajectoryQuery, TrajectoryWaypoint, VerticalUnit};
+pub use queries::{
+    AreaQuery, BboxQuery, CoordinateParseError, CorridorQuery, DateTimeQuery, DistanceUnit,
+    LineStringType, ParsedCoords, ParsedPolygons, ParsedTrajectory, PositionQuery, RadiusQuery,
+    TrajectoryQuery, TrajectoryWaypoint, VerticalUnit,
+};
 pub use responses::{ConformanceClasses, LandingPage};
-pub use types::{Crs, Extent, Link, SpatialExtent, TemporalExtent, VerticalExtent};
+pub use types::{Crs, Extent, Link, LinkVariables, SpatialExtent, TemporalExtent, VerticalExtent};
 
-/// EDR API conformance class URIs
+/// EDR API conformance class URIs (OGC API - EDR v1.0)
 pub mod conformance {
     /// Core conformance class
-    pub const CORE: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core";
+    pub const CORE: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/core";
     /// Collections conformance class
-    pub const COLLECTIONS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/collections";
+    pub const COLLECTIONS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/collections";
     /// Position query conformance class
-    pub const POSITION: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/position";
+    pub const POSITION: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/position";
     /// Area query conformance class
-    pub const AREA: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/area";
+    pub const AREA: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/area";
     /// Radius query conformance class
-    pub const RADIUS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/radius";
+    pub const RADIUS: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/radius";
     /// Cube query conformance class
-    pub const CUBE: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube";
+    pub const CUBE: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/cube";
     /// Trajectory query conformance class
-    pub const TRAJECTORY: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/trajectory";
+    pub const TRAJECTORY: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/trajectory";
     /// Corridor query conformance class
-    pub const CORRIDOR: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/corridor";
+    pub const CORRIDOR: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/corridor";
     /// Instances conformance class
-    pub const INSTANCES: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances";
+    pub const INSTANCES: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances";
     /// CoverageJSON conformance class
-    pub const COVJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson";
+    pub const COVJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/covjson";
     /// GeoJSON conformance class
-    pub const GEOJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/geojson";
+    pub const GEOJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson";
 }
 
 /// Media types used in EDR responses
@@ -76,6 +82,6 @@ pub mod media_types {
     pub const GEO_JSON: &str = "application/geo+json";
     /// JSON media type
     pub const JSON: &str = "application/json";
-    /// OpenAPI JSON media type
-    pub const OPENAPI_JSON: &str = "application/openapi+json;version=3.0";
+    /// OpenAPI JSON media type (OAI vendor prefix)
+    pub const OPENAPI_JSON: &str = "application/vnd.oai.openapi+json;version=3.0";
 }

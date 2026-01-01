@@ -83,17 +83,26 @@ async fn run_server(args: Args) {
         // Landing page
         .route("/edr", get(handlers::landing::landing_handler))
         .route("/edr/", get(handlers::landing::landing_handler))
-        // API definition (OpenAPI)
+        // API definition (OpenAPI) - with trailing slash support
         .route("/edr/api", get(handlers::api::api_handler))
+        .route("/edr/api/", get(handlers::api::api_handler))
         .route("/edr/api.html", get(handlers::api::api_html_handler))
-        // Conformance
+        // Conformance (with and without trailing slash for OGC compliance)
         .route(
             "/edr/conformance",
             get(handlers::conformance::conformance_handler),
         )
-        // Collections
+        .route(
+            "/edr/conformance/",
+            get(handlers::conformance::conformance_handler),
+        )
+        // Collections (with trailing slash support)
         .route(
             "/edr/collections",
+            get(handlers::collections::list_collections_handler),
+        )
+        .route(
+            "/edr/collections/",
             get(handlers::collections::list_collections_handler),
         )
         .route(
