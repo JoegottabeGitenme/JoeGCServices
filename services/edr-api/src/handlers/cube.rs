@@ -567,18 +567,16 @@ async fn cube_query(
                 }
             }
         }
-        OutputFormat::CoverageJson => {
-            match serde_json::to_string_pretty(&final_collection) {
-                Ok(j) => (j, output_format.content_type()),
-                Err(e) => {
-                    tracing::error!("Failed to serialize CoverageJSON: {}", e);
-                    return error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ExceptionResponse::internal_error("Failed to serialize response"),
-                    );
-                }
+        OutputFormat::CoverageJson => match serde_json::to_string_pretty(&final_collection) {
+            Ok(j) => (j, output_format.content_type()),
+            Err(e) => {
+                tracing::error!("Failed to serialize CoverageJSON: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
             }
-        }
+        },
     };
 
     Response::builder()

@@ -373,18 +373,16 @@ async fn position_query(
                     }
                 }
             }
-            OutputFormat::CoverageJson => {
-                match serde_json::to_string_pretty(&collection) {
-                    Ok(j) => (j, output_format.content_type()),
-                    Err(e) => {
-                        tracing::error!("Failed to serialize CoverageCollection: {}", e);
-                        return error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            ExceptionResponse::internal_error("Failed to serialize response"),
-                        );
-                    }
+            OutputFormat::CoverageJson => match serde_json::to_string_pretty(&collection) {
+                Ok(j) => (j, output_format.content_type()),
+                Err(e) => {
+                    tracing::error!("Failed to serialize CoverageCollection: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error("Failed to serialize response"),
+                    );
                 }
-            }
+            },
         };
 
         return Response::builder()
@@ -594,18 +592,16 @@ async fn position_query(
                 }
             }
         }
-        OutputFormat::CoverageJson => {
-            match serde_json::to_string_pretty(&coverage) {
-                Ok(j) => (j, output_format.content_type()),
-                Err(e) => {
-                    tracing::error!("Failed to serialize CoverageJSON: {}", e);
-                    return error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ExceptionResponse::internal_error("Failed to serialize response"),
-                    );
-                }
+        OutputFormat::CoverageJson => match serde_json::to_string_pretty(&coverage) {
+            Ok(j) => (j, output_format.content_type()),
+            Err(e) => {
+                tracing::error!("Failed to serialize CoverageJSON: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
             }
-        }
+        },
     };
 
     Response::builder()

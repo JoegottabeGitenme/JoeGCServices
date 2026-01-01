@@ -115,7 +115,11 @@ async fn locations_list(
     }
 
     // Build GeoJSON FeatureCollection with URI-style IDs per OGC EDR spec
-    let fc = LocationFeatureCollection::from_config_with_uris(locations, &state.base_url, &collection_id);
+    let fc = LocationFeatureCollection::from_config_with_uris(
+        locations,
+        &state.base_url,
+        &collection_id,
+    );
 
     // Determine output format
     let content_type = match params.f.as_deref() {
