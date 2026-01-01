@@ -12,12 +12,13 @@ The EDR API service implements the OGC API - Environmental Data Retrieval specif
 
 ## Responsibilities
 
-1. **OGC Compliance**: Implements EDR v1.1 specification with comprehensive conformance testing
-2. **Data Queries**: Supports 6 query types: Position, Area, Radius, Trajectory, Corridor, Cube
+1. **OGC Compliance**: Implements EDR v1.0 specification with comprehensive conformance testing
+2. **Data Queries**: Supports 7 query types: Position, Area, Radius, Trajectory, Corridor, Cube, Locations
 3. **Collection Management**: Exposes weather data collections grouped by level type
 4. **Instance Support**: Provides access to specific model runs as instances
-5. **Response Limits**: Enforces configurable limits to prevent resource exhaustion
-6. **Metrics**: Exposes Prometheus metrics for monitoring
+5. **Named Locations**: Pre-defined points of interest for human-readable queries
+6. **Response Limits**: Enforces configurable limits to prevent resource exhaustion
+7. **Metrics**: Exposes Prometheus metrics for monitoring
 
 ## Architecture
 
@@ -36,6 +37,7 @@ graph TB
         Trajectory["Trajectory Handler"]
         Corridor["Corridor Handler"]
         Cube["Cube Handler"]
+        Locations["Locations Handler"]
     end
     
     subgraph Data["Data Layer"]
@@ -44,6 +46,7 @@ graph TB
     end
     
     GridProc["Grid Processor"]
+    LocCache["Location Cache"]
     
     Client --> Router
     Router --> Landing
@@ -55,6 +58,7 @@ graph TB
     Router --> Trajectory
     Router --> Corridor
     Router --> Cube
+    Router --> Locations
     
     Collections --> PG
     Instances --> PG
@@ -64,6 +68,8 @@ graph TB
     Trajectory --> GridProc
     Corridor --> GridProc
     Cube --> GridProc
+    Locations --> LocCache
+    Locations --> GridProc
     GridProc --> MINIO
 ```
 
@@ -75,6 +81,8 @@ graph TB
 |----------|--------|-------------|
 | `/edr` | GET | Landing page with API links |
 | `/edr/conformance` | GET | Supported conformance classes |
+| `/edr/api` | GET | OpenAPI specification (YAML) |
+| `/edr/api.html` | GET | Interactive API documentation (ReDoc) |
 
 ### Collection Endpoints
 
@@ -95,6 +103,8 @@ graph TB
 | `/edr/collections/{id}/trajectory` | GET | Trajectory query (path data) |
 | `/edr/collections/{id}/corridor` | GET | Corridor query (buffered path) |
 | `/edr/collections/{id}/cube` | GET | Cube query (3D volume) |
+| `/edr/collections/{id}/locations` | GET | List named locations |
+| `/edr/collections/{id}/locations/{locId}` | GET | Query at named location |
 
 All query endpoints also support instance-specific versions:
 - `/edr/collections/{id}/instances/{instId}/position`
@@ -103,6 +113,8 @@ All query endpoints also support instance-specific versions:
 - `/edr/collections/{id}/instances/{instId}/trajectory`
 - `/edr/collections/{id}/instances/{instId}/corridor`
 - `/edr/collections/{id}/instances/{instId}/cube`
+- `/edr/collections/{id}/instances/{instId}/locations`
+- `/edr/collections/{id}/instances/{instId}/locations/{locId}`
 
 ### Diagnostic Endpoints
 
@@ -168,6 +180,7 @@ collections:
 settings:
   output_formats:
     - application/vnd.cov+json
+    - application/geo+json
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
@@ -180,6 +193,31 @@ limits:
   max_response_size_mb: 50
   max_area_sq_degrees: 100
 ```
+
+### Locations Configuration
+
+Named locations are defined in `config/edr/locations.yaml`:
+
+```yaml
+locations:
+  - id: KJFK
+    name: "John F. Kennedy International Airport"
+    description: "New York, NY"
+    coords: [-73.7781, 40.6413]
+    properties:
+      type: airport
+      country: US
+
+  - id: NYC
+    name: "New York City"
+    description: "Manhattan, New York"
+    coords: [-74.0060, 40.7128]
+    properties:
+      type: city
+      country: US
+```
+
+See [EDR Configuration](../configuration/edr.md) for full details.
 
 ### Configuration Hot-Reload
 
@@ -198,11 +236,13 @@ services/edr-api/src/
 ├── state.rs                # Application state (catalog, grid-processor)
 ├── config.rs               # EDR config loading
 ├── limits.rs               # Response size estimation
-├── content_negotiation.rs  # Accept header handling
+├── content_negotiation.rs  # Accept header and f parameter handling
+├── location_cache.rs       # In-memory cache for location queries
 ├── handlers/
 │   ├── mod.rs              # Handler module exports
 │   ├── landing.rs          # Landing page handler
 │   ├── conformance.rs      # Conformance handler
+│   ├── api.rs              # OpenAPI spec handler
 │   ├── collections.rs      # Collections handlers
 │   ├── instances.rs        # Instances handlers
 │   ├── position.rs         # Position query handler
@@ -211,6 +251,7 @@ services/edr-api/src/
 │   ├── trajectory.rs       # Trajectory query handler
 │   ├── corridor.rs         # Corridor query handler
 │   ├── cube.rs             # Cube query handler
+│   ├── locations.rs        # Locations query handler
 │   ├── catalog_check.rs    # Database contents diagnostic endpoint
 │   └── health.rs           # Health/metrics handlers
 └── Dockerfile
@@ -220,7 +261,7 @@ services/edr-api/src/
 
 Key crates used:
 
-- **edr-protocol** - EDR types, CoverageJSON, query parsing
+- **edr-protocol** - EDR types, CoverageJSON, GeoJSON, query parsing
 - **grid-processor** - Weather data access and interpolation
 - **storage** - Catalog and metadata queries
 - **axum** - HTTP framework
@@ -261,23 +302,57 @@ The primary response format for data queries:
 }
 ```
 
+### GeoJSON
+
+Alternative format for GIS integration:
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [-97.5, 35.2]},
+      "properties": {
+        "datetime": "2024-12-29T12:00:00Z",
+        "TMP": {"value": 288.5, "unit": "K"}
+      }
+    }
+  ]
+}
+```
+
 ### Domain Types by Query
 
 | Query Type | Domain Type | Description |
 |------------|-------------|-------------|
 | Position | Point | Single point |
+| Position (multi-time) | PointSeries | Time series at point |
+| Position (multi-z) | VerticalProfile | Vertical profile at point |
 | Area | Grid | 2D grid within polygon |
 | Radius | Grid | 2D grid within circle |
 | Trajectory | Trajectory | Path with composite axis |
 | Corridor | CoverageCollection | Multiple cross-sections |
 | Cube | CoverageCollection | Grid per z-level |
+| Locations | Point/PointSeries/VerticalProfile | Depends on query params |
 
 ## Performance
 
 ### Caching Strategy
 
 - **Chunk Cache**: Grid processor maintains a shared chunk cache for Zarr data
-- **No Response Cache**: EDR responses are not cached (point queries are fast)
+- **Location Cache**: In-memory cache for location queries with `X-Cache` header
+- **HTTP Cache Headers**: All responses include appropriate `Cache-Control` headers
+
+### Cache Headers
+
+| Response Type | Cache-Control |
+|---------------|---------------|
+| Data queries | `max-age=300` (5 minutes) |
+| Collections/instances | `max-age=60` (1 minute) |
+| Locations list | `max-age=3600` (1 hour) |
+| Location data | `max-age=300` (5 minutes) |
+| Catalog check | `no-cache, no-store, must-revalidate` |
 
 ### Throughput
 
@@ -287,6 +362,7 @@ The primary response format for data queries:
 | Position (10 params) | 200 | <100ms |
 | Area (small polygon) | 100 | <200ms |
 | Trajectory | 150 | <150ms |
+| Location (cached) | 1000+ | <10ms |
 
 ### Scaling
 
@@ -301,6 +377,7 @@ The service can be horizontally scaled. Each instance maintains its own chunk ca
 edr_requests_total{endpoint="position"}
 edr_requests_total{endpoint="area"}
 edr_requests_total{endpoint="trajectory"}
+edr_requests_total{endpoint="locations"}
 
 # Latency
 edr_request_duration_seconds_bucket{endpoint="position",le="0.1"}
@@ -308,6 +385,8 @@ edr_request_duration_seconds_bucket{endpoint="position",le="0.1"}
 # Cache performance
 grid_processor_chunk_cache_hits_total
 grid_processor_chunk_cache_misses_total
+location_cache_hits_total
+location_cache_misses_total
 ```
 
 ## Troubleshooting
@@ -335,6 +414,7 @@ grid_processor_chunk_cache_misses_total
 **Causes**:
 1. Chunk cache too large
 2. Many concurrent large queries
+3. Location cache accumulation
 
 **Solutions**:
 - Reduce `EDR_CHUNK_CACHE_MB`
@@ -353,8 +433,21 @@ grid_processor_chunk_cache_misses_total
 - Break large requests into smaller ones
 - Check limits in collection config
 
+### Location Not Found
+
+**Symptoms**: 404 error for location query
+
+**Causes**:
+1. Location ID not in config
+2. Case sensitivity issue (should be case-insensitive)
+
+**Solutions**:
+- Check `config/edr/locations.yaml` for available locations
+- Use `GET /collections/{id}/locations` to list available locations
+
 ## See Also
 
 - [EDR Endpoints](../api-reference/edr.md) - API documentation
+- [EDR Configuration](../configuration/edr.md) - Configuration reference
 - [edr-protocol Crate](../crates/edr-protocol.md) - Protocol types
 - [grid-processor](../crates/grid-processor.md) - Data access layer

@@ -139,6 +139,54 @@ Full WMTS 1.0.0 compliance test suite:
 - **Per-layer testing**: Validates every layer and tile matrix set
 - **Visual tile preview**: Shows actual rendered tiles
 
+#### EDR Compliance (`edr-compliance.html`)
+
+Full OGC API - EDR compliance test suite with 157+ tests:
+
+- **Core conformance**: Landing page, links, conformance declaration
+- **Collections**: Structure, metadata, extent validation
+- **Query types**: Position, area, radius, trajectory, corridor, cube, locations
+- **Parameter handling**: z levels, datetime, CRS, format negotiation
+- **Content negotiation**: Accept headers, f parameter, CoverageJSON/GeoJSON validation
+- **Error handling**: 400/404 responses, OGC exception format
+- **Interactive testing**: Map-based coordinate selection, query builder
+- **External server support**: Test any EDR server by entering its URL
+
+Test categories include:
+| Category | Tests | Description |
+|----------|-------|-------------|
+| Core | 3 | Landing page structure and links |
+| Collections | 3 | Collection list and metadata |
+| Position | 10 | Point queries with various formats |
+| Area | 13 | Polygon queries |
+| Radius | 17 | Circular area queries |
+| Trajectory | 17 | Path queries (LINESTRING variants) |
+| Corridor | 30+ | Buffered path queries |
+| Cube | 16 | 3D bounding box queries |
+| Locations | 11 | Named location queries |
+| Content-Type | 7 | Format negotiation |
+| Error Handling | 4 | Exception responses |
+
+#### EDR Coverage Validation (`edr-coverage.html`)
+
+Validates that advertised EDR data actually exists and can be retrieved:
+
+- **Purpose**: Ensures data integrity between configuration and database
+- **Test modes**:
+  - **Quick**: One sample per parameter
+  - **Full**: Multiple times per parameter
+  - **Thorough**: All times and levels
+- **Query type selection**: Position, area, radius, trajectory, corridor, cube, locations
+- **Output format testing**: CoverageJSON, GeoJSON, or both formats
+- **Concurrent execution**: Up to 20 parallel requests
+- **Catalog comparison**: Compares advertised vs actual database contents
+- **Results export**: JSON export for debugging
+
+Result categories:
+- **Pass** (green): Data retrieved successfully
+- **Fail** (red): Request error or invalid response
+- **Warn** (yellow): Success but empty/null data
+
 ### OGC Compliance Badges (Main Dashboard)
 
 Header badges show quick OGC compliance status:

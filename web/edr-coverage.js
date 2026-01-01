@@ -2396,95 +2396,117 @@ class EDRCoverageValidator {
 
             if (!coll) return;
 
-            let show = filter === 'all';
+            let showCollection = filter === 'all';
             let shouldExpand = false;
 
-            if (!show) {
-                // Check if collection has any items matching the filter
-                for (const param of coll.parameters) {
-                    const paramCheck = coll.parameterChecks[param];
-                    
-                    // Check parameter-level status
-                    if (filter === 'fail' && !paramCheck.inCatalog) {
-                        show = true;
-                        shouldExpand = true;
-                    }
-                    
-                    // Check parameter-level query status (for surface params without levels)
-                    if (filter === 'warn' && paramCheck.queryStatus === 'warn') {
-                        show = true;
-                        shouldExpand = true;
-                    }
-                    if (filter === 'pass' && paramCheck.queryStatus === 'pass') {
-                        show = true;
-                    }
-
-                    // Check level-specific statuses
-                    for (const levelCheck of Object.values(paramCheck.levels || {})) {
-                        if (filter === 'fail' && !levelCheck.inCatalog) {
-                            show = true;
-                            shouldExpand = true;
-                        }
-                        if (filter === 'warn' && levelCheck.queryResult === 'warn') {
-                            show = true;
-                            shouldExpand = true;
-                        }
-                        if (filter === 'pass' && levelCheck.inCatalog) {
-                            show = true;
-                        }
-                    }
-                    
-                    // Also check queryResults array for warnings
-                    if (filter === 'warn' && paramCheck.queryResults) {
-                        const hasWarn = paramCheck.queryResults.some(r => r.status === 'warn');
-                        if (hasWarn) {
-                            show = true;
-                            shouldExpand = true;
-                        }
-                    }
-                }
-            }
-
-            collEl.style.display = show ? '' : 'none';
-            
-            // Auto-expand collections that have matching items for fail/warn filters
-            if (show && shouldExpand && (filter === 'fail' || filter === 'warn')) {
-                collEl.classList.add('expanded');
+            // Process each parameter
+            collEl.querySelectorAll('.tree-parameter').forEach(paramEl => {
+                const paramName = paramEl.dataset.param;
+                const paramCheck = coll.parameterChecks[paramName];
                 
-                // Also expand parameters that have the matching status
-                collEl.querySelectorAll('.tree-parameter').forEach(paramEl => {
-                    const paramName = paramEl.dataset.param;
-                    const paramCheck = coll.parameterChecks[paramName];
-                    
-                    let paramHasMatch = false;
-                    
-                    if (filter === 'fail' && !paramCheck.inCatalog) {
+                let showParam = filter === 'all';
+                let paramHasMatch = false;
+                
+                // Check parameter-level status
+                if (filter === 'fail') {
+                    if (paramCheck.inCatalog === false || paramCheck.queryStatus === 'fail') {
+                        showParam = true;
                         paramHasMatch = true;
                     }
-                    if (filter === 'warn') {
-                        if (paramCheck.queryStatus === 'warn') {
-                            paramHasMatch = true;
-                        }
-                        if (paramCheck.queryResults?.some(r => r.status === 'warn')) {
-                            paramHasMatch = true;
-                        }
-                        for (const levelCheck of Object.values(paramCheck.levels || {})) {
-                            if (levelCheck.queryResult === 'warn') {
+                    if (paramCheck.queryResults?.some(r => r.status === 'fail')) {
+                        showParam = true;
+                        paramHasMatch = true;
+                    }
+                }
+                if (filter === 'warn') {
+                    if (paramCheck.queryStatus === 'warn') {
+                        showParam = true;
+                        paramHasMatch = true;
+                    }
+                    if (paramCheck.queryResults?.some(r => r.status === 'warn')) {
+                        showParam = true;
+                        paramHasMatch = true;
+                    }
+                }
+                if (filter === 'pass' && paramCheck.queryStatus === 'pass') {
+                    showParam = true;
+                }
+
+                // Process each level within the parameter
+                const levels = Object.keys(paramCheck.levels || {});
+                paramEl.querySelectorAll('.tree-level').forEach(levelEl => {
+                    const levelName = levelEl.dataset.level;
+                    const levelCheck = levelName ? paramCheck.levels[levelName] : null;
+                    
+                    let showLevel = filter === 'all';
+                    
+                    if (levelCheck) {
+                        if (filter === 'fail') {
+                            if (levelCheck.inCatalog === false || levelCheck.queryResult === 'fail') {
+                                showLevel = true;
+                                showParam = true;
                                 paramHasMatch = true;
                             }
                         }
+                        if (filter === 'warn' && levelCheck.queryResult === 'warn') {
+                            showLevel = true;
+                            showParam = true;
+                            paramHasMatch = true;
+                        }
+                        if (filter === 'pass' && (levelCheck.queryResult === 'pass' || levelCheck.inCatalog === true)) {
+                            showLevel = true;
+                            showParam = true;
+                        }
+                    } else {
+                        // Surface parameter (no level) - use param-level checks
+                        if (filter === 'fail') {
+                            if (paramCheck.inCatalog === false || paramCheck.queryStatus === 'fail') {
+                                showLevel = true;
+                            }
+                            if (paramCheck.queryResults?.some(r => r.status === 'fail')) {
+                                showLevel = true;
+                            }
+                        }
+                        if (filter === 'warn') {
+                            if (paramCheck.queryStatus === 'warn') {
+                                showLevel = true;
+                            }
+                            if (paramCheck.queryResults?.some(r => r.status === 'warn')) {
+                                showLevel = true;
+                            }
+                        }
+                        if (filter === 'pass' && paramCheck.queryStatus === 'pass') {
+                            showLevel = true;
+                        }
                     }
                     
-                    if (paramHasMatch) {
-                        paramEl.classList.add('expanded');
-                    }
+                    levelEl.style.display = showLevel ? '' : 'none';
                 });
+
+                // Show/hide parameter and expand if it has matches
+                paramEl.style.display = showParam ? '' : 'none';
+                if (showParam) {
+                    showCollection = true;
+                    if (paramHasMatch && (filter === 'fail' || filter === 'warn')) {
+                        paramEl.classList.add('expanded');
+                        shouldExpand = true;
+                    }
+                }
+                
+                // Collapse when showing all
+                if (filter === 'all') {
+                    paramEl.classList.remove('expanded');
+                }
+            });
+
+            collEl.style.display = showCollection ? '' : 'none';
+            
+            // Auto-expand collections that have matching items for fail/warn filters
+            if (showCollection && shouldExpand && (filter === 'fail' || filter === 'warn')) {
+                collEl.classList.add('expanded');
             } else if (filter === 'all') {
                 // When showing all, collapse everything
                 collEl.classList.remove('expanded');
-                collEl.querySelectorAll('.tree-parameter').forEach(paramEl => {
-                    paramEl.classList.remove('expanded');
-                });
             }
         });
     }

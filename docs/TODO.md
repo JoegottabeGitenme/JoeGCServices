@@ -72,3 +72,4 @@
 - the edr compliance test script can be a bit less verbose
 - need to implement geojson output in edr
 - for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
+- clicking on the fail in the coverage web app should show all the failed requests

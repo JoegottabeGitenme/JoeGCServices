@@ -61,6 +61,7 @@
 
 - [Overview](./configuration/README.md)
   - [Model Configuration](./configuration/models.md)
+  - [EDR Configuration](./configuration/edr.md)
   - [Style Configuration](./configuration/styles.md)
   - [Parameter Tables](./configuration/parameters.md)
   - [Environment Variables](./configuration/environment.md)

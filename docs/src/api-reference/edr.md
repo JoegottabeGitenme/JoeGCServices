@@ -1,10 +1,12 @@
 # EDR Endpoints
 
-OGC API - Environmental Data Retrieval (EDR) v1.1 implementation for accessing weather data.
+OGC API - Environmental Data Retrieval (EDR) implementation for accessing weather data.
+
+> **Note:** This implementation uses OGC API-EDR v1.0 conformance URIs. Work is ongoing to achieve full v1.1 conformance including the GeoJSON conformance class.
 
 ## Overview
 
-The EDR API provides RESTful access to weather model data through standardized query patterns. Unlike WMS which returns rendered images, EDR returns raw data values in structured formats like CoverageJSON.
+The EDR API provides RESTful access to weather model data through standardized query patterns. Unlike WMS which returns rendered images, EDR returns raw data values in structured formats like CoverageJSON or GeoJSON.
 
 ## Base URL
 
@@ -16,19 +18,20 @@ http://localhost:8083/edr
 
 This implementation supports the following conformance classes:
 
-| Conformance Class | URI |
-|------------------|-----|
-| Core | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core` |
-| Collections | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/collections` |
-| Position | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/position` |
-| Area | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/area` |
-| Radius | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/radius` |
-| Trajectory | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/trajectory` |
-| Corridor | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/corridor` |
-| Cube | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube` |
-| Instances | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances` |
-| CoverageJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson` |
-| GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/geojson` |
+| Conformance Class | URI | Status |
+|------------------|-----|--------|
+| Core | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/core` | Supported |
+| Collections | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/collections` | Supported |
+| Position | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/position` | Supported |
+| Area | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/area` | Supported |
+| Radius | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/radius` | Supported |
+| Trajectory | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/trajectory` | Supported |
+| Corridor | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/corridor` | Supported |
+| Cube | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/cube` | Supported |
+| Locations | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/locations` | Supported |
+| Instances | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances` | Supported |
+| CoverageJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/covjson` | Supported |
+| GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson` | Pending |
 
 ## Landing Page
 
@@ -46,10 +49,21 @@ GET /edr
   "links": [
     {"href": "/edr", "rel": "self", "type": "application/json"},
     {"href": "/edr/conformance", "rel": "conformance", "type": "application/json"},
-    {"href": "/edr/collections", "rel": "data", "type": "application/json"}
+    {"href": "/edr/collections", "rel": "data", "type": "application/json"},
+    {"href": "/edr/api", "rel": "service-desc", "type": "application/vnd.oai.openapi+json;version=3.0"},
+    {"href": "/edr/api.html", "rel": "service-doc", "type": "text/html"}
   ]
 }
 ```
+
+## API Documentation
+
+The EDR API provides OpenAPI documentation:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /edr/api` | OpenAPI specification (YAML) |
+| `GET /edr/api.html` | Interactive API documentation (ReDoc) |
 
 ## Conformance
 
@@ -63,17 +77,17 @@ GET /edr/conformance
 ```json
 {
   "conformsTo": [
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/collections",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/position",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/area",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/radius",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/trajectory",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/corridor",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/cube",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/instances",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson",
-    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/geojson"
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/core",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/collections",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/position",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/area",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/radius",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/trajectory",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/corridor",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/cube",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/locations",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/covjson"
   ]
 }
 ```
@@ -108,7 +122,8 @@ GET /edr/collections
         "radius": {"link": {"href": "/edr/collections/hrrr-isobaric/radius", "rel": "data"}},
         "trajectory": {"link": {"href": "/edr/collections/hrrr-isobaric/trajectory", "rel": "data"}},
         "corridor": {"link": {"href": "/edr/collections/hrrr-isobaric/corridor", "rel": "data"}},
-        "cube": {"link": {"href": "/edr/collections/hrrr-isobaric/cube", "rel": "data"}}
+        "cube": {"link": {"href": "/edr/collections/hrrr-isobaric/cube", "rel": "data"}},
+        "locations": {"link": {"href": "/edr/collections/hrrr-isobaric/locations", "rel": "data"}}
       },
       "crs": ["CRS:84", "EPSG:4326"],
       "output_formats": ["application/vnd.cov+json", "application/geo+json"]
@@ -166,11 +181,11 @@ GET /edr/collections/{collectionId}/instances/{instanceId}
 
 ## Query Types
 
-The EDR API supports six query types for extracting data from collections.
+The EDR API supports seven query types for extracting data from collections.
 
 ### Common Query Parameters
 
-These parameters are supported by all query types:
+These parameters are supported by all data query types:
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
@@ -178,16 +193,16 @@ These parameters are supported by all query types:
 | datetime | No | Time instant or interval | `2024-12-29T12:00:00Z` |
 | z | No | Vertical level(s) | `850` or `850,700,500` or `1000/500` or `R5/1000/100` |
 | crs | No | Coordinate reference system | `CRS:84` |
-| f | No | Output format | `CoverageJSON` or `GeoJSON` |
+| f | No | Output format | `covjson` or `geojson` |
 
 ### Output Formats
 
-The EDR API supports two output formats:
+The EDR API supports two output formats for data queries:
 
-| Format | Content-Type | Description |
-|--------|-------------|-------------|
-| CoverageJSON | `application/vnd.cov+json` | Default. OGC CoverageJSON format with multi-dimensional arrays |
-| GeoJSON | `application/geo+json` | GeoJSON FeatureCollection with one feature per data point |
+| Format | Content-Type | Query Param Values |
+|--------|-------------|-------------------|
+| CoverageJSON | `application/vnd.cov+json` | `covjson`, `coveragejson`, `json` (default) |
+| GeoJSON | `application/geo+json` | `geojson`, `geo+json` |
 
 **Request format via query parameter:**
 ```http
@@ -199,6 +214,8 @@ GET /edr/collections/{collectionId}/position?coords=POINT(-97.5 35.2)&f=geojson
 GET /edr/collections/{collectionId}/position?coords=POINT(-97.5 35.2)
 Accept: application/geo+json
 ```
+
+> **Note:** If `f=` is provided with an empty value, the API falls back to Accept header negotiation.
 
 **GeoJSON Response Example:**
 ```json
@@ -244,6 +261,18 @@ The `z` parameter supports multiple formats:
 | Range | `z=1000/500` | All levels between min/max |
 | Recurring | `z=R5/1000/100` | 5 levels starting at 1000, decrementing by 100 |
 
+### Datetime Formats
+
+The `datetime` parameter supports multiple formats:
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| Instant | `2024-12-29T12:00:00Z` | Single time |
+| Interval | `2024-12-29T00:00:00Z/2024-12-30T00:00:00Z` | Time range |
+| Open start | `../2024-12-30T00:00:00Z` | Up to time |
+| Open end | `2024-12-29T00:00:00Z/..` | From time onward |
+| List | `2024-12-29T12:00:00Z,2024-12-29T13:00:00Z` | Multiple instants |
+
 ---
 
 ## Position Query
@@ -259,7 +288,15 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/position?coords=POINT
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
-| coords | Yes | WKT POINT or MULTIPOINT | `POINT(-97.5 35.2)` |
+| coords | Yes | WKT POINT, MULTIPOINT, or simple lon,lat | `POINT(-97.5 35.2)` or `-97.5,35.2` |
+
+### Coordinate Formats
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| WKT POINT | `POINT(-97.5 35.2)` | Standard WKT format |
+| Simple | `-97.5,35.2` | Longitude,latitude |
+| MULTIPOINT | `MULTIPOINT((-97.5 35.2),(-98.0 36.0))` | Multiple points |
 
 ### Response (CoverageJSON)
 
@@ -331,7 +368,16 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/radius?coords=...
 |-----------|----------|-------------|---------|
 | coords | Yes | WKT POINT or MULTIPOINT | `POINT(-97.5 35.2)` |
 | within | Yes | Search radius value | `50` |
-| within-units | Yes | Radius units | `km`, `mi`, or `m` |
+| within-units | Yes | Radius units | `km`, `mi`, `m`, or `nm` |
+
+### Supported Distance Units
+
+| Unit | Description |
+|------|-------------|
+| `km` | Kilometers |
+| `mi` | Miles |
+| `m` | Meters |
+| `nm` | Nautical miles |
 
 ### Response
 
@@ -364,6 +410,8 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/trajectory?coords=...
 | LINESTRINGZM | `LINESTRINGZM(-100 40 850 1735574400,-99 40.5 700 1735578000,-98 41 500 1735581600)` | Path with both Z and M |
 | MULTILINESTRING | `MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))` | Multiple path segments |
 
+> **Note:** When using LINESTRINGZ or LINESTRINGZM, the `z` query parameter must not be provided. Similarly, when using LINESTRINGM or LINESTRINGZM, the `datetime` parameter must not be provided.
+
 ### Response
 
 Returns a Coverage with `domainType: "Trajectory"` containing data interpolated along the path.
@@ -385,14 +433,23 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/corridor?coords=...
 |-----------|----------|-------------|---------|
 | coords | Yes | WKT LINESTRING variant | `LINESTRING(-100 40,-99 40.5,-98 41)` |
 | corridor-width | Yes | Total corridor width | `10` |
-| width-units | Yes | Width units | `km`, `mi`, or `m` |
-| corridor-height | Yes | Total corridor height | `1000` |
-| height-units | Yes | Height units | `m`, `hPa`, or `Pa` |
-| resolution-x | No | Cross-track resolution | `3` (returns left, center, right) |
+| width-units | Yes | Width units | `km`, `mi`, `m`, or `nm` |
+| corridor-height | No | Total corridor height (default: 0 for 2D) | `1000` |
+| height-units | No | Height units | `m`, `km`, `hPa`, `mb`, or `Pa` |
+
+### Supported Height Units
+
+| Unit | Description |
+|------|-------------|
+| `m` | Meters |
+| `km` | Kilometers |
+| `hPa` | Hectopascals |
+| `mb` | Millibars |
+| `Pa` | Pascals |
 
 ### Response
 
-Returns a CoverageCollection with multiple Coverage objects representing cross-sections of the corridor.
+Returns a CoverageCollection with multiple Coverage objects representing cross-sections of the corridor (left edge, center, right edge trajectories).
 
 ---
 
@@ -411,8 +468,8 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/cube?bbox=...&z=...
 |-----------|----------|-------------|---------|
 | bbox | Yes | Bounding box (west,south,east,north) | `-98,35,-97,36` |
 | z | Yes | Vertical level(s) | `850` or `850,700,500` |
-| resolution-x | No | Grid points along x-axis | `10` |
-| resolution-y | No | Grid points along y-axis | `10` |
+| resolution-x | No | Grid points along x-axis (0 = native) | `10` |
+| resolution-y | No | Grid points along y-axis (0 = native) | `10` |
 
 ### Response
 
@@ -442,6 +499,124 @@ Returns a CoverageCollection with one Coverage per z-level, each containing a gr
 
 ---
 
+## Locations Query
+
+Retrieves data at pre-defined named locations (airports, cities, weather stations).
+
+### List Locations
+
+Returns all available named locations as a GeoJSON FeatureCollection.
+
+```http
+GET /edr/collections/{collectionId}/locations
+GET /edr/collections/{collectionId}/instances/{instanceId}/locations
+```
+
+**Response:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "KJFK",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-73.7781, 40.6413]
+      },
+      "properties": {
+        "name": "John F. Kennedy International Airport",
+        "description": "New York, NY",
+        "type": "airport",
+        "country": "US"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KLAX",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.4085, 33.9416]
+      },
+      "properties": {
+        "name": "Los Angeles International Airport",
+        "description": "Los Angeles, CA",
+        "type": "airport",
+        "country": "US"
+      }
+    }
+  ]
+}
+```
+
+### Query at Location
+
+Retrieves data at a specific named location.
+
+```http
+GET /edr/collections/{collectionId}/locations/{locationId}
+GET /edr/collections/{collectionId}/locations/{locationId}?parameter-name=TMP,UGRD,VGRD
+GET /edr/collections/{collectionId}/instances/{instanceId}/locations/{locationId}
+```
+
+### Parameters
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| locationId | Yes | Location identifier (case-insensitive) | `KJFK`, `kjfk` |
+| z | No | Vertical level(s) | `850` |
+| datetime | No | Time instant or interval | `2024-12-29T12:00:00Z` |
+| parameter-name | No | Parameter(s) to retrieve | `TMP,UGRD,VGRD` |
+| f | No | Output format | `covjson` or `geojson` |
+
+### Available Locations
+
+Locations are configured server-side in `config/edr/locations.yaml`. Common location types include:
+
+- **Airport codes** (ICAO): `KJFK`, `KLAX`, `KORD`, `KDFW`, `KDEN`, `KSFO`, `KBOS`, `KSEA`, `KMIA`, `KATL`
+- **City identifiers**: `NYC`, `CHI`, `HOU`, `PHX`, `DCA`
+
+### Response
+
+Returns CoverageJSON (default) or GeoJSON with data at the location:
+
+```json
+{
+  "type": "Coverage",
+  "domain": {
+    "type": "Domain",
+    "domainType": "Point",
+    "axes": {
+      "x": {"values": [-73.7781]},
+      "y": {"values": [40.6413]},
+      "t": {"values": ["2024-12-29T12:00:00Z"]}
+    }
+  },
+  "parameters": {
+    "TMP": {
+      "type": "Parameter",
+      "observedProperty": {"label": {"en": "TMP"}},
+      "unit": {"symbol": "K"}
+    }
+  },
+  "ranges": {
+    "TMP": {
+      "type": "NdArray",
+      "dataType": "float",
+      "values": [275.5]
+    }
+  }
+}
+```
+
+### Caching
+
+Location query responses include caching headers:
+- `Cache-Control: max-age=300` (5 minutes)
+- `X-Cache: HIT` or `X-Cache: MISS` indicates cache status
+
+---
+
 ## Error Responses
 
 Errors follow the OGC exception format:
@@ -461,6 +636,7 @@ Errors follow the OGC exception format:
 |--------|------|-------------|
 | 400 | invalid-parameter-value | Invalid or missing required parameter |
 | 404 | not-found | Resource not found |
+| 406 | not-acceptable | Unsupported Accept header format |
 | 413 | response-too-large | Requested data exceeds limits |
 | 500 | server-error | Internal server error |
 
@@ -486,6 +662,9 @@ The API enforces response size limits to prevent excessive resource usage:
 | Max time steps | 48 | Maximum temporal values |
 | Max vertical levels | 20 | Maximum z levels |
 | Max area | 100 sq deg | Maximum bbox/polygon area |
+| Max radius | 500 km | Maximum radius for radius queries |
+| Max trajectory points | 100 | Maximum waypoints in trajectory |
+| Max corridor length | 2000 km | Maximum corridor centerline length |
 | Max response size | 50 MB | Maximum response payload |
 
 Exceeding limits returns a `413 Payload Too Large` error.
@@ -498,12 +677,13 @@ A web-based compliance test suite is available at:
 http://localhost:8000/edr-compliance.html
 ```
 
-This validates all conformance classes with 150+ tests covering:
+This validates all conformance classes with 157+ tests covering:
 - Core API structure (landing page, conformance, collections)
-- All six query types (position, area, radius, trajectory, corridor, cube)
+- All seven query types (position, area, radius, trajectory, corridor, cube, locations)
 - Parameter handling (z, datetime, crs, f, parameter-name)
 - Error responses and edge cases
-- CoverageJSON structure validation
+- CoverageJSON and GeoJSON structure validation
+- Content negotiation and Accept headers
 
 ## Coverage Validation
 
@@ -528,6 +708,10 @@ The coverage validation tool addresses a critical gap: an EDR API can be fully O
   - **Full**: Tests all parameters at one level each
   - **Thorough**: Tests all parameters at all advertised levels
 
+- **Output format testing**: Test CoverageJSON, GeoJSON, or both formats
+
+- **Query type selection**: Test position, area, radius, trajectory, corridor, cube, or locations queries
+
 - **Concurrent testing**: Runs up to 20 requests in parallel for fast validation
 
 - **Catalog comparison**: Compares advertised collections/parameters against actual database contents (requires `catalog-check` endpoint)
@@ -540,8 +724,8 @@ The coverage validation tool addresses a critical gap: an EDR API can be fully O
 
 The tool displays:
 - **Pass** (green): Parameter retrieved successfully with data
-- **Warn** (yellow): Request succeeded but returned no data (empty coverage)
 - **Fail** (red): Request failed with error
+- **Warn** (yellow): Request succeeded but returned no data (empty coverage)
 
 ### Catalog Check Endpoint
 
@@ -569,6 +753,7 @@ This returns what's actually in the database (not what's configured), enabling c
 ## See Also
 
 - [EDR API Service](../services/edr-api.md) - Service implementation details
+- [EDR Configuration](../configuration/edr.md) - Configuration reference
 - [API Examples](./examples.md) - EDR usage examples
 - [WMS Endpoints](./wms.md) - Map tile rendering API
 - [edr-protocol Crate](../crates/edr-protocol.md) - Protocol type definitions

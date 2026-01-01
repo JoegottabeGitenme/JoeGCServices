@@ -269,6 +269,62 @@ z=850,700,500&\
 parameter-name=TMP,HGT"
 ```
 
+### Locations Query (Named Points)
+
+List all available named locations:
+
+```bash
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations"
+```
+
+Get weather at a specific airport:
+
+```bash
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations/KJFK?\
+parameter-name=TMP,UGRD,VGRD"
+```
+
+Get weather at multiple named locations:
+
+```bash
+# JFK Airport
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations/KJFK"
+
+# Chicago O'Hare
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations/KORD"
+
+# New York City (case-insensitive)
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations/nyc"
+```
+
+### GeoJSON Output Format
+
+Get data in GeoJSON format using the `f` parameter:
+
+```bash
+curl "http://localhost:8083/edr/collections/hrrr-surface/position?\
+coords=POINT(-97.5 35.2)&\
+parameter-name=TMP&\
+f=geojson"
+```
+
+Or using the Accept header:
+
+```bash
+curl -H "Accept: application/geo+json" \
+  "http://localhost:8083/edr/collections/hrrr-surface/position?\
+coords=POINT(-97.5 35.2)&\
+parameter-name=TMP"
+```
+
+GeoJSON output for locations:
+
+```bash
+curl "http://localhost:8083/edr/collections/hrrr-surface/locations/KJFK?\
+parameter-name=TMP&\
+f=geojson"
+```
+
 ### Python EDR Client
 
 ```python
@@ -282,7 +338,7 @@ print("Available collections:")
 for col in collections['collections']:
     print(f"  - {col['id']}: {col['title']}")
 
-# Position query
+# Position query (CoverageJSON)
 response = requests.get(
     f"{EDR_BASE}/collections/hrrr-surface/position",
     params={
@@ -295,6 +351,42 @@ if response.ok:
     covjson = response.json()
     temp = covjson['ranges']['TMP']['values'][0]
     print(f"Temperature: {temp} K ({temp - 273.15:.1f} C)")
+
+# Position query (GeoJSON)
+response = requests.get(
+    f"{EDR_BASE}/collections/hrrr-surface/position",
+    params={
+        "coords": "POINT(-97.5 35.2)",
+        "parameter-name": "TMP",
+        "f": "geojson"
+    }
+)
+
+if response.ok:
+    geojson = response.json()
+    feature = geojson['features'][0]
+    temp = feature['properties']['TMP']['value']
+    print(f"Temperature: {temp} K")
+
+# Query named locations
+locations = requests.get(f"{EDR_BASE}/collections/hrrr-surface/locations").json()
+print(f"\nAvailable locations: {len(locations['features'])}")
+for feature in locations['features'][:5]:
+    loc_id = feature['id']
+    name = feature['properties']['name']
+    coords = feature['geometry']['coordinates']
+    print(f"  {loc_id}: {name} at ({coords[0]}, {coords[1]})")
+
+# Get weather at JFK Airport
+response = requests.get(
+    f"{EDR_BASE}/collections/hrrr-surface/locations/KJFK",
+    params={"parameter-name": "TMP,UGRD,VGRD"}
+)
+
+if response.ok:
+    covjson = response.json()
+    temp = covjson['ranges']['TMP']['values'][0]
+    print(f"\nJFK Temperature: {temp - 273.15:.1f}C")
 ```
 
 ### JavaScript EDR Client
@@ -302,6 +394,7 @@ if response.ok:
 ```javascript
 const EDR_BASE = 'http://localhost:8083/edr';
 
+// Get temperature at a point (CoverageJSON)
 async function getTemperature(lon, lat) {
     const url = `${EDR_BASE}/collections/hrrr-surface/position?` +
         `coords=POINT(${lon} ${lat})&parameter-name=TMP`;
@@ -316,8 +409,54 @@ async function getTemperature(lon, lat) {
     return tempC;
 }
 
-// Get temperature at Oklahoma City
+// Get temperature as GeoJSON
+async function getTemperatureGeoJson(lon, lat) {
+    const url = `${EDR_BASE}/collections/hrrr-surface/position?` +
+        `coords=POINT(${lon} ${lat})&parameter-name=TMP&f=geojson`;
+    
+    const response = await fetch(url);
+    const geojson = await response.json();
+    
+    const feature = geojson.features[0];
+    const tempK = feature.properties.TMP.value;
+    const tempC = tempK - 273.15;
+    
+    console.log(`Temperature: ${tempC.toFixed(1)}C`);
+    return geojson;
+}
+
+// List available named locations
+async function getLocations() {
+    const url = `${EDR_BASE}/collections/hrrr-surface/locations`;
+    const response = await fetch(url);
+    const geojson = await response.json();
+    
+    console.log(`Found ${geojson.features.length} locations:`);
+    geojson.features.forEach(f => {
+        console.log(`  ${f.id}: ${f.properties.name}`);
+    });
+    return geojson;
+}
+
+// Get weather at a named location
+async function getLocationWeather(locationId) {
+    const url = `${EDR_BASE}/collections/hrrr-surface/locations/${locationId}?` +
+        `parameter-name=TMP,UGRD,VGRD`;
+    
+    const response = await fetch(url);
+    const covjson = await response.json();
+    
+    const tempK = covjson.ranges.TMP.values[0];
+    const tempC = tempK - 273.15;
+    
+    console.log(`${locationId} Temperature: ${tempC.toFixed(1)}C`);
+    return covjson;
+}
+
+// Examples
 getTemperature(-97.5, 35.5);
+getLocations();
+getLocationWeather('KJFK');
 ```
 
 ## See Also
