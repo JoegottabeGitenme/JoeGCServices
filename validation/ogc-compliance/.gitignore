@@ -2,8 +2,11 @@
 # These are generated during test runs and should not be committed
 results/
 
-# ETS JAR file (downloaded from Maven on first run)
+# ETS JAR files (downloaded from Maven on first run)
 lib/*.jar
+
+# TEAM Engine base directory (extracted CTL scripts and work files)
+te_base/
 
 # Logs
 *.log

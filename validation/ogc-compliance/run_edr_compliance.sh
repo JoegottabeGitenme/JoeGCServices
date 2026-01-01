@@ -1,16 +1,16 @@
 #!/bin/bash
 #
-# OGC API EDR 1.0 Compliance Test Runner (CLI)
+# OGC API EDR 1.0 Compliance Test Runner
 #
 # This script runs the official OGC ETS (Executable Test Suite) for EDR 1.0
 # using the all-in-one JAR directly - no Docker or TEAM Engine required.
 #
 # Usage:
-#   ./run-ets-cli.sh                           # Test local EDR API (default)
-#   ./run-ets-cli.sh --url http://example.com/edr  # Test custom URL
-#   ./run-ets-cli.sh --collections 5           # Test 5 collections
-#   ./run-ets-cli.sh --all-collections         # Test all collections
-#   ./run-ets-cli.sh --open                    # Open HTML report after
+#   ./run_edr_compliance.sh                           # Test local EDR API (default)
+#   ./run_edr_compliance.sh --url http://example.com/edr  # Test custom URL
+#   ./run_edr_compliance.sh --collections 5           # Test 5 collections
+#   ./run_edr_compliance.sh --all-collections         # Test all collections
+#   ./run_edr_compliance.sh --open                    # Open HTML report after
 #
 # Requirements:
 #   - Java 17+ (openjdk or similar)
@@ -40,7 +40,7 @@ EDR_API_URL="${EDR_API_URL:-http://localhost:8083/edr}"
 API_DEFINITION=""  # Auto-detect from landing page
 NUM_COLLECTIONS=3
 OPEN_REPORT=false
-OUTPUT_DIR="results"
+OUTPUT_DIR="results/edr"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --api-definition URL    OpenAPI definition URL (auto-detected if not specified)"
             echo "  -c, --collections N     Number of collections to test (default: 3)"
             echo "  -a, --all-collections   Test all collections"
-            echo "  -o, --output DIR        Output directory (default: results)"
+            echo "  -o, --output DIR        Output directory (default: results/edr)"
             echo "  --open                  Open HTML report in browser when done"
             echo "  -h, --help              Show this help message"
             echo ""
@@ -498,7 +498,7 @@ open_report() {
 print_summary() {
     echo ""
     echo "=========================================="
-    echo "         OGC Compliance Test Summary"
+    echo "       EDR Compliance Test Summary"
     echo "=========================================="
     echo ""
     echo "EDR API:    ${EDR_API_URL}"

@@ -1,129 +1,224 @@
-# OGC API EDR 1.0 Compliance Testing
+# OGC Compliance Testing
 
-Run official OGC compliance tests against the EDR API using the OGC Executable Test Suite (ETS).
+Run official OGC compliance tests for WMS 1.3.0, WMTS 1.0.0, and EDR 1.0 APIs using the OGC Executable Test Suites (ETS).
 
 ## Quick Start
 
 ```bash
-# Ensure EDR API is running
-cargo run --release -p edr-api
+# Run all compliance tests
+./run_all_compliance.sh
 
-# Run compliance tests
-./run-ets-cli.sh
-
-# View the results
-cat results/testng/*/testng-results.xml | head -20
-open results/report.html
+# Or run individual test suites
+./run_wms_compliance.sh
+./run_wmts_compliance.sh
+./run_edr_compliance.sh
 ```
 
 ## Prerequisites
 
-- **Java 17+** (OpenJDK or similar)
-- EDR API running on port 8083
-- Internet connection (for first-time JAR download)
+- **Docker** (for WMS and WMTS tests)
+- **Java 17+** (for EDR tests only)
+- Services running:
+  - WMS/WMTS on port 8080 (default)
+  - EDR API on port 8083 (default)
 
-## Usage
+## Test Suites
+
+| Service | OGC Standard | ETS Version | Test Method |
+|---------|--------------|-------------|-------------|
+| WMS | 1.3.0 | latest | Docker + TEAM Engine |
+| WMTS | 1.0.0 | latest | Docker + TEAM Engine |
+| EDR | 1.0 | 1.3 | Standalone JAR (TestNG) |
+
+**Note:** WMS and WMTS tests use Docker containers running official OGC TEAM Engine images. EDR tests run standalone via Java.
+
+## Scripts
+
+### Run All Tests
 
 ```bash
-# Run tests against local EDR API (default)
-./run-ets-cli.sh
+# Run all three test suites
+./run_all_compliance.sh
 
-# Run tests against custom URL
-./run-ets-cli.sh --url http://my-server:8083/edr
+# Skip specific services
+./run_all_compliance.sh --skip-edr
+./run_all_compliance.sh --skip-wms --skip-wmts
 
-# Test more collections
-./run-ets-cli.sh --collections 5
+# Custom URLs
+./run_all_compliance.sh --wms-url http://myserver/wms --edr-url http://myserver/edr
 
-# Test all collections
-./run-ets-cli.sh --all-collections
-
-# Open HTML report in browser when done
-./run-ets-cli.sh --open
-
-# Show all options
-./run-ets-cli.sh --help
+# Open reports in browser when done
+./run_all_compliance.sh --open
 ```
 
-## How It Works
+### WMS 1.3.0 Compliance
 
-The script uses the official OGC ETS (Executable Test Suite) for EDR 1.0:
+```bash
+# Basic usage (tests all profiles by default)
+./run_wms_compliance.sh
 
-1. Downloads the all-in-one JAR from Maven Central (first run only)
-2. Generates a test configuration file
-3. Runs tests directly via Java (no Docker required)
-4. Parses results and generates an HTML report
+# Custom WMS URL
+./run_wms_compliance.sh --url http://myserver/wms
 
-## Test Suite Coverage
+# Disable optional test profiles
+./run_wms_compliance.sh --no-queryable --no-time --no-recommended
 
-The OGC API - EDR 1.0 test suite validates these conformance classes:
+# Show all options
+./run_wms_compliance.sh --help
+```
 
-| Class | Description |
-|-------|-------------|
-| Core | Landing page, conformance, API definition |
-| Collections | Collection metadata and discovery |
-| JSON | JSON encoding support |
-| GeoJSON | GeoJSON encoding for responses |
-| EDR GeoJSON | EDR-specific GeoJSON extensions |
-| Queries | Position, area, trajectory, corridor queries |
+**Test Profiles (enabled by default):**
+- **Basic**: Core GetCapabilities, GetMap tests
+- **Queryable**: GetFeatureInfo tests
+- **TIME**: TIME dimension tests
+- **Recommended**: OGC recommended practices
+
+### WMTS 1.0.0 Compliance
+
+```bash
+# Basic usage
+./run_wmts_compliance.sh
+
+# Custom WMTS URL
+./run_wmts_compliance.sh --url http://myserver/wmts
+
+# Open report when done
+./run_wmts_compliance.sh --open
+```
+
+### EDR 1.0 Compliance
+
+```bash
+# Basic usage
+./run_edr_compliance.sh
+
+# Custom EDR URL
+./run_edr_compliance.sh --url http://myserver/edr
+
+# Test more/all collections
+./run_edr_compliance.sh --collections 5
+./run_edr_compliance.sh --all-collections
+
+# Show all options
+./run_edr_compliance.sh --help
+```
 
 ## Output
 
-Results are saved to the `results/` directory:
+Results are saved to service-specific directories:
 
-| File | Description |
-|------|-------------|
-| `report.html` | Human-readable HTML summary |
-| `testng/*/testng-results.xml` | Detailed TestNG XML results |
-| `test-run-props.xml` | Test configuration used |
+```
+validation/ogc-compliance/
+├── results/
+│   ├── wms/
+│   │   ├── report.html           # Human-readable summary
+│   │   └── test-results.xml      # TEAM Engine XML results
+│   ├── wmts/
+│   │   ├── report.html
+│   │   └── test-results.xml
+│   └── edr/
+│       ├── report.html
+│       ├── test-run-props.xml
+│       └── testng/*/testng-results.xml
+├── lib/
+│   └── ets-ogcapi-edr10-1.3-aio.jar  # Auto-downloaded for EDR
+├── docker-compose.yml            # Docker services configuration
+└── nginx-proxy.conf              # Proxy configuration for Docker
+```
 
 ## Example Output
 
 ```
-================================================
-    OGC API EDR 1.0 Compliance Test Suite
-================================================
+======================================================
+           OGC COMPLIANCE TEST SUMMARY
+======================================================
 
-[OK] Java 17 found
-[OK] ETS JAR found: lib/ets-ogcapi-edr10-1.3-aio.jar
-[OK] EDR API is accessible
-[INFO] Auto-detected API definition: http://localhost:8083/edr/api
+Service Results:
 
-Running OGC API EDR 1.0 Compliance Tests
-========================================
+  WMS      FAILED       47 passed, 109 failed
+  WMTS     FAILED       10 passed,  27 failed
+  EDR      FAILED       34 passed,  18 failed
 
-Test Results
-============
-Results file: results/testng/.../testng-results.xml
+WMS Failed Tests:
+  - GetCapabilities
+  - GetMap-ImageFormat
+  - ... and more
 
-  Total:   56
-  Passed:  34
-  Failed:  18
-  Skipped: 4
+Overall: FAILED
 
-  Pass Rate: 60%
+Reports:
+  WMS:  file:///path/to/results/wms/report.html
+  WMTS: file:///path/to/results/wmts/report.html
+  EDR:  file:///path/to/results/edr/report.html
 
-COMPLIANCE: FAILED
+Duration: 180s
 ```
 
-## Configuration
+## Architecture
 
-You can also pass a custom properties file:
+### WMS/WMTS Testing (Docker-based)
 
-```bash
-# Create custom configuration
-cat > my-config.xml << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
-<properties version="1.0">
-    <entry key="iut">https://api.example.com/edr</entry>
-    <entry key="apiDefinition">https://api.example.com/edr/api</entry>
-    <entry key="noofcollections">-1</entry>
-</properties>
-EOF
+WMS and WMTS tests run inside Docker using official OGC TEAM Engine containers. A key challenge is that the WMS/WMTS Capabilities documents return `localhost:8080` URLs, which Docker containers cannot reach. This is solved with an nginx proxy:
 
-# Run with custom config
-java -jar lib/ets-ogcapi-edr10-1.3-aio.jar -o results my-config.xml
 ```
+Docker Network (172.28.0.0/16):
++------------------------------------------------------------+
+|                                                            |
+|  +------------------+         +------------------+         |
+|  |  TEAM Engine     |  ---->  |  nginx proxy     |  ----> Host WMS/WMTS
+|  |  (WMS or WMTS)   |         |  172.28.0.10     |        (localhost:8080)
+|  |  port 9093/9094  |         |  port 8080       |         |
+|  +------------------+         +------------------+         |
+|         |                           |                      |
+|         |  URLs rewritten:          |                      |
+|         |  localhost:8080 ->        |                      |
+|         |  172.28.0.10:8080         |                      |
++------------------------------------------------------------+
+```
+
+The nginx proxy:
+1. Forwards requests from Docker to the host's WMS/WMTS service
+2. Rewrites `localhost:8080` URLs in responses to `172.28.0.10:8080`
+
+### EDR Testing (Standalone JAR)
+
+EDR tests use a standalone TestNG-based JAR that runs directly via Java without Docker.
+
+## How It Works
+
+### WMS/WMTS (Docker + TEAM Engine)
+1. **Checks Docker** availability and service accessibility
+2. **Starts containers** via Docker Compose (nginx proxy + TEAM Engine)
+3. **Waits for TEAM Engine** to be ready (REST API health check)
+4. **Runs tests** via TEAM Engine REST API
+5. **Parses XML results** from the test run
+6. **Generates HTML report** with pass/fail summary
+7. **Stops containers** on exit (cleanup)
+
+### EDR (Standalone)
+1. **Downloads ETS JAR** from Maven Central on first run (cached in `lib/`)
+2. **Checks Java 17+** installation
+3. **Verifies service accessibility** before running tests
+4. **Runs OGC ETS** via Java
+5. **Parses TestNG results** from XML output
+6. **Generates HTML report** with detailed results
+
+## Known Limitations
+
+### WMS/WMTS (Docker-based)
+
+- Requires Docker to be installed and running
+- Tests run against `localhost:8080` via the nginx proxy workaround
+- Some tests may still fail due to network/timing issues in containerized environment
+
+### EDR (Standalone)
+
+- Requires Java 17+ installed
+- The test suite runs fully standalone without Docker
+
+### General
+
+For official OGC certification, use the OGC CITE testing facility at https://cite.ogc.org/
 
 ## CI/CD Integration
 
@@ -132,18 +227,32 @@ java -jar lib/ets-ogcapi-edr10-1.3-aio.jar -o results my-config.xml
 - name: Run OGC Compliance Tests
   run: |
     cd validation/ogc-compliance
-    ./run-ets-cli.sh --collections 3
+    ./run_all_compliance.sh
 
-- name: Upload Compliance Report
+- name: Upload Compliance Reports
   uses: actions/upload-artifact@v4
+  if: always()
   with:
-    name: ogc-compliance-report
+    name: ogc-compliance-reports
     path: validation/ogc-compliance/results/
 ```
 
 ## Troubleshooting
 
-### Java not found
+### Docker not running (WMS/WMTS)
+
+```bash
+# Check Docker status
+docker info
+
+# Start Docker (Linux with systemd)
+sudo systemctl start docker
+
+# Make sure you have Docker Compose
+docker compose version
+```
+
+### Java not found (EDR only)
 
 ```bash
 # Install Java 17+
@@ -157,41 +266,64 @@ brew install openjdk@17
 sudo pacman -S jdk17-openjdk
 ```
 
-### EDR API not accessible
+### Service not accessible
 
 ```bash
-# Check if API is running
+# Check if services are running
+curl "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"
+curl "http://localhost:8080/wmts?SERVICE=WMTS&REQUEST=GetCapabilities"
 curl http://localhost:8083/edr
 
-# Start the API
-cargo run --release -p edr-api
+# Start services
+cargo run --release -p wms-api &
+cargo run --release -p edr-api &
 ```
 
-### Test failures
-
-Check the detailed TestNG results for failure messages:
+### Docker image pull failures (WMS/WMTS)
 
 ```bash
-grep -A5 'status="FAIL"' results/testng/*/testng-results.xml
+# Manually pull the TEAM Engine images
+docker pull ogccite/ets-wms13:latest
+docker pull ogccite/ets-wmts10:latest
+docker pull nginx:alpine
 ```
 
-## File Structure
+### EDR JAR download failures
 
+```bash
+# Manual download for EDR tests
+mkdir -p lib
+curl -L -o lib/ets-ogcapi-edr10-1.3-aio.jar \
+  https://repo1.maven.org/maven2/org/opengis/cite/ets-ogcapi-edr10/1.3/ets-ogcapi-edr10-1.3-aio.jar
 ```
-validation/ogc-compliance/
-├── run-ets-cli.sh              # Main test runner script
-├── test-run-props.xml.template # Configuration template
-├── lib/
-│   └── ets-ogcapi-edr10-*.jar  # OGC ETS all-in-one JAR
-├── results/                    # Test output (gitignored)
-│   ├── report.html
-│   └── testng/*/testng-results.xml
-└── README.md
+
+### Viewing detailed failures
+
+```bash
+# EDR: Find failed tests with details
+grep -A10 'status="FAIL"' results/edr/testng/*/testng-results.xml
+
+# WMS/WMTS: Check TEAM Engine XML results
+grep 'result="6"' results/wms/test-results.xml
+grep 'result="6"' results/wmts/test-results.xml
+
+# Or view the HTML reports
+xdg-open results/wms/report.html
+xdg-open results/edr/report.html
+```
+
+### Container cleanup
+
+```bash
+# If containers weren't cleaned up properly
+docker compose -f docker-compose.yml -p ogc-wms-test down
+docker compose -f docker-compose.yml -p ogc-wmts-test down
 ```
 
 ## References
 
-- [OGC API - Environmental Data Retrieval](https://ogcapi.ogc.org/edr/)
-- [OGC ETS for EDR 1.0](https://github.com/opengeospatial/ets-ogcapi-edr10)
-- [OGC CITE](https://cite.ogc.org/)
-- [OGC Compliance Program](https://www.ogc.org/compliance)
+- [OGC WMS 1.3.0 Specification](https://www.ogc.org/standard/wms/)
+- [OGC WMTS 1.0.0 Specification](https://www.ogc.org/standard/wmts/)
+- [OGC API - EDR Specification](https://ogcapi.ogc.org/edr/)
+- [OGC CITE (Compliance & Interoperability Testing)](https://cite.ogc.org/)
+- [OGC ETS GitHub Repositories](https://github.com/opengeospatial)
