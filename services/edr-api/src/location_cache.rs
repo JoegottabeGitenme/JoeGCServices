@@ -39,6 +39,8 @@ pub struct LocationCacheKey {
     pub parameters: Option<String>,
     /// Z parameter (vertical levels)
     pub z: Option<String>,
+    /// Output format (e.g., "geojson", "covjson")
+    pub format: Option<String>,
 }
 
 impl LocationCacheKey {
@@ -50,6 +52,7 @@ impl LocationCacheKey {
         datetime: Option<String>,
         parameters: Option<String>,
         z: Option<String>,
+        format: Option<String>,
     ) -> Self {
         Self {
             collection_id: collection_id.into(),
@@ -58,19 +61,21 @@ impl LocationCacheKey {
             datetime,
             parameters,
             z,
+            format,
         }
     }
 
     /// Convert to a string key for the LRU cache.
     fn to_string_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
             self.collection_id,
             self.location_id,
             self.instance_id.as_deref().unwrap_or("-"),
             self.datetime.as_deref().unwrap_or("-"),
             self.parameters.as_deref().unwrap_or("-"),
             self.z.as_deref().unwrap_or("-"),
+            self.format.as_deref().unwrap_or("-"),
         )
     }
 }
@@ -279,7 +284,7 @@ mod tests {
     async fn test_cache_put_get() {
         let cache = LocationCache::new(10, 300);
 
-        let key = LocationCacheKey::new("hrrr-surface", "KJFK", None, None, None, None);
+        let key = LocationCacheKey::new("hrrr-surface", "KJFK", None, None, None, None, None);
         let data = Bytes::from(r#"{"type":"Coverage"}"#);
         let content_type = "application/vnd.cov+json".to_string();
 
@@ -295,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_miss() {
         let cache = LocationCache::new(10, 300);
-        let key = LocationCacheKey::new("hrrr-surface", "UNKNOWN", None, None, None, None);
+        let key = LocationCacheKey::new("hrrr-surface", "UNKNOWN", None, None, None, None, None);
 
         let result = cache.get(&key).await;
         assert!(result.is_none());
@@ -311,6 +316,7 @@ mod tests {
             Some("2024-12-29T12:00:00Z".to_string()),
             Some("TMP,UGRD,VGRD".to_string()),
             Some("850".to_string()),
+            Some("geojson".to_string()),
         );
 
         let string_key = key.to_string_key();
@@ -318,14 +324,15 @@ mod tests {
         assert!(string_key.contains("KLAX"));
         assert!(string_key.contains("TMP,UGRD,VGRD"));
         assert!(string_key.contains("850"));
+        assert!(string_key.contains("geojson"));
     }
 
     #[tokio::test]
     async fn test_cache_stats() {
         let cache = LocationCache::new(10, 300);
 
-        let key1 = LocationCacheKey::new("col", "loc1", None, None, None, None);
-        let key2 = LocationCacheKey::new("col", "loc2", None, None, None, None);
+        let key1 = LocationCacheKey::new("col", "loc1", None, None, None, None, None);
+        let key2 = LocationCacheKey::new("col", "loc2", None, None, None, None, None);
 
         // Miss
         cache.get(&key1).await;

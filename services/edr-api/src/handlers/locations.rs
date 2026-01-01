@@ -114,8 +114,8 @@ async fn locations_list(
             .unwrap();
     }
 
-    // Build GeoJSON FeatureCollection
-    let fc = LocationFeatureCollection::from_config(locations);
+    // Build GeoJSON FeatureCollection with URI-style IDs per OGC EDR spec
+    let fc = LocationFeatureCollection::from_config_with_uris(locations, &state.base_url, &collection_id);
 
     // Determine output format
     let content_type = match params.f.as_deref() {
@@ -189,6 +189,7 @@ async fn location_query(
     };
 
     // Build cache key early to check cache before expensive operations
+    // Include format in cache key to ensure different formats are cached separately
     let cache_key = LocationCacheKey::new(
         &collection_id,
         &location_id,
@@ -196,6 +197,7 @@ async fn location_query(
         params.datetime.clone(),
         params.parameter_name.clone(),
         params.z.clone(),
+        params.f.clone(),
     );
 
     // Check cache first

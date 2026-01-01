@@ -63,7 +63,7 @@ impl ConformanceClasses {
     /// Create conformance classes for the current implementation.
     ///
     /// Includes: Core, Collections, Position, Area, Radius, Trajectory, Corridor, Cube,
-    /// Locations, Instances, CoverageJSON, GeoJSON
+    /// Locations, Instances, CoverageJSON, GeoJSON, EDR GeoJSON
     pub fn current() -> Self {
         Self {
             conforms_to: vec![
@@ -78,9 +78,10 @@ impl ConformanceClasses {
                 conformance::LOCATIONS.to_string(),
                 conformance::INSTANCES.to_string(),
                 conformance::COVJSON.to_string(),
-                // GeoJSON conformance class - now supported via locations endpoint
-                // which returns GeoJSON FeatureCollections for named locations.
+                // GeoJSON conformance class - basic RFC 7946 GeoJSON for locations list
                 conformance::GEOJSON.to_string(),
+                // EDR GeoJSON conformance class - EDR-specific GeoJSON for data query responses
+                conformance::EDR_GEOJSON.to_string(),
             ],
         }
     }

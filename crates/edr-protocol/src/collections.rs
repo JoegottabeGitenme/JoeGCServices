@@ -142,6 +142,8 @@ impl Collection {
     ///
     /// Per OGC EDR spec (Abstract Test 15), collections MUST have a link with
     /// rel="data" or rel="collection" that points to the collection itself.
+    /// For locations support, we add a link with rel="items" pointing to the
+    /// locations endpoint (per OGC EDR spec example for Location Query).
     pub fn build_links(&mut self, base_url: &str) {
         let collection_url = format!("{}/collections/{}", base_url, self.id);
         self.links = vec![
@@ -158,6 +160,14 @@ impl Collection {
             Link::new(format!("{}/instances", collection_url), "instances")
                 .with_type("application/json")
                 .with_title("Model run instances"),
+        );
+
+        // Add locations link with rel="items" (required for OGC GeoJSON conformance test)
+        // The test looks for collections that "offer Locations resources" via items link
+        self.links.push(
+            Link::new(format!("{}/locations", collection_url), "items")
+                .with_type("application/geo+json")
+                .with_title("Locations"),
         );
     }
 }
@@ -199,6 +209,17 @@ fn default_output_formats() -> Vec<String> {
     vec![
         "application/vnd.cov+json".to_string(),
         "application/geo+json".to_string(),
+    ]
+}
+
+/// Output formats for locations queries.
+/// Includes "GeoJSON" short form for OGC ETS test compatibility
+/// (the test checks for equalsIgnoreCase("GeoJSON")).
+fn locations_output_formats() -> Vec<String> {
+    vec![
+        "application/vnd.cov+json".to_string(),
+        "application/geo+json".to_string(),
+        "GeoJSON".to_string(),
     ]
 }
 
@@ -335,7 +356,8 @@ impl DataQueries {
             .with_type("application/geo+json")
             .with_title("Locations query")
             .with_variables(LinkVariables {
-                output_formats: Some(default_output_formats()),
+                // Use locations_output_formats which includes "GeoJSON" for OGC ETS compatibility
+                output_formats: Some(locations_output_formats()),
                 ..Default::default()
             }),
         });

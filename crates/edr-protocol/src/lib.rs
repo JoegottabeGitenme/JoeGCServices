@@ -76,8 +76,10 @@ pub mod conformance {
     pub const INSTANCES: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances";
     /// CoverageJSON conformance class
     pub const COVJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/covjson";
-    /// GeoJSON conformance class
+    /// GeoJSON conformance class (basic RFC 7946)
     pub const GEOJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson";
+    /// EDR GeoJSON conformance class (EDR-specific GeoJSON for data query responses)
+    pub const EDR_GEOJSON: &str = "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/edr-geojson";
 }
 
 /// Media types used in EDR responses

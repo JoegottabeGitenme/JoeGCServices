@@ -129,6 +129,44 @@ pub struct LocationFeature {
     pub properties: LocationProperties,
 }
 
+impl LocationFeature {
+    /// Create a new LocationFeature from a Location with a proper URI ID.
+    ///
+    /// Per OGC EDR spec, the Feature ID SHALL be a valid URI string that
+    /// SHOULD resolve to more information about the location.
+    pub fn from_location_with_uri(loc: &Location, base_url: &str, collection_id: &str) -> Self {
+        let mut props = LocationProperties {
+            name: loc.name.clone(),
+            description: loc.description.clone(),
+            datetime: None,
+            extra: HashMap::new(),
+        };
+
+        // Copy location properties to feature properties
+        for (k, v) in &loc.properties {
+            props
+                .extra
+                .insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+
+        // Generate URI-style ID per OGC EDR spec requirement
+        let uri_id = format!(
+            "{}/collections/{}/locations/{}",
+            base_url, collection_id, loc.id
+        );
+
+        Self {
+            feature_type: "Feature".to_string(),
+            id: uri_id,
+            geometry: LocationGeometry {
+                geometry_type: "Point".to_string(),
+                coordinates: vec![loc.coords[0], loc.coords[1]],
+            },
+            properties: props,
+        }
+    }
+}
+
 impl From<&Location> for LocationFeature {
     fn from(loc: &Location) -> Self {
         let mut props = LocationProperties {
@@ -216,7 +254,29 @@ impl LocationFeatureCollection {
         }
     }
 
-    /// Create from a LocationsConfig.
+    /// Create from a LocationsConfig with proper URI-style IDs.
+    ///
+    /// Per OGC EDR spec, the Feature ID SHALL be a valid URI string.
+    pub fn from_config_with_uris(
+        config: &LocationsConfig,
+        base_url: &str,
+        collection_id: &str,
+    ) -> Self {
+        let features: Vec<LocationFeature> = config
+            .locations
+            .iter()
+            .map(|loc| LocationFeature::from_location_with_uri(loc, base_url, collection_id))
+            .collect();
+        let count = features.len();
+
+        Self {
+            collection_type: "FeatureCollection".to_string(),
+            features,
+            number_returned: Some(count),
+        }
+    }
+
+    /// Create from a LocationsConfig (legacy - uses simple IDs).
     pub fn from_config(config: &LocationsConfig) -> Self {
         Self::from_locations(&config.locations)
     }

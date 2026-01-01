@@ -67,12 +67,13 @@ pub async fn list_instances_handler(
         // Build links
         instance.build_links(&state.base_url, &collection_id);
 
-        // Add data queries (position, area, radius, trajectory, and corridor)
+        // Add data queries (position, area, radius, trajectory, corridor, and locations)
         let queries = DataQueries::with_position(&state.base_url, &collection_id)
             .with_area(&state.base_url, &collection_id)
             .with_radius(&state.base_url, &collection_id)
             .with_trajectory(&state.base_url, &collection_id)
-            .with_corridor(&state.base_url, &collection_id);
+            .with_corridor(&state.base_url, &collection_id)
+            .with_locations(&state.base_url, &collection_id);
         instance = instance.with_data_queries(queries);
 
         // Get actual temporal extent from forecast range
@@ -193,12 +194,13 @@ pub async fn get_instance_handler(
     // Build links
     instance.build_links(&state.base_url, &collection_id);
 
-    // Add data queries (position, area, radius, trajectory, and corridor)
+    // Add data queries (position, area, radius, trajectory, corridor, and locations)
     let queries = DataQueries::with_position(&state.base_url, &collection_id)
         .with_area(&state.base_url, &collection_id)
         .with_radius(&state.base_url, &collection_id)
         .with_trajectory(&state.base_url, &collection_id)
-        .with_corridor(&state.base_url, &collection_id);
+        .with_corridor(&state.base_url, &collection_id)
+        .with_locations(&state.base_url, &collection_id);
     instance = instance.with_data_queries(queries);
 
     // Get actual temporal extent from forecast range
