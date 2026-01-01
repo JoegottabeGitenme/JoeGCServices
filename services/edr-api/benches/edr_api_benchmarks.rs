@@ -117,9 +117,9 @@ fn bench_response_size_estimation(c: &mut Criterion) {
     group.bench_function("estimate_position_simple", |b| {
         b.iter(|| {
             ResponseSizeEstimate::for_position(
-                black_box(1),  // params
-                black_box(1),  // time steps
-                black_box(1),  // levels
+                black_box(1), // params
+                black_box(1), // time steps
+                black_box(1), // levels
             )
         })
     });
@@ -137,9 +137,9 @@ fn bench_response_size_estimation(c: &mut Criterion) {
     group.bench_function("estimate_position_large", |b| {
         b.iter(|| {
             ResponseSizeEstimate::for_position(
-                black_box(10), // params
+                black_box(10),  // params
                 black_box(168), // time steps (week hourly)
-                black_box(37), // levels (full atmospheric profile)
+                black_box(37),  // levels (full atmospheric profile)
             )
         })
     });
@@ -148,10 +148,10 @@ fn bench_response_size_estimation(c: &mut Criterion) {
     group.bench_function("estimate_area_small", |b| {
         b.iter(|| {
             ResponseSizeEstimate::for_area(
-                black_box(1),   // params
-                black_box(1),   // time steps
-                black_box(1),   // levels
-                black_box(4.0), // 2x2 degree bbox
+                black_box(1),    // params
+                black_box(1),    // time steps
+                black_box(1),    // levels
+                black_box(4.0),  // 2x2 degree bbox
                 black_box(0.03), // HRRR resolution
             )
         })
@@ -160,9 +160,9 @@ fn bench_response_size_estimation(c: &mut Criterion) {
     group.bench_function("estimate_area_conus", |b| {
         b.iter(|| {
             ResponseSizeEstimate::for_area(
-                black_box(3),    // params
-                black_box(24),   // time steps
-                black_box(1),    // levels
+                black_box(3),      // params
+                black_box(24),     // time steps
+                black_box(1),      // levels
                 black_box(1534.0), // CONUS area (~59 * 26 degrees)
                 black_box(0.25),   // GFS resolution
             )

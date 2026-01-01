@@ -14,9 +14,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use edr_protocol::{
     coverage_json::{
-        CovJsonParameter, CoverageCollection, CoverageJson, CoverageType,
-        Domain, DomainType, NdArray, ReferenceSystem, ReferenceSystemConnection,
-        VerticalCoordinateSystem,
+        CovJsonParameter, CoverageCollection, CoverageJson, CoverageType, Domain, DomainType,
+        NdArray, ReferenceSystem, ReferenceSystemConnection, VerticalCoordinateSystem,
     },
     parameters::Unit,
     queries::{BboxQuery, DateTimeQuery},
@@ -451,7 +450,9 @@ async fn cube_query(
             if !units_str.is_empty() {
                 if let Some(shared_param) = shared_params.get_mut(param_name) {
                     if shared_param.unit.is_none() {
-                        *shared_param = shared_param.clone().with_unit(Unit::from_symbol(&units_str));
+                        *shared_param = shared_param
+                            .clone()
+                            .with_unit(Unit::from_symbol(&units_str));
                     }
                 }
             }
@@ -464,25 +465,24 @@ async fn cube_query(
             {
                 Ok(param_region) => {
                     // Resample if needed
-                    let values = if out_width == param_region.width
-                        && out_height == param_region.height
-                    {
-                        // Native resolution
-                        param_region
-                            .data
-                            .iter()
-                            .map(|&v| if v.is_nan() { None } else { Some(v) })
-                            .collect()
-                    } else {
-                        // Resample to requested resolution
-                        resample_grid(
-                            &param_region.data,
-                            param_region.width,
-                            param_region.height,
-                            out_width,
-                            out_height,
-                        )
-                    };
+                    let values =
+                        if out_width == param_region.width && out_height == param_region.height {
+                            // Native resolution
+                            param_region
+                                .data
+                                .iter()
+                                .map(|&v| if v.is_nan() { None } else { Some(v) })
+                                .collect()
+                        } else {
+                            // Resample to requested resolution
+                            resample_grid(
+                                &param_region.data,
+                                param_region.width,
+                                param_region.height,
+                                out_width,
+                                out_height,
+                            )
+                        };
 
                     // Shape: [t, y, x, z] per the IBL example
                     let shape = vec![1, out_height, out_width, 1];

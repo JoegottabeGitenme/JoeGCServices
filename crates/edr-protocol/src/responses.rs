@@ -36,7 +36,7 @@ impl LandingPage {
                 .with_type("application/json")
                 .with_title("Collections"),
             Link::new(format!("{}/api", base_url), "service-desc")
-                .with_type("application/openapi+json;version=3.0")
+                .with_type("application/vnd.oai.openapi+json;version=3.0")
                 .with_title("OpenAPI definition"),
             Link::new(format!("{}/api.html", base_url), "service-doc")
                 .with_type("text/html")

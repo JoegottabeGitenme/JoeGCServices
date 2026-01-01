@@ -84,15 +84,14 @@ impl ResponseSizeEstimate {
         // Convert radius to degrees (approximate)
         // At mid-latitudes, 1 degree ≈ 100 km
         let radius_degrees = radius_km / 100.0;
-        
+
         // Bounding box is 2r x 2r, but only π/4 of that is actually the circle
         let bbox_side = 2.0 * radius_degrees;
         let bbox_area = bbox_side * bbox_side;
         let circle_area = std::f64::consts::PI / 4.0 * bbox_area;
-        
+
         // Estimate number of grid points in the circular area
-        let num_points =
-            (circle_area / (resolution_degrees * resolution_degrees)) as usize;
+        let num_points = (circle_area / (resolution_degrees * resolution_degrees)) as usize;
         let num_points = num_points.max(1);
 
         let data_bytes = num_parameters * num_time_steps * num_vertical_levels * num_points * 4;

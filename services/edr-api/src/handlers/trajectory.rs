@@ -246,7 +246,11 @@ async fn trajectory_query(
     // Check response size limits
     let num_waypoints = waypoints.len();
     let num_levels = z_values.as_ref().map(|v| v.len()).unwrap_or(1);
-    let num_times = if time_strings.is_empty() { 1 } else { time_strings.len() };
+    let num_times = if time_strings.is_empty() {
+        1
+    } else {
+        time_strings.len()
+    };
 
     let estimate = ResponseSizeEstimate::for_trajectory(
         params_to_query.len(),
@@ -326,7 +330,11 @@ async fn trajectory_query(
             })
             .filter(|s| !s.is_empty())
             .collect();
-        if times.is_empty() { None } else { Some(times) }
+        if times.is_empty() {
+            None
+        } else {
+            Some(times)
+        }
     } else if !time_strings.is_empty() {
         Some(time_strings.clone())
     } else {
@@ -358,7 +366,12 @@ async fn trajectory_query(
     // Create CoverageJSON with Trajectory domain
     let mut coverage = CoverageJson {
         type_: edr_protocol::coverage_json::CoverageType::Coverage,
-        domain: edr_protocol::Domain::trajectory(x_values.clone(), y_values.clone(), t_values.clone(), z_axis.clone()),
+        domain: edr_protocol::Domain::trajectory(
+            x_values.clone(),
+            y_values.clone(),
+            t_values.clone(),
+            z_axis.clone(),
+        ),
         parameters: Some(std::collections::HashMap::new()),
         ranges: Some(std::collections::HashMap::new()),
     };
@@ -394,7 +407,7 @@ async fn trajectory_query(
             // to query at different valid times for each waypoint.
             // For simplicity, we'll sample at the waypoint location using the first time.
             // A more sophisticated implementation could query each waypoint at its embedded time.
-            
+
             let wp_query = if line_type.has_m() {
                 // Use the waypoint's embedded time
                 if let Some(epoch) = waypoint.m {
@@ -449,13 +462,8 @@ async fn trajectory_query(
         let shape = vec![waypoints.len()];
         let axis_names = vec!["composite".to_string()]; // Composite axis for trajectory
 
-        coverage = coverage.with_parameter_array_nullable(
-            param_name,
-            cov_param,
-            values,
-            shape,
-            axis_names,
-        );
+        coverage = coverage
+            .with_parameter_array_nullable(param_name, cov_param, values, shape, axis_names);
     }
 
     // Serialize response
@@ -536,7 +544,8 @@ mod tests {
 
     #[test]
     fn test_parse_linestring() {
-        let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72, -3.35 50.92, -3.11 51.02)");
+        let result =
+            TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72, -3.35 50.92, -3.11 51.02)");
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.waypoints.len(), 3);
@@ -555,7 +564,9 @@ mod tests {
 
     #[test]
     fn test_parse_linestringm() {
-        let result = TrajectoryQuery::parse_coords("LINESTRINGM(-3.53 50.72 1560507000, -3.35 50.92 1560508800)");
+        let result = TrajectoryQuery::parse_coords(
+            "LINESTRINGM(-3.53 50.72 1560507000, -3.35 50.92 1560508800)",
+        );
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.waypoints.len(), 2);
@@ -565,7 +576,9 @@ mod tests {
 
     #[test]
     fn test_parse_linestringzm() {
-        let result = TrajectoryQuery::parse_coords("LINESTRINGZM(-3.53 50.72 100 1560507000, -3.35 50.92 200 1560508800)");
+        let result = TrajectoryQuery::parse_coords(
+            "LINESTRINGZM(-3.53 50.72 100 1560507000, -3.35 50.92 200 1560508800)",
+        );
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.waypoints.len(), 2);
@@ -581,7 +594,9 @@ mod tests {
         assert!(result.is_err());
 
         // POLYGON is not valid for trajectory
-        let result = TrajectoryQuery::parse_coords("POLYGON((-3.53 50.72, -3.35 50.92, -3.11 51.02, -3.53 50.72))");
+        let result = TrajectoryQuery::parse_coords(
+            "POLYGON((-3.53 50.72, -3.35 50.92, -3.11 51.02, -3.53 50.72))",
+        );
         assert!(result.is_err());
     }
 }

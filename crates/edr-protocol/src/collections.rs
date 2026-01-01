@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::parameters::Parameter;
-use crate::types::{Extent, Link};
+use crate::types::{Extent, Link, LinkVariables};
 
 /// A list of collections available from the EDR API.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -139,10 +139,17 @@ impl Collection {
     }
 
     /// Build standard links for a collection.
+    ///
+    /// Per OGC EDR spec (Abstract Test 15), collections MUST have a link with
+    /// rel="data" or rel="collection" that points to the collection itself.
     pub fn build_links(&mut self, base_url: &str) {
         let collection_url = format!("{}/collections/{}", base_url, self.id);
         self.links = vec![
             Link::new(&collection_url, "self").with_type("application/json"),
+            // Add "collection" rel link pointing to self (required by OGC EDR spec)
+            Link::new(&collection_url, "collection")
+                .with_type("application/json")
+                .with_title("This collection"),
             Link::new(base_url, "root").with_type("application/json"),
         ];
 
@@ -187,6 +194,11 @@ pub struct DataQueries {
     pub locations: Option<QueryDescription>,
 }
 
+/// Default output formats for EDR queries.
+fn default_output_formats() -> Vec<String> {
+    vec!["application/vnd.cov+json".to_string()]
+}
+
 impl DataQueries {
     /// Create a new DataQueries with position query enabled.
     pub fn with_position(base_url: &str, collection_id: &str) -> Self {
@@ -196,9 +208,12 @@ impl DataQueries {
                     format!("{}/collections/{}/position", base_url, collection_id),
                     "data",
                 )
-                .with_type("application/json")
-                .with_title("Position query"),
-                variables: None,
+                .with_type("application/vnd.cov+json")
+                .with_title("Position query")
+                .with_variables(LinkVariables {
+                    output_formats: Some(default_output_formats()),
+                    ..Default::default()
+                }),
             }),
             ..Default::default()
         }
@@ -211,9 +226,12 @@ impl DataQueries {
                 format!("{}/collections/{}/area", base_url, collection_id),
                 "data",
             )
-            .with_type("application/json")
-            .with_title("Area query"),
-            variables: None,
+            .with_type("application/vnd.cov+json")
+            .with_title("Area query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
+                ..Default::default()
+            }),
         });
         self
     }
@@ -225,9 +243,12 @@ impl DataQueries {
                 format!("{}/collections/{}/cube", base_url, collection_id),
                 "data",
             )
-            .with_type("application/json")
-            .with_title("Cube query"),
-            variables: None,
+            .with_type("application/vnd.cov+json")
+            .with_title("Cube query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
+                ..Default::default()
+            }),
         });
         self
     }
@@ -240,8 +261,11 @@ impl DataQueries {
                 "data",
             )
             .with_type("application/vnd.cov+json")
-            .with_title("Radius query"),
-            variables: None,
+            .with_title("Radius query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
+                ..Default::default()
+            }),
         });
         self
     }
@@ -254,8 +278,11 @@ impl DataQueries {
                 "data",
             )
             .with_type("application/vnd.cov+json")
-            .with_title("Trajectory query"),
-            variables: None,
+            .with_title("Trajectory query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
+                ..Default::default()
+            }),
         });
         self
     }
@@ -270,8 +297,9 @@ impl DataQueries {
                 "data",
             )
             .with_type("application/vnd.cov+json")
-            .with_title("Corridor query"),
-            variables: Some(QueryVariables {
+            .with_title("Corridor query")
+            .with_variables(LinkVariables {
+                output_formats: Some(default_output_formats()),
                 // Supported width units (distance units)
                 width_units: Some(vec![
                     "km".to_string(),
@@ -296,26 +324,8 @@ impl DataQueries {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QueryDescription {
     /// Link to the query endpoint.
+    /// The link's `variables` field contains output_formats and query-specific settings.
     pub link: Link,
-
-    /// Variables/settings specific to this query type.
-    /// For corridor queries, this includes width_units and height_units.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variables: Option<QueryVariables>,
-}
-
-/// Variables/settings specific to a query type.
-///
-/// Per OGC EDR spec, corridor queries must advertise supported width_units and height_units.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct QueryVariables {
-    /// Supported width units for corridor queries.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub width_units: Option<Vec<String>>,
-
-    /// Supported height units for corridor queries.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub height_units: Option<Vec<String>>,
 }
 
 /// A list of instances (model runs) for a collection.
@@ -447,8 +457,9 @@ mod tests {
         let mut collection = Collection::new("hrrr-surface");
         collection.build_links("http://localhost:8083/edr");
 
-        assert!(collection.links.len() >= 2);
+        assert!(collection.links.len() >= 3);
         assert!(collection.links.iter().any(|l| l.rel == "self"));
+        assert!(collection.links.iter().any(|l| l.rel == "collection")); // OGC EDR requirement
         assert!(collection.links.iter().any(|l| l.rel == "instances"));
     }
 

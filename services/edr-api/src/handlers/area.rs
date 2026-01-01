@@ -275,7 +275,7 @@ async fn area_query(
         match chrono::DateTime::parse_from_rfc3339(id) {
             Ok(dt) => {
                 let ref_time = dt.with_timezone(&chrono::Utc);
-                
+
                 // Validate that this instance actually exists
                 let model_name = &model_config.model;
                 match state.catalog.get_model_runs_with_counts(model_name).await {
@@ -296,7 +296,7 @@ async fn area_query(
                         // Continue anyway - the query will fail if instance doesn't exist
                     }
                 }
-                
+
                 Some(ref_time)
             }
             Err(_) => {
@@ -462,7 +462,9 @@ async fn area_query(
                         param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
 
                     // Check if point is inside any polygon (union of all polygons for MULTIPOLYGON)
-                    let inside_any = all_area_queries.iter().any(|aq| aq.contains_point(lon, lat));
+                    let inside_any = all_area_queries
+                        .iter()
+                        .any(|aq| aq.contains_point(lon, lat));
                     if inside_any {
                         if value.is_nan() {
                             values.push(None);

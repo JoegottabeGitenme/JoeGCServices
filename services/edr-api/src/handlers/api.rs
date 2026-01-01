@@ -12,7 +12,10 @@ const OPENAPI_SPEC: &str = include_str!("../openapi.yaml");
 pub async fn api_handler() -> Response {
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/openapi+json;version=3.0")
+        .header(
+            header::CONTENT_TYPE,
+            "application/vnd.oai.openapi+json;version=3.0",
+        )
         .header(header::CACHE_CONTROL, "max-age=3600")
         .body(OPENAPI_SPEC.into())
         .unwrap()

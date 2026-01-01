@@ -2,7 +2,7 @@
 //!
 //! Returns data along and around a path defined by the coords parameter.
 //! A corridor is a volumetric region around a trajectory path with specified
-//! width (horizontal) and height (vertical) dimensions.
+//! width (horizontal) and optional height (vertical) dimensions.
 //!
 //! The response is a CoverageCollection containing multiple trajectories:
 //! - The centerline trajectory
@@ -12,14 +12,16 @@
 //! - coords: LINESTRING, LINESTRINGZ, LINESTRINGM, LINESTRINGZM or MULTI* variants
 //! - corridor-width: Total width of corridor (trajectory is center)
 //! - width-units: Units for width (km, mi, m, nm)
-//! - corridor-height: Total height of corridor (trajectory is center)
-//! - height-units: Units for height (m, km, hPa, mb, Pa)
+//!
+//! Optional parameters:
+//! - corridor-height: Total height of corridor (defaults to 0 for 2D corridor)
+//! - height-units: Units for height (defaults to "m")
 //!
 //! The Z coordinate (in LINESTRINGZ/LINESTRINGZM) represents height.
 //! The M coordinate (in LINESTRINGM/LINESTRINGZM) represents Unix epoch time.
 //!
 //! Error conditions (HTTP 400):
-//! - Missing any required parameter (coords, corridor-width, width-units, corridor-height, height-units)
+//! - Missing required parameters (coords, corridor-width, width-units)
 //! - coords=LINESTRINGZ with z parameter (conflict)
 //! - coords=LINESTRINGM with datetime parameter (conflict)
 //! - coords=LINESTRINGZM with z or datetime parameter (conflict)
@@ -84,7 +86,6 @@ pub struct CorridorQueryParams {
 
     /// Output format.
     pub f: Option<String>,
-
     // TODO: Stretch goal - resolution parameters
     // /// Number of positions across corridor width.
     // #[serde(rename = "resolution-x")]
@@ -268,27 +269,21 @@ async fn corridor_query(
         }
     };
 
-    // Check for required corridor-height parameter
-    let corridor_height_str = match &params.corridor_height {
-        Some(h) if !h.trim().is_empty() => h.as_str(),
-        _ => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                ExceptionResponse::bad_request("Missing required parameter: corridor-height"),
-            );
-        }
-    };
+    // corridor-height is optional - default to 0 if not provided (2D corridor)
+    let corridor_height_str = params
+        .corridor_height
+        .as_ref()
+        .map(|h| h.as_str())
+        .filter(|h| !h.trim().is_empty())
+        .unwrap_or("0");
 
-    // Check for required height-units parameter
-    let height_units_str = match &params.height_units {
-        Some(u) if !u.trim().is_empty() => u.as_str(),
-        _ => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                ExceptionResponse::bad_request("Missing required parameter: height-units"),
-            );
-        }
-    };
+    // height-units is optional - default to "m" if not provided
+    let height_units_str = params
+        .height_units
+        .as_ref()
+        .map(|u| u.as_str())
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or("m");
 
     // ===== Parse and Validate Units =====
 
@@ -366,11 +361,11 @@ async fn corridor_query(
     };
 
     let _corridor_height: f64 = match corridor_height_str.trim().parse() {
-        Ok(v) if v > 0.0 => v,
+        Ok(v) if v >= 0.0 => v, // Allow 0 for 2D corridors (no vertical extent)
         Ok(_) => {
             return error_response(
                 StatusCode::BAD_REQUEST,
-                ExceptionResponse::bad_request("corridor-height must be a positive number"),
+                ExceptionResponse::bad_request("corridor-height must be a non-negative number"),
             );
         }
         Err(_) => {
@@ -825,11 +820,7 @@ async fn corridor_query(
             if let Some(ref mut ranges) = coverage.ranges {
                 ranges.insert(
                     param_name.clone(),
-                    edr_protocol::coverage_json::NdArray::with_missing(
-                        values,
-                        shape,
-                        axis_names,
-                    ),
+                    edr_protocol::coverage_json::NdArray::with_missing(values, shape, axis_names),
                 );
             }
         }

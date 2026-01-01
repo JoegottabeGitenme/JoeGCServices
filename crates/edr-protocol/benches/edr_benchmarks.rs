@@ -7,6 +7,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use std::collections::HashMap;
 
 use edr_protocol::{
+    collections::{Collection, CollectionList, Instance, InstanceList},
     coverage_json::{CovJsonParameter, CoverageCollection, CoverageJson, Domain, NdArray},
     parameters::{Parameter, Unit},
     queries::{
@@ -15,7 +16,6 @@ use edr_protocol::{
     },
     responses::{ConformanceClasses, LandingPage},
     types::{Extent, Link, TemporalExtent, VerticalExtent},
-    collections::{Collection, CollectionList, Instance, InstanceList},
 };
 
 // =============================================================================
@@ -108,11 +108,7 @@ fn bench_datetime_parsing(c: &mut Criterion) {
 
     // Interval
     group.bench_function("parse_interval", |b| {
-        b.iter(|| {
-            DateTimeQuery::parse(black_box(
-                "2024-12-29T00:00:00Z/2024-12-29T23:59:59Z",
-            ))
-        })
+        b.iter(|| DateTimeQuery::parse(black_box("2024-12-29T00:00:00Z/2024-12-29T23:59:59Z")))
     });
 
     // Open-ended intervals
@@ -288,11 +284,7 @@ fn bench_trajectory_parsing(c: &mut Criterion) {
 
     // Simple linestring (3 points)
     group.bench_function("parse_linestring_3_points", |b| {
-        b.iter(|| {
-            TrajectoryQuery::parse_coords(black_box(
-                "LINESTRING(-100 35, -97 36, -94 35)",
-            ))
-        })
+        b.iter(|| TrajectoryQuery::parse_coords(black_box("LINESTRING(-100 35, -97 36, -94 35)")))
     });
 
     // Medium linestring (10 points)
@@ -343,11 +335,7 @@ fn bench_trajectory_parsing(c: &mut Criterion) {
 
     // Lowercase WKT
     group.bench_function("parse_lowercase", |b| {
-        b.iter(|| {
-            TrajectoryQuery::parse_coords(black_box(
-                "linestring(-100 35, -97 36, -94 35)",
-            ))
-        })
+        b.iter(|| TrajectoryQuery::parse_coords(black_box("linestring(-100 35, -97 36, -94 35)")))
     });
 
     // Multilinestring (for complex trajectories)
@@ -371,11 +359,7 @@ fn bench_corridor_parsing(c: &mut Criterion) {
 
     // Corridor coordinates (uses same parsing as trajectory)
     group.bench_function("parse_corridor_coords", |b| {
-        b.iter(|| {
-            CorridorQuery::parse_coords(black_box(
-                "LINESTRING(-100 35, -97 36, -94 35)",
-            ))
-        })
+        b.iter(|| CorridorQuery::parse_coords(black_box("LINESTRING(-100 35, -97 36, -94 35)")))
     });
 
     // Vertical unit parsing
@@ -424,9 +408,9 @@ fn bench_corridor_parsing(c: &mut Criterion) {
         b.iter(|| {
             CorridorQuery::new(
                 black_box(waypoints.clone()),
-                black_box(10.0),  // corridor width
+                black_box(10.0), // corridor width
                 DistanceUnit::Kilometers,
-                black_box(1000.0),  // corridor height
+                black_box(1000.0), // corridor height
                 VerticalUnit::Meters,
             )
         })
@@ -434,11 +418,12 @@ fn bench_corridor_parsing(c: &mut Criterion) {
 
     // Width/height calculations
     let corridor = CorridorQuery::new(
-        vec![
-            TrajectoryWaypoint {
-                lon: -100.0, lat: 35.0, z: None, m: None,
-            },
-        ],
+        vec![TrajectoryWaypoint {
+            lon: -100.0,
+            lat: 35.0,
+            z: None,
+            m: None,
+        }],
         50.0,
         DistanceUnit::Kilometers,
         5000.0,
@@ -475,9 +460,7 @@ fn bench_parameter_parsing(c: &mut Criterion) {
 
     group.bench_function("parse_multiple_7", |b| {
         b.iter(|| {
-            PositionQuery::parse_parameter_names(black_box(
-                "TMP,UGRD,VGRD,RH,HGT,PRMSL,APCP",
-            ))
+            PositionQuery::parse_parameter_names(black_box("TMP,UGRD,VGRD,RH,HGT,PRMSL,APCP"))
         })
     });
 
@@ -524,7 +507,12 @@ fn bench_coverage_json_creation(c: &mut Criterion) {
 
     // Add multiple parameters (typical weather query)
     group.bench_function("add_5_parameters", |b| {
-        let base = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0));
+        let base = CoverageJson::point(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            Some(2.0),
+        );
         let params = [
             ("TMP", Unit::kelvin(), 288.5),
             ("UGRD", Unit::meters_per_second(), 5.2),
@@ -592,10 +580,9 @@ fn bench_coverage_json_creation(c: &mut Criterion) {
     group.bench_function("create_vertical_profile_37", |b| {
         // Full atmospheric profile (37 levels typical for global models)
         let z_values: Vec<f64> = vec![
-            1000.0, 975.0, 950.0, 925.0, 900.0, 875.0, 850.0, 825.0, 800.0, 775.0,
-            750.0, 700.0, 650.0, 600.0, 550.0, 500.0, 450.0, 400.0, 350.0, 300.0,
-            250.0, 225.0, 200.0, 175.0, 150.0, 125.0, 100.0, 70.0, 50.0, 30.0,
-            20.0, 10.0, 7.0, 5.0, 3.0, 2.0, 1.0,
+            1000.0, 975.0, 950.0, 925.0, 900.0, 875.0, 850.0, 825.0, 800.0, 775.0, 750.0, 700.0,
+            650.0, 600.0, 550.0, 500.0, 450.0, 400.0, 350.0, 300.0, 250.0, 225.0, 200.0, 175.0,
+            150.0, 125.0, 100.0, 70.0, 50.0, 30.0, 20.0, 10.0, 7.0, 5.0, 3.0, 2.0, 1.0,
         ];
         b.iter(|| {
             CoverageJson::vertical_profile(
@@ -741,8 +728,13 @@ fn bench_coverage_json_serialization(c: &mut Criterion) {
         z_values,
     );
     let values: Vec<Option<f32>> = vec![
-        Some(288.0), Some(285.0), Some(280.0), Some(270.0),
-        Some(255.0), Some(230.0), Some(220.0),
+        Some(288.0),
+        Some(285.0),
+        Some(280.0),
+        Some(270.0),
+        Some(255.0),
+        Some(230.0),
+        Some(220.0),
     ];
     profile = profile.with_vertical_profile_data(
         "TMP",
@@ -875,7 +867,13 @@ fn bench_ndarray(c: &mut Criterion) {
 
     // Large sparse array with missing values
     let large_sparse: Vec<Option<f32>> = (0..10000)
-        .map(|i| if i % 7 == 0 { None } else { Some(i as f32 * 0.01) })
+        .map(|i| {
+            if i % 7 == 0 {
+                None
+            } else {
+                Some(i as f32 * 0.01)
+            }
+        })
         .collect();
     group.throughput(Throughput::Elements(10000));
     group.bench_function("create_large_sparse_10k", |b| {
@@ -967,8 +965,8 @@ fn bench_domain(c: &mut Criterion) {
             })
             .collect();
         let z_values: Vec<f64> = vec![
-            1000.0, 975.0, 950.0, 925.0, 900.0, 850.0, 800.0, 750.0, 700.0, 650.0,
-            600.0, 550.0, 500.0, 450.0, 400.0, 350.0, 300.0, 250.0, 200.0, 150.0,
+            1000.0, 975.0, 950.0, 925.0, 900.0, 850.0, 800.0, 750.0, 700.0, 650.0, 600.0, 550.0,
+            500.0, 450.0, 400.0, 350.0, 300.0, 250.0, 200.0, 150.0,
         ];
         b.iter(|| {
             Domain::grid(
@@ -1011,13 +1009,11 @@ fn bench_collections(c: &mut Criterion) {
             );
             params.insert(
                 "UGRD".to_string(),
-                Parameter::new("UGRD", "U-Wind")
-                    .with_unit(Unit::meters_per_second()),
+                Parameter::new("UGRD", "U-Wind").with_unit(Unit::meters_per_second()),
             );
             params.insert(
                 "VGRD".to_string(),
-                Parameter::new("VGRD", "V-Wind")
-                    .with_unit(Unit::meters_per_second()),
+                Parameter::new("VGRD", "V-Wind").with_unit(Unit::meters_per_second()),
             );
 
             Collection::new(black_box("hrrr-surface"))
@@ -1034,16 +1030,10 @@ fn bench_collections(c: &mut Criterion) {
     group.bench_function("create_collection_list", |b| {
         let collections: Vec<Collection> = (0..5)
             .map(|i| {
-                Collection::new(format!("collection-{}", i))
-                    .with_title(format!("Collection {}", i))
+                Collection::new(format!("collection-{}", i)).with_title(format!("Collection {}", i))
             })
             .collect();
-        b.iter(|| {
-            CollectionList::new(
-                black_box(collections.clone()),
-                "http://localhost:8083/edr",
-            )
-        })
+        b.iter(|| CollectionList::new(black_box(collections.clone()), "http://localhost:8083/edr"))
     });
 
     // Serialize collection list
@@ -1072,8 +1062,7 @@ fn bench_instances(c: &mut Criterion) {
     // Create instance
     group.bench_function("create_instance", |b| {
         b.iter(|| {
-            Instance::new(black_box("2024-12-29T12:00:00Z"))
-                .with_title("HRRR Run 2024-12-29 12Z")
+            Instance::new(black_box("2024-12-29T12:00:00Z")).with_title("HRRR Run 2024-12-29 12Z")
         })
     });
 
@@ -1097,7 +1086,11 @@ fn bench_instances(c: &mut Criterion) {
     });
 
     // Serialize instance list
-    let list = InstanceList::new(instances.clone(), "http://localhost:8083/edr", "hrrr-surface");
+    let list = InstanceList::new(
+        instances.clone(),
+        "http://localhost:8083/edr",
+        "hrrr-surface",
+    );
     let json = serde_json::to_string(&list).unwrap();
     group.throughput(Throughput::Bytes(json.len() as u64));
     group.bench_function("serialize_instance_list", |b| {
@@ -1185,9 +1178,7 @@ fn bench_types(c: &mut Criterion) {
     });
 
     // Unit presets
-    group.bench_function("create_unit_kelvin", |b| {
-        b.iter(|| Unit::kelvin())
-    });
+    group.bench_function("create_unit_kelvin", |b| b.iter(|| Unit::kelvin()));
 
     group.bench_function("create_unit_from_symbol", |b| {
         b.iter(|| Unit::from_symbol(black_box("m/s")))
@@ -1204,12 +1195,17 @@ fn bench_deserialization(c: &mut Criterion) {
     let mut group = c.benchmark_group("deserialization");
 
     // CoverageJSON deserialization
-    let cov = CoverageJson::point(-97.5, 35.2, Some("2024-12-29T12:00:00Z".to_string()), Some(2.0))
-        .with_parameter(
-            "TMP",
-            CovJsonParameter::new("Temperature").with_unit(Unit::kelvin()),
-            288.5,
-        );
+    let cov = CoverageJson::point(
+        -97.5,
+        35.2,
+        Some("2024-12-29T12:00:00Z".to_string()),
+        Some(2.0),
+    )
+    .with_parameter(
+        "TMP",
+        CovJsonParameter::new("Temperature").with_unit(Unit::kelvin()),
+        288.5,
+    );
     let json = serde_json::to_string(&cov).unwrap();
     group.throughput(Throughput::Bytes(json.len() as u64));
     group.bench_function("deserialize_coverage_json", |b| {

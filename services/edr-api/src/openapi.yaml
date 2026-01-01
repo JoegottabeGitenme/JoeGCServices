@@ -166,11 +166,17 @@ paths:
         - $ref: '#/components/parameters/coords'
         - name: within
           in: query
+          required: true
+          style: form
+          explode: false
           description: Radius distance
           schema:
             type: number
         - name: within-units
           in: query
+          required: false
+          style: form
+          explode: false
           description: Units for radius (m, km, mi)
           schema:
             type: string
@@ -227,11 +233,17 @@ paths:
         - $ref: '#/components/parameters/coords'
         - name: corridor-width
           in: query
+          required: true
+          style: form
+          explode: false
           description: Width of the corridor
           schema:
             type: number
         - name: width-units
           in: query
+          required: false
+          style: form
+          explode: false
           description: Units for corridor width
           schema:
             type: string
@@ -262,9 +274,16 @@ paths:
         - $ref: '#/components/parameters/collectionId'
         - name: bbox
           in: query
+          required: true
+          style: form
+          explode: false
           description: Bounding box (minx,miny,maxx,maxy)
           schema:
-            type: string
+            type: array
+            minItems: 4
+            maxItems: 6
+            items:
+              type: number
         - $ref: '#/components/parameters/z'
         - $ref: '#/components/parameters/datetime'
         - $ref: '#/components/parameters/parameter-name'
@@ -338,6 +357,9 @@ components:
     coords:
       name: coords
       in: query
+      required: true
+      style: form
+      explode: false
       description: |
         Well-Known Text (WKT) geometry:
         - Position: POINT(lon lat)
@@ -349,6 +371,9 @@ components:
     z:
       name: z
       in: query
+      required: false
+      style: form
+      explode: false
       description: |
         Vertical level(s). Supports:
         - Single value: 850
@@ -361,6 +386,9 @@ components:
     datetime:
       name: datetime
       in: query
+      required: false
+      style: form
+      explode: false
       description: |
         Temporal extent. Supports:
         - Single instant: 2024-01-01T00:00:00Z
@@ -372,6 +400,9 @@ components:
     parameter-name:
       name: parameter-name
       in: query
+      required: false
+      style: form
+      explode: false
       description: Comma-separated list of parameter names to return
       schema:
         type: string
@@ -379,6 +410,9 @@ components:
     crs:
       name: crs
       in: query
+      required: false
+      style: form
+      explode: false
       description: Coordinate reference system (default CRS84)
       schema:
         type: string
@@ -387,6 +421,9 @@ components:
     f:
       name: f
       in: query
+      required: false
+      style: form
+      explode: false
       description: Response format
       schema:
         type: string
@@ -396,6 +433,9 @@ components:
     resolution-x:
       name: resolution-x
       in: query
+      required: false
+      style: form
+      explode: false
       description: Horizontal resolution for area queries
       schema:
         type: number
@@ -403,6 +443,9 @@ components:
     resolution-y:
       name: resolution-y
       in: query
+      required: false
+      style: form
+      explode: false
       description: Vertical resolution for area queries
       schema:
         type: number

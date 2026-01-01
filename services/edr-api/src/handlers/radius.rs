@@ -161,7 +161,10 @@ async fn radius_query(
         Err(e) => {
             return error_response(
                 StatusCode::BAD_REQUEST,
-                ExceptionResponse::bad_request(format!("Invalid coordinates: {}. Expected POINT or MULTIPOINT.", e)),
+                ExceptionResponse::bad_request(format!(
+                    "Invalid coordinates: {}. Expected POINT or MULTIPOINT.",
+                    e
+                )),
             );
         }
     };
@@ -685,9 +688,9 @@ mod tests {
             RadiusQuery::new(-100.0, 35.0, 50.0, DistanceUnit::Kilometers),
             RadiusQuery::new(-95.0, 40.0, 50.0, DistanceUnit::Kilometers),
         ];
-        
+
         let bbox = compute_union_bbox(&queries);
-        
+
         // The union should encompass both circles
         assert!(bbox.west < -100.0);
         assert!(bbox.east > -95.0);
@@ -698,10 +701,10 @@ mod tests {
     #[test]
     fn test_radius_contains_point() {
         let rq = RadiusQuery::new(-97.5, 35.5, 100.0, DistanceUnit::Kilometers);
-        
+
         // Center should be inside
         assert!(rq.contains_point(-97.5, 35.5));
-        
+
         // Point far away should be outside
         assert!(!rq.contains_point(-90.0, 35.5));
     }

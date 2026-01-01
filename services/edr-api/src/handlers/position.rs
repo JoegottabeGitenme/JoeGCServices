@@ -77,7 +77,7 @@ async fn position_query(
     } else {
         tracing::debug!("Position query: No Accept header present");
     }
-    
+
     // Check Accept header - return 406 if unsupported format requested
     // Per OGC EDR spec and RFC 7231
     if let Err(response) = check_data_query_accept(&headers) {
@@ -245,7 +245,7 @@ async fn position_query(
         match chrono::DateTime::parse_from_rfc3339(id) {
             Ok(dt) => {
                 let ref_time = dt.with_timezone(&chrono::Utc);
-                
+
                 // Validate that this instance actually exists
                 let model_name = &model_config.model;
                 match state.catalog.get_model_runs_with_counts(model_name).await {
@@ -266,7 +266,7 @@ async fn position_query(
                         // Continue anyway - the query will fail if instance doesn't exist
                     }
                 }
-                
+
                 Some(ref_time)
             }
             Err(_) => {
@@ -303,7 +303,8 @@ async fn position_query(
         let datetime_str = time_strings.first().cloned();
 
         for (pt_lon, pt_lat) in &points {
-            let mut point_coverage = CoverageJson::point(*pt_lon, *pt_lat, datetime_str.clone(), z_val);
+            let mut point_coverage =
+                CoverageJson::point(*pt_lon, *pt_lat, datetime_str.clone(), z_val);
 
             // Query each parameter for this point
             for param_name in &params_to_query {
@@ -328,15 +329,21 @@ async fn position_query(
                     query = query.at_run(ref_time);
                 }
 
-                match state.grid_data_service.read_point(&query, *pt_lon, *pt_lat).await {
+                match state
+                    .grid_data_service
+                    .read_point(&query, *pt_lon, *pt_lat)
+                    .await
+                {
                     Ok(point_value) => {
                         let unit = Unit::from_symbol(&point_value.units);
                         let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
 
                         if let Some(val) = point_value.value {
-                            point_coverage = point_coverage.with_parameter(param_name, cov_param, val);
+                            point_coverage =
+                                point_coverage.with_parameter(param_name, cov_param, val);
                         } else {
-                            point_coverage = point_coverage.with_parameter_null(param_name, cov_param);
+                            point_coverage =
+                                point_coverage.with_parameter_null(param_name, cov_param);
                         }
                     }
                     Err(_) => {
@@ -396,7 +403,8 @@ async fn position_query(
 
             for z in z_vals {
                 // Build the level string for this z value
-                let level_str = build_level_string(&collection_def.level_filter, param_def, Some(*z));
+                let level_str =
+                    build_level_string(&collection_def.level_filter, param_def, Some(*z));
 
                 let mut query = DatasetQuery::forecast(&model_config.model, param_name);
 

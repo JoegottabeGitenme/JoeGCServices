@@ -6,8 +6,8 @@ use axum::{
     response::Response,
 };
 use edr_protocol::{
-    responses::ExceptionResponse, Collection, CollectionList, DataQueries, Extent, Parameter,
-    TemporalExtent, VerticalExtent,
+    parameters::Parameter, responses::ExceptionResponse, Collection, CollectionList, DataQueries,
+    Extent, TemporalExtent, VerticalExtent,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -162,6 +162,16 @@ pub async fn list_collections_handler(
         if let Some((model_config, coll_def)) = config.find_collection(&collection_def.id) {
             let extent = build_extent_from_catalog(&state.catalog, model_config, coll_def).await;
             collection = collection.with_extent(extent);
+
+            // Add parameters (required by OGC EDR tests)
+            let mut params = HashMap::new();
+            for param_def in &coll_def.parameters {
+                let param = Parameter::new(&param_def.name, &param_def.name);
+                params.insert(param_def.name.clone(), param);
+            }
+            if !params.is_empty() {
+                collection = collection.with_parameters(params);
+            }
 
             // Add CRS and formats
             collection = collection

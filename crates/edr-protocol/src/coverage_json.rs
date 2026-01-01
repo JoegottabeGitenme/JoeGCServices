@@ -278,15 +278,35 @@ impl Domain {
     /// Create a point domain.
     pub fn point(x: f64, y: f64, t: Option<String>, z: Option<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
-        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
+        axes.insert(
+            "x".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(x)],
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(y)],
+            },
+        );
 
         if let Some(t) = t {
-            axes.insert("t".to_string(), Axis::Values { values: vec![AxisValue::String(t)] });
+            axes.insert(
+                "t".to_string(),
+                Axis::Values {
+                    values: vec![AxisValue::String(t)],
+                },
+            );
         }
 
         if let Some(z) = z {
-            axes.insert("z".to_string(), Axis::Values { values: vec![AxisValue::Float(z)] });
+            axes.insert(
+                "z".to_string(),
+                Axis::Values {
+                    values: vec![AxisValue::Float(z)],
+                },
+            );
         }
 
         let referencing = vec![ReferenceSystemConnection {
@@ -305,17 +325,34 @@ impl Domain {
     /// Create a point domain with multiple z values (vertical profile at a point).
     pub fn vertical_profile(x: f64, y: f64, t: Option<String>, z_values: Vec<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
-        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
+        axes.insert(
+            "x".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(x)],
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(y)],
+            },
+        );
 
         if let Some(t) = t {
-            axes.insert("t".to_string(), Axis::Values { values: vec![AxisValue::String(t)] });
+            axes.insert(
+                "t".to_string(),
+                Axis::Values {
+                    values: vec![AxisValue::String(t)],
+                },
+            );
         }
 
         // Multiple z values for vertical profile
         axes.insert(
             "z".to_string(),
-            Axis::Values { values: z_values.into_iter().map(AxisValue::Float).collect() },
+            Axis::Values {
+                values: z_values.into_iter().map(AxisValue::Float).collect(),
+            },
         );
 
         let mut referencing = vec![ReferenceSystemConnection {
@@ -340,17 +377,34 @@ impl Domain {
     /// Create a point series domain (time series at a single point).
     pub fn point_series(x: f64, y: f64, t_values: Vec<String>, z: Option<f64>) -> Self {
         let mut axes = HashMap::new();
-        axes.insert("x".to_string(), Axis::Values { values: vec![AxisValue::Float(x)] });
-        axes.insert("y".to_string(), Axis::Values { values: vec![AxisValue::Float(y)] });
+        axes.insert(
+            "x".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(x)],
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(y)],
+            },
+        );
 
         // Time axis with multiple values
         axes.insert(
             "t".to_string(),
-            Axis::Values { values: t_values.into_iter().map(AxisValue::String).collect() },
+            Axis::Values {
+                values: t_values.into_iter().map(AxisValue::String).collect(),
+            },
         );
 
         if let Some(z) = z {
-            axes.insert("z".to_string(), Axis::Values { values: vec![AxisValue::Float(z)] });
+            axes.insert(
+                "z".to_string(),
+                Axis::Values {
+                    values: vec![AxisValue::Float(z)],
+                },
+            );
         }
 
         let mut referencing = vec![ReferenceSystemConnection {
@@ -382,24 +436,32 @@ impl Domain {
         let mut axes = HashMap::new();
         axes.insert(
             "x".to_string(),
-            Axis::Values { values: x_values.into_iter().map(AxisValue::Float).collect() },
+            Axis::Values {
+                values: x_values.into_iter().map(AxisValue::Float).collect(),
+            },
         );
         axes.insert(
             "y".to_string(),
-            Axis::Values { values: y_values.into_iter().map(AxisValue::Float).collect() },
+            Axis::Values {
+                values: y_values.into_iter().map(AxisValue::Float).collect(),
+            },
         );
 
         if let Some(t) = t_values {
             axes.insert(
                 "t".to_string(),
-                Axis::Values { values: t.into_iter().map(AxisValue::String).collect() },
+                Axis::Values {
+                    values: t.into_iter().map(AxisValue::String).collect(),
+                },
             );
         }
 
         if let Some(z) = z_values {
             axes.insert(
                 "z".to_string(),
-                Axis::Values { values: z.into_iter().map(AxisValue::Float).collect() },
+                Axis::Values {
+                    values: z.into_iter().map(AxisValue::Float).collect(),
+                },
             );
         }
 
@@ -465,7 +527,11 @@ impl Domain {
 
             // Add time if present
             if has_t {
-                let t_idx = if single_time { 0 } else { i.min(t_vec.len() - 1) };
+                let t_idx = if single_time {
+                    0
+                } else {
+                    i.min(t_vec.len() - 1)
+                };
                 point.push(CompositeValue::String(t_vec[t_idx].clone()));
             }
 
@@ -552,14 +618,18 @@ impl Domain {
         // Z is a single value for each coverage in the collection
         axes.insert(
             "z".to_string(),
-            Axis::Values { values: vec![AxisValue::Float(z_value)] },
+            Axis::Values {
+                values: vec![AxisValue::Float(z_value)],
+            },
         );
 
         // Time if provided
         if let Some(t) = t_value {
             axes.insert(
                 "t".to_string(),
-                Axis::Values { values: vec![AxisValue::String(t)] },
+                Axis::Values {
+                    values: vec![AxisValue::String(t)],
+                },
             );
         }
 
@@ -594,9 +664,7 @@ pub enum DomainType {
 #[serde(untagged)]
 pub enum Axis {
     /// Explicit list of values with "values" key.
-    Values {
-        values: Vec<AxisValue>,
-    },
+    Values { values: Vec<AxisValue> },
     /// Regular axis defined by start, stop, and number of points.
     Regular { start: f64, stop: f64, num: usize },
     /// Composite axis for trajectory domains (tuple of coordinates).
@@ -751,7 +819,10 @@ impl ReferenceSystem {
 
     /// Create a vertical CRS with coordinate system details.
     pub fn vertical_with_cs(cs: VerticalCoordinateSystem) -> Self {
-        ReferenceSystem::Vertical { id: None, cs: Some(cs) }
+        ReferenceSystem::Vertical {
+            id: None,
+            cs: Some(cs),
+        }
     }
 }
 

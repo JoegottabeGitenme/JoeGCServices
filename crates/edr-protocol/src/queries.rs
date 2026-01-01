@@ -93,7 +93,8 @@ impl PositionQuery {
         }
 
         Err(CoordinateParseError::InvalidWkt(
-            "Expected POINT(lon lat), MULTIPOINT((lon1 lat1),(lon2 lat2)), or lon,lat format".to_string(),
+            "Expected POINT(lon lat), MULTIPOINT((lon1 lat1),(lon2 lat2)), or lon,lat format"
+                .to_string(),
         ))
     }
 
@@ -140,13 +141,13 @@ impl PositionQuery {
         }
 
         let inner = &wkt[start + 1..end].trim();
-        
+
         // Parse each point - they are enclosed in parentheses and separated by commas
         // Format: (lon1 lat1),(lon2 lat2)
         let mut points = Vec::new();
         let mut depth = 0;
         let mut current_point = String::new();
-        
+
         for ch in inner.chars() {
             match ch {
                 '(' => {
@@ -373,9 +374,7 @@ impl PositionQuery {
 
         // Generate the levels: start, start-increment, start-2*increment, etc.
         // (For pressure levels, we typically decrement)
-        let levels: Vec<f64> = (0..count)
-            .map(|i| start - (i as f64 * increment))
-            .collect();
+        let levels: Vec<f64> = (0..count).map(|i| start - (i as f64 * increment)).collect();
 
         Ok(levels)
     }
@@ -413,22 +412,22 @@ impl DateTimeQuery {
         if dt == ".." {
             return Ok(());
         }
-        
+
         // Try to parse as RFC 3339 (ISO 8601 subset)
         if chrono::DateTime::parse_from_rfc3339(dt).is_ok() {
             return Ok(());
         }
-        
+
         // Also try without timezone (common format)
         if chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%dT%H:%M:%S").is_ok() {
             return Ok(());
         }
-        
+
         // Try date-only format
         if chrono::NaiveDate::parse_from_str(dt, "%Y-%m-%d").is_ok() {
             return Ok(());
         }
-        
+
         Err(CoordinateParseError::InvalidWkt(format!(
             "Invalid datetime format '{}'. Expected ISO 8601 format (e.g., 2024-12-29T12:00:00Z)",
             dt
@@ -479,7 +478,7 @@ impl DateTimeQuery {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            
+
             // Validate each datetime in the list
             for t in &times {
                 Self::validate_datetime(t)?;
@@ -705,7 +704,7 @@ impl AreaQuery {
 
         // Extract the coordinate string (inside the double parens)
         let coords_str = &coords[start + 2..end].trim();
-        
+
         Self::parse_ring(coords_str)
     }
 
@@ -768,13 +767,13 @@ impl AreaQuery {
         }
 
         let inner = &coords[start + 1..end];
-        
+
         // Parse each polygon - they are enclosed in double parentheses
         // Format: ((ring1)),((ring2))
         let mut polygons = Vec::new();
         let mut depth = 0;
         let mut current_polygon = String::new();
-        
+
         for ch in inner.chars() {
             match ch {
                 '(' => {
@@ -893,7 +892,9 @@ impl DistanceUnit {
             "km" | "kilometers" | "kilometre" | "kilometres" => Ok(DistanceUnit::Kilometers),
             "mi" | "miles" | "mile" => Ok(DistanceUnit::Miles),
             "m" | "meters" | "metre" | "metres" => Ok(DistanceUnit::Meters),
-            "nm" | "nautical_miles" | "nautical miles" | "nauticalmiles" => Ok(DistanceUnit::NauticalMiles),
+            "nm" | "nautical_miles" | "nautical miles" | "nauticalmiles" => {
+                Ok(DistanceUnit::NauticalMiles)
+            }
             _ => Err(CoordinateParseError::InvalidWkt(format!(
                 "Unknown distance unit '{}'. Supported units: km, mi, m, nm",
                 unit
@@ -961,29 +962,27 @@ impl RadiusQuery {
     /// Accepts numeric string like "100" or "50.5"
     pub fn parse_within(within: &str) -> Result<f64, CoordinateParseError> {
         let within = within.trim();
-        within.parse::<f64>().map_err(|_| {
-            CoordinateParseError::InvalidCoordinate(format!(
-                "Invalid radius value '{}'. Expected a number.",
-                within
-            ))
-        }).and_then(|v| {
-            if v <= 0.0 {
-                Err(CoordinateParseError::OutOfRange(
-                    "Radius must be a positive number".to_string(),
+        within
+            .parse::<f64>()
+            .map_err(|_| {
+                CoordinateParseError::InvalidCoordinate(format!(
+                    "Invalid radius value '{}'. Expected a number.",
+                    within
                 ))
-            } else {
-                Ok(v)
-            }
-        })
+            })
+            .and_then(|v| {
+                if v <= 0.0 {
+                    Err(CoordinateParseError::OutOfRange(
+                        "Radius must be a positive number".to_string(),
+                    ))
+                } else {
+                    Ok(v)
+                }
+            })
     }
 
     /// Create a RadiusQuery from parsed parameters.
-    pub fn new(
-        center_lon: f64,
-        center_lat: f64,
-        within: f64,
-        within_units: DistanceUnit,
-    ) -> Self {
+    pub fn new(center_lon: f64, center_lat: f64, within: f64, within_units: DistanceUnit) -> Self {
         Self {
             center_lon,
             center_lat,
@@ -1030,17 +1029,17 @@ impl RadiusQuery {
         // At the equator, 1 degree ≈ 111.32 km
         // For latitude: 1 degree ≈ 111.32 km (constant)
         // For longitude: 1 degree ≈ 111.32 * cos(lat) km (varies with latitude)
-        
+
         let lat_rad = self.center_lat.to_radians();
         let radius_km = self.radius_km();
-        
+
         // Degrees per km at this latitude
         let deg_per_km_lat = 1.0 / 111.32;
         let deg_per_km_lon = 1.0 / (111.32 * lat_rad.cos().max(0.01)); // Avoid division by zero near poles
-        
+
         let delta_lat = radius_km * deg_per_km_lat;
         let delta_lon = radius_km * deg_per_km_lon;
-        
+
         BboxQuery {
             west: (self.center_lon - delta_lon).max(-180.0),
             south: (self.center_lat - delta_lat).max(-90.0),
@@ -1085,22 +1084,42 @@ pub struct TrajectoryWaypoint {
 impl TrajectoryWaypoint {
     /// Create a 2D waypoint (lon, lat).
     pub fn new_2d(lon: f64, lat: f64) -> Self {
-        Self { lon, lat, z: None, m: None }
+        Self {
+            lon,
+            lat,
+            z: None,
+            m: None,
+        }
     }
 
     /// Create a 3D waypoint with height (lon, lat, z).
     pub fn new_3d_z(lon: f64, lat: f64, z: f64) -> Self {
-        Self { lon, lat, z: Some(z), m: None }
+        Self {
+            lon,
+            lat,
+            z: Some(z),
+            m: None,
+        }
     }
 
     /// Create a 3D waypoint with time (lon, lat, m).
     pub fn new_3d_m(lon: f64, lat: f64, m: i64) -> Self {
-        Self { lon, lat, z: None, m: Some(m) }
+        Self {
+            lon,
+            lat,
+            z: None,
+            m: Some(m),
+        }
     }
 
     /// Create a 4D waypoint (lon, lat, z, m).
     pub fn new_4d(lon: f64, lat: f64, z: f64, m: i64) -> Self {
-        Self { lon, lat, z: Some(z), m: Some(m) }
+        Self {
+            lon,
+            lat,
+            z: Some(z),
+            m: Some(m),
+        }
     }
 }
 
@@ -1120,12 +1139,18 @@ pub enum LineStringType {
 impl LineStringType {
     /// Check if this type includes height (Z) coordinates.
     pub fn has_z(&self) -> bool {
-        matches!(self, LineStringType::LineStringZ | LineStringType::LineStringZM)
+        matches!(
+            self,
+            LineStringType::LineStringZ | LineStringType::LineStringZM
+        )
     }
 
     /// Check if this type includes time (M) coordinates.
     pub fn has_m(&self) -> bool {
-        matches!(self, LineStringType::LineStringM | LineStringType::LineStringZM)
+        matches!(
+            self,
+            LineStringType::LineStringM | LineStringType::LineStringZM
+        )
     }
 }
 
@@ -1243,7 +1268,8 @@ impl TrajectoryQuery {
             LineStringType::LineString
         } else {
             return Err(CoordinateParseError::InvalidWkt(
-                "Expected LINESTRING, LINESTRINGZ, LINESTRINGM, LINESTRINGZM, or MULTI* variant".to_string(),
+                "Expected LINESTRING, LINESTRINGZ, LINESTRINGM, LINESTRINGZM, or MULTI* variant"
+                    .to_string(),
             ));
         };
 
@@ -1293,7 +1319,7 @@ impl TrajectoryQuery {
         }
 
         let inner = &coords[start + 1..end];
-        
+
         // Parse each linestring segment
         let mut all_waypoints = Vec::new();
         let mut depth = 0;
@@ -1362,16 +1388,19 @@ impl TrajectoryQuery {
                 if parts.len() != expected_coords {
                     return Err(CoordinateParseError::InvalidWkt(format!(
                         "Expected {} coordinates for {:?}, got {} in '{}'",
-                        expected_coords, line_type, parts.len(), waypoint_str
+                        expected_coords,
+                        line_type,
+                        parts.len(),
+                        waypoint_str
                     )));
                 }
 
-                let lon: f64 = parts[0].parse().map_err(|_| {
-                    CoordinateParseError::InvalidCoordinate(parts[0].to_string())
-                })?;
-                let lat: f64 = parts[1].parse().map_err(|_| {
-                    CoordinateParseError::InvalidCoordinate(parts[1].to_string())
-                })?;
+                let lon: f64 = parts[0]
+                    .parse()
+                    .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[0].to_string()))?;
+                let lat: f64 = parts[1]
+                    .parse()
+                    .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
 
                 // Validate lon/lat ranges
                 PositionQuery::validate_coordinates(lon, lat)?;
@@ -1463,9 +1492,7 @@ impl TrajectoryQuery {
     ///
     /// Returns (min_epoch, max_epoch) in seconds.
     pub fn time_range(&self) -> Option<(i64, i64)> {
-        let times: Vec<i64> = self.waypoints.iter()
-            .filter_map(|wp| wp.m)
-            .collect();
+        let times: Vec<i64> = self.waypoints.iter().filter_map(|wp| wp.m).collect();
 
         if times.is_empty() {
             return None;
@@ -1480,9 +1507,7 @@ impl TrajectoryQuery {
     ///
     /// Returns (min_z, max_z).
     pub fn z_range(&self) -> Option<(f64, f64)> {
-        let z_values: Vec<f64> = self.waypoints.iter()
-            .filter_map(|wp| wp.z)
-            .collect();
+        let z_values: Vec<f64> = self.waypoints.iter().filter_map(|wp| wp.z).collect();
 
         if z_values.is_empty() {
             return None;
@@ -2297,14 +2322,23 @@ mod tests {
     fn test_distance_unit_parse() {
         assert_eq!(DistanceUnit::parse("km").unwrap(), DistanceUnit::Kilometers);
         assert_eq!(DistanceUnit::parse("KM").unwrap(), DistanceUnit::Kilometers);
-        assert_eq!(DistanceUnit::parse("kilometers").unwrap(), DistanceUnit::Kilometers);
+        assert_eq!(
+            DistanceUnit::parse("kilometers").unwrap(),
+            DistanceUnit::Kilometers
+        );
         assert_eq!(DistanceUnit::parse("mi").unwrap(), DistanceUnit::Miles);
         assert_eq!(DistanceUnit::parse("miles").unwrap(), DistanceUnit::Miles);
         assert_eq!(DistanceUnit::parse("m").unwrap(), DistanceUnit::Meters);
         assert_eq!(DistanceUnit::parse("meters").unwrap(), DistanceUnit::Meters);
-        assert_eq!(DistanceUnit::parse("nm").unwrap(), DistanceUnit::NauticalMiles);
-        assert_eq!(DistanceUnit::parse("nautical_miles").unwrap(), DistanceUnit::NauticalMiles);
-        
+        assert_eq!(
+            DistanceUnit::parse("nm").unwrap(),
+            DistanceUnit::NauticalMiles
+        );
+        assert_eq!(
+            DistanceUnit::parse("nautical_miles").unwrap(),
+            DistanceUnit::NauticalMiles
+        );
+
         assert!(DistanceUnit::parse("invalid").is_err());
     }
 
@@ -2312,16 +2346,16 @@ mod tests {
     fn test_distance_unit_conversions() {
         // 1 km = 1000 m
         assert!((DistanceUnit::Kilometers.to_meters(1.0) - 1000.0).abs() < 0.01);
-        
+
         // 1 mile = 1609.344 m
         assert!((DistanceUnit::Miles.to_meters(1.0) - 1609.344).abs() < 0.01);
-        
+
         // 1 m = 1 m
         assert!((DistanceUnit::Meters.to_meters(1.0) - 1.0).abs() < 0.01);
-        
+
         // 1 nm = 1852 m
         assert!((DistanceUnit::NauticalMiles.to_meters(1.0) - 1852.0).abs() < 0.01);
-        
+
         // km conversion
         assert!((DistanceUnit::Miles.to_kilometers(1.0) - 1.609344).abs() < 0.001);
     }
@@ -2331,7 +2365,7 @@ mod tests {
         assert!((RadiusQuery::parse_within("100").unwrap() - 100.0).abs() < 0.01);
         assert!((RadiusQuery::parse_within("50.5").unwrap() - 50.5).abs() < 0.01);
         assert!((RadiusQuery::parse_within(" 25 ").unwrap() - 25.0).abs() < 0.01);
-        
+
         // Invalid values
         assert!(RadiusQuery::parse_within("abc").is_err());
         assert!(RadiusQuery::parse_within("-10").is_err());
@@ -2352,12 +2386,16 @@ mod tests {
         // Distance from London to Paris is approximately 344 km
         let london = (-0.1276, 51.5074);
         let paris = (2.3522, 48.8566);
-        
+
         let distance_m = RadiusQuery::haversine_distance(london.0, london.1, paris.0, paris.1);
         let distance_km = distance_m / 1000.0;
-        
+
         // Should be approximately 344 km (allow some tolerance)
-        assert!((distance_km - 344.0).abs() < 5.0, "Distance was {} km", distance_km);
+        assert!(
+            (distance_km - 344.0).abs() < 5.0,
+            "Distance was {} km",
+            distance_km
+        );
     }
 
     #[test]
@@ -2370,13 +2408,13 @@ mod tests {
     fn test_radius_query_contains_point() {
         // 100 km radius around Oklahoma City (-97.5, 35.5)
         let query = RadiusQuery::new(-97.5, 35.5, 100.0, DistanceUnit::Kilometers);
-        
+
         // Center point should be inside
         assert!(query.contains_point(-97.5, 35.5));
-        
+
         // Point 50 km away should be inside (approximately 0.5 degrees at this latitude)
         assert!(query.contains_point(-97.0, 35.5));
-        
+
         // Point 200 km away should be outside
         assert!(!query.contains_point(-95.0, 35.5));
     }
@@ -2386,13 +2424,13 @@ mod tests {
         // 100 km radius around the equator
         let query = RadiusQuery::new(0.0, 0.0, 100.0, DistanceUnit::Kilometers);
         let bbox = query.bounding_box();
-        
+
         // At the equator, 100 km ≈ 0.9 degrees
         assert!(bbox.west < -0.8);
         assert!(bbox.east > 0.8);
         assert!(bbox.south < -0.8);
         assert!(bbox.north > 0.8);
-        
+
         // Should be symmetric around center
         assert!((bbox.west + bbox.east).abs() < 0.01);
         assert!((bbox.south + bbox.north).abs() < 0.01);
@@ -2403,11 +2441,11 @@ mod tests {
         // 100 km radius at 60° latitude - longitude degrees should be wider
         let query = RadiusQuery::new(0.0, 60.0, 100.0, DistanceUnit::Kilometers);
         let bbox = query.bounding_box();
-        
+
         // At 60°N, 100 km ≈ 1.8 degrees longitude (twice as much as at equator)
         assert!(bbox.west < -1.5);
         assert!(bbox.east > 1.5);
-        
+
         // Latitude should still be ~0.9 degrees
         assert!((bbox.north - 60.0 - 0.9).abs() < 0.1);
     }
@@ -2416,11 +2454,13 @@ mod tests {
 
     #[test]
     fn test_parse_linestring_2d() {
-        let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72, -3.35 50.92, -3.11 51.02)").unwrap();
+        let result =
+            TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72, -3.35 50.92, -3.11 51.02)")
+                .unwrap();
         assert_eq!(result.line_type, LineStringType::LineString);
         assert_eq!(result.waypoints.len(), 3);
         assert!(!result.is_multi);
-        
+
         assert_eq!(result.waypoints[0].lon, -3.53);
         assert_eq!(result.waypoints[0].lat, 50.72);
         assert!(result.waypoints[0].z.is_none());
@@ -2436,39 +2476,48 @@ mod tests {
 
     #[test]
     fn test_parse_linestringz() {
-        let result = TrajectoryQuery::parse_coords("LINESTRINGZ(-3.53 50.72 100, -3.35 50.92 200, -3.11 51.02 300)").unwrap();
+        let result = TrajectoryQuery::parse_coords(
+            "LINESTRINGZ(-3.53 50.72 100, -3.35 50.92 200, -3.11 51.02 300)",
+        )
+        .unwrap();
         assert_eq!(result.line_type, LineStringType::LineStringZ);
         assert_eq!(result.waypoints.len(), 3);
-        
+
         assert_eq!(result.waypoints[0].lon, -3.53);
         assert_eq!(result.waypoints[0].lat, 50.72);
         assert_eq!(result.waypoints[0].z, Some(100.0));
         assert!(result.waypoints[0].m.is_none());
-        
+
         assert_eq!(result.waypoints[2].z, Some(300.0));
     }
 
     #[test]
     fn test_parse_linestringm() {
         // Unix epoch times (e.g., 1560507000 = 2019-06-14T07:30:00Z)
-        let result = TrajectoryQuery::parse_coords("LINESTRINGM(-3.53 50.72 1560507000, -3.35 50.92 1560508800)").unwrap();
+        let result = TrajectoryQuery::parse_coords(
+            "LINESTRINGM(-3.53 50.72 1560507000, -3.35 50.92 1560508800)",
+        )
+        .unwrap();
         assert_eq!(result.line_type, LineStringType::LineStringM);
         assert_eq!(result.waypoints.len(), 2);
-        
+
         assert_eq!(result.waypoints[0].lon, -3.53);
         assert_eq!(result.waypoints[0].lat, 50.72);
         assert!(result.waypoints[0].z.is_none());
         assert_eq!(result.waypoints[0].m, Some(1560507000));
-        
+
         assert_eq!(result.waypoints[1].m, Some(1560508800));
     }
 
     #[test]
     fn test_parse_linestringzm() {
-        let result = TrajectoryQuery::parse_coords("LINESTRINGZM(-3.53 50.72 100 1560507000, -3.35 50.92 200 1560508800)").unwrap();
+        let result = TrajectoryQuery::parse_coords(
+            "LINESTRINGZM(-3.53 50.72 100 1560507000, -3.35 50.92 200 1560508800)",
+        )
+        .unwrap();
         assert_eq!(result.line_type, LineStringType::LineStringZM);
         assert_eq!(result.waypoints.len(), 2);
-        
+
         assert_eq!(result.waypoints[0].lon, -3.53);
         assert_eq!(result.waypoints[0].lat, 50.72);
         assert_eq!(result.waypoints[0].z, Some(100.0));
@@ -2477,11 +2526,14 @@ mod tests {
 
     #[test]
     fn test_parse_multilinestring() {
-        let result = TrajectoryQuery::parse_coords("MULTILINESTRING((-3.53 50.72, -3.35 50.92), (-3.11 51.02, -2.85 51.42))").unwrap();
+        let result = TrajectoryQuery::parse_coords(
+            "MULTILINESTRING((-3.53 50.72, -3.35 50.92), (-3.11 51.02, -2.85 51.42))",
+        )
+        .unwrap();
         assert_eq!(result.line_type, LineStringType::LineString);
         assert_eq!(result.waypoints.len(), 4); // Concatenated
         assert!(result.is_multi);
-        
+
         assert_eq!(result.waypoints[0].lon, -3.53);
         assert_eq!(result.waypoints[2].lon, -3.11);
     }
@@ -2492,7 +2544,7 @@ mod tests {
         assert_eq!(result.line_type, LineStringType::LineStringZ);
         assert_eq!(result.waypoints.len(), 4);
         assert!(result.is_multi);
-        
+
         assert_eq!(result.waypoints[0].z, Some(100.0));
         assert_eq!(result.waypoints[3].z, Some(400.0));
     }
@@ -2501,8 +2553,10 @@ mod tests {
     fn test_parse_linestring_invalid_not_linestring() {
         let result = TrajectoryQuery::parse_coords("POINT(-3.53 50.72)");
         assert!(result.is_err());
-        
-        let result = TrajectoryQuery::parse_coords("POLYGON((-3.53 50.72, -3.35 50.92, -3.11 51.02, -3.53 50.72))");
+
+        let result = TrajectoryQuery::parse_coords(
+            "POLYGON((-3.53 50.72, -3.35 50.92, -3.11 51.02, -3.53 50.72))",
+        );
         assert!(result.is_err());
     }
 
@@ -2511,7 +2565,7 @@ mod tests {
         // Wrong number of coordinates for type
         let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 50.72 100, -3.35 50.92 200)"); // 3 coords but not Z type
         assert!(result.is_err());
-        
+
         let result = TrajectoryQuery::parse_coords("LINESTRINGZ(-3.53 50.72, -3.35 50.92)"); // Missing Z
         assert!(result.is_err());
     }
@@ -2521,7 +2575,7 @@ mod tests {
         // Longitude out of range
         let result = TrajectoryQuery::parse_coords("LINESTRING(-200 50.72, -3.35 50.92)");
         assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
-        
+
         // Latitude out of range
         let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 100, -3.35 50.92)");
         assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
@@ -2535,7 +2589,7 @@ mod tests {
             TrajectoryWaypoint::new_2d(-98.0, 37.0),
             TrajectoryWaypoint::new_2d(-96.0, 36.0),
         ];
-        
+
         let bbox = query.bounding_box();
         assert_eq!(bbox.west, -100.0);
         assert_eq!(bbox.east, -96.0);
@@ -2551,7 +2605,7 @@ mod tests {
             TrajectoryWaypoint::new_2d(0.0, 0.0),
             TrajectoryWaypoint::new_2d(1.0, 0.0), // ~111 km at equator
         ];
-        
+
         let length = query.path_length_meters();
         assert!((length - 111_000.0).abs() < 1000.0); // Within 1 km
     }
@@ -2564,7 +2618,7 @@ mod tests {
             TrajectoryWaypoint::new_3d_m(-3.35, 50.92, 1560510600),
             TrajectoryWaypoint::new_3d_m(-3.11, 51.02, 1560508800),
         ];
-        
+
         let (min, max) = query.time_range().unwrap();
         assert_eq!(min, 1560507000);
         assert_eq!(max, 1560510600);
@@ -2578,7 +2632,7 @@ mod tests {
             TrajectoryWaypoint::new_3d_z(-3.35, 50.92, 500.0),
             TrajectoryWaypoint::new_3d_z(-3.11, 51.02, 300.0),
         ];
-        
+
         let (min, max) = query.z_range().unwrap();
         assert_eq!(min, 100.0);
         assert_eq!(max, 500.0);
@@ -2588,13 +2642,13 @@ mod tests {
     fn test_linestring_type_has_z_m() {
         assert!(!LineStringType::LineString.has_z());
         assert!(!LineStringType::LineString.has_m());
-        
+
         assert!(LineStringType::LineStringZ.has_z());
         assert!(!LineStringType::LineStringZ.has_m());
-        
+
         assert!(!LineStringType::LineStringM.has_z());
         assert!(LineStringType::LineStringM.has_m());
-        
+
         assert!(LineStringType::LineStringZM.has_z());
         assert!(LineStringType::LineStringZM.has_m());
     }

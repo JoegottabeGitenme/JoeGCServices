@@ -19,10 +19,7 @@ pub const METADATA_MEDIA_TYPES: &[&str] = &["application/json"];
 
 /// Check if the Accept header is compatible with the supported media types.
 /// Returns Ok(()) if compatible, or an error Response if not.
-pub fn check_accept_header(
-    headers: &HeaderMap,
-    supported_types: &[&str],
-) -> Result<(), Response> {
+pub fn check_accept_header(headers: &HeaderMap, supported_types: &[&str]) -> Result<(), Response> {
     // Get Accept header, default to */* if not present
     let accept = headers
         .get(header::ACCEPT)
@@ -195,7 +192,8 @@ mod tests {
     #[test]
     fn test_browser_default_accept() {
         // Typical browser Accept header includes */* so should pass
-        let headers = make_headers("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        let headers =
+            make_headers("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         assert!(check_data_query_accept(&headers).is_ok());
     }
 

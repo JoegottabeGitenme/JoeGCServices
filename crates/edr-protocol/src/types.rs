@@ -28,6 +28,28 @@ pub struct Link {
     /// The language of the linked resource.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hreflang: Option<String>,
+
+    /// Query-specific variables (for EDR data query links).
+    /// Contains output_formats, and for corridor queries: width_units, height_units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<LinkVariables>,
+}
+
+/// Variables associated with a query link.
+/// Used to advertise supported output formats and query-specific options.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LinkVariables {
+    /// Supported output formats for this query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_formats: Option<Vec<String>>,
+
+    /// Supported width units for corridor queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_units: Option<Vec<String>>,
+
+    /// Supported height units for corridor queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_units: Option<Vec<String>>,
 }
 
 impl Link {
@@ -40,6 +62,7 @@ impl Link {
             title: None,
             templated: None,
             hreflang: None,
+            variables: None,
         }
     }
 
@@ -58,6 +81,12 @@ impl Link {
     /// Mark as a URI template.
     pub fn templated(mut self) -> Self {
         self.templated = Some(true);
+        self
+    }
+
+    /// Set query variables (output_formats, width_units, height_units).
+    pub fn with_variables(mut self, variables: LinkVariables) -> Self {
+        self.variables = Some(variables);
         self
     }
 }
