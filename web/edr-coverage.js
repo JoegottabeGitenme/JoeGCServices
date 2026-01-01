@@ -9,7 +9,8 @@ class EDRCoverageValidator {
     constructor() {
         this.endpoint = 'http://localhost:8083/edr';
         this.mode = 'full';
-        this.queryType = 'position'; // 'position', 'area', or 'radius'
+        this.queryType = 'position'; // 'position', 'area', 'radius', 'trajectory', 'corridor', 'cube'
+        this.outputFormat = 'covjson'; // 'covjson', 'geojson', or 'both'
         this.testPoint = { lon: -100, lat: 40 };
         this.testArea = { lon: -100, lat: 40 }; // Center of 1x1 degree test polygon
         this.testRadius = { lon: -100, lat: 40, within: 50, units: 'km' }; // Radius query config
@@ -81,6 +82,11 @@ class EDRCoverageValidator {
         // Bind mode select
         document.getElementById('mode-select').addEventListener('change', (e) => {
             this.mode = e.target.value;
+        });
+
+        // Bind format select
+        document.getElementById('format-select').addEventListener('change', (e) => {
+            this.outputFormat = e.target.value;
         });
 
         // Bind query type select
@@ -722,33 +728,60 @@ class EDRCoverageValidator {
      */
     async executeTask(task) {
         const { collId, param, level, time, levelCheck, paramCheck, coll } = task;
-        let result;
-        if (this.queryType === 'area') {
-            result = await this.testAreaQuery(collId, param, level, time, coll);
-        } else if (this.queryType === 'radius') {
-            result = await this.testRadiusQuery(collId, param, level, time, coll);
-        } else if (this.queryType === 'trajectory') {
-            result = await this.testTrajectoryQuery(collId, param, level, time, coll);
-        } else if (this.queryType === 'corridor') {
-            result = await this.testCorridorQuery(collId, param, level, time, coll);
-        } else if (this.queryType === 'cube') {
-            result = await this.testCubeQuery(collId, param, level, time, coll);
-        } else {
-            result = await this.testPositionQuery(collId, param, level, time, coll);
+        
+        // Determine which formats to test
+        const formats = this.outputFormat === 'both' 
+            ? ['covjson', 'geojson'] 
+            : [this.outputFormat];
+        
+        const results = [];
+        
+        for (const format of formats) {
+            let result;
+            if (this.queryType === 'area') {
+                result = await this.testAreaQuery(collId, param, level, time, coll, format);
+            } else if (this.queryType === 'radius') {
+                result = await this.testRadiusQuery(collId, param, level, time, coll, format);
+            } else if (this.queryType === 'trajectory') {
+                result = await this.testTrajectoryQuery(collId, param, level, time, coll, format);
+            } else if (this.queryType === 'corridor') {
+                result = await this.testCorridorQuery(collId, param, level, time, coll, format);
+            } else if (this.queryType === 'cube') {
+                result = await this.testCubeQuery(collId, param, level, time, coll, format);
+            } else {
+                result = await this.testPositionQuery(collId, param, level, time, coll, format);
+            }
+            
+            results.push(result);
+            
+            // Track in results
+            this.results.checks.push(result);
+            
+            // Update summary
+            this.results.summary[result.status]++;
+            this.updateSummary();
+            
+            // Log request
+            this.logRequest(result);
         }
+        
+        // Use the first result (or best result if testing both formats) for level/param tracking
+        const primaryResult = results.find(r => r.status === 'pass') || results[0];
 
         // Update the level check result
         if (levelCheck) {
-            levelCheck.queryResult = result.status;
-            levelCheck.queryMessage = result.message;
-            levelCheck.queryValues = result.values;
-            levelCheck.queryDuration = result.duration;
-            levelCheck.queryUrl = result.url;
+            levelCheck.queryResult = primaryResult.status;
+            levelCheck.queryMessage = primaryResult.message;
+            levelCheck.queryValues = primaryResult.values;
+            levelCheck.queryDuration = primaryResult.duration;
+            levelCheck.queryUrl = primaryResult.url;
+            // Store all format results for this level
+            levelCheck.formatResults = results;
         }
 
         // Track at parameter level for summary display
         if (paramCheck) {
-            paramCheck.queryResults.push(result);
+            paramCheck.queryResults.push(...results);
             // Update parameter-level summary
             const passCount = paramCheck.queryResults.filter(r => r.status === 'pass').length;
             const totalCount = paramCheck.queryResults.length;
@@ -758,28 +791,19 @@ class EDRCoverageValidator {
                                      paramCheck.queryResults.some(r => r.status === 'warn') ? 'warn' : 'fail';
         }
 
-        // Track in results
-        this.results.checks.push(result);
-
-        // Update summary
-        this.results.summary[result.status]++;
-        this.updateSummary();
-
         // Update progress
         this.completedChecks++;
         const percent = Math.round((this.completedChecks / this.totalChecks) * 100);
         this.updateProgress(percent, `Testing ${collId}/${param} (${this.completedChecks}/${this.totalChecks})`);
 
-        // Log request
-        this.logRequest(result);
-
-        return result;
+        return primaryResult;
     }
 
     /**
      * Make a single position query and check result
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testPositionQuery(collectionId, parameter, level, time, coll) {
+    async testPositionQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         const { lon, lat } = this.getQueryCoordinates(coll);
         const coords = `POINT(${lon} ${lat})`;
         let url = `${this.endpoint}/collections/${collectionId}/position?coords=${encodeURIComponent(coords)}&parameter-name=${parameter}`;
@@ -789,6 +813,11 @@ class EDRCoverageValidator {
         }
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
+        }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
         }
 
         const startTime = performance.now();
@@ -805,6 +834,8 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
+                    queryType: 'position',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
                     duration,
@@ -813,21 +844,29 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
-            const values = data.ranges?.[parameter]?.values || [];
-            const hasData = values.some(v => v !== null);
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            } else {
+                const values = data.ranges?.[parameter]?.values || [];
+                const hasData = values.some(v => v !== null);
 
-            return {
-                collection: collectionId,
-                parameter,
-                level,
-                time,
-                status: hasData ? 'pass' : 'warn',
-                message: hasData ? 'Data retrieved' : 'Query OK but null values',
-                values: values.slice(0, 5),
-                duration,
-                url,
-                response: data
-            };
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format: 'covjson',
+                    queryType: 'position',
+                    status: hasData ? 'pass' : 'warn',
+                    message: hasData ? 'Data retrieved (CovJSON)' : 'Query OK but null values',
+                    values: values.slice(0, 5),
+                    duration,
+                    url,
+                    response: data
+                };
+            }
         } catch (error) {
             if (error.name === 'AbortError') {
                 throw error;
@@ -837,6 +876,8 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
+                queryType: 'position',
                 status: 'fail',
                 message: error.message,
                 duration: Math.round(performance.now() - startTime),
@@ -844,11 +885,97 @@ class EDRCoverageValidator {
             };
         }
     }
+    
+    /**
+     * Validate GeoJSON response structure and extract data
+     */
+    validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url) {
+        const isFeatureCollection = data.type === 'FeatureCollection';
+        const isFeature = data.type === 'Feature';
+        
+        if (!isFeatureCollection && !isFeature) {
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format: 'geojson',
+                queryType: this.queryType,
+                status: 'fail',
+                message: `Invalid GeoJSON: type is "${data.type}", expected FeatureCollection or Feature`,
+                duration,
+                url,
+                response: data
+            };
+        }
+        
+        // Extract features
+        const features = isFeatureCollection ? (data.features || []) : [data];
+        
+        if (features.length === 0) {
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format: 'geojson',
+                queryType: this.queryType,
+                status: 'warn',
+                message: 'GeoJSON valid but no features',
+                duration,
+                url,
+                response: data
+            };
+        }
+        
+        // Check for parameter values in properties
+        let hasData = false;
+        let sampleValues = [];
+        
+        for (const feature of features) {
+            const props = feature.properties || {};
+            // Check for parameter value (could be under 'parameters' or direct property)
+            const paramData = props.parameters?.[parameter] || props[parameter];
+            if (paramData !== undefined && paramData !== null) {
+                hasData = true;
+                if (typeof paramData === 'object' && paramData.values) {
+                    sampleValues.push(...paramData.values.slice(0, 3));
+                } else {
+                    sampleValues.push(paramData);
+                }
+            }
+        }
+        
+        // Check geometry validity
+        const hasValidGeometry = features.every(f => 
+            f.geometry && f.geometry.type && f.geometry.coordinates
+        );
+        
+        return {
+            collection: collectionId,
+            parameter,
+            level,
+            time,
+            format: 'geojson',
+            queryType: this.queryType,
+            status: hasData ? 'pass' : 'warn',
+            message: hasData 
+                ? `GeoJSON valid (${features.length} features)` 
+                : `GeoJSON valid but no data for ${parameter}`,
+            values: sampleValues.slice(0, 5),
+            featureCount: features.length,
+            hasValidGeometry,
+            duration,
+            url,
+            response: data
+        };
+    }
 
     /**
      * Make a single area query and check result
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testAreaQuery(collectionId, parameter, level, time, coll) {
+    async testAreaQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         // Create a 1x1 degree polygon centered on the test area (or random point)
         const { lon, lat } = this.getQueryCoordinates(coll);
         const halfDeg = 0.5;
@@ -868,6 +995,11 @@ class EDRCoverageValidator {
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
         }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
+        }
 
         const startTime = performance.now();
 
@@ -883,6 +1015,7 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
                     queryType: 'area',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
@@ -892,6 +1025,12 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            }
+            
             const values = data.ranges?.[parameter]?.values || [];
             const nonNullValues = values.filter(v => v !== null);
             const hasData = nonNullValues.length > 0;
@@ -901,6 +1040,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format: 'covjson',
                 queryType: 'area',
                 status: hasData ? 'pass' : 'warn',
                 message: hasData 
@@ -922,6 +1062,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
                 queryType: 'area',
                 status: 'fail',
                 message: error.message,
@@ -933,8 +1074,9 @@ class EDRCoverageValidator {
 
     /**
      * Make a single radius query and check result
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testRadiusQuery(collectionId, parameter, level, time, coll) {
+    async testRadiusQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         // Get coordinates (either from fixed config or random within collection bbox)
         const { lon, lat } = this.getQueryCoordinates(coll);
         const coords = `POINT(${lon} ${lat})`;
@@ -948,6 +1090,11 @@ class EDRCoverageValidator {
         }
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
+        }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
         }
 
         const startTime = performance.now();
@@ -964,6 +1111,7 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
                     queryType: 'radius',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
@@ -973,6 +1121,12 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            }
+            
             const values = data.ranges?.[parameter]?.values || [];
             const nonNullValues = values.filter(v => v !== null);
             const hasData = nonNullValues.length > 0;
@@ -982,6 +1136,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format: 'covjson',
                 queryType: 'radius',
                 status: hasData ? 'pass' : 'warn',
                 message: hasData 
@@ -1003,6 +1158,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
                 queryType: 'radius',
                 status: 'fail',
                 message: error.message,
@@ -1014,8 +1170,9 @@ class EDRCoverageValidator {
 
     /**
      * Make a single trajectory query and check result
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testTrajectoryQuery(collectionId, parameter, level, time, coll) {
+    async testTrajectoryQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         // Get trajectory coordinates - either fixed or generate random within bbox
         const coords = this.getTrajectoryCoordinates(coll);
         
@@ -1026,6 +1183,11 @@ class EDRCoverageValidator {
         }
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
+        }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
         }
 
         const startTime = performance.now();
@@ -1042,6 +1204,7 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
                     queryType: 'trajectory',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
@@ -1051,6 +1214,12 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            }
+            
             const values = data.ranges?.[parameter]?.values || [];
             const nonNullValues = values.filter(v => v !== null);
             const hasData = nonNullValues.length > 0;
@@ -1064,6 +1233,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format: 'covjson',
                 queryType: 'trajectory',
                 status: hasData ? 'pass' : 'warn',
                 message: hasData 
@@ -1087,6 +1257,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
                 queryType: 'trajectory',
                 status: 'fail',
                 message: error.message,
@@ -1099,8 +1270,9 @@ class EDRCoverageValidator {
     /**
      * Make a single corridor query and check result
      * Corridor returns a CoverageCollection with multiple trajectories
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testCorridorQuery(collectionId, parameter, level, time, coll) {
+    async testCorridorQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         // Get corridor coordinates - either fixed or generate random within bbox
         const coords = this.getCorridorCoordinates(coll);
         const corridorWidth = this.testCorridor.corridorWidth;
@@ -1115,6 +1287,11 @@ class EDRCoverageValidator {
         }
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
+        }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
         }
 
         const startTime = performance.now();
@@ -1131,6 +1308,7 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
                     queryType: 'corridor',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
@@ -1140,6 +1318,11 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            }
             
             // Corridor returns CoverageCollection with multiple coverages (trajectories)
             const isCoverageCollection = data.type === 'CoverageCollection';
@@ -1166,6 +1349,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format: 'covjson',
                 queryType: 'corridor',
                 status: hasData ? 'pass' : 'warn',
                 message: hasData 
@@ -1191,6 +1375,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
                 queryType: 'corridor',
                 status: 'fail',
                 message: error.message,
@@ -1203,8 +1388,9 @@ class EDRCoverageValidator {
     /**
      * Make a single cube query and check result
      * Cube returns a CoverageCollection with one Coverage per z-level
+     * @param {string} format - 'covjson' or 'geojson'
      */
-    async testCubeQuery(collectionId, parameter, level, time, coll) {
+    async testCubeQuery(collectionId, parameter, level, time, coll, format = 'covjson') {
         // Get cube parameters - either fixed or generate random bbox within collection bounds
         const bbox = this.getCubeBbox(coll);
         const z = this.getCubeZ(coll, level);
@@ -1224,6 +1410,11 @@ class EDRCoverageValidator {
         if (time) {
             url += `&datetime=${encodeURIComponent(time)}`;
         }
+        
+        // Add format parameter
+        if (format === 'geojson') {
+            url += '&f=geojson';
+        }
 
         const startTime = performance.now();
 
@@ -1239,6 +1430,7 @@ class EDRCoverageValidator {
                     parameter,
                     level,
                     time,
+                    format,
                     queryType: 'cube',
                     status: 'fail',
                     message: `HTTP ${response.status}: ${response.statusText}`,
@@ -1248,6 +1440,11 @@ class EDRCoverageValidator {
             }
 
             const data = await response.json();
+            
+            // Validate response based on format
+            if (format === 'geojson') {
+                return this.validateGeoJsonResponse(data, collectionId, parameter, level, time, duration, url);
+            }
             
             // Cube returns CoverageCollection with one coverage per z-level
             const isCoverageCollection = data.type === 'CoverageCollection';
@@ -1274,6 +1471,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format: 'covjson',
                 queryType: 'cube',
                 status: hasData ? 'pass' : 'warn',
                 message: hasData 
@@ -1299,6 +1497,7 @@ class EDRCoverageValidator {
                 parameter,
                 level,
                 time,
+                format,
                 queryType: 'cube',
                 status: 'fail',
                 message: error.message,
@@ -1463,9 +1662,11 @@ class EDRCoverageValidator {
         // Add log entry
         const entry = document.createElement('div');
         entry.className = 'log-entry';
+        const formatBadge = result.format === 'geojson' ? '<span class="format-badge geojson">GeoJSON</span>' : '';
         entry.innerHTML = `
             <span class="time">${new Date().toLocaleTimeString()}</span>
             <span class="status ${result.status}">${result.status.toUpperCase()}</span>
+            ${formatBadge}
             <span class="url" title="${result.url}">${result.url}</span>
             <span class="duration">${result.duration}ms</span>
         `;

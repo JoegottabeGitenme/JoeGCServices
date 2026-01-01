@@ -43,6 +43,15 @@
                     <option value="cube">Cube (3D Volume)</option>
                 </select>
             </div>
+            <div class="format-config">
+                <label for="format-select">Output Format:</label>
+                <select id="format-select">
+                    <option value="covjson" selected>CoverageJSON</option>
+                    <option value="geojson">GeoJSON</option>
+                    <option value="both">Both (CovJSON + GeoJSON)</option>
+                </select>
+                <span class="config-hint" title="Test CoverageJSON (default), GeoJSON, or both output formats">?</span>
+            </div>
             <div class="test-point-config" id="test-point-config">
                 <label>Test Point:</label>
                 <input type="text" id="test-lon" value="-100" size="6" title="Longitude">

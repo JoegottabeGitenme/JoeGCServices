@@ -772,6 +772,19 @@ header nav a:hover {
     white-space: nowrap;
 }
 
+.log-entry .format-badge {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.log-entry .format-badge.geojson {
+    background: #3b82f6;
+    color: white;
+}
+
 /* Gap Summary Panel */
 .gap-summary-panel {
     margin: 0 2rem 1rem;
