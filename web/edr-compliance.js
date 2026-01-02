@@ -10,8 +10,6 @@ let API_BASE = localStorage.getItem('edr-compliance-endpoint') || DEFAULT_API_BA
 // Test state
 let testResults = {};
 let collections = [];
-let map = null;
-let marker = null;
 
 // ============================================================
 // INITIALIZATION
@@ -19,9 +17,7 @@ let marker = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initEndpointConfig();
-    initMap();
     initTestSections();
-    initQueryForm();
     initModal();
     loadCollections();
 });
@@ -51,32 +47,6 @@ function initEndpointConfig() {
     // Run all tests button
     document.getElementById('run-all-btn').addEventListener('click', runAllTests);
     document.getElementById('clear-results-btn').addEventListener('click', clearAllResults);
-}
-
-function initMap() {
-    map = L.map('map').setView([39.8283, -98.5795], 4); // Center of US
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
-
-    // Click handler to set coordinates
-    map.on('click', (e) => {
-        const { lat, lng } = e.latlng;
-        setCoordinates(lng, lat);
-    });
-}
-
-function setCoordinates(lon, lat) {
-    const coordsInput = document.getElementById('coords-input');
-    coordsInput.value = `POINT(${lon.toFixed(4)} ${lat.toFixed(4)})`;
-
-    // Update marker
-    if (marker) {
-        marker.setLatLng([lat, lon]);
-    } else {
-        marker = L.marker([lat, lon]).addTo(map);
-    }
 }
 
 function initTestSections() {
@@ -111,11 +81,6 @@ function initTestSections() {
             copyTestUrl(testName, btn);
         });
     });
-}
-
-function initQueryForm() {
-    document.getElementById('execute-query-btn').addEventListener('click', executeQuery);
-    document.getElementById('copy-url-btn').addEventListener('click', copyQueryUrl);
 }
 
 function initModal() {
@@ -227,24 +192,11 @@ async function loadCollections() {
         const response = await fetchJson(`${API_BASE}/collections`);
         if (response.ok && response.json?.collections) {
             collections = response.json.collections;
-            updateCollectionSelect();
         }
     } catch (e) {
         console.error('Failed to load collections:', e);
         collections = [];
     }
-}
-
-function updateCollectionSelect() {
-    const select = document.getElementById('collection-select');
-    select.innerHTML = '<option value="">Select a collection...</option>';
-
-    collections.forEach(col => {
-        const option = document.createElement('option');
-        option.value = col.id;
-        option.textContent = col.title || col.id;
-        select.appendChild(option);
-    });
 }
 
 // ============================================================
@@ -6319,89 +6271,6 @@ async function testLocationsFCovJson() {
         checks,
         response: res
     };
-}
-
-// ============================================================
-// QUERY BUILDER
-// ============================================================
-
-async function executeQuery() {
-    const collectionId = document.getElementById('collection-select').value;
-    const coords = document.getElementById('coords-input').value.trim();
-    const params = document.getElementById('params-input').value.trim();
-    const datetime = document.getElementById('datetime-input').value.trim();
-    const z = document.getElementById('z-input').value.trim();
-
-    if (!collectionId) {
-        alert('Please select a collection');
-        return;
-    }
-
-    if (!coords) {
-        alert('Please enter coordinates');
-        return;
-    }
-
-    const url = buildQueryUrl(collectionId, coords, params, datetime, z);
-
-    const responseBody = document.getElementById('response-body');
-    const responseStatus = document.getElementById('response-status');
-    const responseTime = document.getElementById('response-time');
-    const responseSize = document.getElementById('response-size');
-
-    responseBody.textContent = 'Loading...';
-
-    try {
-        const res = await fetchJson(url);
-        responseStatus.textContent = `Status: ${res.status} ${res.statusText}`;
-        responseTime.textContent = `Time: ${res.time}ms`;
-        responseSize.textContent = `Size: ${formatBytes(res.text.length)}`;
-
-        if (res.json) {
-            responseBody.textContent = JSON.stringify(res.json, null, 2);
-        } else {
-            responseBody.textContent = res.text;
-        }
-    } catch (e) {
-        responseStatus.textContent = 'Error';
-        responseTime.textContent = '';
-        responseSize.textContent = '';
-        responseBody.textContent = `Error: ${e.message}`;
-    }
-}
-
-function buildQueryUrl(collectionId, coords, params, datetime, z) {
-    let url = `${API_BASE}/collections/${collectionId}/position?coords=${encodeURIComponent(coords)}`;
-
-    if (params) {
-        url += `&parameter-name=${encodeURIComponent(params)}`;
-    }
-    if (datetime) {
-        url += `&datetime=${encodeURIComponent(datetime)}`;
-    }
-    if (z) {
-        url += `&z=${encodeURIComponent(z)}`;
-    }
-
-    return url;
-}
-
-function copyQueryUrl() {
-    const collectionId = document.getElementById('collection-select').value;
-    const coords = document.getElementById('coords-input').value.trim();
-    const params = document.getElementById('params-input').value.trim();
-    const datetime = document.getElementById('datetime-input').value.trim();
-    const z = document.getElementById('z-input').value.trim();
-
-    if (!collectionId || !coords) {
-        alert('Please select a collection and enter coordinates');
-        return;
-    }
-
-    const url = buildQueryUrl(collectionId, coords, params, datetime, z);
-    navigator.clipboard.writeText(url).then(() => {
-        alert('URL copied to clipboard');
-    });
 }
 
 // ============================================================

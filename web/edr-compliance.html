@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OGC EDR API Compliance Test Suite</title>
     <link rel="stylesheet" href="edr-compliance.css">
-    <!-- Leaflet for map -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <header>
@@ -1551,64 +1548,6 @@
             </div>
         </section>
 
-        <!-- Interactive Query Panel -->
-        <section class="query-panel">
-            <h2>Interactive Query Builder</h2>
-            
-            <!-- Map Container -->
-            <div id="map-container">
-                <div id="map"></div>
-                <div class="map-controls">
-                    <span class="map-hint">Click on map to set coordinates</span>
-                </div>
-            </div>
-
-            <!-- Query Form -->
-            <div class="query-form">
-                <div class="form-group">
-                    <label for="collection-select">Collection:</label>
-                    <select id="collection-select">
-                        <option value="">Select a collection...</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="coords-input">Coordinates:</label>
-                    <input type="text" id="coords-input" placeholder="POINT(-97.5 35.2) or -97.5,35.2">
-                </div>
-
-                <div class="form-group">
-                    <label for="params-input">Parameters (comma-separated):</label>
-                    <input type="text" id="params-input" placeholder="TMP,UGRD,VGRD">
-                </div>
-
-                <div class="form-group">
-                    <label for="datetime-input">Datetime:</label>
-                    <input type="text" id="datetime-input" placeholder="2024-12-29T12:00:00Z">
-                </div>
-
-                <div class="form-group">
-                    <label for="z-input">Vertical Level (z):</label>
-                    <input type="text" id="z-input" placeholder="850 or 850,700,500">
-                </div>
-
-                <div class="query-actions">
-                    <button id="execute-query-btn">Execute Query</button>
-                    <button id="copy-url-btn">Copy URL</button>
-                </div>
-            </div>
-
-            <!-- Response Viewer -->
-            <div class="response-viewer">
-                <h3>Response</h3>
-                <div class="response-meta">
-                    <span id="response-status"></span>
-                    <span id="response-time"></span>
-                    <span id="response-size"></span>
-                </div>
-                <pre id="response-body"></pre>
-            </div>
-        </section>
     </div>
 
     <!-- Test Details Modal -->

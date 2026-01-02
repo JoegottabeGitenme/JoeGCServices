@@ -65,6 +65,7 @@
 - let's try to get registered on the OGC implementation database
 - add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
   that will run some of the various security scanners and display some results
-- is the EDR compliance github action going to start ingesting data while it's running? will the compliance testing even work without data? We might have to get some dummy data or something, does this break upon trying to do the same thing with WMS or WMTS?
-- the edr compliance test script can be a bit less verbose
 - for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
+- need to check units and other metadata in all query type outputs
+- need to check outputs against known coveragejson and geojson schemas, add that to validation checking
+- 
