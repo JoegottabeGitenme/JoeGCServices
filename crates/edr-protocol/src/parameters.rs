@@ -259,7 +259,7 @@ pub enum UnitSymbol {
     Structured {
         /// Symbol value.
         value: String,
-        /// Symbol type (e.g., "http://www.opengis.net/def/uom/UCUM/").
+        /// Symbol type (e.g., "<http://www.opengis.net/def/uom/UCUM/>").
         #[serde(rename = "type")]
         type_: Option<String>,
     },
