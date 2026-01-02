@@ -97,20 +97,20 @@ CREATE TABLE grid_catalog (
     id SERIAL PRIMARY KEY,
     model VARCHAR(50),          -- gfs, hrrr, goes18, mrms
     parameter VARCHAR(50),      -- TMP, UGRD, CMI_C13, etc.
-    level_type VARCHAR(50),     -- surface, 2m, 10m, etc.
-    forecast_time TIMESTAMP,    -- Reference time
-    valid_time TIMESTAMP,       -- Valid time
+    level VARCHAR(50),          -- surface, 2m, 10m, etc.
+    reference_time TIMESTAMP,   -- Model run initialization time
     forecast_hour INT,          -- Hours since reference
-    projection JSONB,           -- Projection parameters
-    grid_shape JSONB,           -- [nx, ny]
+    valid_time TIMESTAMP,       -- Valid time (reference_time + forecast_hour)
     bbox JSONB,                 -- Bounding box
-    storage_path TEXT,          -- MinIO path prefix
-    shard_count INT,            -- Number of shreds
-    created_at TIMESTAMP DEFAULT NOW()
+    storage_path TEXT,          -- MinIO/Zarr path
+    file_size BIGINT,           -- Size in bytes
+    status VARCHAR(20),         -- available, expired
+    zarr_metadata JSONB,        -- Zarr-specific metadata
+    ingested_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_grid_catalog_lookup 
-    ON grid_catalog(model, parameter, forecast_time, forecast_hour);
+    ON grid_catalog(model, parameter, reference_time, forecast_hour);
 ```
 
 ### Shredded Storage (MinIO)

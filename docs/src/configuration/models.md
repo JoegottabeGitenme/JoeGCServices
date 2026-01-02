@@ -125,8 +125,8 @@ How long to keep ingested data, with safeguards to prevent data loss during inge
 ```yaml
 # For forecast models (HRRR, GFS)
 retention:
-  hours: 24              # Keep data for 24 hours
-  keep_latest_runs: 1    # Always keep at least 1 complete run (safeguard)
+  hours: 3               # Keep data for 3 hours (based on reference_time)
+  keep_latest_runs: 3    # Always keep at least 3 recent runs (safeguard)
 
 # For observation models (MRMS, GOES)
 retention:
@@ -134,15 +134,21 @@ retention:
   keep_latest_observations: 60   # Always keep at least 60 observations (~2 hours)
 ```
 
+#### Cleanup Behavior
+
+Cleanup is based on `reference_time` (the model run initialization time), not `valid_time` (forecast validity time). This provides simpler, more predictable cleanup behavior:
+
+- **Forecast models**: Data is deleted when `reference_time` exceeds `retention.hours`
+- **Observation models**: Data is deleted when `reference_time` exceeds `retention.hours`
+
 #### Retention Safeguards
 
 The cleanup system includes safeguards to ensure data is never completely deleted during ingestion outages:
 
 **For forecast models** (`dimensions.type: forecast`):
-- `keep_latest_runs`: Number of complete model runs to always protect
-- A run is "complete" when all expected forecast hours are ingested
-- Old runs are only deleted when a newer complete run exists
-- Default: 1 (always keep at least one complete run)
+- `keep_latest_runs`: Number of recent model runs to always protect (by `reference_time`)
+- Protected runs are never deleted, even if they exceed the retention period
+- Default: 1 (always keep at least one run)
 
 **For observation models** (`dimensions.type: observation`):
 - `keep_latest_observations`: Number of recent observations to always protect

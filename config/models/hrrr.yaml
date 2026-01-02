@@ -53,8 +53,8 @@ schedule:
   delay_hours: 1                     # Data typically available 2 hours after cycle
 
 retention:
-  hours: 2                          # Keep data for 2 hours
-  keep_latest_runs: 1               # Always keep at least 1 complete run (safeguard)
+  hours: 3                          # Keep data for 3 hours
+  keep_latest_runs: 3               # Always keep at least 3 recent runs (safeguard)
 
 # Precaching configuration - disabled for now (focus on observation data first)
 precaching:

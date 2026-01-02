@@ -246,8 +246,8 @@ CREATE INDEX idx_catalog_lookup ON grid_catalog
 CREATE INDEX idx_catalog_bbox ON grid_catalog 
     USING GIST ((bbox::geometry));
 
--- Time-based cleanup
-CREATE INDEX idx_catalog_valid_time ON grid_catalog (valid_time);
+-- Time-based cleanup (uses reference_time for predictable retention)
+CREATE INDEX idx_catalog_reference_time ON grid_catalog (reference_time);
 ```
 
 **Why PostgreSQL?**
