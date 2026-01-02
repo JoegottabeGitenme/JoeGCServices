@@ -64,16 +64,16 @@ precaching:
   poll_interval_secs: 300
   parameters: [ "TMP" ]               # Most requested parameters
 
-# GRIB2 level type codes reference:
+# GRIB2 level type codes reference (Table 4.5):
 #   1 = surface
 #   3 = cloud top
 #   100 = isobaric (pressure level in Pa, displayed as mb)
 #   101 = mean sea level
 #   103 = height above ground (in m)
 #   200 = entire atmosphere
-#   212 = low cloud layer
-#   222 = middle cloud layer
-#   232 = high cloud layer
+#   214 = low cloud layer (212=bottom, 213=top)
+#   224 = middle cloud layer (222=bottom, 223=top)
+#   234 = high cloud layer (232=bottom, 233=top)
 
 parameters:
   # ==========================================================================

@@ -1682,7 +1682,17 @@ class EDRCoverageValidator {
             const features = locationsData.features || [];
             
             // Extract location IDs from features
-            const locationIds = features.map(f => f.id || f.properties?.id).filter(Boolean);
+            // Note: Per OGC EDR spec, feature IDs are URI-style (e.g., "http://.../locations/HOU")
+            // We need to extract just the location code (last path segment) for use in queries
+            const locationIds = features.map(f => {
+                const rawId = f.id || f.properties?.id;
+                if (!rawId) return null;
+                // If it's a URI, extract the last path segment
+                if (rawId.includes('/locations/')) {
+                    return rawId.split('/locations/').pop();
+                }
+                return rawId;
+            }).filter(Boolean);
             this.testLocations.availableLocations = locationIds;
             
             // Populate select
@@ -1691,7 +1701,11 @@ class EDRCoverageValidator {
                 const option = document.createElement('option');
                 option.value = id;
                 // Try to get a nice label from feature properties
-                const feature = features.find(f => (f.id || f.properties?.id) === id);
+                // Match by checking if the feature ID ends with our extracted ID
+                const feature = features.find(f => {
+                    const fid = f.id || f.properties?.id;
+                    return fid === id || (fid && fid.endsWith(`/locations/${id}`));
+                });
                 const name = feature?.properties?.name || id;
                 option.textContent = name !== id ? `${id} - ${name}` : id;
                 select.appendChild(option);

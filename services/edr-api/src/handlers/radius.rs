@@ -646,11 +646,13 @@ fn build_level_string(
         }
         "cloud_layer" => {
             // Map cloud layer codes to names
+            // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
+            // (x2=bottom, x3=top, x4=layer; some products use different codes)
             if let Some(code) = level_filter.level_code {
                 match code {
-                    212 => Some("low cloud layer".to_string()),
-                    222 => Some("middle cloud layer".to_string()),
-                    232 => Some("high cloud layer".to_string()),
+                    212 | 213 | 214 => Some("low cloud layer".to_string()),
+                    222 | 223 | 224 => Some("middle cloud layer".to_string()),
+                    232 | 233 | 234 => Some("high cloud layer".to_string()),
                     _ => None,
                 }
             } else {

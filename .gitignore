@@ -29,6 +29,7 @@
 # OS files
 Thumbs.db
 .directory
+.DS_Store
 
 # Docker files (local builds only, not the Dockerfiles themselves)
 docker-compose.override.yml

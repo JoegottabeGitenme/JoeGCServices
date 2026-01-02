@@ -91,7 +91,9 @@ collections:
     description: "Cloud cover by layer (low, middle, high)"
     level_filter:
       level_type: cloud_layer
-      level_codes: [212, 222, 232]
+      # GRIB2 Table 4.5: 214=low cloud layer, 224=middle cloud layer, 234=high cloud layer
+      # (212/222/232 are cloud *bottom* levels, not layer totals)
+      level_codes: [214, 224, 234]
     parameters:
       - name: LCDC
         levels: [low_cloud_layer]

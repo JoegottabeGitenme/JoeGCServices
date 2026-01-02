@@ -535,10 +535,10 @@ impl Domain {
                 point.push(CompositeValue::String(t_vec[t_idx].clone()));
             }
 
-            // Add values in lat/lon order (y first, then x) for correct map display
-            // The labels say "x", "y" but viewers expect lat, lon order in the values
-            point.push(CompositeValue::Float(y_values[i])); // latitude
-            point.push(CompositeValue::Float(x_values[i])); // longitude
+            // Add x (longitude) then y (latitude) to match coordinate names order
+            // Per OGC CoverageJSON spec, composite axis coordinates must be "t,x,y,z" in that order
+            point.push(CompositeValue::Float(x_values[i])); // x = longitude
+            point.push(CompositeValue::Float(y_values[i])); // y = latitude
 
             // Add z if present
             if has_z {

@@ -538,10 +538,7 @@ fn get_time_values(axes: &HashMap<String, Axis>) -> Vec<String> {
 
 /// Get all z values from axes.
 fn get_z_values(axes: &HashMap<String, Axis>) -> Vec<f64> {
-    get_axis_float_values(axes, "x")
-        .is_empty()
-        .then(|| Vec::new())
-        .unwrap_or_else(|| get_axis_float_values(axes, "z"))
+    get_axis_float_values(axes, "z")
 }
 
 /// Get the first float value from an axis.
@@ -751,5 +748,104 @@ mod tests {
         let fc = EdrFeatureCollection::from(&collection);
 
         assert_eq!(fc.features.len(), 2);
+    }
+
+    #[test]
+    fn test_convert_vertical_profile_coverage() {
+        // Create a vertical profile with 3 z-levels
+        let z_values = vec![1000.0, 850.0, 500.0];
+        let param = CovJsonParameter::new("Temperature").with_unit(Unit::kelvin());
+        let values = vec![Some(288.0), Some(280.0), Some(255.0)];
+
+        let coverage = CoverageJson::vertical_profile(
+            -97.5,
+            35.2,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            z_values.clone(),
+        )
+        .with_vertical_profile_data("TMP", param, values);
+
+        let fc = EdrFeatureCollection::from(&coverage);
+
+        // Should have 3 features, one for each z-level
+        assert_eq!(fc.features.len(), 3, "Expected 3 features for 3 z-levels");
+
+        // Check first feature (z=1000)
+        assert_eq!(fc.features[0].properties.z, Some(1000.0));
+        let params = fc.features[0].properties.parameters.as_ref().unwrap();
+        assert_eq!(params.get("TMP").unwrap().value, Some(288.0));
+
+        // Check second feature (z=850)
+        assert_eq!(fc.features[1].properties.z, Some(850.0));
+        let params = fc.features[1].properties.parameters.as_ref().unwrap();
+        assert_eq!(params.get("TMP").unwrap().value, Some(280.0));
+
+        // Check third feature (z=500)
+        assert_eq!(fc.features[2].properties.z, Some(500.0));
+        let params = fc.features[2].properties.parameters.as_ref().unwrap();
+        assert_eq!(params.get("TMP").unwrap().value, Some(255.0));
+    }
+
+    #[test]
+    fn test_get_z_values_helper() {
+        // Test the get_z_values helper directly
+        let mut axes = HashMap::new();
+        axes.insert(
+            "z".to_string(),
+            Axis::Values {
+                values: vec![
+                    AxisValue::Float(1000.0),
+                    AxisValue::Float(850.0),
+                    AxisValue::Float(500.0),
+                ],
+            },
+        );
+        axes.insert(
+            "x".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(-97.5)],
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values {
+                values: vec![AxisValue::Float(35.2)],
+            },
+        );
+
+        let z_vals = get_z_values(&axes);
+        assert_eq!(z_vals.len(), 3, "Should return 3 z-values");
+        assert_eq!(z_vals[0], 1000.0);
+        assert_eq!(z_vals[1], 850.0);
+        assert_eq!(z_vals[2], 500.0);
+    }
+
+    #[test]
+    fn test_get_z_values_without_x_axis() {
+        // BUG TEST: get_z_values should work even without an x axis
+        // The current implementation incorrectly returns empty vec when x is missing
+        let mut axes = HashMap::new();
+        axes.insert(
+            "z".to_string(),
+            Axis::Values {
+                values: vec![
+                    AxisValue::Float(1000.0),
+                    AxisValue::Float(850.0),
+                    AxisValue::Float(500.0),
+                ],
+            },
+        );
+        // Note: no "x" axis!
+
+        let z_vals = get_z_values(&axes);
+        // This should return the z values, not an empty vec
+        assert_eq!(
+            z_vals.len(),
+            3,
+            "Should return 3 z-values even without x axis"
+        );
+        assert_eq!(z_vals[0], 1000.0);
+        assert_eq!(z_vals[1], 850.0);
+        assert_eq!(z_vals[2], 500.0);
     }
 }
