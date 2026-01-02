@@ -27,6 +27,14 @@ class MyHTTPRequestHandler(HANDLER):
         self.send_response(200)
         self.end_headers()
 
+    def translate_path(self, path):
+        """Override to serve validation schemas from parent directory."""
+        # Handle requests for /validation/schemas/ from parent directory
+        if path.startswith("/validation/"):
+            web_dir = Path(__file__).parent
+            return str(web_dir.parent / path.lstrip("/"))
+        return super().translate_path(path)
+
 
 class DualStackTCPServer(socketserver.TCPServer):
     """TCP Server that supports both IPv4 and IPv6."""

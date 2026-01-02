@@ -19,7 +19,9 @@ source:
   type: aws_s3
   bucket: noaa-hrrr-bdp-pds
   prefix_template: "hrrr.{date}/conus"
-  file_pattern: "hrrr.t{cycle:02}z.wrfsfcf{forecast:02}.grib2"
+  # Use pressure file (wrfprs) for full isobaric data (~400MB vs ~135MB for wrfsfc)
+  # Contains: all surface params + full upper-air profiles at standard pressure levels
+  file_pattern: "hrrr.t{cycle:02}z.wrfprsf{forecast:02}.grib2"
   region: us-east-1
 
 grid:
@@ -62,16 +64,16 @@ precaching:
   poll_interval_secs: 300
   parameters: [ "TMP" ]               # Most requested parameters
 
-# GRIB2 level type codes reference:
+# GRIB2 level type codes reference (Table 4.5):
 #   1 = surface
 #   3 = cloud top
 #   100 = isobaric (pressure level in Pa, displayed as mb)
 #   101 = mean sea level
 #   103 = height above ground (in m)
 #   200 = entire atmosphere
-#   212 = low cloud layer
-#   222 = middle cloud layer
-#   232 = high cloud layer
+#   214 = low cloud layer (212=bottom, 213=top)
+#   224 = middle cloud layer (222=bottom, 223=top)
+#   234 = high cloud layer (232=bottom, 233=top)
 
 parameters:
   # ==========================================================================
@@ -113,6 +115,30 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
+      # Isobaric levels for upper-air analysis
+      # Use {value_mb} template to convert Pa to mb (divide by 100)
+      - type: isobaric
+        level_code: 100
+        value: 100000  # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500   # 925 mb in Pa
+      - type: isobaric
+        level_code: 100
+        value: 85000   # 850 mb in Pa
+      - type: isobaric
+        level_code: 100
+        value: 70000   # 700 mb in Pa
+      - type: isobaric
+        level_code: 100
+        value: 50000   # 500 mb in Pa
+      - type: isobaric
+        level_code: 100
+        value: 30000   # 300 mb in Pa
+      - type: isobaric
+        level_code: 100
+        value: 25000   # 250 mb in Pa
     style: temperature
     units: K
     display_units: °C
@@ -138,7 +164,7 @@ parameters:
     conversion: K_to_C
     valid_range: [ 180, 320 ]  # ~-93°C to 47°C
 
-  # U-component wind (10m)
+  # U-component wind (10m and isobaric)
   - name: UGRD
     description: "U-Component of Wind"
     grib2:
@@ -151,11 +177,40 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
+      # Isobaric levels
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
     style: wind
     units: m/s
     valid_range: [ -150, 150 ]  # Wind components can be negative
 
-  # V-component wind (10m)
+  # V-component wind (10m and isobaric)
   - name: VGRD
     description: "V-Component of Wind"
     grib2:
@@ -168,11 +223,40 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
+      # Isobaric levels
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
     style: wind
     units: m/s
     valid_range: [ -150, 150 ]  # Wind components can be negative
 
-  # Relative Humidity (2m)
+  # Relative Humidity (2m and isobaric)
   - name: RH
     description: "Relative Humidity"
     grib2:
@@ -185,6 +269,35 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
+      # Isobaric levels
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
     style: humidity
     units: "%"
     valid_range: [ 0, 100 ]  # Percentage 0-100%
@@ -204,6 +317,120 @@ parameters:
     style: wind
     units: m/s
     valid_range: [ 0, 100 ]  # Gusts always positive (magnitude)
+
+  # Surface Pressure
+  - name: PRES
+    description: "Surface Pressure"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: atmospheric
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+    valid_range: [ 50000, 110000 ]  # 500-1100 hPa
+
+  # ==========================================================================
+  # Convective Parameters
+  # ==========================================================================
+  
+  # Convective Available Potential Energy
+  - name: CAPE
+    description: "Convective Available Potential Energy"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 6
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: cape
+    units: J/kg
+    valid_range: [ 0, 10000 ]  # 0-10000 J/kg
+
+  # Convective Inhibition
+  - name: CIN
+    description: "Convective Inhibition"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: cin
+    units: J/kg
+    valid_range: [ -2000, 0 ]  # CIN is typically negative
+
+  # Composite Reflectivity
+  - name: REFC
+    description: "Composite Reflectivity"
+    grib2:
+      discipline: 0
+      category: 16
+      number: 196
+    downsample: max
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    style: reflectivity
+    units: dBZ
+    valid_range: [ -10, 80 ]  # -10 to 80 dBZ
+
+  # ==========================================================================
+  # Geopotential Height (isobaric only)
+  # ==========================================================================
+  
+  - name: HGT
+    description: "Geopotential Height"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 5
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
+    style: height
+    units: gpm
+    valid_range: [ 0, 20000 ]  # 0-20000 geopotential meters
 
   # ==========================================================================
   # Precipitation Parameters
@@ -268,6 +495,71 @@ parameters:
     style: cloud
     units: "%"
     valid_range: [ 0, 100 ]  # Percentage 0-100%
+
+  # Low Cloud Cover
+  - name: LCDC
+    description: "Low Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 3
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 214
+        display: "low cloud layer"
+    style: cloud
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+  # Medium Cloud Cover
+  - name: MCDC
+    description: "Medium Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 4
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 224
+        display: "middle cloud layer"
+    style: cloud
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+  # High Cloud Cover
+  - name: HCDC
+    description: "High Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 5
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 234
+        display: "high cloud layer"
+    style: cloud
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+  # Precipitable Water
+  - name: PWAT
+    description: "Precipitable Water"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 3
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    style: moisture
+    units: kg/m^2
+    display_units: mm
+    valid_range: [ 0, 100 ]  # 0-100 mm
 
 # Composite layers
 composites:

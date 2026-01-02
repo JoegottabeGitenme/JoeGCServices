@@ -27,9 +27,9 @@
 .env.*.local
 
 # OS files
-.DS_Store
 Thumbs.db
 .directory
+.DS_Store
 
 # Docker files (local builds only, not the Dockerfiles themselves)
 docker-compose.override.yml
@@ -104,3 +104,9 @@ compile_commands.json
 *.grib2
 /benchmark_results/
 /hammer_results/
+/edr_load_results/
+/lancedb/
+/models/
+/config.json
+/validation/ogc-compliance/lib/ets-ogcapi-edr10-1.3-aio.jar
+/edr-dump-*/

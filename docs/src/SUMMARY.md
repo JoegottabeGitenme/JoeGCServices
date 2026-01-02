@@ -22,6 +22,7 @@
 
 - [Overview](./services/README.md)
   - [WMS API](./services/wms-api.md)
+  - [EDR API](./services/edr-api.md)
   - [Ingester](./services/ingester.md)
   - [Downloader](./services/downloader.md)
 
@@ -37,12 +38,14 @@
   - [storage](./crates/storage.md)
   - [wms-common](./crates/wms-common.md)
   - [wms-protocol](./crates/wms-protocol.md)
+  - [edr-protocol](./crates/edr-protocol.md)
 
 # API Reference
 
 - [Overview](./api-reference/README.md)
   - [WMS Endpoints](./api-reference/wms.md)
   - [WMTS Endpoints](./api-reference/wmts.md)
+  - [EDR Endpoints](./api-reference/edr.md)
   - [REST API](./api-reference/rest-api.md)
   - [Examples](./api-reference/examples.md)
 
@@ -58,6 +61,7 @@
 
 - [Overview](./configuration/README.md)
   - [Model Configuration](./configuration/models.md)
+  - [EDR Configuration](./configuration/edr.md)
   - [Style Configuration](./configuration/styles.md)
   - [Parameter Tables](./configuration/parameters.md)
   - [Environment Variables](./configuration/environment.md)

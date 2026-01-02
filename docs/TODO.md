@@ -1,9 +1,6 @@
 - Would like to get different output formats (geotiff, black/white png, etc)
 - how to make EDR work
-    - create validation page using lots of AI and pdf files and other specs we can find
     - test validation page against some other EDR servers
-    - implement Grid Processor abstraction API and document so we can use it for EDR
-        - this abstraction layer cannot break WMS or WMTS
     - create another viewer to monitor EDR metrics, more stuff in prometheus and grafana
     - create another 'viewer' so that we can form EDR queries and visualize them if needed
     - ultimate test would be to point onlineweather to this EDR server
@@ -19,12 +16,15 @@
     - this could be useful for a mobile app
 - we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
 - some of the scripts in the scripts folder could be moved somewhere into validation
+- integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
 - wms-api container takes the longest to start
 - style viewing and editing web app, view current styles and how they would look on the map
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
   how they impact performance
+- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
+  manage things like cold/warm cache etc.
 - need to consider actually deploying this to ec2 or something
     - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
 - implement renderer queue after we've deleted the renderer worker stuff???
@@ -38,6 +38,7 @@
 - web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
     - this may have been due to the 10s of thousands of objects in minio
     - see if this happens again after we fixed the orphaned files issue
+    - it still happens and its still happening after claude 'fixed' the memory leaks
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - need to give the swagger docs a human pass to catch some of the errors
 - why are we getting orphaned files constantly?
@@ -45,7 +46,7 @@
   getting chunk cache entry count
 - downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
   eachother
-- ingester should be able to handle multiple downloads at once
+- ingester should be able to handle multiple downloads at once, currently it does 1 at a time
 - README needs some screenshots and to be more accurate
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
@@ -56,8 +57,13 @@
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
-- uhhh we might be caching blank tiles, example: HRRR data outside of it's geographic bounds WMS still returns a 'tile'
-  but it's just blank, this could potentially be optmized somehow, maybe just don't cache if it's completely blank?
-  maybe a simple hashsum check? don't want to introduce too much overhead for something that ultimately may not happen
-  often. Right now each blank tile is 0.5kb and returns in around 7ms
 - looping radar (only product that does this) absolutely eats up the chunk cache
+- let's try to get registered on the OGC implementation database
+- add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
+  that will run some of the various security scanners and display some results
+- for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
+- need to check units and other metadata in all query type outputs
+- lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
+- lets make the styles of the compliance checking web pages consistent, maybe one page for all compliance checking, one page for all coverage checking
+- need to update prometheus and grafana and loki and stuff for the EDR api still
+- need to check units in WMS now that we fixed units being passed into zarr format during ingestion

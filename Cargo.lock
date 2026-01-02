@@ -1481,6 +1481,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "edr-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "chrono",
+ "clap",
+ "criterion",
+ "dotenvy",
+ "edr-protocol",
+ "grid-processor",
+ "lru",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "projection",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "storage",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "wms-common",
+]
+
+[[package]]
+name = "edr-protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio-test",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

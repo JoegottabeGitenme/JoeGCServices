@@ -43,7 +43,11 @@ web/
 ├── wms-compliance.html      # WMS 1.3.0 compliance tests
 ├── wms-compliance.js        # WMS test implementation
 ├── wmts-compliance.html     # WMTS 1.0.0 compliance tests
-└── wmts-compliance.js       # WMTS test implementation
+├── wmts-compliance.js       # WMTS test implementation
+├── edr-compliance.html      # EDR 1.1 compliance tests
+├── edr-compliance.js        # EDR compliance test implementation
+├── edr-coverage.html        # EDR coverage validation
+└── edr-coverage.js          # EDR coverage validation logic
 ```
 
 ## Running Tests
@@ -392,15 +396,48 @@ Tests include:
 - **GetTile (RESTful)**: URL path parsing, format handling
 - **TileMatrix**: Scale denominators, tile bounds
 
+#### EDR 1.1 Compliance Tests
+
+```
+http://localhost:8000/edr-compliance.html
+```
+
+Tests include:
+- **Landing Page**: Structure, required links, JSON-LD context
+- **Conformance**: Declared conformance classes
+- **Collections**: Metadata structure, extent, data_queries
+- **Position Query**: CoverageJSON response, parameter handling
+- **Error Handling**: OGC exception format, status codes
+
+#### EDR Coverage Validation
+
+```
+http://localhost:8000/edr-coverage.html
+```
+
+Unlike compliance testing (which verifies protocol correctness), coverage validation verifies that all **advertised data is actually retrievable**. This catches configuration/data mismatches:
+
+- **Quick mode**: Tests one parameter per collection (~10 requests)
+- **Full mode**: Tests all parameters at one level each (~50-100 requests)
+- **Thorough mode**: Tests all parameters at all levels (~200+ requests)
+
+Results:
+- **Pass** (green): Data retrieved successfully
+- **Warn** (yellow): Request succeeded but no data returned
+- **Fail** (red): Request failed with error
+
+The tool uses the `/edr/catalog-check` endpoint to compare advertised vs actual database contents.
+
 ### Features
 
-Both compliance test suites support:
+All compliance/coverage test suites support:
 
-- **External endpoint testing**: Point at any WMS/WMTS server for comparison
+- **External endpoint testing**: Point at any WMS/WMTS/EDR server for comparison
 - **Per-layer validation**: Tests run against each layer in capabilities
-- **Visual tile preview**: See rendered tiles alongside test results
+- **Visual tile preview**: See rendered tiles alongside test results (WMS/WMTS)
 - **Reference links**: Direct links to OGC specification sections
 - **Batch execution**: Run all tests with a single click
+- **JSON export**: Download full request logs for debugging (EDR Coverage)
 
 ### Capabilities Caching Test
 

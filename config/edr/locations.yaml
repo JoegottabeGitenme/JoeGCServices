@@ -1,0 +1,142 @@
+# EDR Named Locations Configuration
+# 
+# Global locations available for all EDR collections.
+# Clients can query data at these locations using human-readable identifiers
+# instead of raw coordinates via the /collections/{id}/locations endpoint.
+#
+# Location IDs should be unique, stable identifiers like:
+# - ICAO airport codes (KJFK, EGLL, etc.)
+# - WMO station IDs
+# - City names or custom identifiers
+#
+# Coordinates are [longitude, latitude] in CRS:84 (WGS84).
+
+locations:
+  # Major US Airports
+  - id: KJFK
+    name: "John F. Kennedy International Airport"
+    description: "New York, NY"
+    coords: [-73.7781, 40.6413]
+    properties:
+      type: airport
+      country: US
+      
+  - id: KLAX
+    name: "Los Angeles International Airport"
+    description: "Los Angeles, CA"
+    coords: [-118.4085, 33.9416]
+    properties:
+      type: airport
+      country: US
+
+  - id: KORD
+    name: "Chicago O'Hare International Airport"
+    description: "Chicago, IL"
+    coords: [-87.9073, 41.9742]
+    properties:
+      type: airport
+      country: US
+
+  - id: KDFW
+    name: "Dallas/Fort Worth International Airport"
+    description: "Dallas, TX"
+    coords: [-97.0403, 32.8998]
+    properties:
+      type: airport
+      country: US
+
+  - id: KDEN
+    name: "Denver International Airport"
+    description: "Denver, CO"
+    coords: [-104.6737, 39.8561]
+    properties:
+      type: airport
+      country: US
+
+  - id: KSFO
+    name: "San Francisco International Airport"
+    description: "San Francisco, CA"
+    coords: [-122.3790, 37.6213]
+    properties:
+      type: airport
+      country: US
+
+  - id: KBOS
+    name: "Boston Logan International Airport"
+    description: "Boston, MA"
+    coords: [-71.0096, 42.3656]
+    properties:
+      type: airport
+      country: US
+
+  - id: KSEA
+    name: "Seattle-Tacoma International Airport"
+    description: "Seattle, WA"
+    coords: [-122.3088, 47.4502]
+    properties:
+      type: airport
+      country: US
+
+  - id: KMIA
+    name: "Miami International Airport"
+    description: "Miami, FL"
+    coords: [-80.2906, 25.7959]
+    properties:
+      type: airport
+      country: US
+
+  - id: KATL
+    name: "Hartsfield-Jackson Atlanta International Airport"
+    description: "Atlanta, GA"
+    coords: [-84.4281, 33.6407]
+    properties:
+      type: airport
+      country: US
+
+  # Major US Cities (non-airport)
+  - id: NYC
+    name: "New York City"
+    description: "Manhattan, New York"
+    coords: [-74.0060, 40.7128]
+    properties:
+      type: city
+      country: US
+
+  - id: CHI
+    name: "Chicago"
+    description: "Downtown Chicago, Illinois"
+    coords: [-87.6298, 41.8781]
+    properties:
+      type: city
+      country: US
+
+  - id: HOU
+    name: "Houston"
+    description: "Downtown Houston, Texas"
+    coords: [-95.3698, 29.7604]
+    properties:
+      type: city
+      country: US
+
+  - id: PHX
+    name: "Phoenix"
+    description: "Downtown Phoenix, Arizona"
+    coords: [-112.0740, 33.4484]
+    properties:
+      type: city
+      country: US
+
+  - id: DCA
+    name: "Washington DC"
+    description: "National Mall, Washington DC"
+    coords: [-77.0369, 38.9072]
+    properties:
+      type: city
+      country: US
+
+# TODO: Add pre-caching configuration once background warming is implemented
+# precaching:
+#   enabled: false
+#   locations: [KJFK, KLAX, KORD]  # High-traffic locations to pre-warm
+#   parameters: [TMP, UGRD, VGRD]  # Parameters to pre-compute
+#   refresh_interval_secs: 300

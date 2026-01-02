@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EDR Data Coverage Validation</title>
+    <link rel="stylesheet" href="edr-coverage.css">
+</head>
+<body>
+    <header>
+        <h1>EDR Data Coverage Validation</h1>
+        <p>Verify that every advertised piece of data can actually be retrieved</p>
+        <nav>
+            <a href="index.html">Dashboard</a> |
+            <a href="edr-compliance.html">EDR Compliance</a>
+        </nav>
+    </header>
+
+    <!-- Configuration Panel -->
+    <section class="config-panel">
+        <div class="config-row">
+            <div class="endpoint-config">
+                <label for="endpoint-input">EDR API Endpoint:</label>
+                <input type="text" id="endpoint-input" value="http://localhost:8083/edr">
+                <button id="apply-btn">Apply</button>
+            </div>
+            <div class="mode-config">
+                <label for="mode-select">Validation Mode:</label>
+                <select id="mode-select">
+                    <option value="quick">Quick (Sample HTTP per parameter)</option>
+                    <option value="full" selected>Full (Multiple times per parameter)</option>
+                    <option value="thorough">Thorough (All times + levels)</option>
+                </select>
+            </div>
+            <div class="query-type-config">
+                <label for="query-type-select">Query Type:</label>
+                <select id="query-type-select">
+                    <option value="position" selected>Position (Point)</option>
+                    <option value="area">Area (Polygon)</option>
+                    <option value="radius">Radius (Circle)</option>
+                    <option value="trajectory">Trajectory (LineString)</option>
+                    <option value="corridor">Corridor</option>
+                    <option value="cube">Cube (3D Volume)</option>
+                    <option value="locations">Locations (Named)</option>
+                </select>
+            </div>
+            <div class="format-config">
+                <label for="format-select">Output Format:</label>
+                <select id="format-select">
+                    <option value="covjson" selected>CoverageJSON</option>
+                    <option value="geojson">GeoJSON</option>
+                    <option value="both">Both (CovJSON + GeoJSON)</option>
+                </select>
+                <span class="config-hint" title="Test CoverageJSON (default), GeoJSON, or both output formats">?</span>
+            </div>
+            <div class="test-point-config" id="test-point-config">
+                <label>Test Point:</label>
+                <input type="text" id="test-lon" value="-100" size="6" title="Longitude">
+                <input type="text" id="test-lat" value="40" size="6" title="Latitude">
+            </div>
+            <div class="test-area-config" id="test-area-config" style="display: none;">
+                <label>Test Area (1x1 deg):</label>
+                <input type="text" id="test-area-lon" value="-100" size="6" title="Center Longitude">
+                <input type="text" id="test-area-lat" value="40" size="6" title="Center Latitude">
+            </div>
+            <div class="test-radius-config" id="test-radius-config" style="display: none;">
+                <label>Radius Center:</label>
+                <input type="text" id="test-radius-lon" value="-100" size="6" title="Center Longitude">
+                <input type="text" id="test-radius-lat" value="40" size="6" title="Center Latitude">
+                <label>Within:</label>
+                <input type="text" id="test-radius-within" value="50" size="4" title="Radius distance">
+                <select id="test-radius-units" title="Distance units">
+                    <option value="km" selected>km</option>
+                    <option value="mi">mi</option>
+                    <option value="m">m</option>
+                    <option value="nm">nm</option>
+                </select>
+            </div>
+            <div class="test-trajectory-config" id="test-trajectory-config" style="display: none;">
+                <label>Trajectory:</label>
+                <input type="text" id="test-trajectory-coords" value="LINESTRING(-100 40,-99 40.5,-98 41)" size="50" title="WKT LINESTRING coordinates">
+                <span class="config-hint" title="Enter LINESTRING, LINESTRINGZ, LINESTRINGM, or LINESTRINGZM WKT. Example: LINESTRING(-100 40,-99 40.5,-98 41)">?</span>
+            </div>
+            <div class="test-corridor-config" id="test-corridor-config" style="display: none;">
+                <label>Corridor Path:</label>
+                <input type="text" id="test-corridor-coords" value="LINESTRING(-100 40,-99 40.5,-98 41)" size="40" title="WKT LINESTRING for corridor centerline">
+                <label>Width:</label>
+                <input type="number" id="test-corridor-width" value="10" size="4" title="Corridor width">
+                <select id="test-corridor-width-units" title="Width units">
+                    <option value="km" selected>km</option>
+                    <option value="m">m</option>
+                    <option value="mi">mi</option>
+                    <option value="nm">nm</option>
+                </select>
+                <label>Height:</label>
+                <input type="number" id="test-corridor-height" value="1000" size="6" title="Corridor height">
+                <select id="test-corridor-height-units" title="Height units">
+                    <option value="m" selected>m</option>
+                    <option value="km">km</option>
+                    <option value="hPa">hPa</option>
+                    <option value="mb">mb</option>
+                    <option value="Pa">Pa</option>
+                    <option value="ft">ft</option>
+                </select>
+                <span class="config-hint" title="Corridor query: retrieves data along a path with specified width and height envelope">?</span>
+            </div>
+            <div class="test-cube-config" id="test-cube-config" style="display: none;">
+                <label>BBox:</label>
+                <input type="text" id="test-cube-bbox" value="-101,39,-100,40" size="20" title="Bounding box: minLon,minLat,maxLon,maxLat">
+                <label>Z Levels:</label>
+                <input type="text" id="test-cube-z" value="850" size="12" title="Vertical level(s), e.g., 850 or 850,700,500">
+                <label>Resolution:</label>
+                <input type="number" id="test-cube-resolution-x" value="10" size="3" title="Grid resolution X">
+                <span>x</span>
+                <input type="number" id="test-cube-resolution-y" value="10" size="3" title="Grid resolution Y">
+                <span class="config-hint" title="Cube query: retrieves 3D volumetric data within a bounding box at specified vertical levels. Only available for collections with vertical extent (isobaric, height_above_ground).">?</span>
+            </div>
+            <div class="test-locations-config" id="test-locations-config" style="display: none;">
+                <label>Location ID:</label>
+                <input type="text" id="test-location-id" value="KJFK" size="10" title="Named location ID (e.g., KJFK, KLAX)">
+                <button type="button" id="refresh-locations-btn" title="Refresh available locations">↻</button>
+                <select id="location-select" title="Select from available locations">
+                    <option value="">-- or select --</option>
+                </select>
+                <span class="config-hint" title="Enter a location ID from the locations endpoint (e.g., KJFK, KLAX, new_york). When randomize is enabled, a random location will be picked from available locations.">?</span>
+            </div>
+            <div class="randomize-config">
+                <label class="toggle-label">
+                    <input type="checkbox" id="randomize-toggle">
+                    <span class="toggle-text">Randomize locations</span>
+                </label>
+                <span class="config-hint" title="When enabled, picks random coordinates within each collection's geographic bounds">?</span>
+            </div>
+        </div>
+        <div class="config-row">
+            <div class="collection-filter-config">
+                <label>Collections Filter:</label>
+                <div class="collection-filter-controls">
+                    <select id="collection-filter-select" multiple size="4" title="Ctrl+click to select multiple">
+                        <option value="">Loading collections...</option>
+                    </select>
+                    <div class="filter-buttons">
+                        <button id="select-all-btn" type="button" title="Select all collections">All</button>
+                        <button id="select-none-btn" type="button" title="Clear selection">None</button>
+                        <button id="refresh-collections-btn" type="button" title="Refresh collection list">↻</button>
+                    </div>
+                </div>
+                <span class="filter-hint">Ctrl+click to select multiple. Empty = all collections.</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Progress & Summary Panel -->
+    <section class="summary-panel">
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <span class="progress-text" id="progress-text">Ready to validate</span>
+        </div>
+        <div class="summary-stats">
+            <div class="stat pass">
+                <span class="count" id="pass-count">0</span>
+                <span class="label">Pass</span>
+            </div>
+            <div class="stat fail">
+                <span class="count" id="fail-count">0</span>
+                <span class="label">Fail</span>
+            </div>
+            <div class="stat warn">
+                <span class="count" id="warn-count">0</span>
+                <span class="label">Warn</span>
+            </div>
+            <div class="stat skip">
+                <span class="count" id="skip-count">0</span>
+                <span class="label">Skip</span>
+            </div>
+        </div>
+        <div class="summary-actions">
+            <button id="run-btn" class="btn-primary">Run Validation</button>
+            <button id="stop-btn" class="btn-secondary" disabled>Stop</button>
+            <button id="clear-btn" class="btn-secondary">Clear</button>
+            <button id="export-btn" class="btn-secondary">Export JSON</button>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Left: Collections Tree -->
+        <section class="collections-panel">
+            <div class="panel-header">
+                <h2>Collections Coverage</h2>
+            </div>
+            <div class="collections-tree" id="collections-tree">
+                <div class="loading">Click "Run Validation" to start...</div>
+            </div>
+        </section>
+
+        <!-- Right: Details Panel -->
+        <section class="details-panel">
+            <div class="panel-header">
+                <h2>Validation Details</h2>
+            </div>
+            <div class="details-content" id="details-content">
+                <p class="placeholder">Select an item from the tree to see details</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- Log Panel -->
+    <section class="log-panel" id="log-panel">
+        <div class="log-header" onclick="toggleLog()">
+            <span>Request Log</span>
+            <span class="log-count" id="log-count">0 requests</span>
+            <span class="toggle-icon" id="log-toggle-icon">+</span>
+        </div>
+        <div class="log-content" id="log-content">
+            <div class="log-empty">No requests logged yet</div>
+        </div>
+    </section>
+
+    <!-- Gap Summary Panel -->
+    <section class="gap-summary-panel" id="gap-summary-panel" style="display: none;">
+        <div class="panel-header">
+            <h2>Coverage Gaps Summary</h2>
+            <button class="btn-small" onclick="copyGapSummary()">Copy</button>
+        </div>
+        <div class="gap-content" id="gap-content"></div>
+    </section>
+
+    <script src="edr-coverage.js"></script>
+</body>
+</html>

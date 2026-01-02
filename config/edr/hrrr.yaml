@@ -1,0 +1,119 @@
+# HRRR EDR Configuration
+# Defines collections grouped by level type for the OGC EDR API
+#
+# NOTE: The HRRR surface file (wrfsfc) contains limited isobaric data.
+# To get full upper-air profiles, the pressure file (wrfprs) would need to be downloaded.
+# Current configuration reflects what's available from the surface file.
+
+model: hrrr
+
+collections:
+  # Full isobaric data from pressure file (wrfprs)
+  - id: hrrr-isobaric
+    title: "HRRR - Isobaric Levels"
+    description: "Upper-air parameters on pressure levels (1000, 925, 850, 700, 500, 300, 250 hPa)"
+    level_filter:
+      level_type: isobaric
+      level_code: 100
+    parameters:
+      - name: TMP
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+      - name: HGT
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+      - name: UGRD
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+      - name: VGRD
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+      - name: RH
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+    run_mode: instances
+
+  - id: hrrr-surface
+    title: "HRRR - Surface"
+    description: "Surface-level parameters"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: PRES
+        levels: [surface]
+      - name: CAPE
+        levels: [surface]
+      - name: CIN
+        levels: [surface]
+      - name: APCP
+        levels: [surface]
+      - name: VIS
+        levels: [surface]
+      - name: GUST
+        levels: [surface]
+    run_mode: instances
+
+  - id: hrrr-height-agl
+    title: "HRRR - Heights Above Ground"
+    description: "Parameters at specific heights above ground level (2m temp/dew point/humidity/wind)"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+      - name: RH
+        levels: [2]
+      # TODO: 10m wind not working yet - need to investigate level_value template
+      # Currently only 2m values are being ingested for UGRD/VGRD
+      - name: UGRD
+        levels: [2]
+      - name: VGRD
+        levels: [2]
+    run_mode: instances
+
+  - id: hrrr-atmosphere
+    title: "HRRR - Entire Atmosphere"
+    description: "Column-integrated atmospheric parameters (PWAT)"
+    level_filter:
+      level_type: entire_atmosphere
+      level_code: 200
+    parameters:
+      - name: PWAT
+        levels: [entire_atmosphere]
+      # TODO: REFC and TCDC need GRIB2 parameter code mapping fix
+      # - name: REFC
+      #   levels: [entire_atmosphere]
+      # - name: TCDC
+      #   levels: [entire_atmosphere]
+    run_mode: instances
+
+  - id: hrrr-cloud-layers
+    title: "HRRR - Cloud Layers"
+    description: "Cloud cover by layer (low, middle, high)"
+    level_filter:
+      level_type: cloud_layer
+      # GRIB2 Table 4.5: 214=low cloud layer, 224=middle cloud layer, 234=high cloud layer
+      # (212/222/232 are cloud *bottom* levels, not layer totals)
+      level_codes: [214, 224, 234]
+    parameters:
+      - name: LCDC
+        levels: [low_cloud_layer]
+      - name: MCDC
+        levels: [middle_cloud_layer]
+      - name: HCDC
+        levels: [high_cloud_layer]
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    # TODO: Add EPSG:4326 when axis order handling is implemented
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 48
+  max_vertical_levels: 20
+  max_response_size_mb: 50

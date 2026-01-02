@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<!--
+  OGC API EDR 1.0 Test Run Configuration Template
+  
+  Copy this file and customize for your EDR API.
+  
+  Parameters:
+    iut             - Implementation Under Test URL (landing page)
+    apiDefinition   - OpenAPI definition URL (usually /api endpoint)
+    noofcollections - Number of collections to test (-1 for all)
+    ics             - Conformance level (optional)
+-->
+<properties version="1.0">
+    <comment>OGC API EDR 1.0 Test Configuration</comment>
+    
+    <!-- EDR API landing page URL -->
+    <entry key="iut">http://localhost:8083/edr</entry>
+    
+    <!-- OpenAPI definition URL -->
+    <entry key="apiDefinition">http://localhost:8083/edr/api</entry>
+    
+    <!-- Number of collections to test (-1 = all) -->
+    <entry key="noofcollections">3</entry>
+</properties>

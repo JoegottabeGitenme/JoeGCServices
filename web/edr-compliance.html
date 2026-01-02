@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OGC EDR API Compliance Test Suite</title>
+    <link rel="stylesheet" href="edr-compliance.css">
+    <!-- Ajv JSON Schema Validator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ajv/8.12.0/ajv7.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>OGC EDR API Compliance Test Suite</h1>
+        <p>OGC API - Environmental Data Retrieval v1.1 Conformance Testing</p>
+        <p class="spec-ref">
+            <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html" target="_blank">Full OGC EDR Specification</a>
+            |
+            <a href="https://ogcapi.ogc.org/edr/" target="_blank">OGC API - EDR Overview</a>
+        </p>
+    </header>
+
+    <!-- Endpoint Configuration -->
+    <section class="config-panel">
+        <h2>Endpoint Configuration</h2>
+        <div class="endpoint-config">
+            <label for="endpoint-input">EDR API Base URL:</label>
+            <input type="text" id="endpoint-input" placeholder="http://localhost:8083/edr">
+            <button id="endpoint-apply-btn">Apply</button>
+            <button id="endpoint-reset-btn">Reset</button>
+        </div>
+    </section>
+
+    <!-- Test Summary -->
+    <section class="summary-panel">
+        <h2>Compliance Summary</h2>
+        <div class="summary-stats">
+            <div class="stat passed">
+                <span class="count" id="passed-count">0</span>
+                <span class="label">Passed</span>
+            </div>
+            <div class="stat failed">
+                <span class="count" id="failed-count">0</span>
+                <span class="label">Failed</span>
+            </div>
+            <div class="stat pending">
+                <span class="count" id="pending-count">0</span>
+                <span class="label">Pending</span>
+            </div>
+        </div>
+        <div class="summary-actions">
+            <button id="run-all-btn">Run All Tests</button>
+            <button id="clear-results-btn">Clear Results</button>
+        </div>
+        <div class="failed-tests-list" id="failed-tests-list" style="display: none;">
+            <h3>Failed Tests:</h3>
+            <ul id="failed-tests-ul"></ul>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Tests Panel -->
+        <section class="tests-panel">
+            <h2>Conformance Tests</h2>
+
+            <!-- Core Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="core">
+                    <span class="toggle">+</span>
+                    Core Conformance
+                    <span class="section-status" id="core-status"></span>
+                </h3>
+                <div class="section-content" id="core-tests">
+                    <div class="test-item" data-test="landing-page">
+                        <span class="test-name">Landing Page</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#landing-page" target="_blank" class="spec-link" title="OGC EDR Spec: API Landing Page (Section 7.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="landing-links">
+                        <span class="test-name">Landing Page Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#landing-page" target="_blank" class="spec-link" title="OGC EDR Spec: Landing Page Links (Section 7.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="conformance">
+                        <span class="test-name">Conformance Declaration</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#conformance-classes" target="_blank" class="spec-link" title="OGC EDR Spec: Conformance Declaration (Section 7.4)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collections Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="collections">
+                    <span class="toggle">+</span>
+                    Collections Conformance
+                    <span class="section-status" id="collections-status"></span>
+                </h3>
+                <div class="section-content" id="collections-tests">
+                    <div class="test-item" data-test="collections-list">
+                        <span class="test-name">Collections List</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_collection-section" target="_blank" class="spec-link" title="OGC EDR Spec: Collections (Section 8.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="collection-structure">
+                        <span class="test-name">Collection Structure</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#collection-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Collection Definition (Section 8.2.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="collection-links">
+                        <span class="test-name">Collection Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#collection-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Collection Links (Section 8.2.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Extent Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="extent">
+                    <span class="toggle">+</span>
+                    Extent Conformance
+                    <span class="section-status" id="extent-status"></span>
+                </h3>
+                <div class="section-content" id="extent-tests">
+                    <div class="test-item" data-test="extent-spatial">
+                        <span class="test-name">Spatial Extent</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-extent" target="_blank" class="spec-link" title="OGC EDR Spec: Extent (Requirement A.22)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="extent-temporal">
+                        <span class="test-name">Temporal Extent</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-extent" target="_blank" class="spec-link" title="OGC EDR Spec: Extent (Requirement A.22)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="extent-vertical">
+                        <span class="test-name">Vertical Extent</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-extent" target="_blank" class="spec-link" title="OGC EDR Spec: Extent (Requirement A.22)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Instances Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="instances">
+                    <span class="toggle">+</span>
+                    Instances Conformance
+                    <span class="section-status" id="instances-status"></span>
+                </h3>
+                <div class="section-content" id="instances-tests">
+                    <div class="test-item" data-test="instances-list">
+                        <span class="test-name">Instances List</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instances (Section 8.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="instance-structure">
+                        <span class="test-name">Instance Structure</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instance Structure (Section 8.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="instance-extent">
+                        <span class="test-name">Instance Temporal Extent</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instance Extent (Section 8.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Position Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="position">
+                    <span class="toggle">+</span>
+                    Position Query Conformance
+                    <span class="section-status" id="position-status"></span>
+                </h3>
+                <div class="section-content" id="position-tests">
+                    <div class="test-item" data-test="position-wkt">
+                        <span class="test-name">Position Query (WKT)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_position-section" target="_blank" class="spec-link" title="OGC EDR Spec: Position Query (Section 8.4)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-simple">
+                        <span class="test-name">Position Query (lon,lat)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#position-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Position Definition (Section 8.4.1)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-covjson">
+                        <span class="test-name">CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-invalid">
+                        <span class="test-name">Invalid Coordinates Error</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-missing-coords">
+                        <span class="test-name">Missing coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-position" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.26 E">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-multipoint">
+                        <span class="test-name">MULTIPOINT Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_point-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.41 B">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-no-query-params">
+                        <span class="test-name">No Query Params Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_position_no-query-params" target="_blank" class="spec-link" title="Abstract Test B.41: /conf/position/no-query-params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="Abstract Test B.53/B.54: CRS Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.55/B.56: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Z Parameter Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="z-param">
+                    <span class="toggle">+</span>
+                    Vertical Level (z) Parameter
+                    <span class="section-status" id="z-param-status"></span>
+                </h3>
+                <div class="section-content" id="z-param-tests">
+                    <div class="test-item" data-test="z-single">
+                        <span class="test-name">Single z Level (z=850)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="z-multiple">
+                        <span class="test-name">Multiple z Levels (z=850,700,500)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53 C">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="z-range">
+                        <span class="test-name">z Range (z=1000/500)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53 B">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="z-recurring">
+                        <span class="test-name">Recurring z Intervals (z=R5/1000/100)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53 D">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="z-invalid">
+                        <span class="test-name">Invalid z Parameter (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.52">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Datetime Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="datetime">
+                    <span class="toggle">+</span>
+                    Datetime Query Conformance
+                    <span class="section-status" id="datetime-status"></span>
+                </h3>
+                <div class="section-content" id="datetime-tests">
+                    <div class="test-item" data-test="datetime-instant">
+                        <span class="test-name">Single Datetime Instant</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-range">
+                        <span class="test-name">Datetime Range (start/end)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-list">
+                        <span class="test-name">Multiple Datetime List</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-open-end">
+                        <span class="test-name">Datetime Open End (start/..)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="datetime-open-start">
+                        <span class="test-name">Datetime Open Start (../end)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Datetime Parameter - Open Start Interval">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Area Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="area">
+                    <span class="toggle">+</span>
+                    Area Query Conformance
+                    <span class="section-status" id="area-status"></span>
+                </h3>
+                <div class="section-content" id="area-tests">
+                    <div class="test-item" data-test="area-basic">
+                        <span class="test-name">Area Query (Basic Polygon)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-covjson">
+                        <span class="test-name">Area Query CoverageJSON Grid</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-small">
+                        <span class="test-name">Area Query (Small Region)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-complex">
+                        <span class="test-name">Area Query (Complex Polygon)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-too-large">
+                        <span class="test-name">Area Query (Too Large - 413)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-invalid-polygon">
+                        <span class="test-name">Area Query (Invalid Polygon - 400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-with-params">
+                        <span class="test-name">Area Query with Parameters</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_c92d1888-dc80-454f-8452-e2f070b90dcd" target="_blank" class="spec-link" title="OGC EDR Spec: Area Query (Section 8.2.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-missing-coords">
+                        <span class="test-name">Missing coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-area" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.27 E">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-multipolygon">
+                        <span class="test-name">MULTIPOLYGON Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_polygon-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.42 B">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-z-multiple">
+                        <span class="test-name">Area with Multiple z Levels</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="Abstract Test B.87/B.88: CRS Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.89/B.90: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Radius Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="radius">
+                    <span class="toggle">+</span>
+                    Radius Query Conformance
+                    <span class="section-status" id="radius-status"></span>
+                </h3>
+                <div class="section-content" id="radius-tests">
+                    <div class="test-item" data-test="radius-basic">
+                        <span class="test-name">Radius Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_e9bce888-9ced-4764-9b4d-7b9ce47d1f22" target="_blank" class="spec-link" title="OGC EDR Spec: Radius Query (Section 8.2.4)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-covjson">
+                        <span class="test-name">Radius Query CoverageJSON Grid</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-coords">
+                        <span class="test-name">Missing coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 E">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-within">
+                        <span class="test-name">Missing within Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 G">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-missing-within-units">
+                        <span class="test-name">Missing within-units Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31 I">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-invalid-coords">
+                        <span class="test-name">Invalid coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Radius coords must be POINT or MULTIPOINT">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-too-large">
+                        <span class="test-name">Radius Too Large (413)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-km">
+                        <span class="test-name">Radius with km Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-mi">
+                        <span class="test-name">Radius with mi Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-units-m">
+                        <span class="test-name">Radius with m Units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.31">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-multipoint">
+                        <span class="test-name">MULTIPOINT Radius Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_queries_radius" target="_blank" class="spec-link" title="OGC EDR Spec: Radius coords can be MULTIPOINT">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-z-parameter">
+                        <span class="test-name">Radius with z Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53 z-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-with-params">
+                        <span class="test-name">Radius with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.56 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-datetime">
+                        <span class="test-name">Radius with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-no-query-params">
+                        <span class="test-name">No Query Params Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_radius_no-query-params" target="_blank" class="spec-link" title="Abstract Test B.57: /conf/radius/no-query-params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="Abstract Test B.71/B.72: CRS Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="radius-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.73/B.74: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trajectory Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="trajectory">
+                    <span class="toggle">+</span>
+                    Trajectory Query Conformance
+                    <span class="section-status" id="trajectory-status"></span>
+                </h3>
+                <div class="section-content" id="trajectory-tests">
+                    <div class="test-item" data-test="trajectory-basic">
+                        <span class="test-name">Trajectory Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_e9bce888-9ced-4764-9b4d-7b9ce47d1f23" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory Query (Section 8.2.5)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-covjson">
+                        <span class="test-name">Trajectory CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-missing-coords">
+                        <span class="test-name">Trajectory Missing coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-trajectory" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.29 trajectory coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-coords">
+                        <span class="test-name">Trajectory Invalid coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.43 LINESTRING coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-linestringz">
+                        <span class="test-name">Trajectory with LINESTRINGZ</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_trajectory_query" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory with Z coordinates">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-linestringm">
+                        <span class="test-name">Trajectory with LINESTRINGM</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_trajectory_query" target="_blank" class="spec-link" title="OGC EDR Spec: Trajectory with M (time) coordinates">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-z-conflict">
+                        <span class="test-name">Trajectory Z Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_109" target="_blank" class="spec-link" title="OGC EDR Spec: B.109 z param conflict with LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-multilinestring">
+                        <span class="test-name">MULTILINESTRING Trajectory</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: MULTILINESTRING support">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-with-params">
+                        <span class="test-name">Trajectory with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-datetime">
+                        <span class="test-name">Trajectory with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-no-query-params">
+                        <span class="test-name">No Query Params Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_trajectory_no-query-params" target="_blank" class="spec-link" title="Abstract Test B.105: /conf/trajectory/no-query-params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-linestringm">
+                        <span class="test-name">Invalid LINESTRINGM Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_trajectory_coords-param-invalid-linestringm" target="_blank" class="spec-link" title="Abstract Test B.108: Invalid LINESTRINGM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-linestringz">
+                        <span class="test-name">Invalid LINESTRINGZ Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_trajectory_coords-param-invalid-linestringz" target="_blank" class="spec-link" title="Abstract Test B.112: Invalid LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-linestringzm">
+                        <span class="test-name">Invalid LINESTRINGZM Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_trajectory_coords-param-invalid-linestringzm" target="_blank" class="spec-link" title="Abstract Test B.111: Invalid LINESTRINGZM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-invalid-time">
+                        <span class="test-name">Invalid Time Coords Error (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#ats_trajectory_coords-param-invalid-time" target="_blank" class="spec-link" title="Abstract Test B.113: Invalid time coordinates">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="Abstract Test B.119/B.120: CRS Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="trajectory-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.121/B.122: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Corridor Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="corridor">
+                    <span class="toggle">+</span>
+                    Corridor Query Conformance
+                    <span class="section-status" id="corridor-status"></span>
+                </h3>
+                <div class="section-content" id="corridor-tests">
+                    <div class="test-item" data-test="corridor-basic">
+                        <span class="test-name">Corridor Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Corridor Query (Requirement A.30)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-covjson">
+                        <span class="test-name">Corridor CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-coords">
+                        <span class="test-name">Corridor Missing coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_124" target="_blank" class="spec-link" title="OGC EDR Spec: B.124 coords required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-width">
+                        <span class="test-name">Corridor Missing corridor-width (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_125" target="_blank" class="spec-link" title="OGC EDR Spec: B.125 corridor-width required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-width-units">
+                        <span class="test-name">Corridor Missing width-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_127" target="_blank" class="spec-link" title="OGC EDR Spec: B.127 width-units required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-height">
+                        <span class="test-name">Corridor Missing corridor-height (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_126" target="_blank" class="spec-link" title="OGC EDR Spec: B.126 corridor-height required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-missing-height-units">
+                        <span class="test-name">Corridor Missing height-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_128" target="_blank" class="spec-link" title="OGC EDR Spec: B.128 height-units required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-width-units">
+                        <span class="test-name">Corridor Invalid width-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_136" target="_blank" class="spec-link" title="OGC EDR Spec: B.136 width-units validation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-height-units">
+                        <span class="test-name">Corridor Invalid height-units (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_137" target="_blank" class="spec-link" title="OGC EDR Spec: B.137 height-units validation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-coords">
+                        <span class="test-name">Corridor Invalid coords (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_129" target="_blank" class="spec-link" title="OGC EDR Spec: B.129 LINESTRING required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-z-conflict">
+                        <span class="test-name">Corridor Z Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_131" target="_blank" class="spec-link" title="OGC EDR Spec: B.131 z param conflict with LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-datetime-conflict">
+                        <span class="test-name">Corridor Datetime Conflict (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: datetime conflict with LINESTRINGM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-multilinestring">
+                        <span class="test-name">MULTILINESTRING Corridor</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_linestring-coords-response" target="_blank" class="spec-link" title="OGC EDR Spec: MULTILINESTRING support">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-params">
+                        <span class="test-name">Corridor with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-pressure-height-units">
+                        <span class="test-name">Corridor with hPa height-units</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_height-units-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.68 height-units response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-metadata">
+                        <span class="test-name">Corridor Metadata (variables)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor-variables" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.19 corridor-variables">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringm">
+                        <span class="test-name">Invalid LINESTRINGM Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_130" target="_blank" class="spec-link" title="OGC EDR Spec: B.130 Invalid LINESTRINGM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringz">
+                        <span class="test-name">Invalid LINESTRINGZ Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_134" target="_blank" class="spec-link" title="OGC EDR Spec: B.134 Invalid LINESTRINGZ">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-invalid-linestringzm">
+                        <span class="test-name">Invalid LINESTRINGZM Format</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_133" target="_blank" class="spec-link" title="OGC EDR Spec: B.133 Invalid LINESTRINGZM">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-zm-z-conflict">
+                        <span class="test-name">LINESTRINGZM + z Conflict</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_132" target="_blank" class="spec-link" title="OGC EDR Spec: B.132 LINESTRINGZM + z conflict">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-zm-datetime-conflict">
+                        <span class="test-name">LINESTRINGZM + datetime Conflict</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: LINESTRINGZM datetime conflict">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringz">
+                        <span class="test-name">Valid LINESTRINGZ Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGZ corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringm">
+                        <span class="test-name">Valid LINESTRINGM Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGM corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-linestringzm">
+                        <span class="test-name">Valid LINESTRINGZM Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Valid LINESTRINGZM corridor">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-datetime">
+                        <span class="test-name">Corridor with datetime Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: datetime parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-with-z">
+                        <span class="test-name">Corridor with z Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: z parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-instance">
+                        <span class="test-name">Instance Corridor Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-corridor" target="_blank" class="spec-link" title="OGC EDR Spec: Instance corridor query">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-not-found">
+                        <span class="test-name">Corridor 404 Not Found</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: 404 for non-existent collection">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="Abstract Test B.151/B.152: CRS Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="corridor-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.153/B.154: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cube Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="cube">
+                    <span class="toggle">+</span>
+                    Cube Queries
+                    <span class="section-status" id="cube-status"></span>
+                </h3>
+                <div class="section-content" id="cube-tests">
+                    <div class="test-item" data-test="cube-basic">
+                        <span class="test-name">Cube Query (Basic)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Cube Query (Requirement A.28)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-covjson">
+                        <span class="test-name">Cube CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_content" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON content (Requirement A.81)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-missing-bbox">
+                        <span class="test-name">Cube Missing bbox (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_92" target="_blank" class="spec-link" title="OGC EDR Spec: B.92 bbox required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-missing-z">
+                        <span class="test-name">Cube Missing z (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.G/H z required">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-invalid-bbox">
+                        <span class="test-name">Cube Invalid bbox (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_93" target="_blank" class="spec-link" title="OGC EDR Spec: B.93 invalid bbox">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-multi-z">
+                        <span class="test-name">Cube Multi-Level Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_cube-z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.60 cube-z-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-with-datetime">
+                        <span class="test-name">Cube with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-with-resolution">
+                        <span class="test-name">Cube with resolution-x/y</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_resolution-x-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.59 resolution-x response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-instance">
+                        <span class="test-name">Instance Cube Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Instance cube query">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-not-found">
+                        <span class="test-name">Cube 404 Not Found</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: 404 for non-existent collection">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-no-query-params">
+                        <span class="test-name">Cube No Query Params (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_abstract_test_b_91" target="_blank" class="spec-link" title="OGC EDR Spec: B.91 no query params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-z-range">
+                        <span class="test-name">Cube z Range (min/max)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53.B z range syntax">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-z-recurring">
+                        <span class="test-name">Cube z Recurring Interval</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_z-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.53.D recurring z syntax">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-invalid-z">
+                        <span class="test-name">Cube Invalid z (400)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28 invalid z parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-crs-valid">
+                        <span class="test-name">Cube with CRS Parameter</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.K crs parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="cube-f-covjson">
+                        <span class="test-name">Cube with f=CoverageJSON</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-cube" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.28.L format parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Locations Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="locations">
+                    <span class="toggle">+</span>
+                    Locations Query Conformance
+                    <span class="section-status" id="locations-status"></span>
+                </h3>
+                <div class="section-content" id="locations-tests">
+                    <div class="test-item" data-test="locations-list">
+                        <span class="test-name">List All Locations (GeoJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_locations-section" target="_blank" class="spec-link" title="OGC EDR Spec: Locations Query (Section 8.2.8)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-geojson-structure">
+                        <span class="test-name">GeoJSON FeatureCollection Structure</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON Format">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-query-basic">
+                        <span class="test-name">Query Data at Named Location</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_locations-section" target="_blank" class="spec-link" title="OGC EDR Spec: Locations Query (Section 8.2.8)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-query-covjson">
+                        <span class="test-name">Location Query CoverageJSON Response</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_covjson-section" target="_blank" class="spec-link" title="OGC EDR Spec: CoverageJSON Response (Section 9.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-invalid-id">
+                        <span class="test-name">Invalid Location ID Returns 404</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-with-params">
+                        <span class="test-name">Location Query with parameter-name</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 parameter-name-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-with-datetime">
+                        <span class="test-name">Location Query with datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.45 datetime-response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-cache-header">
+                        <span class="test-name">Location Query Has X-Cache Header</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="HTTP Caching Headers">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-instance">
+                        <span class="test-name">Instance Locations Query</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instances (Section 8.3)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-crs-valid">
+                        <span class="test-name">CRS Parameter (crs=CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="OGC EDR Spec: CRS Definition">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="locations-f-covjson">
+                        <span class="test-name">Format Parameter (f=CoverageJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Format Parameter">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Handling Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="errors">
+                    <span class="toggle">+</span>
+                    Error Handling
+                    <span class="section-status" id="errors-status"></span>
+                </h3>
+                <div class="section-content" id="errors-tests">
+                    <div class="test-item" data-test="error-404-collection">
+                        <span class="test-name">404 Collection Not Found</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="error-400-coords">
+                        <span class="test-name">400 Invalid Coordinates</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes (Section 9.2)">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="error-400-datetime">
+                        <span class="test-name">400 Invalid Datetime</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_datetime-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.44">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="error-response-structure">
+                        <span class="test-name">Error Response Structure</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: Exception Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collection Metadata Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="metadata">
+                    <span class="toggle">+</span>
+                    Collection Metadata
+                    <span class="section-status" id="metadata-status"></span>
+                </h3>
+                <div class="section-content" id="metadata-tests">
+                    <div class="test-item" data-test="metadata-data-queries">
+                        <span class="test-name">data_queries Object Structure</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-data-queries" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.14">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="metadata-parameter-names">
+                        <span class="test-name">parameter_names Object</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-parameters" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.25">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="metadata-output-formats">
+                        <span class="test-name">output_formats Lists Only Supported Formats</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.50">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="metadata-crs">
+                        <span class="test-name">CRS Lists Only Supported Systems</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.48">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Content-Type / Format Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="content-type">
+                    <span class="toggle">+</span>
+                    Content-Type &amp; Format Parameter
+                    <span class="section-status" id="content-type-status"></span>
+                </h3>
+                <div class="section-content" id="content-type-tests">
+                    <div class="test-item" data-test="content-type-covjson">
+                        <span class="test-name">Response Content-Type Header (CovJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_covjson_definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.82 - CoverageJSON media type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="content-type-json">
+                        <span class="test-name">Response Content-Type Header (JSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_json_definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.76 - JSON media type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="f-param-covjson">
+                        <span class="test-name">f Parameter Selects CoverageJSON</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.50 - f parameter definition">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="f-param-invalid">
+                        <span class="test-name">Invalid f Parameter Returns Error</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-f-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.51 - f parameter response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="f-param-geojson">
+                        <span class="test-name">f Parameter Selects GeoJSON (f=geojson)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.50 - f parameter for GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="content-type-geojson">
+                        <span class="test-name">Response Content-Type Header (GeoJSON)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_geojson_definition" target="_blank" class="spec-link" title="OGC EDR Spec: GeoJSON media type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="geojson-structure">
+                        <span class="test-name">GeoJSON FeatureCollection Structure</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON Format">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CRS Parameter Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="crs-param">
+                    <span class="toggle">+</span>
+                    CRS Parameter
+                    <span class="section-status" id="crs-param-status"></span>
+                </h3>
+                <div class="section-content" id="crs-param-tests">
+                    <div class="test-item" data-test="crs-param-valid">
+                        <span class="test-name">Valid CRS Parameter (CRS:84)</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.48 - crs parameter definition">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="crs-param-invalid">
+                        <span class="test-name">Invalid CRS Parameter Returns Error</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-crs-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.49 - crs parameter response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parameter Name Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="param-name">
+                    <span class="toggle">+</span>
+                    Parameter-Name Query Parameter
+                    <span class="section-status" id="param-name-status"></span>
+                </h3>
+                <div class="section-content" id="param-name-tests">
+                    <div class="test-item" data-test="param-name-filter">
+                        <span class="test-name">Response Contains Only Requested Params</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_parameter-name-response" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.47 - parameter-name response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="param-name-invalid">
+                        <span class="test-name">Invalid Parameter Name Handling</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_REQ_rc-parameter-name-definition" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.46 - parameter-name definition">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Instance Query Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="instance-query">
+                    <span class="toggle">+</span>
+                    Instance-Specific Queries
+                    <span class="section-status" id="instance-query-status"></span>
+                </h3>
+                <div class="section-content" id="instance-query-tests">
+                    <div class="test-item" data-test="instance-position-query">
+                        <span class="test-name">Position Query via Instance Path</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section" target="_blank" class="spec-link" title="OGC EDR Spec: Instances - Query via instance path">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="instance-invalid-id">
+                        <span class="test-name">Invalid Instance ID Returns 404</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP Status Codes - 404 Not Found">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Domain Type Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="domain-types">
+                    <span class="toggle">+</span>
+                    CoverageJSON Domain Types
+                    <span class="section-status" id="domain-types-status"></span>
+                </h3>
+                <div class="section-content" id="domain-types-tests">
+                    <div class="test-item" data-test="domain-type-point">
+                        <span class="test-name">Point Query Returns domainType: Point</span>
+                        <a href="https://covjson.org/spec/#point" target="_blank" class="spec-link" title="CoverageJSON Spec: Point Domain Type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="domain-type-pointseries">
+                        <span class="test-name">Multi-time Returns domainType: PointSeries</span>
+                        <a href="https://covjson.org/spec/#pointseries" target="_blank" class="spec-link" title="CoverageJSON Spec: PointSeries Domain Type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="domain-type-verticalprofile">
+                        <span class="test-name">Multi-z Returns domainType: VerticalProfile</span>
+                        <a href="https://covjson.org/spec/#verticalprofile" target="_blank" class="spec-link" title="CoverageJSON Spec: VerticalProfile Domain Type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="domain-type-grid">
+                        <span class="test-name">Area Query Returns domainType: Grid</span>
+                        <a href="https://covjson.org/spec/#grid" target="_blank" class="spec-link" title="CoverageJSON Spec: Grid Domain Type">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Link Validation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="links">
+                    <span class="toggle">+</span>
+                    Link Validation
+                    <span class="section-status" id="links-status"></span>
+                </h3>
+                <div class="section-content" id="links-tests">
+                    <div class="test-item" data-test="links-self">
+                        <span class="test-name">Collection Has Valid Self Link</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-collection-links" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.13 - Collection links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="links-data-queries">
+                        <span class="test-name">data_queries Links Are Accessible</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-data-queries" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.14 - data_queries links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- No Query Params Error Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="no-params">
+                    <span class="toggle">+</span>
+                    No Query Parameters Error
+                    <span class="section-status" id="no-params-status"></span>
+                </h3>
+                <div class="section-content" id="no-params-tests">
+                    <div class="test-item" data-test="position-no-params">
+                        <span class="test-name">Position with No Params Returns Error</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_conf_position_no-query-params" target="_blank" class="spec-link" title="OGC EDR Spec: Abstract Test B.41 - No query params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-no-params">
+                        <span class="test-name">Area with No Params Returns Error</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#_conf_area_no-query-params" target="_blank" class="spec-link" title="OGC EDR Spec: Abstract Test B.75 - No query params">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accept Header Content Negotiation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="accept-header">
+                    <span class="toggle">+</span>
+                    Accept Header Content Negotiation
+                    <span class="section-status" id="accept-header-status"></span>
+                </h3>
+                <div class="section-content" id="accept-header-tests">
+                    <div class="test-item" data-test="accept-covjson">
+                        <span class="test-name">Accept: application/vnd.cov+json</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement /req/core/http - HTTP content negotiation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="accept-json">
+                        <span class="test-name">Accept: application/json</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement /req/core/http - HTTP content negotiation">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="accept-unsupported">
+                        <span class="test-name">Accept: Unsupported Type Returns 406</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#http-status-codes" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP 406 - Content negotiation failed">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="accept-geojson">
+                        <span class="test-name">Accept: application/geo+json</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http" target="_blank" class="spec-link" title="OGC EDR Spec: HTTP content negotiation for GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CoverageJSON Structure Validation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="covjson-structure">
+                    <span class="toggle">+</span>
+                    CoverageJSON Structure Validation
+                    <span class="section-status" id="covjson-structure-status"></span>
+                </h3>
+                <div class="section-content" id="covjson-structure-tests">
+                    <div class="test-item" data-test="covjson-referencing">
+                        <span class="test-name">Domain Has Referencing System</span>
+                        <a href="https://covjson.org/spec/#domain-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Domain Objects - referencing">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-ndarray">
+                        <span class="test-name">NdArray Structure Valid</span>
+                        <a href="https://covjson.org/spec/#ndarray-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: NdArray Objects">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-observed-property">
+                        <span class="test-name">Parameters Have observedProperty</span>
+                        <a href="https://covjson.org/spec/#parameter-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Parameter Objects - observedProperty">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="covjson-axes">
+                        <span class="test-name">Domain Axes Structure Valid</span>
+                        <a href="https://covjson.org/spec/#domain-objects" target="_blank" class="spec-link" title="CoverageJSON Spec: Domain Objects - axes">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alternate Links Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="alternate-links">
+                    <span class="toggle">+</span>
+                    Alternate Format Links
+                    <span class="section-status" id="alternate-links-status"></span>
+                </h3>
+                <div class="section-content" id="alternate-links-tests">
+                    <div class="test-item" data-test="links-alternate-formats">
+                        <span class="test-name">Collection Has Alternate Format Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-collection-links" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.13 - alternate links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="links-landing-alternate">
+                        <span class="test-name">Landing Page Has Alternate Links</span>
+                        <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_root-success" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.3 - Landing page links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON Schema Validation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="schema-validation">
+                    <span class="toggle">+</span>
+                    JSON Schema Validation
+                    <span class="section-status" id="schema-validation-status"></span>
+                </h3>
+                <div class="section-content" id="schema-validation-tests">
+                    <div class="test-item" data-test="schema-covjson-position">
+                        <span class="test-name">Position Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-area">
+                        <span class="test-name">Area Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-trajectory">
+                        <span class="test-name">Trajectory Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-cube">
+                        <span class="test-name">Cube Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-locations">
+                        <span class="test-name">Location Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-geojson-locations-list">
+                        <span class="test-name">Locations List Validates Against GeoJSON Schema</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-geojson-position">
+                        <span class="test-name">Position GeoJSON Response Validates Against Schema</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Test Details Modal -->
+    <div id="test-details-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h3 id="modal-title">Test Details</h3>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="edr-compliance.js"></script>
+</body>
+</html>

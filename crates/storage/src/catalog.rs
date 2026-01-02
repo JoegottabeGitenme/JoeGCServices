@@ -236,6 +236,32 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Find dataset closest to requested valid time at a specific level.
+    pub async fn find_by_time_and_level(
+        &self,
+        model: &str,
+        parameter: &str,
+        valid_time: DateTime<Utc>,
+        level: &str,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size, zarr_metadata FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND level = $4 AND status = 'available' \
+             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(valid_time)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
     /// Find dataset by forecast hour.
     pub async fn find_by_forecast_hour(
         &self,
@@ -945,6 +971,69 @@ impl Catalog {
                 file_size: r.file_size as u64,
             })
             .collect())
+    }
+
+    /// Get the temporal extent (min/max valid times) for a model.
+    /// Returns (oldest_valid_time, newest_valid_time) or None if no data exists.
+    pub async fn get_model_temporal_extent(
+        &self,
+        model: &str,
+    ) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let result = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+            "SELECT MIN(valid_time), MAX(valid_time) \
+             FROM datasets \
+             WHERE model = $1 AND status = 'available'",
+        )
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        match result {
+            (Some(min), Some(max)) => Ok(Some((min, max))),
+            _ => Ok(None),
+        }
+    }
+
+    /// Get all available valid times for a model (for populating temporal extent values).
+    /// Returns unique valid times sorted ascending.
+    pub async fn get_model_valid_times(&self, model: &str) -> WmsResult<Vec<DateTime<Utc>>> {
+        let times = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT valid_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY valid_time ASC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(times)
+    }
+
+    /// Get the forecast time range for a specific model run.
+    /// Returns (start_time, end_time) where start_time is the run time
+    /// and end_time is the latest valid_time from all forecasts in that run.
+    pub async fn get_run_forecast_range(
+        &self,
+        model: &str,
+        reference_time: DateTime<Utc>,
+    ) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let result = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+            "SELECT MIN(valid_time), MAX(valid_time) \
+             FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        match result {
+            (Some(min), Some(max)) => Ok(Some((min, max))),
+            _ => Ok(None),
+        }
     }
 
     /// Get availability information for a specific parameter.

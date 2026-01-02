@@ -149,13 +149,24 @@ pub fn create_test_tables() -> Arc<Grib2Tables> {
         200,
         LevelDescription::Static("entire atmosphere".to_string()),
     );
+    // Cloud layers: support both bottom (x2) and layer (x4) codes
+    // GRIB2 Table 4.5: 212=bottom, 213=top, 214=layer for each cloud level
     tables.add_level(212, LevelDescription::Static("low cloud layer".to_string()));
+    tables.add_level(214, LevelDescription::Static("low cloud layer".to_string()));
     tables.add_level(
         222,
         LevelDescription::Static("middle cloud layer".to_string()),
     );
     tables.add_level(
+        224,
+        LevelDescription::Static("middle cloud layer".to_string()),
+    );
+    tables.add_level(
         232,
+        LevelDescription::Static("high cloud layer".to_string()),
+    );
+    tables.add_level(
+        234,
         LevelDescription::Static("high cloud layer".to_string()),
     );
 

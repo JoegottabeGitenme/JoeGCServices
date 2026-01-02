@@ -1,0 +1,652 @@
+openapi: 3.0.3
+info:
+  title: Weather WMS EDR API
+  version: 1.0.0
+  description: |
+    OGC API - Environmental Data Retrieval (EDR) for weather model data.
+    
+    This API provides access to weather data from multiple models including:
+    - **GFS** - Global Forecast System (0.25° global coverage)
+    - **HRRR** - High-Resolution Rapid Refresh (3km CONUS coverage)
+    - **GOES-16/18** - Geostationary satellite imagery
+    - **MRMS** - Multi-Radar Multi-Sensor precipitation
+    
+    ## Query Types
+    
+    The API supports the following EDR query patterns:
+    - **Position** - Point sampling at a single location
+    - **Area** - Polygon-based spatial queries  
+    - **Radius** - Circle queries around a point
+    - **Trajectory** - Sampling along a path with time
+    - **Corridor** - Buffered path queries
+    - **Cube** - Bounding box with vertical/temporal extent
+    
+  contact:
+    name: Weather WMS Support
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8083/edr
+    description: Local development server
+
+paths:
+  /:
+    get:
+      operationId: getLandingPage
+      summary: Landing page
+      description: Returns the landing page with links to API resources
+      responses:
+        '200':
+          description: Landing page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandingPage'
+
+  /api:
+    get:
+      operationId: getApiDefinition
+      summary: OpenAPI definition
+      description: Returns the OpenAPI 3.0 definition for this API
+      responses:
+        '200':
+          description: OpenAPI definition
+          content:
+            application/openapi+json;version=3.0:
+              schema:
+                type: object
+
+  /conformance:
+    get:
+      operationId: getConformance
+      summary: Conformance declaration
+      description: Returns the conformance classes implemented by this API
+      responses:
+        '200':
+          description: Conformance declaration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conformance'
+
+  /collections:
+    get:
+      operationId: getCollections
+      summary: List collections
+      description: Returns metadata about all available data collections
+      responses:
+        '200':
+          description: Collections list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collections'
+
+  /collections/{collectionId}:
+    get:
+      operationId: getCollection
+      summary: Get collection metadata
+      description: Returns metadata about a specific collection
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+      responses:
+        '200':
+          description: Collection metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collection'
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/position:
+    get:
+      operationId: getPosition
+      summary: Position query
+      description: Sample data at a single point location
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          description: Data at the specified position
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/area:
+    get:
+      operationId: getArea
+      summary: Area query
+      description: Sample data within a polygon area
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+        - $ref: '#/components/parameters/resolution-x'
+        - $ref: '#/components/parameters/resolution-y'
+      responses:
+        '200':
+          description: Data within the specified area
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/radius:
+    get:
+      operationId: getRadius
+      summary: Radius query
+      description: Sample data within a radius of a point
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - name: within
+          in: query
+          required: true
+          style: form
+          explode: false
+          description: Radius distance
+          schema:
+            type: number
+        - name: within-units
+          in: query
+          required: false
+          style: form
+          explode: false
+          description: Units for radius (m, km, mi)
+          schema:
+            type: string
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          description: Data within the specified radius
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/trajectory:
+    get:
+      operationId: getTrajectory
+      summary: Trajectory query
+      description: Sample data along a path with time coordinates
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          description: Data along the trajectory
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/corridor:
+    get:
+      operationId: getCorridor
+      summary: Corridor query
+      description: Sample data within a buffered path
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - name: corridor-width
+          in: query
+          required: true
+          style: form
+          explode: false
+          description: Width of the corridor
+          schema:
+            type: number
+        - name: width-units
+          in: query
+          required: false
+          style: form
+          explode: false
+          description: Units for corridor width
+          schema:
+            type: string
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          description: Data within the corridor
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/cube:
+    get:
+      operationId: getCube
+      summary: Cube query
+      description: Sample data within a bounding box with vertical and temporal extent
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: bbox
+          in: query
+          required: true
+          style: form
+          explode: false
+          description: Bounding box (minx,miny,maxx,maxy)
+          schema:
+            type: array
+            minItems: 4
+            maxItems: 6
+            items:
+              type: number
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          description: Data within the cube
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/instances:
+    get:
+      operationId: getInstances
+      summary: List instances
+      description: Returns available instances (model runs) for a collection
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+      responses:
+        '200':
+          description: List of instances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instances'
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/instances/{instanceId}:
+    get:
+      operationId: getInstance
+      summary: Get instance metadata
+      description: Returns metadata about a specific instance
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+      responses:
+        '200':
+          description: Instance metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+        '404':
+          description: Instance not found
+
+components:
+  parameters:
+    collectionId:
+      name: collectionId
+      in: path
+      required: true
+      description: Collection identifier
+      schema:
+        type: string
+
+    instanceId:
+      name: instanceId
+      in: path
+      required: true
+      description: Instance identifier
+      schema:
+        type: string
+
+    coords:
+      name: coords
+      in: query
+      required: true
+      style: form
+      explode: false
+      description: |
+        Well-Known Text (WKT) geometry:
+        - Position: POINT(lon lat)
+        - Area: POLYGON((lon1 lat1, lon2 lat2, ...))
+        - Trajectory: LINESTRING(lon1 lat1, lon2 lat2, ...)
+      schema:
+        type: string
+
+    z:
+      name: z
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        Vertical level(s). Supports:
+        - Single value: 850
+        - List: 1000,850,500
+        - Range: 1000/500
+        - Recurring: R5/1000/100
+      schema:
+        type: string
+
+    datetime:
+      name: datetime
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        Temporal extent. Supports:
+        - Single instant: 2024-01-01T00:00:00Z
+        - Interval: 2024-01-01T00:00:00Z/2024-01-02T00:00:00Z
+        - Open-ended: ../2024-01-01T00:00:00Z or 2024-01-01T00:00:00Z/..
+      schema:
+        type: string
+
+    parameter-name:
+      name: parameter-name
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: Comma-separated list of parameter names to return
+      schema:
+        type: string
+
+    crs:
+      name: crs
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: Coordinate reference system (default CRS84)
+      schema:
+        type: string
+        default: http://www.opengis.net/def/crs/OGC/1.3/CRS84
+
+    f:
+      name: f
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: Response format
+      schema:
+        type: string
+        enum: [CoverageJSON, GeoJSON, json]
+        default: CoverageJSON
+
+    resolution-x:
+      name: resolution-x
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: Horizontal resolution for area queries
+      schema:
+        type: number
+
+    resolution-y:
+      name: resolution-y
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: Vertical resolution for area queries
+      schema:
+        type: number
+
+  schemas:
+    LandingPage:
+      type: object
+      required:
+        - title
+        - links
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+
+    Link:
+      type: object
+      required:
+        - href
+        - rel
+      properties:
+        href:
+          type: string
+          format: uri
+        rel:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+
+    Conformance:
+      type: object
+      required:
+        - conformsTo
+      properties:
+        conformsTo:
+          type: array
+          items:
+            type: string
+            format: uri
+
+    Collections:
+      type: object
+      required:
+        - links
+        - collections
+      properties:
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Collection'
+
+    Collection:
+      type: object
+      required:
+        - id
+        - links
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        extent:
+          $ref: '#/components/schemas/Extent'
+        data_queries:
+          type: object
+        parameter_names:
+          type: object
+        output_formats:
+          type: array
+          items:
+            type: string
+        crs:
+          type: array
+          items:
+            type: string
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+
+    Extent:
+      type: object
+      properties:
+        spatial:
+          type: object
+          properties:
+            bbox:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+            crs:
+              type: string
+        temporal:
+          type: object
+          properties:
+            interval:
+              type: array
+              items:
+                type: array
+                items:
+                  type: string
+                  format: date-time
+            trs:
+              type: string
+        vertical:
+          type: object
+          properties:
+            interval:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+            vrs:
+              type: string
+
+    Instances:
+      type: object
+      required:
+        - instances
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instance'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+
+    Instance:
+      type: object
+      required:
+        - id
+        - links
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        extent:
+          $ref: '#/components/schemas/Extent'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+
+    CoverageJSON:
+      type: object
+      description: CoverageJSON document
+      properties:
+        type:
+          type: string
+          enum: [Coverage, CoverageCollection]
+        domain:
+          type: object
+        parameters:
+          type: object
+        ranges:
+          type: object
+
+    GeoJSON:
+      type: object
+      description: GeoJSON FeatureCollection
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            type: object

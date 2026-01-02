@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head><title>Accept Header Test</title></head>
+<body>
+<h1>Accept Header Test</h1>
+<p>Testing that Accept: application/xml returns 406 Not Acceptable</p>
+<button onclick="runFetchTest()">Test with Fetch API</button>
+<button onclick="runXhrTest()">Test with XMLHttpRequest</button>
+<pre id="result"></pre>
+
+<script>
+const testUrl = 'http://localhost:8083/edr/collections/hrrr-surface/position?coords=POINT(-97.5 35.2)&_t=' + Date.now();
+
+async function runFetchTest() {
+    const resultEl = document.getElementById('result');
+    resultEl.textContent = 'Running Fetch test...\n';
+    
+    const headers = new Headers();
+    headers.set('Accept', 'application/xml');
+    
+    console.log('Fetch Headers:', [...headers.entries()]);
+    
+    try {
+        const response = await fetch(testUrl + '&method=fetch', {
+            method: 'GET',
+            headers: headers,
+            mode: 'cors',
+            cache: 'no-store'
+        });
+        
+        const text = await response.text();
+        resultEl.textContent = 'FETCH TEST\nStatus: ' + response.status + '\n\nResponse:\n' + text.substring(0, 500);
+        
+        if (response.status === 406) {
+            resultEl.textContent += '\n\n*** SUCCESS: Got 406 as expected! ***';
+        } else {
+            resultEl.textContent += '\n\n*** FAIL: Expected 406, got ' + response.status + ' ***';
+        }
+    } catch (e) {
+        resultEl.textContent = 'Fetch Error: ' + e.message;
+    }
+}
+
+function runXhrTest() {
+    const resultEl = document.getElementById('result');
+    resultEl.textContent = 'Running XHR test...\n';
+    
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', testUrl + '&method=xhr', true);
+    xhr.setRequestHeader('Accept', 'application/xml');
+    
+    console.log('XHR: Setting Accept header to application/xml');
+    
+    xhr.onload = function() {
+        resultEl.textContent = 'XHR TEST\nStatus: ' + xhr.status + '\n\nResponse:\n' + xhr.responseText.substring(0, 500);
+        
+        if (xhr.status === 406) {
+            resultEl.textContent += '\n\n*** SUCCESS: Got 406 as expected! ***';
+        } else {
+            resultEl.textContent += '\n\n*** FAIL: Expected 406, got ' + xhr.status + ' ***';
+        }
+    };
+    
+    xhr.onerror = function() {
+        resultEl.textContent = 'XHR Error: Network error';
+    };
+    
+    xhr.send();
+}
+</script>
+</body>
+</html>

@@ -185,6 +185,9 @@ pub async fn ingest_grib2(
             )
         };
 
+        // Get units from config (defaults to "unknown" if not specified)
+        let units = filter.get_units(param);
+
         // Write Zarr and upload
         match write_and_upload_zarr(
             storage,
@@ -195,6 +198,7 @@ pub async fn ingest_grib2(
             &model,
             param,
             level,
+            units,
             reference_time,
             forecast_hour,
             &zarr_storage_path,
@@ -294,6 +298,7 @@ async fn write_and_upload_zarr(
     model: &str,
     param: &str,
     level: &str,
+    units: &str,
     reference_time: DateTime<Utc>,
     forecast_hour: u32,
     storage_path: &str,
@@ -328,7 +333,7 @@ async fn write_and_upload_zarr(
             model,
             param,
             level,
-            "unknown", // units
+            units,
             reference_time,
             forecast_hour,
             &pyramid_config,
