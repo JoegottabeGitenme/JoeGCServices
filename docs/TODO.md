@@ -67,3 +67,4 @@
 - lets make the styles of the compliance checking web pages consistent, maybe one page for all compliance checking, one page for all coverage checking
 - need to update prometheus and grafana and loki and stuff for the EDR api still
 - need to check units in WMS now that we fixed units being passed into zarr format during ingestion
+- let's remove the minikube stuff from the start.sh script

@@ -43,6 +43,46 @@ impl UnitConversion {
             Self::None => value,
         }
     }
+
+    /// Infer the conversion needed based on native and display units.
+    ///
+    /// This allows the system to automatically determine conversions when
+    /// native units come from Zarr metadata and display units from layer config.
+    ///
+    /// # Arguments
+    /// * `native` - Native units from the data source (e.g., "K", "Pa")
+    /// * `display` - Desired display units (e.g., "°C", "hPa")
+    ///
+    /// # Returns
+    /// The appropriate UnitConversion, or None if units are the same or unknown
+    pub fn infer(native: &str, display: &str) -> Self {
+        // Normalize display string (handle unicode symbols)
+        let display_normalized = display.replace("°C", "C").replace("°F", "F").to_uppercase();
+        let native_upper = native.to_uppercase();
+
+        match (native_upper.as_str(), display_normalized.as_str()) {
+            // Temperature: Kelvin to Celsius
+            ("K", "C") | ("K", "CELSIUS") => Self::KToC,
+            // Pressure: Pascal to hectoPascal
+            ("PA", "HPA") | ("PA", "HECTOPASCAL") | ("PA", "MB") | ("PA", "MBAR") => Self::PaToHPa,
+            // Distance: meters to kilometers
+            ("M", "KM") | ("M", "KILOMETERS") => Self::MToKm,
+            // Same units - no conversion
+            _ if native_upper == display_normalized => Self::None,
+            // Unknown combination - no conversion
+            _ => Self::None,
+        }
+    }
+
+    /// Get the display unit symbol for a given conversion
+    pub fn display_symbol(&self) -> &'static str {
+        match self {
+            Self::KToC => "°C",
+            Self::PaToHPa => "hPa",
+            Self::MToKm => "km",
+            Self::None => "",
+        }
+    }
 }
 
 /// Unit configuration for a layer
@@ -62,6 +102,72 @@ impl Default for UnitConfig {
             native: String::new(),
             display: String::new(),
             conversion: UnitConversion::None,
+        }
+    }
+}
+
+impl UnitConfig {
+    /// Create a UnitConfig by merging Zarr native units with layer config display preferences.
+    ///
+    /// This is the preferred way to create UnitConfig when rendering data, as it:
+    /// 1. Uses native units from Zarr metadata (source of truth)
+    /// 2. Uses display units from layer config (user preference)
+    /// 3. Infers the appropriate conversion automatically
+    ///
+    /// # Arguments
+    /// * `zarr_native` - Native units from Zarr metadata (e.g., "K", "Pa", "%")
+    /// * `layer_config` - Optional layer config with display preferences
+    ///
+    /// # Fallback behavior
+    /// - If `zarr_native` is empty/"unknown", falls back to layer config's native
+    /// - If no layer config, uses zarr_native for both native and display (no conversion)
+    pub fn from_zarr_and_config(zarr_native: &str, layer_config: Option<&UnitConfig>) -> Self {
+        // Determine effective native units
+        let native = if zarr_native.is_empty() || zarr_native == "unknown" {
+            // Fall back to layer config's native if Zarr doesn't have it
+            layer_config.map(|c| c.native.clone()).unwrap_or_default()
+        } else {
+            zarr_native.to_string()
+        };
+
+        // Determine display units and conversion
+        let (display, conversion) = if let Some(config) = layer_config {
+            if !config.display.is_empty() {
+                // Layer config specifies display units
+                // If config has explicit conversion, use it; otherwise infer
+                let conv = if config.conversion != UnitConversion::None {
+                    config.conversion.clone()
+                } else {
+                    UnitConversion::infer(&native, &config.display)
+                };
+                (config.display.clone(), conv)
+            } else {
+                // No display preference, use native as display
+                (native.clone(), UnitConversion::None)
+            }
+        } else {
+            // No layer config, use native as display
+            (native.clone(), UnitConversion::None)
+        };
+
+        Self {
+            native,
+            display,
+            conversion,
+        }
+    }
+
+    /// Check if this config has meaningful unit information
+    pub fn has_units(&self) -> bool {
+        !self.native.is_empty() || !self.display.is_empty()
+    }
+
+    /// Get the display unit string, falling back to native if display is empty
+    pub fn effective_display(&self) -> &str {
+        if self.display.is_empty() {
+            &self.native
+        } else {
+            &self.display
         }
     }
 }
@@ -609,5 +715,94 @@ mod tests {
         let registry = LayerConfigRegistry::new();
         assert_eq!(registry.total_layers(), 0);
         assert!(registry.get_model("gfs").is_none());
+    }
+
+    #[test]
+    fn test_unit_conversion_infer() {
+        // Temperature conversions
+        assert_eq!(UnitConversion::infer("K", "°C"), UnitConversion::KToC);
+        assert_eq!(UnitConversion::infer("K", "C"), UnitConversion::KToC);
+        assert_eq!(UnitConversion::infer("k", "c"), UnitConversion::KToC); // case insensitive
+
+        // Pressure conversions
+        assert_eq!(UnitConversion::infer("Pa", "hPa"), UnitConversion::PaToHPa);
+        assert_eq!(UnitConversion::infer("pa", "HPA"), UnitConversion::PaToHPa);
+        assert_eq!(UnitConversion::infer("Pa", "mb"), UnitConversion::PaToHPa);
+
+        // Distance conversions
+        assert_eq!(UnitConversion::infer("m", "km"), UnitConversion::MToKm);
+
+        // Same units - no conversion
+        assert_eq!(UnitConversion::infer("m/s", "m/s"), UnitConversion::None);
+        assert_eq!(UnitConversion::infer("%", "%"), UnitConversion::None);
+
+        // Unknown combination - no conversion
+        assert_eq!(UnitConversion::infer("K", "F"), UnitConversion::None); // Not implemented
+        assert_eq!(UnitConversion::infer("foo", "bar"), UnitConversion::None);
+    }
+
+    #[test]
+    fn test_unit_config_from_zarr_and_config() {
+        // Case 1: Zarr has native units, layer config has display preference
+        let layer_unit_config = UnitConfig {
+            native: "K".to_string(),
+            display: "°C".to_string(),
+            conversion: UnitConversion::None, // Will be inferred
+        };
+
+        let result = UnitConfig::from_zarr_and_config("K", Some(&layer_unit_config));
+        assert_eq!(result.native, "K");
+        assert_eq!(result.display, "°C");
+        assert_eq!(result.conversion, UnitConversion::KToC);
+
+        // Case 2: Zarr has "unknown" - falls back to layer config
+        let result = UnitConfig::from_zarr_and_config("unknown", Some(&layer_unit_config));
+        assert_eq!(result.native, "K");
+        assert_eq!(result.display, "°C");
+
+        // Case 3: No layer config - uses Zarr native for both
+        let result = UnitConfig::from_zarr_and_config("Pa", None);
+        assert_eq!(result.native, "Pa");
+        assert_eq!(result.display, "Pa");
+        assert_eq!(result.conversion, UnitConversion::None);
+
+        // Case 4: Layer config has explicit conversion
+        let layer_with_conversion = UnitConfig {
+            native: "K".to_string(),
+            display: "°C".to_string(),
+            conversion: UnitConversion::KToC,
+        };
+        let result = UnitConfig::from_zarr_and_config("K", Some(&layer_with_conversion));
+        assert_eq!(result.conversion, UnitConversion::KToC);
+
+        // Case 5: Percentage - no conversion needed
+        let pct_config = UnitConfig {
+            native: "%".to_string(),
+            display: "%".to_string(),
+            conversion: UnitConversion::None,
+        };
+        let result = UnitConfig::from_zarr_and_config("%", Some(&pct_config));
+        assert_eq!(result.native, "%");
+        assert_eq!(result.display, "%");
+        assert_eq!(result.conversion, UnitConversion::None);
+    }
+
+    #[test]
+    fn test_unit_config_effective_display() {
+        // Has display
+        let config = UnitConfig {
+            native: "K".to_string(),
+            display: "°C".to_string(),
+            conversion: UnitConversion::KToC,
+        };
+        assert_eq!(config.effective_display(), "°C");
+
+        // No display - uses native
+        let config_no_display = UnitConfig {
+            native: "m/s".to_string(),
+            display: String::new(),
+            conversion: UnitConversion::None,
+        };
+        assert_eq!(config_no_display.effective_display(), "m/s");
     }
 }
