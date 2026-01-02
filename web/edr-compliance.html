@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OGC EDR API Compliance Test Suite</title>
     <link rel="stylesheet" href="edr-compliance.css">
+    <!-- Ajv JSON Schema Validator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ajv/8.12.0/ajv7.min.js"></script>
 </head>
 <body>
     <header>
@@ -1540,6 +1542,66 @@
                     <div class="test-item" data-test="links-landing-alternate">
                         <span class="test-name">Landing Page Has Alternate Links</span>
                         <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_root-success" target="_blank" class="spec-link" title="OGC EDR Spec: Requirement A.3 - Landing page links">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON Schema Validation Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="schema-validation">
+                    <span class="toggle">+</span>
+                    JSON Schema Validation
+                    <span class="section-status" id="schema-validation-status"></span>
+                </h3>
+                <div class="section-content" id="schema-validation-tests">
+                    <div class="test-item" data-test="schema-covjson-position">
+                        <span class="test-name">Position Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-area">
+                        <span class="test-name">Area Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-trajectory">
+                        <span class="test-name">Trajectory Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-cube">
+                        <span class="test-name">Cube Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-covjson-locations">
+                        <span class="test-name">Location Response Validates Against CoverageJSON Schema</span>
+                        <a href="https://covjson.org/spec/" target="_blank" class="spec-link" title="CoverageJSON Specification">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-geojson-locations-list">
+                        <span class="test-name">Locations List Validates Against GeoJSON Schema</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="schema-geojson-position">
+                        <span class="test-name">Position GeoJSON Response Validates Against Schema</span>
+                        <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON">Spec</a>
                         <span class="test-status pending">Pending</span>
                         <button class="copy-url-btn" title="Copy test URL">URL</button>
                         <button class="run-test-btn">Run</button>

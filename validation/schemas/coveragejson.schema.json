@@ -1,0 +1,363 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://covjson.org/schema/coveragejson.schema.json",
+  "title": "CoverageJSON Schema",
+  "description": "JSON Schema for CoverageJSON format based on OGC CoverageJSON Community Standard",
+  "definitions": {
+    "coverage": {
+      "type": "object",
+      "required": ["type", "domain", "ranges"],
+      "properties": {
+        "type": {
+          "const": "Coverage"
+        },
+        "id": {
+          "type": "string"
+        },
+        "domain": {
+          "oneOf": [
+            { "$ref": "#/definitions/domain" },
+            { "type": "string", "format": "uri" }
+          ]
+        },
+        "domainType": {
+          "$ref": "#/definitions/domainType"
+        },
+        "parameters": {
+          "$ref": "#/definitions/parameters"
+        },
+        "parameterGroups": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/parameterGroup" }
+        },
+        "ranges": {
+          "$ref": "#/definitions/ranges"
+        }
+      },
+      "additionalProperties": true
+    },
+    "coverageCollection": {
+      "type": "object",
+      "required": ["type", "coverages"],
+      "properties": {
+        "type": {
+          "const": "CoverageCollection"
+        },
+        "domainType": {
+          "$ref": "#/definitions/domainType"
+        },
+        "parameters": {
+          "$ref": "#/definitions/parameters"
+        },
+        "parameterGroups": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/parameterGroup" }
+        },
+        "referencing": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/referenceSystemConnection" }
+        },
+        "coverages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/coverage" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "domain": {
+      "type": "object",
+      "required": ["type", "axes"],
+      "properties": {
+        "type": {
+          "const": "Domain"
+        },
+        "domainType": {
+          "$ref": "#/definitions/domainType"
+        },
+        "axes": {
+          "$ref": "#/definitions/axes"
+        },
+        "referencing": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/referenceSystemConnection" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "domainType": {
+      "type": "string",
+      "enum": [
+        "Grid",
+        "VerticalProfile",
+        "PointSeries",
+        "Point",
+        "MultiPointSeries",
+        "MultiPoint",
+        "Trajectory",
+        "Section",
+        "MultiPolygonSeries",
+        "MultiPolygon",
+        "Polygon"
+      ]
+    },
+    "axes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/axis"
+      }
+    },
+    "axis": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "array"
+        },
+        "start": {},
+        "stop": {},
+        "num": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bounds": {
+          "type": "array"
+        },
+        "dataType": {
+          "type": "string"
+        }
+      }
+    },
+    "referenceSystemConnection": {
+      "type": "object",
+      "required": ["coordinates", "system"],
+      "properties": {
+        "coordinates": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "system": {
+          "$ref": "#/definitions/referenceSystem"
+        }
+      }
+    },
+    "referenceSystem": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "calendar": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/parameter"
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["type", "observedProperty"],
+      "properties": {
+        "type": {
+          "const": "Parameter"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/definitions/i18n"
+        },
+        "description": {
+          "$ref": "#/definitions/i18n"
+        },
+        "unit": {
+          "$ref": "#/definitions/unit"
+        },
+        "observedProperty": {
+          "$ref": "#/definitions/observedProperty"
+        },
+        "categoryEncoding": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "parameterGroup": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "ParameterGroup"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/definitions/i18n"
+        },
+        "description": {
+          "$ref": "#/definitions/i18n"
+        },
+        "observedProperty": {
+          "$ref": "#/definitions/observedProperty"
+        },
+        "members": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "observedProperty": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/definitions/i18n"
+        },
+        "description": {
+          "$ref": "#/definitions/i18n"
+        },
+        "categories": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/category" }
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/definitions/i18n"
+        },
+        "description": {
+          "$ref": "#/definitions/i18n"
+        }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/definitions/i18n"
+        },
+        "symbol": {
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/definitions/symbol" }
+          ]
+        }
+      }
+    },
+    "symbol": {
+      "type": "object",
+      "required": ["value", "type"],
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
+    "i18n": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "ranges": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/definitions/ndArray" },
+          { "$ref": "#/definitions/tiledNdArray" },
+          { "type": "string", "format": "uri" }
+        ]
+      }
+    },
+    "ndArray": {
+      "type": "object",
+      "required": ["type", "dataType", "values"],
+      "properties": {
+        "type": {
+          "const": "NdArray"
+        },
+        "dataType": {
+          "type": "string"
+        },
+        "axisNames": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shape": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "values": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    },
+    "tiledNdArray": {
+      "type": "object",
+      "required": ["type", "dataType", "axisNames", "shape", "tileSets"],
+      "properties": {
+        "type": {
+          "const": "TiledNdArray"
+        },
+        "dataType": {
+          "type": "string"
+        },
+        "axisNames": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shape": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "tileSets": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/tileSet" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "tileSet": {
+      "type": "object",
+      "required": ["tileShape", "urlTemplate"],
+      "properties": {
+        "tileShape": {
+          "type": "array",
+          "items": { "type": ["integer", "null"] }
+        },
+        "urlTemplate": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/coverage" },
+    { "$ref": "#/definitions/coverageCollection" }
+  ]
+}

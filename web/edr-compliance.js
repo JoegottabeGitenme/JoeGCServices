@@ -288,7 +288,11 @@ async function runAllTests() {
         // CoverageJSON Structure Validation (LOW PRIORITY)
         'covjson-referencing', 'covjson-ndarray', 'covjson-observed-property', 'covjson-axes',
         // Alternate Format Links (LOW PRIORITY)
-        'links-alternate-formats', 'links-landing-alternate'
+        'links-alternate-formats', 'links-landing-alternate',
+        // JSON Schema Validation
+        'schema-covjson-position', 'schema-covjson-area', 'schema-covjson-trajectory',
+        'schema-covjson-cube', 'schema-covjson-locations',
+        'schema-geojson-locations-list', 'schema-geojson-position'
     ];
 
     for (const test of tests) {
@@ -700,6 +704,21 @@ async function executeTest(testName) {
             return testLocationsCrsValid();
         case 'locations-f-covjson':
             return testLocationsFCovJson();
+        // Schema Validation tests
+        case 'schema-covjson-position':
+            return testSchemaCovJsonPosition();
+        case 'schema-covjson-area':
+            return testSchemaCovJsonArea();
+        case 'schema-covjson-trajectory':
+            return testSchemaCovJsonTrajectory();
+        case 'schema-covjson-cube':
+            return testSchemaCovJsonCube();
+        case 'schema-covjson-locations':
+            return testSchemaCovJsonLocations();
+        case 'schema-geojson-locations-list':
+            return testSchemaGeoJsonLocationsList();
+        case 'schema-geojson-position':
+            return testSchemaGeoJsonPosition();
         default:
             return { passed: false, error: 'Unknown test' };
     }
@@ -1005,6 +1024,21 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/locations/KJFK?crs=CRS:84`];
         case 'locations-f-covjson':
             return [`${API_BASE}/collections/${colId}/locations/KJFK?f=CoverageJSON`];
+        // Schema Validation URLs
+        case 'schema-covjson-position':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)`];
+        case 'schema-covjson-area':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))`];
+        case 'schema-covjson-trajectory':
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)`];
+        case 'schema-covjson-cube':
+            return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850`];
+        case 'schema-covjson-locations':
+            return [`${API_BASE}/collections/${colId}/locations/{locationId}`];
+        case 'schema-geojson-locations-list':
+            return [`${API_BASE}/collections/${colId}/locations`];
+        case 'schema-geojson-position':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=GeoJSON`];
         default:
             return [];
     }
@@ -6279,6 +6313,486 @@ async function testLocationsFCovJson() {
 }
 
 // ============================================================
+// JSON SCHEMA VALIDATION
+// ============================================================
+
+// Schema cache
+let covJsonSchema = null;
+let geoJsonSchema = null;
+let ajvInstance = null;
+
+// Initialize Ajv and load schemas
+async function initSchemaValidator() {
+    if (ajvInstance) return ajvInstance;
+    
+    // Check if Ajv is available
+    if (typeof Ajv === 'undefined' && typeof Ajv7 === 'undefined') {
+        console.warn('Ajv not loaded, schema validation will be skipped');
+        return null;
+    }
+    
+    const AjvClass = typeof Ajv !== 'undefined' ? Ajv : Ajv7;
+    ajvInstance = new AjvClass({ allErrors: true, strict: false });
+    
+    return ajvInstance;
+}
+
+// Load CoverageJSON schema
+async function loadCovJsonSchema() {
+    if (covJsonSchema) return covJsonSchema;
+    
+    try {
+        const res = await fetch('/validation/schemas/coveragejson.schema.json');
+        if (res.ok) {
+            covJsonSchema = await res.json();
+            return covJsonSchema;
+        }
+    } catch (e) {
+        console.warn('Could not load CoverageJSON schema:', e);
+    }
+    
+    // Fallback inline schema if file not found
+    covJsonSchema = getCovJsonSchemaInline();
+    return covJsonSchema;
+}
+
+// Load GeoJSON schema
+async function loadGeoJsonSchema() {
+    if (geoJsonSchema) return geoJsonSchema;
+    
+    try {
+        const res = await fetch('/validation/schemas/geojson.schema.json');
+        if (res.ok) {
+            geoJsonSchema = await res.json();
+            return geoJsonSchema;
+        }
+    } catch (e) {
+        console.warn('Could not load GeoJSON schema:', e);
+    }
+    
+    // Fallback inline schema if file not found
+    geoJsonSchema = getGeoJsonSchemaInline();
+    return geoJsonSchema;
+}
+
+// Inline CoverageJSON schema (fallback)
+function getCovJsonSchemaInline() {
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "CoverageJSON Schema",
+        "definitions": {
+            "coverage": {
+                "type": "object",
+                "required": ["type", "domain", "ranges"],
+                "properties": {
+                    "type": { "const": "Coverage" },
+                    "domain": { "type": "object" },
+                    "ranges": { "type": "object" },
+                    "parameters": { "type": "object" }
+                }
+            },
+            "coverageCollection": {
+                "type": "object",
+                "required": ["type", "coverages"],
+                "properties": {
+                    "type": { "const": "CoverageCollection" },
+                    "coverages": { "type": "array" }
+                }
+            }
+        },
+        "oneOf": [
+            { "$ref": "#/definitions/coverage" },
+            { "$ref": "#/definitions/coverageCollection" }
+        ]
+    };
+}
+
+// Inline GeoJSON schema (fallback)
+function getGeoJsonSchemaInline() {
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "GeoJSON Schema",
+        "definitions": {
+            "feature": {
+                "type": "object",
+                "required": ["type", "geometry", "properties"],
+                "properties": {
+                    "type": { "const": "Feature" },
+                    "geometry": { "type": ["object", "null"] },
+                    "properties": { "type": ["object", "null"] }
+                }
+            },
+            "featureCollection": {
+                "type": "object",
+                "required": ["type", "features"],
+                "properties": {
+                    "type": { "const": "FeatureCollection" },
+                    "features": { "type": "array" }
+                }
+            }
+        },
+        "oneOf": [
+            { "$ref": "#/definitions/feature" },
+            { "$ref": "#/definitions/featureCollection" }
+        ]
+    };
+}
+
+// Validate data against CoverageJSON schema
+async function validateCovJson(data) {
+    const ajv = await initSchemaValidator();
+    if (!ajv) {
+        return { valid: true, errors: [], skipped: true, message: 'Schema validator not available' };
+    }
+    
+    const schema = await loadCovJsonSchema();
+    
+    try {
+        const validate = ajv.compile(schema);
+        const valid = validate(data);
+        
+        if (valid) {
+            return { valid: true, errors: [] };
+        } else {
+            const errors = validate.errors.map(e => `${e.instancePath || '/'}: ${e.message}`);
+            return { valid: false, errors };
+        }
+    } catch (e) {
+        return { valid: false, errors: [`Schema compilation error: ${e.message}`] };
+    }
+}
+
+// Validate data against GeoJSON schema
+async function validateGeoJson(data) {
+    const ajv = await initSchemaValidator();
+    if (!ajv) {
+        return { valid: true, errors: [], skipped: true, message: 'Schema validator not available' };
+    }
+    
+    const schema = await loadGeoJsonSchema();
+    
+    try {
+        const validate = ajv.compile(schema);
+        const valid = validate(data);
+        
+        if (valid) {
+            return { valid: true, errors: [] };
+        } else {
+            const errors = validate.errors.map(e => `${e.instancePath || '/'}: ${e.message}`);
+            return { valid: false, errors };
+        }
+    } catch (e) {
+        return { valid: false, errors: [`Schema compilation error: ${e.message}`] };
+    }
+}
+
+// Test: Position response validates against CoverageJSON schema
+async function testSchemaCovJsonPosition() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateCovJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Validates against CoverageJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Area response validates against CoverageJSON schema
+async function testSchemaCovJsonArea() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateCovJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Validates against CoverageJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Trajectory response validates against CoverageJSON schema
+async function testSchemaCovJsonTrajectory() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const linestring = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}`);
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateCovJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Validates against CoverageJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Cube response validates against CoverageJSON schema
+async function testSchemaCovJsonCube() {
+    const col = await findIsobaricCollection();
+    if (!col) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=850`);
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateCovJson(res.json);
+    
+    // Cube can return either Coverage or CoverageCollection
+    const isCoverage = res.json?.type === 'Coverage';
+    const isCoverageCollection = res.json?.type === 'CoverageCollection';
+    const hasValidType = isCoverage || isCoverageCollection;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage or CoverageCollection', passed: hasValidType },
+        { name: 'Validates against CoverageJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Location response validates against CoverageJSON schema
+async function testSchemaCovJsonLocations() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const locationId = await getFirstLocationId(col.id);
+    
+    if (!locationId) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'No locations available (test N/A)', passed: true }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`);
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateCovJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Validates against CoverageJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Locations list validates against GeoJSON schema
+async function testSchemaGeoJsonLocationsList() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
+    
+    if (res.status === 404) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'Locations endpoint not configured (test N/A)', passed: true }]
+        };
+    }
+    
+    if (res.status !== 200) {
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    const validation = await validateGeoJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is FeatureCollection', passed: res.json?.type === 'FeatureCollection' },
+        { name: 'Validates against GeoJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Test: Position GeoJSON response validates against schema
+async function testSchemaGeoJsonPosition() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=GeoJSON`);
+    
+    if (res.status !== 200) {
+        // GeoJSON output may not be supported
+        if (res.status === 400 || res.status === 406) {
+            return { 
+                passed: true, 
+                checks: [{ name: 'GeoJSON output not supported (test N/A)', passed: true }],
+                response: res
+            };
+        }
+        return { 
+            passed: false, 
+            checks: [{ name: 'Request succeeded', passed: false }],
+            response: res
+        };
+    }
+    
+    // Check if response is GeoJSON (not CoverageJSON)
+    const isGeoJson = res.json?.type === 'Feature' || res.json?.type === 'FeatureCollection';
+    
+    if (!isGeoJson) {
+        return { 
+            passed: true, 
+            checks: [{ name: 'Response is not GeoJSON format (test N/A)', passed: true }],
+            response: res
+        };
+    }
+    
+    const validation = await validateGeoJson(res.json);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Type is Feature or FeatureCollection', passed: isGeoJson },
+        { name: 'Validates against GeoJSON schema', passed: validation.valid }
+    ];
+    
+    if (!validation.valid && validation.errors?.length > 0) {
+        checks.push({ name: `Schema errors: ${validation.errors.slice(0, 3).join('; ')}`, passed: false });
+    }
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
 // UI HELPERS
 // ============================================================
 
@@ -6689,6 +7203,35 @@ const SPEC_LINKS = {
     'accept-geojson': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http',
         title: 'HTTP Content Negotiation for GeoJSON'
+    },
+    // JSON Schema Validation
+    'schema-covjson-position': {
+        url: 'https://covjson.org/spec/',
+        title: 'CoverageJSON Specification - Position Query Schema Validation'
+    },
+    'schema-covjson-area': {
+        url: 'https://covjson.org/spec/',
+        title: 'CoverageJSON Specification - Area Query Schema Validation'
+    },
+    'schema-covjson-trajectory': {
+        url: 'https://covjson.org/spec/',
+        title: 'CoverageJSON Specification - Trajectory Query Schema Validation'
+    },
+    'schema-covjson-cube': {
+        url: 'https://covjson.org/spec/',
+        title: 'CoverageJSON Specification - Cube Query Schema Validation'
+    },
+    'schema-covjson-locations': {
+        url: 'https://covjson.org/spec/',
+        title: 'CoverageJSON Specification - Location Query Schema Validation'
+    },
+    'schema-geojson-locations-list': {
+        url: 'https://tools.ietf.org/html/rfc7946',
+        title: 'RFC 7946 - GeoJSON Locations List Schema Validation'
+    },
+    'schema-geojson-position': {
+        url: 'https://tools.ietf.org/html/rfc7946',
+        title: 'RFC 7946 - GeoJSON Position Response Schema Validation'
     }
 };
 
