@@ -71,6 +71,18 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/hrrr/prod/hrrr.20241203/conus/hrr
 # Total: ~3-4 GB
 ```
 
+## Data Retention
+
+Default retention settings for HRRR:
+
+```yaml
+retention:
+  hours: 3               # Keep data for 3 hours
+  keep_latest_runs: 3    # Always keep at least 3 recent runs
+```
+
+With hourly HRRR runs, this keeps approximately 3 hours of forecast data. The `keep_latest_runs` safeguard ensures data is always available even if ingestion is delayed.
+
 ## Typical Uses
 
 - **Short-range temperature forecasts**: Hourly temperatures at 3km resolution

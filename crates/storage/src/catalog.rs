@@ -363,13 +363,14 @@ impl Catalog {
     }
 
     /// Mark old datasets for a specific model as expired based on retention hours.
+    /// Uses reference_time (model run initialization time) for simpler, more predictable cleanup.
     pub async fn mark_model_expired(
         &self,
         model: &str,
         older_than: DateTime<Utc>,
     ) -> WmsResult<u64> {
         let result = sqlx::query(
-            "UPDATE datasets SET status = 'expired' WHERE model = $1 AND valid_time < $2 AND status = 'available'",
+            "UPDATE datasets SET status = 'expired' WHERE model = $1 AND reference_time < $2 AND status = 'available'",
         )
         .bind(model)
         .bind(older_than)
@@ -383,10 +384,10 @@ impl Catalog {
     /// Mark old datasets for a specific model as expired, but protect specified runs.
     ///
     /// This is the main retention safeguard method. It marks datasets as expired if:
-    /// - valid_time < older_than (exceeds retention period)
+    /// - reference_time < older_than (exceeds retention period)
     /// - reference_time is NOT in the protected_runs list
     ///
-    /// This ensures we always keep at least N complete runs even during ingestion outages.
+    /// This ensures we always keep at least N recent runs even during ingestion outages.
     pub async fn mark_model_expired_except_runs(
         &self,
         model: &str,
@@ -407,7 +408,7 @@ impl Catalog {
 
         let query = format!(
             "UPDATE datasets SET status = 'expired' \
-             WHERE model = $1 AND valid_time < $2 AND status = 'available' \
+             WHERE model = $1 AND reference_time < $2 AND status = 'available' \
              AND reference_time NOT IN ({})",
             in_clause
         );

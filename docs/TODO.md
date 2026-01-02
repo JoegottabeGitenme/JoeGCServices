@@ -1,12 +1,4 @@
-- Would like to get different output formats (geotiff, black/white png, etc)
-- how to make EDR work
-    - test validation page against some other EDR servers
-    - create another viewer to monitor EDR metrics, more stuff in prometheus and grafana
-    - create another 'viewer' so that we can form EDR queries and visualize them if needed
-    - ultimate test would be to point onlineweather to this EDR server
-    - grid processor will have it's own pod and cache and processing in the overall system, and can be deployed
-      with/without services connected to it
-    - need a way to load test gridprocessor without a service, so the API is important here
+- Would like to get different output formats (geotiff, black/white png, etc) in WMS and WMTS
 - getFeatureInfo should support arbitrary html output
 - we have a projection crate and also reprojecting logic in the grid processor crate
 - could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or
@@ -14,11 +6,7 @@
 - mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile
   then just compress to that b64 string, ofc this would rely on the frontend being able to render it
     - this could be useful for a mobile app
-- we have test_renders and hammer_Results and a bunch of others lets consolidate into the validation folder
-- some of the scripts in the scripts folder could be moved somewhere into validation
-- integration tests
 - various web ui links can be cleaned up into a dropdown or something on the web dashboard
-- wms-api container takes the longest to start
 - style viewing and editing web app, view current styles and how they would look on the map
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
@@ -61,7 +49,6 @@
 - let's try to get registered on the OGC implementation database
 - add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
   that will run some of the various security scanners and display some results
-- for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
 - need to check units and other metadata in all query type outputs
 - lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
 - lets make the styles of the compliance checking web pages consistent, maybe one page for all compliance checking, one page for all coverage checking

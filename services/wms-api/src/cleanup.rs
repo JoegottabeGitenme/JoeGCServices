@@ -449,14 +449,14 @@ impl CleanupTask {
     }
 
     /// Cleanup logic for forecast models (HRRR, GFS).
-    /// Protects the latest N complete runs before deleting old data.
+    /// Protects the latest N runs (by reference_time) before deleting old data.
     async fn cleanup_forecast_model(
         &self,
         model: &str,
         config: &ModelRetentionConfig,
         cutoff: DateTime<Utc>,
     ) -> Result<u64> {
-        // Get all runs for this model
+        // Get all runs for this model, sorted by reference_time DESC
         let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
 
         if runs.is_empty() {
@@ -464,55 +464,23 @@ impl CleanupTask {
             return Ok(0);
         }
 
-        // Identify complete runs (runs that have all expected forecast hours)
-        let expected = config.expected_forecast_hours.unwrap_or(1) as i64;
-        let mut complete_runs: Vec<DateTime<Utc>> = runs
-            .iter()
-            .filter(|(_, count)| *count >= expected)
-            .map(|(ref_time, _)| *ref_time)
-            .collect();
-
-        // Sort by time descending (newest first)
-        complete_runs.sort_by(|a, b| b.cmp(a));
-
-        // Determine which runs to protect
-        let runs_to_protect: Vec<DateTime<Utc>> = complete_runs
+        // Protect the N most recent runs regardless of completeness
+        // The query already returns runs sorted by reference_time DESC
+        let runs_to_protect: Vec<DateTime<Utc>> = runs
             .iter()
             .take(config.keep_latest_runs as usize)
-            .cloned()
+            .map(|(ref_time, _)| *ref_time)
             .collect();
-
-        if runs_to_protect.is_empty() {
-            // No complete runs exist - protect the newest run regardless of completeness
-            // This prevents data loss when a new run is still being ingested
-            let newest_run = runs.iter().map(|(ref_time, _)| ref_time).max();
-            if let Some(newest) = newest_run {
-                info!(
-                    model = %model,
-                    newest_run = %newest,
-                    "No complete runs found, protecting newest incomplete run"
-                );
-                // Mark expired but exclude the newest run
-                return self
-                    .state
-                    .catalog
-                    .mark_model_expired_except_runs(model, cutoff, &[*newest])
-                    .await
-                    .map_err(Into::into);
-            }
-            return Ok(0);
-        }
 
         info!(
             model = %model,
             protected_runs = ?runs_to_protect.iter().map(|r| r.to_rfc3339()).collect::<Vec<_>>(),
             total_runs = runs.len(),
-            complete_runs = complete_runs.len(),
-            expected_forecast_hours = expected,
-            "Protecting complete runs from cleanup"
+            keep_latest_runs = config.keep_latest_runs,
+            "Protecting most recent runs from cleanup"
         );
 
-        // Mark expired datasets, but exclude protected runs
+        // Mark expired datasets where reference_time < cutoff, except protected runs
         self.state
             .catalog
             .mark_model_expired_except_runs(model, cutoff, &runs_to_protect)
@@ -566,33 +534,28 @@ impl CleanupTask {
     /// Get information about protected runs for a model (for admin API).
     pub async fn get_protected_runs(&self, model: &str) -> Result<Vec<ProtectedRunInfo>> {
         let model_config = self.config.get_model_config(model);
+        // Runs are already sorted by reference_time DESC from the query
         let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
 
         if runs.is_empty() {
             return Ok(vec![]);
         }
 
-        let expected = model_config.expected_forecast_hours.unwrap_or(1) as i64;
-
         match model_config.model_type {
             ModelType::Forecast => {
-                let mut complete_runs: Vec<(DateTime<Utc>, i64)> = runs
-                    .iter()
-                    .filter(|(_, count)| *count >= expected)
-                    .cloned()
-                    .collect();
-                complete_runs.sort_by(|a, b| b.0.cmp(&a.0));
-
-                let protected: Vec<ProtectedRunInfo> = complete_runs
+                // Protect the N most recent runs by reference_time
+                let protected: Vec<ProtectedRunInfo> = runs
                     .iter()
                     .take(model_config.keep_latest_runs as usize)
-                    .map(|(ref_time, count)| ProtectedRunInfo {
+                    .enumerate()
+                    .map(|(idx, (ref_time, count))| ProtectedRunInfo {
                         reference_time: *ref_time,
                         dataset_count: *count,
                         is_complete: true,
                         reason: format!(
-                            "Complete run ({}/{} forecast hours), protected by keep_latest_runs={}",
-                            count, expected, model_config.keep_latest_runs
+                            "Recent run #{}, protected by keep_latest_runs={}",
+                            idx + 1,
+                            model_config.keep_latest_runs
                         ),
                     })
                     .collect();
@@ -600,10 +563,7 @@ impl CleanupTask {
                 Ok(protected)
             }
             ModelType::Observation => {
-                let mut sorted_obs: Vec<(DateTime<Utc>, i64)> = runs;
-                sorted_obs.sort_by(|a, b| b.0.cmp(&a.0));
-
-                let protected: Vec<ProtectedRunInfo> = sorted_obs
+                let protected: Vec<ProtectedRunInfo> = runs
                     .iter()
                     .take(model_config.keep_latest_observations as usize)
                     .map(|(ref_time, count)| ProtectedRunInfo {
