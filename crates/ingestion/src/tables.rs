@@ -62,6 +62,8 @@ pub struct IngestionFilter {
     /// Map: parameter_name → ValidRange for sentinel value conversion.
     /// Values outside valid_range are converted to NaN during ingestion.
     valid_ranges: HashMap<String, ValidRange>,
+    /// Map: parameter_name → units string (e.g., "K", "%", "m/s").
+    units: HashMap<String, String>,
 }
 
 impl IngestionFilter {
@@ -96,6 +98,17 @@ impl IngestionFilter {
     /// since valid_range is now required for all parameters).
     pub fn get_valid_range(&self, param: &str) -> Option<ValidRange> {
         self.valid_ranges.get(param).copied()
+    }
+
+    /// Get the units for a parameter.
+    ///
+    /// Returns the configured units string (e.g., "K", "%", "m/s").
+    /// Returns "unknown" if no units are configured.
+    pub fn get_units(&self, param: &str) -> &str {
+        self.units
+            .get(param)
+            .map(|s| s.as_str())
+            .unwrap_or("unknown")
     }
 
     /// Returns true if this filter has any parameters defined.
@@ -144,6 +157,11 @@ impl IngestionFilter {
     /// Set the valid range for a parameter.
     fn set_valid_range(&mut self, param: String, range: ValidRange) {
         self.valid_ranges.insert(param, range);
+    }
+
+    /// Set the units for a parameter.
+    fn set_units(&mut self, param: String, units: String) {
+        self.units.insert(param, units);
     }
 }
 
@@ -263,6 +281,11 @@ fn load_filter_from_config(
             if !missing_valid_range.contains(&name) {
                 missing_valid_range.push(name.clone());
             }
+        }
+
+        // Parse units string (e.g., "K", "%", "m/s")
+        if let Some(units) = param.get("units").and_then(|u| u.as_str()) {
+            filter.set_units(name.clone(), units.to_string());
         }
 
         let levels = match param.get("levels").and_then(|l| l.as_sequence()) {
@@ -968,6 +991,43 @@ parameters:
         assert!(!range.is_valid(-1001.0));
         assert!(!range.is_valid(1.0));
     }
+
+    #[test]
+    fn test_load_filter_with_units() {
+        let dir = tempdir().unwrap();
+        let config = r#"
+parameters:
+  - name: TMP
+    valid_range: [150, 350]
+    units: "K"
+    levels:
+      - level_code: 103
+        value: 2
+  - name: RH
+    valid_range: [0, 100]
+    units: "%"
+    levels:
+      - level_code: 103
+        value: 2
+  - name: WIND
+    valid_range: [0, 100]
+    levels:
+      - level_code: 103
+        value: 10
+"#;
+        create_test_config(dir.path(), "test", config);
+
+        let mut filter = IngestionFilter::new();
+        load_filter_from_config(&dir.path().join("test.yaml"), &mut filter).unwrap();
+
+        // Check units are correctly parsed
+        assert_eq!(filter.get_units("TMP"), "K");
+        assert_eq!(filter.get_units("RH"), "%");
+        // Parameter without units should return "unknown"
+        assert_eq!(filter.get_units("WIND"), "unknown");
+        // Unknown parameter should also return "unknown"
+        assert_eq!(filter.get_units("UNKNOWN"), "unknown");
+    }
 }
 
 #[cfg(test)]
@@ -1043,5 +1103,62 @@ mod integration_tests {
         );
 
         println!("All HRRR filter tests passed!");
+    }
+
+    #[test]
+    fn test_units_from_real_config() {
+        // This test uses the actual HRRR config file
+        std::env::set_var("CONFIG_DIR", "../../config");
+
+        let filter = build_filter_for_model("hrrr").expect("Should load HRRR config");
+
+        // Check units for various parameters
+        assert_eq!(
+            filter.get_units("TMP"),
+            "K",
+            "Temperature should be in Kelvin"
+        );
+        assert_eq!(
+            filter.get_units("RH"),
+            "%",
+            "Relative humidity should be in percent"
+        );
+        assert_eq!(filter.get_units("UGRD"), "m/s", "U-wind should be in m/s");
+        assert_eq!(filter.get_units("VGRD"), "m/s", "V-wind should be in m/s");
+        assert_eq!(
+            filter.get_units("LCDC"),
+            "%",
+            "Low cloud cover should be in percent"
+        );
+        assert_eq!(
+            filter.get_units("MCDC"),
+            "%",
+            "Medium cloud cover should be in percent"
+        );
+        assert_eq!(
+            filter.get_units("HCDC"),
+            "%",
+            "High cloud cover should be in percent"
+        );
+        assert_eq!(
+            filter.get_units("PWAT"),
+            "kg/m^2",
+            "Precipitable water should be in kg/m^2"
+        );
+        assert_eq!(
+            filter.get_units("PRES"),
+            "Pa",
+            "Pressure should be in Pascals"
+        );
+        assert_eq!(
+            filter.get_units("VIS"),
+            "m",
+            "Visibility should be in meters"
+        );
+
+        // Unknown parameter should return "unknown"
+        assert_eq!(filter.get_units("UNKNOWN_PARAM"), "unknown");
+
+        println!("All units tests passed!");
     }
 }

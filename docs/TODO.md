@@ -46,7 +46,7 @@
   getting chunk cache entry count
 - downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
   eachother
-- ingester should be able to handle multiple downloads at once
+- ingester should be able to handle multiple downloads at once, currently it does 1 at a time
 - README needs some screenshots and to be more accurate
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
@@ -63,7 +63,7 @@
   that will run some of the various security scanners and display some results
 - for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
 - need to check units and other metadata in all query type outputs
-- need to check outputs against known coveragejson and geojson schemas, add that to validation checking
 - lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
 - lets make the styles of the compliance checking web pages consistent, maybe one page for all compliance checking, one page for all coverage checking
 - need to update prometheus and grafana and loki and stuff for the EDR api still
+- need to check units in WMS now that we fixed units being passed into zarr format during ingestion
