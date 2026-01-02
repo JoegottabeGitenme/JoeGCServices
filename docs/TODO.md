@@ -57,10 +57,6 @@
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
-- uhhh we might be caching blank tiles, example: HRRR data outside of it's geographic bounds WMS still returns a 'tile'
-  but it's just blank, this could potentially be optimized somehow, maybe just don't cache if it's completely blank?
-  maybe a simple hashsum check? don't want to introduce too much overhead for something that ultimately may not happen
-  often. Right now each blank tile is 0.5kb and returns in around 7ms
 - looping radar (only product that does this) absolutely eats up the chunk cache
 - let's try to get registered on the OGC implementation database
 - add some security scanning as another docker compose image that can we enabled optionally, this will show a webpage
@@ -68,4 +64,6 @@
 - for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
 - need to check units and other metadata in all query type outputs
 - need to check outputs against known coveragejson and geojson schemas, add that to validation checking
-- 
+- lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
+- lets make the styles of the compliance checking web pages consistent, maybe one page for all compliance checking, one page for all coverage checking
+- need to update prometheus and grafana and loki and stuff for the EDR api still

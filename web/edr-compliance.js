@@ -5841,7 +5841,12 @@ async function getFirstLocationId(collectionId) {
     const res = await fetchJson(`${API_BASE}/collections/${collectionId}/locations`);
     if (res.status === 200 && res.json?.features?.length > 0) {
         // Get the first location ID from GeoJSON features
-        return res.json.features[0]?.id || res.json.features[0]?.properties?.id;
+        let id = res.json.features[0]?.id || res.json.features[0]?.properties?.id;
+        // If ID is a full URL, extract just the location ID portion
+        if (id && id.includes('/locations/')) {
+            id = id.split('/locations/').pop();
+        }
+        return id;
     }
     return null;
 }
