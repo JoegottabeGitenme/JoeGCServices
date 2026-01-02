@@ -199,6 +199,58 @@ This bug causes the EDR GeoJSON conformance tests to be skipped for all complian
 3. Potential EDR GeoJSON compliance issues in implementations go undetected
 4. The bug has gone unnoticed because pygeoapi—the **only** OGC certified compliant EDR implementation and official reference implementation—does not declare this conformance class
 
+## Verified Fix
+
+We cloned the ETS repository, applied the fix, rebuilt the JAR, and tested it against our implementation to verify the fix works.
+
+### Steps to Reproduce the Fix Verification
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/opengeospatial/ets-ogcapi-edr10.git
+cd ets-ogcapi-edr10
+
+# 2. Apply the fix in RequirementClass.java (line 14)
+# Change: EDRGEOJSON("http://www.opengis.net/spec/ogcapi-edr-1/1.0/req/edr-geojson");
+# To:     EDRGEOJSON("http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/edr-geojson");
+
+# 3. Build the all-in-one JAR
+mvn clean package -DskipTests -q
+
+# 4. Run tests against an EDR implementation that declares conf/edr-geojson
+java -jar target/ets-ogcapi-edr10-1.4-SNAPSHOT-aio.jar -o results test-props.xml
+```
+
+### Test Results Comparison
+
+| ETS Version | `validateResponseForEDRGeoJSON` Status | Details |
+|-------------|----------------------------------------|---------|
+| **Original (1.3)** | `SKIP` | "Requirements class http://www.opengis.net/spec/ogcapi-edr-1/1.0/req/edr-geojson not implemented." |
+| **Fixed (1.4-SNAPSHOT)** | `FAIL` (test executes!) | Test runs and validates EDR GeoJSON conformance |
+
+### Original (Buggy) Test Output
+
+```xml
+<test-method name="validateResponseForEDRGeoJSON" status="SKIP">
+  <![CDATA[Requirements class http://www.opengis.net/spec/ogcapi-edr-1/1.0/req/edr-geojson not implemented.]]>
+</test-method>
+```
+
+### Fixed Test Output
+
+```xml
+<test-method name="validateResponseForEDRGeoJSON" duration-ms="15" status="FAIL">
+  <exception class="java.lang.AssertionError">
+    <message>
+      <![CDATA[Fails Abstract Test 23. None of the collections were found to offer 
+      Position resources that return GeoJSON conforming to EDR GeoJSON.]]>
+    </message>
+  </exception>
+</test-method>
+```
+
+The test now **actually executes** (note the `duration-ms="15"` vs `duration-ms="0"` for skip) and performs real validation. The failure is a legitimate test result indicating our implementation needs work, not a bug in the test suite.
+
 ## References
 
 - [OGC API - EDR 1.0 (19-086r5)](https://docs.ogc.org/is/19-086r5/19-086r5.html) - Table B.36

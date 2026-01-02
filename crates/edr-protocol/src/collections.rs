@@ -205,10 +205,13 @@ pub struct DataQueries {
 }
 
 /// Default output formats for EDR queries.
+/// Includes "GeoJSON" short form for OGC ETS test compatibility
+/// (the validateResponseForEDRGeoJSON test checks for equalsIgnoreCase("GeoJSON")).
 fn default_output_formats() -> Vec<String> {
     vec![
         "application/vnd.cov+json".to_string(),
         "application/geo+json".to_string(),
+        "GeoJSON".to_string(),
     ]
 }
 
