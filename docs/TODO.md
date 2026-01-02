@@ -1,9 +1,6 @@
 - Would like to get different output formats (geotiff, black/white png, etc)
 - how to make EDR work
-    - create validation page using lots of AI and pdf files and other specs we can find
     - test validation page against some other EDR servers
-    - implement Grid Processor abstraction API and document so we can use it for EDR
-        - this abstraction layer cannot break WMS or WMTS
     - create another viewer to monitor EDR metrics, more stuff in prometheus and grafana
     - create another 'viewer' so that we can form EDR queries and visualize them if needed
     - ultimate test would be to point onlineweather to this EDR server
@@ -70,6 +67,4 @@
   that will run some of the various security scanners and display some results
 - is the EDR compliance github action going to start ingesting data while it's running? will the compliance testing even work without data? We might have to get some dummy data or something, does this break upon trying to do the same thing with WMS or WMTS?
 - the edr compliance test script can be a bit less verbose
-- need to implement geojson output in edr
 - for some reason it seems like the retention time is not being respected and minio keeps growing, just hrrr only for now the other datasets seem to be getting cleaned up, might be an issue with model versus observation data types
-- clicking on the fail in the coverage web app should show all the failed requests

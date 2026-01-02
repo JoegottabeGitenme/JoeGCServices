@@ -12,7 +12,7 @@
 #   --url URL         EDR API base URL (default: http://localhost:8083/edr)
 #   --duration SECS   Test duration in seconds (default: 60)
 #   --concurrency N   Number of concurrent requests (default: 10)
-#   --query-type TYPE Only run position, area, radius, trajectory, corridor, cube, or all (default: all)
+#   --query-type TYPE Only run position, area, radius, trajectory, corridor, cube, locations, or all (default: all)
 #   --output DIR      Output directory for results (default: ./edr_load_results)
 #   --validate        Validate discovered endpoints before load testing
 #   --verbose         Show detailed output
@@ -27,7 +27,7 @@ set -euo pipefail
 BASE_URL="${EDR_BASE_URL:-http://localhost:8083/edr}"
 DURATION=60
 CONCURRENCY=10
-QUERY_TYPE="all"  # position, area, radius, trajectory, corridor, cube, or all
+QUERY_TYPE="all"  # position, area, radius, trajectory, corridor, cube, locations, or all
 OUTPUT_DIR="./edr_load_results"
 VALIDATE=false
 VERBOSE=false
@@ -172,6 +172,7 @@ for coll in collections:
     supports_trajectory = 'trajectory' in data_queries
     supports_corridor = 'corridor' in data_queries
     supports_cube = 'cube' in data_queries
+    supports_locations = 'locations' in data_queries
     
     # Generate scenarios for each parameter
     for param in params:
@@ -200,6 +201,10 @@ for coll in collections:
         # Cube query scenario (only for collections with vertical levels)
         if supports_cube and level:
             scenarios.append(f"cube|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
+        
+        # Locations query scenario (list locations and query specific location)
+        if supports_locations:
+            scenarios.append(f"locations|{coll_id}|{param}|{level}|{min_lon}|{max_lon}|{min_lat}|{max_lat}")
 
 # Write scenarios to file
 with open("$SCENARIOS_FILE", 'w') as f:
@@ -213,9 +218,10 @@ radius_count = sum(1 for s in scenarios if s.startswith('radius|'))
 trajectory_count = sum(1 for s in scenarios if s.startswith('trajectory|'))
 corridor_count = sum(1 for s in scenarios if s.startswith('corridor|'))
 cube_count = sum(1 for s in scenarios if s.startswith('cube|'))
+locations_count = sum(1 for s in scenarios if s.startswith('locations|'))
 
 print(f"Discovered {len(collections)} collections, {total_params} parameters, {len(scenarios)} test scenarios")
-print(f"  Query types: {position_count} position, {area_count} area, {radius_count} radius, {trajectory_count} trajectory, {corridor_count} corridor, {cube_count} cube")
+print(f"  Query types: {position_count} position, {area_count} area, {radius_count} radius, {trajectory_count} trajectory, {corridor_count} corridor, {cube_count} cube, {locations_count} locations")
 PYTHON
     
     local scenario_count=$(wc -l < "$SCENARIOS_FILE")
@@ -287,10 +293,15 @@ validate_endpoints() {
             local bbox_s=$(python3 -c "print($center_lat - $half)")
             local bbox_n=$(python3 -c "print($center_lat + $half)")
             url="$BASE_URL/collections/$coll_id/cube?bbox=$bbox_w,$bbox_s,$bbox_e,$bbox_n&parameter-name=$param&z=$level&resolution-x=3&resolution-y=3"
+        elif [[ "$query_type" == "locations" ]]; then
+            # Test locations list endpoint
+            url="$BASE_URL/collections/$coll_id/locations"
         fi
         
         local http_code
-        http_code=$(curl -sf -w "%{http_code}" -o /dev/null --max-time 10 "$url" 2>/dev/null) || http_code="000"
+        http_code=$(curl -s -w "%{http_code}" -o /dev/null --max-time 10 "$url" 2>/dev/null)
+        http_code="${http_code: -3}"
+        [[ -z "$http_code" ]] && http_code="000"
         
         if [[ "$http_code" == "200" ]]; then
             valid=$((valid + 1))
@@ -335,7 +346,10 @@ make_request() {
     local req_id=$(date +%s%N)
     local response_file="$RESULTS_DIR/response_${req_id}.json"
     
-    http_code=$(curl -sf -w "%{http_code}" -o "$response_file" --max-time 30 "$url" 2>/dev/null) || http_code="000"
+    http_code=$(curl -s -w "%{http_code}" -o "$response_file" --max-time 30 "$url" 2>/dev/null)
+    # Extract just the HTTP code (last 3 characters) in case there's extra output
+    http_code="${http_code: -3}"
+    [[ -z "$http_code" ]] && http_code="000"
     
     local end_time=$(date +%s%N)
     local duration_ms=$(( (end_time - start_time) / 1000000 ))
@@ -532,6 +546,28 @@ run_scenario() {
     elif [[ "$query_type" == "cube" ]]; then
         local bbox=$(random_bbox "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0)
         url="$BASE_URL/collections/$coll_id/cube?bbox=$bbox&parameter-name=$param&z=$level&resolution-x=5&resolution-y=5"
+    elif [[ "$query_type" == "locations" ]]; then
+        # Randomly choose between different location query patterns
+        local choice=$((RANDOM % 4))
+        if [[ $choice -eq 0 ]]; then
+            # List all locations (GeoJSON)
+            url="$BASE_URL/collections/$coll_id/locations?f=application/geo%2Bjson"
+        elif [[ $choice -eq 1 ]]; then
+            # List all locations (default JSON)
+            url="$BASE_URL/collections/$coll_id/locations"
+        elif [[ $choice -eq 2 ]]; then
+            # Query a specific location with the parameter from this scenario
+            # Use location IDs that actually exist in the system
+            local -a known_locations=("KJFK" "KLAX" "KORD" "KDFW" "KDEN" "KSFO" "KBOS" "KSEA" "KMIA" "KATL" "NYC" "CHI" "HOU" "PHX" "DCA")
+            local loc_id=${known_locations[$((RANDOM % ${#known_locations[@]}))]}
+            url="$BASE_URL/collections/$coll_id/locations/$loc_id?parameter-name=$param"
+            [[ -n "$level" ]] && url+="&z=$level"
+        else
+            # Query a specific location without parameter filter (get all available)
+            local -a known_locations=("KJFK" "KLAX" "KORD" "KDFW" "KDEN" "KSFO" "KBOS" "KSEA" "KMIA" "KATL" "NYC" "CHI" "HOU" "PHX" "DCA")
+            local loc_id=${known_locations[$((RANDOM % ${#known_locations[@]}))]}
+            url="$BASE_URL/collections/$coll_id/locations/$loc_id"
+        fi
     fi
     
     make_request "$query_type:$coll_id:$param" "$url"
@@ -560,6 +596,7 @@ run_tests() {
     local trajectory_count=0
     local corridor_count=0
     local cube_count=0
+    local locations_count=0
     for s in "${scenarios[@]}"; do
         if [[ "$s" == "position|"* ]]; then
             position_count=$((position_count + 1))
@@ -573,9 +610,11 @@ run_tests() {
             corridor_count=$((corridor_count + 1))
         elif [[ "$s" == "cube|"* ]]; then
             cube_count=$((cube_count + 1))
+        elif [[ "$s" == "locations|"* ]]; then
+            locations_count=$((locations_count + 1))
         fi
     done
-    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor, $cube_count cube)"
+    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor, $cube_count cube, $locations_count locations)"
     echo ""
     
     # Filter by query type if specified
