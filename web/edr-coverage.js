@@ -5,9 +5,13 @@
  * can actually be retrieved.
  */
 
+// Smart endpoint detection
+const IS_LOCAL_DEV = window.location.port === '8000';
+const DEFAULT_EDR_ENDPOINT = IS_LOCAL_DEV ? 'http://localhost:8083/edr' : `${window.location.origin}/edr`;
+
 class EDRCoverageValidator {
     constructor() {
-        this.endpoint = 'http://localhost:8083/edr';
+        this.endpoint = DEFAULT_EDR_ENDPOINT;
         this.mode = 'full';
         this.queryType = 'position'; // 'position', 'area', 'radius', 'trajectory', 'corridor', 'cube'
         this.outputFormat = 'covjson'; // 'covjson', 'geojson', or 'both'
@@ -69,11 +73,14 @@ class EDRCoverageValidator {
      * Initialize the validator and bind event listeners
      */
     init() {
-        // Load saved endpoint
+        // Load saved endpoint or use default
         const savedEndpoint = localStorage.getItem('edr-coverage-endpoint');
         if (savedEndpoint) {
             document.getElementById('endpoint-input').value = savedEndpoint;
             this.endpoint = savedEndpoint;
+        } else {
+            // Set default value in the input
+            document.getElementById('endpoint-input').value = this.endpoint;
         }
 
         // Bind buttons

@@ -81,7 +81,7 @@
                             <span class="link-icon">⬇️</span>
                             <span class="link-text">Downloads</span>
                         </a>
-                        <a href="http://localhost:8080/loadtest" target="_blank" class="external-link" title="Open Load Test Dashboard">
+                        <a href="/loadtest" target="_blank" class="external-link" data-local="http://localhost:8080/loadtest" title="Open Load Test Dashboard">
                             <span class="link-icon">⚡</span>
                             <span class="link-text">Load Tests</span>
                         </a>
@@ -93,37 +93,21 @@
                             <span class="link-icon">🗺️</span>
                             <span class="link-text">Tile Viz</span>
                         </a>
-                        <a href="edr-coverage.html" class="external-link" title="EDR Data Coverage Validation">
-                            <span class="link-icon">🔍</span>
-                            <span class="link-text">EDR Coverage</span>
-                        </a>
-                        <a href="edr-compliance.html" class="external-link" title="EDR API Compliance Tests">
-                            <span class="link-icon">✅</span>
-                            <span class="link-text">EDR Compliance</span>
-                        </a>
-                        <a href="http://localhost:3000/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" target="_blank" class="external-link" title="Open Grafana Performance Dashboard">
+                        <a href="/grafana/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" title="Open Grafana Performance Dashboard">
                             <span class="link-icon">📊</span>
                             <span class="link-text">Grafana</span>
                         </a>
-                        <a href="http://localhost:3000/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" target="_blank" class="external-link" title="Open System Stats Dashboard (CPU, Memory, Leak Detection)">
+                        <a href="/grafana/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" title="Open System Stats Dashboard (CPU, Memory, Leak Detection)">
                             <span class="link-icon">🖥️</span>
                             <span class="link-text">System</span>
                         </a>
-                        <a href="http://localhost:9090" target="_blank" class="external-link" title="Open Prometheus">
+                        <a href="#" target="_blank" class="external-link local-only-link" data-local="http://localhost:9090" title="Open Prometheus (local dev only)">
                             <span class="link-icon">📈</span>
                             <span class="link-text">Prometheus</span>
                         </a>
-                        <a href="http://localhost:9001" target="_blank" class="external-link" title="Open MinIO Console">
+                        <a href="#" target="_blank" class="external-link local-only-link" data-local="http://localhost:9001" title="Open MinIO Console (local dev only)">
                             <span class="link-icon">🗄️</span>
                             <span class="link-text">MinIO</span>
-                        </a>
-                        <a href="http://localhost:5050" target="_blank" class="external-link" title="Open pgAdmin Database UI">
-                            <span class="link-icon">🐘</span>
-                            <span class="link-text">pgAdmin</span>
-                        </a>
-                        <a href="http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/" target="_blank" class="external-link" title="Open Kubernetes Dashboard">
-                            <span class="link-icon">☸️</span>
-                            <span class="link-text">K8s</span>
                         </a>
                     </div>
                 </div>
@@ -840,14 +824,24 @@
     <!-- Leaflet JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
-    <!-- Dynamic URL rewriting for K8s/docker-compose compatibility -->
+    <!-- Dynamic URL rewriting for production/docker-compose compatibility -->
     <script>
         (function() {
-            // In docker-compose (port 8000), keep localhost:8080 links
-            // In K8s (any other port), rewrite to relative URLs
-            if (window.location.port !== '8000') {
+            const isLocalDev = window.location.port === '8000';
+            
+            if (isLocalDev) {
+                // In docker-compose (port 8000), use localhost URLs from data-local attribute
+                document.querySelectorAll('a[data-local]').forEach(function(link) {
+                    link.href = link.dataset.local;
+                });
+            } else {
+                // In production, rewrite localhost:8080 to relative, hide local-only links
                 document.querySelectorAll('a[href*="localhost:8080"]').forEach(function(link) {
                     link.href = link.href.replace('http://localhost:8080', '');
+                });
+                // Hide links that only work in local dev
+                document.querySelectorAll('.local-only-link').forEach(function(link) {
+                    link.style.display = 'none';
                 });
             }
         })();
