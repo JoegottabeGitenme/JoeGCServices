@@ -761,10 +761,14 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             }
         };
 
+        // Get layer configs for unit conversion
+        let layer_configs = state.layer_configs.read().await;
+
         match crate::rendering::query_point_value(
             &state.catalog,
             &state.metrics,
             &state.grid_processor_factory,
+            &layer_configs,
             layer,
             bbox_array,
             width,

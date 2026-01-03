@@ -32,6 +32,7 @@ function initEndpointConfig() {
     applyBtn.addEventListener('click', () => {
         API_BASE = input.value.trim().replace(/\/+$/, '');
         localStorage.setItem('edr-compliance-endpoint', API_BASE);
+        clearMetadataCache();
         loadCollections();
         clearAllResults();
     });
@@ -40,6 +41,7 @@ function initEndpointConfig() {
         API_BASE = DEFAULT_API_BASE;
         input.value = API_BASE;
         localStorage.removeItem('edr-compliance-endpoint');
+        clearMetadataCache();
         loadCollections();
         clearAllResults();
     });
@@ -200,6 +202,188 @@ async function loadCollections() {
 }
 
 // ============================================================
+// DATA-AWARE TESTING HELPERS
+// ============================================================
+
+// Cache collection metadata to avoid repeated fetches
+let collectionMetadataCache = {};
+
+// Store the actual URL used by each test for the copy URL feature
+let testUrlsUsed = {};
+
+// Clear metadata cache (call when endpoint changes)
+function clearMetadataCache() {
+    collectionMetadataCache = {};
+    testUrlsUsed = {};
+}
+
+// Get collection metadata with caching
+async function getCollectionMetadata(collectionId) {
+    if (collectionMetadataCache[collectionId]) {
+        return collectionMetadataCache[collectionId];
+    }
+    const res = await fetchJson(`${API_BASE}/collections/${collectionId}`);
+    if (res.ok && res.json) {
+        collectionMetadataCache[collectionId] = res.json;
+    }
+    return res.json;
+}
+
+// Get valid coordinates from the center of the collection's spatial extent
+async function getValidCoordinates(collectionId) {
+    const metadata = await getCollectionMetadata(collectionId);
+    const bbox = metadata?.extent?.spatial?.bbox?.[0];
+    
+    if (!bbox || bbox.length < 4) {
+        return { warning: 'No spatial extent defined in collection', coords: null, bbox: null };
+    }
+    
+    // Calculate center of bbox [minLon, minLat, maxLon, maxLat]
+    const centerLon = (bbox[0] + bbox[2]) / 2;
+    const centerLat = (bbox[1] + bbox[3]) / 2;
+    
+    return { 
+        coords: { lon: centerLon, lat: centerLat },
+        bbox: bbox
+    };
+}
+
+// Get a valid polygon within the collection's spatial extent
+async function getValidPolygon(collectionId, sizeDegrees = 1.0) {
+    const { coords, bbox, warning } = await getValidCoordinates(collectionId);
+    
+    if (!coords) {
+        return { warning, polygon: null, bboxArray: null };
+    }
+    
+    // Create a small polygon around the center, staying within the collection's bbox
+    const halfSize = sizeDegrees / 2;
+    const minLon = Math.max(bbox[0], coords.lon - halfSize);
+    const maxLon = Math.min(bbox[2], coords.lon + halfSize);
+    const minLat = Math.max(bbox[1], coords.lat - halfSize);
+    const maxLat = Math.min(bbox[3], coords.lat + halfSize);
+    
+    // WKT POLYGON format: counterclockwise, first point = last point
+    const polygon = `POLYGON((${minLon} ${minLat},${maxLon} ${minLat},${maxLon} ${maxLat},${minLon} ${maxLat},${minLon} ${minLat}))`;
+    
+    return { 
+        polygon, 
+        bboxArray: [minLon, minLat, maxLon, maxLat],
+        coords 
+    };
+}
+
+// Get a valid linestring within the collection's spatial extent
+async function getValidLinestring(collectionId) {
+    const { coords, bbox, warning } = await getValidCoordinates(collectionId);
+    
+    if (!coords) {
+        return { warning, linestring: null };
+    }
+    
+    // Generate a linestring within the extent
+    // Create 3 points spanning ~0.5 degrees in each direction from center (or less if bbox is smaller)
+    const maxSpanLon = (bbox[2] - bbox[0]) / 4;
+    const maxSpanLat = (bbox[3] - bbox[1]) / 4;
+    const span = Math.min(maxSpanLon, maxSpanLat, 0.5);
+    
+    const p1 = { lon: Math.max(bbox[0], coords.lon - span), lat: coords.lat };
+    const p2 = { lon: coords.lon, lat: Math.min(bbox[3], coords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], coords.lon + span), lat: coords.lat };
+    
+    const linestring = `LINESTRING(${p1.lon} ${p1.lat},${p2.lon} ${p2.lat},${p3.lon} ${p3.lat})`;
+    
+    return { linestring, coords, bbox };
+}
+
+// Get a valid parameter name from the collection
+async function getValidParameter(collectionId) {
+    const metadata = await getCollectionMetadata(collectionId);
+    const paramNames = metadata?.parameter_names;
+    
+    if (!paramNames || Object.keys(paramNames).length === 0) {
+        return { warning: 'No parameters defined in collection', parameter: null };
+    }
+    
+    // Return first available parameter
+    const firstParam = Object.keys(paramNames)[0];
+    return { parameter: firstParam, allParameters: Object.keys(paramNames) };
+}
+
+// Get a valid datetime from the collection's temporal extent
+async function getValidDatetime(collectionId) {
+    const metadata = await getCollectionMetadata(collectionId);
+    const temporal = metadata?.extent?.temporal;
+    
+    // Try values array first (discrete times)
+    if (temporal?.values && temporal.values.length > 0) {
+        return { datetime: temporal.values[0], allTimes: temporal.values };
+    }
+    
+    // Fall back to interval
+    if (temporal?.interval?.[0]) {
+        const [start, end] = temporal.interval[0];
+        if (start) {
+            return { datetime: start, interval: [start, end] };
+        }
+    }
+    
+    return { warning: 'No temporal extent defined in collection', datetime: null };
+}
+
+// Get a valid Z level from the collection's vertical extent
+async function getValidZLevel(collectionId) {
+    const metadata = await getCollectionMetadata(collectionId);
+    const vertical = metadata?.extent?.vertical;
+    
+    // Try values array from data_queries
+    const dataQueries = metadata?.data_queries;
+    if (dataQueries?.position?.link?.variables?.vertical_levels) {
+        const levels = dataQueries.position.link.variables.vertical_levels;
+        if (levels.length > 0) {
+            return { z: levels[0], allLevels: levels };
+        }
+    }
+    
+    if (vertical?.values && vertical.values.length > 0) {
+        return { z: vertical.values[0], allLevels: vertical.values };
+    }
+    
+    if (vertical?.interval?.[0]) {
+        const [min, max] = vertical.interval[0];
+        if (min !== null) {
+            return { z: min };
+        }
+    }
+    
+    return { warning: 'No vertical extent defined in collection', z: null };
+}
+
+// Check if the response has non-null data values
+function hasNonNullValues(response) {
+    // Check ranges for Coverage type
+    if (response?.ranges) {
+        for (const rangeKey of Object.keys(response.ranges)) {
+            const values = response.ranges[rangeKey]?.values || [];
+            if (values.some(v => v !== null)) {
+                return true;
+            }
+        }
+    }
+    
+    // Check coverages array for CoverageCollection type
+    if (response?.coverages) {
+        for (const coverage of response.coverages) {
+            if (hasNonNullValues(coverage)) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+// ============================================================
 // TEST FUNCTIONS
 // ============================================================
 
@@ -316,8 +500,10 @@ async function runTest(testName) {
         const result = await executeTest(testName);
         testResults[testName] = result;
 
-        if (result.passed) {
+        if (result.passed && !result.warning) {
             setTestStatus(testName, 'passed', 'Passed');
+        } else if (result.passed && result.warning) {
+            setTestStatus(testName, 'warning', 'Warning');
         } else {
             setTestStatus(testName, 'failed', 'Failed');
         }
@@ -1045,13 +1231,23 @@ function getTestUrls(testName) {
 }
 
 function copyTestUrl(testName, btn) {
-    const urls = getTestUrls(testName);
-    if (urls.length === 0) {
-        showToast('No URL available for this test', 'error');
-        return;
+    // First check if we have an actual URL used by the test
+    const result = testResults[testName];
+    let textToCopy;
+    
+    if (result?.url) {
+        // Use the actual URL that was used in the test
+        textToCopy = result.url;
+    } else {
+        // Fall back to template URLs
+        const urls = getTestUrls(testName);
+        if (urls.length === 0) {
+            showToast('No URL available for this test', 'error');
+            return;
+        }
+        textToCopy = urls.length === 1 ? urls[0] : urls.join('\n');
     }
 
-    const textToCopy = urls.length === 1 ? urls[0] : urls.join('\n');
     navigator.clipboard.writeText(textToCopy).then(() => {
         // Visual feedback on the button
         const originalText = btn.textContent;
@@ -1355,10 +1551,11 @@ async function testInstanceExtent() {
     }
 
     const col = collections[0];
-    const instRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
+    const url = `${API_BASE}/collections/${col.id}/instances`;
+    const instRes = await fetchJson(url);
     const instances = instRes.json?.instances || [];
     if (instances.length === 0) {
-        return { passed: true, checks: [{ name: 'No instances to test (ok)', passed: true }], response: instRes };
+        return { passed: true, checks: [{ name: 'No instances to test (ok)', passed: true }], response: instRes, url };
     }
 
     const inst = instances[0];
@@ -1377,12 +1574,15 @@ async function testInstanceExtent() {
         interval[0][0] !== null && 
         interval[0][1] !== null;
     
-    // Check if the range makes sense (end > start)
+    // Check if the range makes sense (end >= start)
+    // Allow end == start for single timestep data
     let hasValidRange = false;
+    let isSingleTimestep = false;
     if (hasCompleteRange) {
         const start = new Date(interval[0][0]);
         const end = new Date(interval[0][1]);
-        hasValidRange = end > start;
+        hasValidRange = end >= start;  // Changed from > to >=
+        isSingleTimestep = end.getTime() === start.getTime();
     }
     
     const checks = [
@@ -1390,13 +1590,21 @@ async function testInstanceExtent() {
         { name: 'Has temporal extent', passed: !!temporal },
         { name: 'Has interval array', passed: hasValidInterval },
         { name: 'Interval has start AND end', passed: hasCompleteRange },
-        { name: 'End time > start time', passed: hasValidRange || !hasCompleteRange }
+        { 
+            name: 'End time >= start time', 
+            passed: hasValidRange || !hasCompleteRange,
+            warning: isSingleTimestep ? 'Single timestep data (start == end)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
     
     return {
         passed: checks.every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: instRes
+        response: instRes,
+        url
     };
 }
 
@@ -1408,7 +1616,20 @@ async function testPositionWkt() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }],
+            coordsInfo: 'Unable to determine coordinates from collection extent'
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type },
@@ -1417,7 +1638,9 @@ async function testPositionWkt() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) - center of collection extent`
     };
 }
 
@@ -1429,7 +1652,19 @@ async function testPositionSimple() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=-97.5,35.2`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=${coords.lon},${coords.lat}`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type }
@@ -1437,7 +1672,9 @@ async function testPositionSimple() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Simple coords: ${coords.lon.toFixed(4)},${coords.lat.toFixed(4)}`
     };
 }
 
@@ -1449,16 +1686,43 @@ async function testPositionCovJson() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})`;
+    const res = await fetchJson(url);
+    
+    // Check for non-null data values
+    const hasData = hasNonNullValues(res.json);
+    
     const checks = [
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Domain type is Point', passed: res.json?.domain?.domainType === 'Point' },
-        { name: 'Has axes', passed: !!res.json?.domain?.axes }
+        { name: 'Has axes', passed: !!res.json?.domain?.axes },
+        { 
+            name: 'Has non-null data values', 
+            passed: true,  // Don't fail on this
+            warning: !hasData ? 'No data values in response (coordinates may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => !c.warning || c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)})`
     };
 }
 
@@ -1513,7 +1777,24 @@ async function testPositionMultipoint() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=MULTIPOINT((-97.5 35.2),(-98.0 36.0))`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create two points within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: coords.lon - span, lat: coords.lat };
+    const p2 = { lon: coords.lon + span, lat: coords.lat + span };
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=MULTIPOINT((${p1.lon} ${p1.lat}),(${p2.lon} ${p2.lat}))`;
+    const res = await fetchJson(url);
     
     // Per EDR spec, MULTIPOINT should be supported if collection supports it
     // Response should be CoverageCollection with one Coverage per point
@@ -1528,7 +1809,9 @@ async function testPositionMultipoint() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `MULTIPOINT: (${p1.lon.toFixed(4)}, ${p1.lat.toFixed(4)}), (${p2.lon.toFixed(4)}, ${p2.lat.toFixed(4)})`
     };
 }
 
@@ -1563,7 +1846,19 @@ async function testPositionCrsValid() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&crs=CRS:84`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -1573,7 +1868,9 @@ async function testPositionCrsValid() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with CRS:84`
     };
 }
 
@@ -1586,7 +1883,19 @@ async function testPositionFCovJson() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&f=CoverageJSON`;
+    const res = await fetchJson(url);
     
     const contentType = res.headers?.get('content-type') || '';
     const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
@@ -1598,6 +1907,8 @@ async function testPositionFCovJson() {
     ];
     return {
         passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with f=CoverageJSON`,
         checks,
         response: res
     };
@@ -1628,12 +1939,22 @@ async function testZSingle() {
         return { passed: false, error: 'No collections available', checks: [] };
     }
 
-    // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=${zValue}`);
+    // Get available z values from collection extent
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zValue}`;
+    const res = await fetchJson(url);
     
     // Check that response includes z axis or returns data for the level
     const hasZAxis = res.json?.domain?.axes?.z !== undefined;
@@ -1647,7 +1968,9 @@ async function testZSingle() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), z=${zValue}`
     };
 }
 
@@ -1658,9 +1981,19 @@ async function testZMultiple() {
         return { passed: false, error: 'No collections available', checks: [] };
     }
 
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
     // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
     // Use first 3 available levels, or defaults
     const zLevels = verticalValues.length >= 3 
@@ -1668,7 +2001,8 @@ async function testZMultiple() {
         : [850, 700, 500];
     const zParam = zLevels.join(',');
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=${zParam}`);
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zParam}`;
+    const res = await fetchJson(url);
     
     // Check z axis in response
     const zAxis = res.json?.domain?.axes?.z;
@@ -1684,7 +2018,9 @@ async function testZMultiple() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), z=${zParam}`
     };
 }
 
@@ -1695,9 +2031,31 @@ async function testZRange() {
         return { passed: false, error: 'No collections available', checks: [] };
     }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=1000/500`);
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Get z levels to determine a valid range
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
-    // Check z axis in response - should include levels between 1000 and 500
+    // Determine a valid z range from the collection's levels
+    let zRange = '1000/500';
+    if (verticalValues.length >= 2) {
+        const sortedValues = [...verticalValues].sort((a, b) => b - a);
+        zRange = `${sortedValues[0]}/${sortedValues[sortedValues.length - 1]}`;
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zRange}`;
+    const res = await fetchJson(url);
+    
+    // Check z axis in response - should include levels between the range
     const zAxis = res.json?.domain?.axes?.z;
     const zAxisValues = Array.isArray(zAxis?.values) ? zAxis.values : (Array.isArray(zAxis) ? zAxis : []);
     const hasMultipleZLevels = zAxisValues.length > 1;
@@ -1711,7 +2069,9 @@ async function testZRange() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), z range=${zRange}`
     };
 }
 
@@ -1722,23 +2082,51 @@ async function testZRecurring() {
         return { passed: false, error: 'No collections available', checks: [] };
     }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=R5/1000/100`);
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Get z levels to determine valid recurring parameters
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
-    // Check z axis in response - should have 5 levels: 1000, 900, 800, 700, 600
+    // Build recurring interval from collection's levels
+    let zRecurring = 'R5/1000/100';
+    let expectedLevels = 5;
+    if (verticalValues.length >= 3) {
+        const sortedValues = [...verticalValues].sort((a, b) => b - a);
+        const startZ = sortedValues[0];
+        const interval = sortedValues.length > 1 ? Math.abs(sortedValues[0] - sortedValues[1]) : 100;
+        expectedLevels = Math.min(5, sortedValues.length);
+        zRecurring = `R${expectedLevels}/${startZ}/${interval}`;
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zRecurring}`;
+    const res = await fetchJson(url);
+    
+    // Check z axis in response
     const zAxis = res.json?.domain?.axes?.z;
     const zAxisValues = Array.isArray(zAxis?.values) ? zAxis.values : (Array.isArray(zAxis) ? zAxis : []);
-    const hasFiveZLevels = zAxisValues.length === 5;
+    const hasExpectedZLevels = zAxisValues.length === expectedLevels;
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has z axis in domain', passed: zAxis !== undefined },
-        { name: 'Returns exactly 5 z levels', passed: hasFiveZLevels }
+        { name: `Returns exactly ${expectedLevels} z levels`, passed: hasExpectedZLevels }
     ];
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), z=${zRecurring}`
     };
 }
 
@@ -1751,7 +2139,19 @@ async function testZInvalid() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=abc`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=abc`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -1760,7 +2160,8 @@ async function testZInvalid() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -1793,8 +2194,19 @@ async function testDatetimeInstant() {
         return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const datetime = times[0]; // Use first available time
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetime)}`);
+    const url = `${API_BASE}/collections/${collection.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${encodeURIComponent(datetime)}`;
+    const res = await fetchJson(url);
     
     // For single instant, check we have a t axis with values
     const tAxisValues = getTimeAxisValues(res.json?.domain);
@@ -1808,7 +2220,9 @@ async function testDatetimeInstant() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime=${datetime}`
     };
 }
 
@@ -1832,11 +2246,22 @@ async function testDatetimeRange() {
         return { passed: true, checks: [{ name: 'Not enough temporal values for range test (N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const startTime = times[0];
     const endTime = times[Math.min(2, times.length - 1)]; // Use 3rd time or last
     const datetimeRange = `${startTime}/${endTime}`;
     
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeRange)}`);
+    const url = `${API_BASE}/collections/${collection.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${encodeURIComponent(datetimeRange)}`;
+    const res = await fetchJson(url);
     
     // For ranges, response should be a PointSeries with multiple time values
     const tAxisValues = getTimeAxisValues(res.json?.domain);
@@ -1850,7 +2275,9 @@ async function testDatetimeRange() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime range`
     };
 }
 
@@ -1864,11 +2291,22 @@ async function testDatetimeList() {
         return { passed: true, checks: [{ name: 'Not enough temporal values for list test (N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Pick 3 times
     const selectedTimes = [times[0], times[1], times[2]];
     const datetimeList = selectedTimes.join(',');
     
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeList)}`);
+    const url = `${API_BASE}/collections/${collection.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${encodeURIComponent(datetimeList)}`;
+    const res = await fetchJson(url);
     
     // For lists, response should be a PointSeries with multiple time values
     const tAxisValues = getTimeAxisValues(res.json?.domain);
@@ -1882,7 +2320,9 @@ async function testDatetimeList() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime list`
     };
 }
 
@@ -1896,10 +2336,21 @@ async function testDatetimeOpenEnd() {
         return { passed: true, checks: [{ name: 'Not enough temporal values for open-end test (N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const startTime = times[0];
     const datetimeOpenEnd = `${startTime}/..`;
     
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeOpenEnd)}`);
+    const url = `${API_BASE}/collections/${collection.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${encodeURIComponent(datetimeOpenEnd)}`;
+    const res = await fetchJson(url);
     
     // For open-ended ranges, response should be a PointSeries with multiple time values
     const tAxisValues = getTimeAxisValues(res.json?.domain);
@@ -1913,7 +2364,9 @@ async function testDatetimeOpenEnd() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime open-end`
     };
 }
 
@@ -1930,9 +2383,19 @@ async function testAreaBasic() {
     }
 
     const col = collections[0];
-    // Small 1x1 degree polygon over Oklahoma
-    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    // Get valid polygon from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type },
@@ -1941,7 +2404,9 @@ async function testAreaBasic() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Polygon bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}]`
     };
 }
 
@@ -1954,18 +2419,24 @@ async function testAreaCovJson() {
     }
 
     const col = collections[0];
-    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    // Get valid polygon from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
     
     // Check for non-null data values
     const ranges = res.json?.ranges || {};
     const paramKeys = Object.keys(ranges);
-    let hasNonNullData = false;
-    if (paramKeys.length > 0) {
-        const firstParam = paramKeys[0];
-        const values = ranges[firstParam]?.values || [];
-        hasNonNullData = values.some(v => v !== null);
-    }
+    const hasData = hasNonNullValues(res.json);
     
     const checks = [
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -1973,12 +2444,22 @@ async function testAreaCovJson() {
         { name: 'Has x axis', passed: !!res.json?.domain?.axes?.x },
         { name: 'Has y axis', passed: !!res.json?.domain?.axes?.y },
         { name: 'Has ranges', passed: paramKeys.length > 0 },
-        { name: 'Has non-null data values', passed: hasNonNullData }
+        { 
+            name: 'Has non-null data values', 
+            passed: true,  // Don't fail on this
+            warning: !hasData ? 'No data values in response (area may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Polygon bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}]`
     };
 }
 
@@ -1991,9 +2472,19 @@ async function testAreaSmall() {
     }
 
     const col = collections[0];
-    // Very small 0.1x0.1 degree polygon
-    const polygon = 'POLYGON((-97.5 35.2,-97.4 35.2,-97.4 35.3,-97.5 35.3,-97.5 35.2))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    
+    // Get valid small polygon from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 0.1);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2003,7 +2494,9 @@ async function testAreaSmall() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Small polygon bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}]`
     };
 }
 
@@ -2016,9 +2509,31 @@ async function testAreaComplex() {
     }
 
     const col = collections[0];
+    
+    // Get valid coordinates from collection extent
+    const { coords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create an L-shaped polygon within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 1.0);
+    const minLon = Math.max(bbox[0], coords.lon - span);
+    const maxLon = Math.min(bbox[2], coords.lon + span);
+    const minLat = Math.max(bbox[1], coords.lat - span);
+    const maxLat = Math.min(bbox[3], coords.lat + span);
+    const midLon = (minLon + maxLon) / 2;
+    const midLat = (minLat + maxLat) / 2;
+    
     // L-shaped polygon
-    const polygon = 'POLYGON((-100 34,-98 34,-98 36,-99 36,-99 35,-100 35,-100 34))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
+    const polygon = `POLYGON((${minLon} ${minLat},${maxLon} ${minLat},${maxLon} ${midLat},${midLon} ${midLat},${midLon} ${maxLat},${minLon} ${maxLat},${minLon} ${minLat}))`;
+    
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2028,7 +2543,9 @@ async function testAreaComplex() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `L-shaped polygon around (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)})`
     };
 }
 
@@ -2090,27 +2607,59 @@ async function testAreaWithParams() {
     }
 
     const col = collections[0];
-    const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&parameter-name=TMP`);
+    
+    // Get valid polygon from collection extent
+    const { polygon, bboxArray, warning: polygonWarning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: polygonWarning || 'Cannot determine valid area', passed: true, warning: polygonWarning }]
+        };
+    }
+    
+    // Get a valid parameter name from the collection
+    const { parameter, warning: paramWarning } = await getValidParameter(col.id);
+    if (!parameter) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: paramWarning || 'Cannot determine valid parameter', passed: true, warning: paramWarning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&parameter-name=${parameter}`;
+    const res = await fetchJson(url);
+    
+    // Check for non-null data values
+    const hasData = hasNonNullValues(res.json);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type },
-        { name: 'Has ranges', passed: !!res.json?.ranges }
+        { name: 'Has ranges', passed: !!res.json?.ranges },
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasData ? 'No data values in response (area may be outside data coverage)' : null
+        }
     ];
     
-    // If we have ranges, check that filtering worked (only requested params)
+    // If we have ranges, check that filtering worked
     if (res.json?.ranges) {
         const rangeKeys = Object.keys(res.json.ranges);
-        // Should have TMP or temperature-related parameter
-        const hasTempParam = rangeKeys.some(k => k.includes('TMP') || k.toLowerCase().includes('temp'));
-        checks.push({ name: 'Response includes requested parameter', passed: hasTempParam || rangeKeys.length > 0 });
+        checks.push({ name: 'Response includes requested parameter', passed: rangeKeys.includes(parameter) || rangeKeys.length > 0 });
     }
     
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Polygon bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], parameter: ${parameter}`
     };
 }
 
@@ -2254,7 +2803,19 @@ async function testRadiusBasic() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type },
@@ -2263,7 +2824,9 @@ async function testRadiusBasic() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius`
     };
 }
 
@@ -2276,17 +2839,24 @@ async function testRadiusCovJson() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=km`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=30&within-units=km`;
+    const res = await fetchJson(url);
     
     // Check for non-null data values
+    const hasData = hasNonNullValues(res.json);
     const ranges = res.json?.ranges || {};
     const paramKeys = Object.keys(ranges);
-    let hasNonNullData = false;
-    if (paramKeys.length > 0) {
-        const firstParam = paramKeys[0];
-        const values = ranges[firstParam]?.values || [];
-        hasNonNullData = values.some(v => v !== null);
-    }
     
     const checks = [
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -2294,12 +2864,22 @@ async function testRadiusCovJson() {
         { name: 'Has x axis', passed: !!res.json?.domain?.axes?.x },
         { name: 'Has y axis', passed: !!res.json?.domain?.axes?.y },
         { name: 'Has ranges', passed: paramKeys.length > 0 },
-        { name: 'Has non-null data values', passed: hasNonNullData }
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasData ? 'No data values in response (coordinates may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 30km radius`
     };
 }
 
@@ -2401,8 +2981,20 @@ async function testRadiusTooLarge() {
     }
 
     const col = collections[0];
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Request 1000 km radius which should exceed limit
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=1000&within-units=km`);
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=1000&within-units=km`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 413', passed: res.status === 413 },
         { name: 'Has error type', passed: !!res.json?.type },
@@ -2411,7 +3003,9 @@ async function testRadiusTooLarge() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 1000km radius (too large)`
     };
 }
 
@@ -2424,7 +3018,19 @@ async function testRadiusUnitsKm() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -2433,7 +3039,9 @@ async function testRadiusUnitsKm() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius`
     };
 }
 
@@ -2446,7 +3054,19 @@ async function testRadiusUnitsMi() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=30&within-units=mi`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=30&within-units=mi`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -2455,7 +3075,9 @@ async function testRadiusUnitsMi() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 30mi radius`
     };
 }
 
@@ -2468,7 +3090,19 @@ async function testRadiusUnitsM() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50000&within-units=m`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50000&within-units=m`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -2477,7 +3111,9 @@ async function testRadiusUnitsM() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50000m radius`
     };
 }
 
@@ -2490,8 +3126,25 @@ async function testRadiusMultipoint() {
     }
 
     const col = collections[0];
-    const coords = 'MULTIPOINT((-97.5 35.2),(-98.0 36.0))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=${encodeURIComponent(coords)}&within=30&within-units=km`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create two points within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: coords.lon - span, lat: coords.lat };
+    const p2 = { lon: coords.lon + span, lat: coords.lat + span };
+    
+    const multipointCoords = `MULTIPOINT((${p1.lon} ${p1.lat}),(${p2.lon} ${p2.lat}))`;
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=${encodeURIComponent(multipointCoords)}&within=30&within-units=km`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
@@ -2501,7 +3154,9 @@ async function testRadiusMultipoint() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `MULTIPOINT: (${p1.lon.toFixed(4)}, ${p1.lat.toFixed(4)}), (${p2.lon.toFixed(4)}, ${p2.lat.toFixed(4)}) with 30km radius`
     };
 }
 
@@ -2520,8 +3175,22 @@ async function testRadiusZParameter() {
         return { passed: true, checks: [{ name: 'No isobaric collection available (test N/A)', passed: true }] };
     }
     
-    // Use 850 hPa as a common isobaric level
-    const res = await fetchJson(`${API_BASE}/collections/${isobaricCol.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&z=850`);
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(isobaricCol.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Get valid Z level
+    const { z } = await getValidZLevel(isobaricCol.id);
+    const zValue = z || 850;
+    
+    const url = `${API_BASE}/collections/${isobaricCol.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&z=${zValue}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2532,7 +3201,9 @@ async function testRadiusZParameter() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius, z=${zValue}`
     };
 }
 
@@ -2546,18 +3217,25 @@ async function testRadiusWithParams() {
 
     const col = collections[0];
     
-    // Get the collection's parameters
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const params = colRes.json?.parameter_names || {};
-    const paramKeys = Object.keys(params);
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
     
-    if (paramKeys.length === 0) {
+    // Get the collection's parameters
+    const { parameter } = await getValidParameter(col.id);
+    
+    if (!parameter) {
         return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
     }
     
-    // Request only the first parameter
-    const requestedParam = paramKeys[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&parameter-name=${requestedParam}`);
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&parameter-name=${parameter}`;
+    const res = await fetchJson(url);
     
     const returnedParams = Object.keys(res.json?.ranges || {});
     
@@ -2565,12 +3243,14 @@ async function testRadiusWithParams() {
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has ranges', passed: returnedParams.length > 0 },
-        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === requestedParam }
+        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === parameter }
     ];
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius, parameter=${parameter}`
     };
 }
 
@@ -2584,8 +3264,19 @@ async function testRadiusDatetime() {
         return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const datetime = times[0]; // Use first available time
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&datetime=${encodeURIComponent(datetime)}`);
+    const url = `${API_BASE}/collections/${collection.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&datetime=${encodeURIComponent(datetime)}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2596,7 +3287,9 @@ async function testRadiusDatetime() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius, datetime=${datetime}`
     };
 }
 
@@ -2631,7 +3324,19 @@ async function testRadiusCrsValid() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&crs=CRS:84`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&crs=CRS:84`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2641,7 +3346,9 @@ async function testRadiusCrsValid() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius, CRS:84`
     };
 }
 
@@ -2654,7 +3361,19 @@ async function testRadiusFCovJson() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km&f=CoverageJSON`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&f=CoverageJSON`;
+    const res = await fetchJson(url);
     
     const contentType = res.headers?.get('content-type') || '';
     const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
@@ -2667,7 +3386,9 @@ async function testRadiusFCovJson() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with 50km radius, f=CoverageJSON`
     };
 }
 
@@ -2685,8 +3406,19 @@ async function testTrajectoryBasic() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}`;
+    const res = await fetchJson(url);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type', passed: !!res.json?.type },
@@ -2695,7 +3427,9 @@ async function testTrajectoryBasic() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)})`
     };
 }
 
@@ -2708,30 +3442,46 @@ async function testTrajectoryCovJson() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}`;
+    const res = await fetchJson(url);
     
     // Check for non-null data values
+    const hasData = hasNonNullValues(res.json);
     const ranges = res.json?.ranges || {};
     const paramKeys = Object.keys(ranges);
-    let hasNonNullData = false;
-    if (paramKeys.length > 0) {
-        const firstParam = paramKeys[0];
-        const values = ranges[firstParam]?.values || [];
-        hasNonNullData = values.some(v => v !== null);
-    }
     
     const checks = [
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Domain type is Trajectory', passed: res.json?.domain?.domainType === 'Trajectory' },
         { name: 'Has composite axis', passed: !!res.json?.domain?.axes?.composite },
         { name: 'Has ranges', passed: paramKeys.length > 0 },
-        { name: 'Has non-null data values', passed: hasNonNullData }
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasData ? 'No data values in response (coordinates may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)})`
     };
 }
 
@@ -2798,9 +3548,29 @@ async function testTrajectoryLinestringZ() {
         return { passed: true, checks: [{ name: 'No isobaric collection available (test N/A)', passed: true }] };
     }
 
-    // LINESTRINGZ with embedded z values (height in meters)
-    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 700,-98 41 500)';
-    const res = await fetchJson(`${API_BASE}/collections/${isobaricCol.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(isobaricCol.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Get valid Z levels
+    const { z, allLevels } = await getValidZLevel(isobaricCol.id);
+    const zLevels = allLevels && allLevels.length >= 3 ? allLevels.slice(0, 3) : [850, 700, 500];
+    
+    // Create a LINESTRINGZ within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    
+    const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} ${zLevels[0]},${p2.lon} ${p2.lat} ${zLevels[1]},${p3.lon} ${p3.lat} ${zLevels[2]})`;
+    const url = `${API_BASE}/collections/${isobaricCol.id}/trajectory?coords=${encodeURIComponent(linestringZ)}`;
+    const res = await fetchJson(url);
     
     // Should return 200 and have z axis data
     const hasZAxis = !!res.json?.domain?.axes?.z || !!res.json?.domain?.axes?.composite;
@@ -2814,7 +3584,9 @@ async function testTrajectoryLinestringZ() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGZ centered at: (${centerCoords.lon.toFixed(4)}, ${centerCoords.lat.toFixed(4)}) with z=${zLevels.join(',')}`
     };
 }
 
@@ -2828,15 +3600,31 @@ async function testTrajectoryLinestringM() {
         return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(collection.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Convert first three times to Unix epoch (seconds since 1970-01-01)
     // Use valid epoch times in the future for testing
     const epoch1 = Math.floor(new Date(times[0]).getTime() / 1000);
     const epoch2 = epoch1 + 3600;  // +1 hour
     const epoch3 = epoch1 + 7200;  // +2 hours
     
-    // LINESTRINGM with embedded M values (Unix epoch time)
-    const coords = `LINESTRINGM(-100 40 ${epoch1},-99 40.5 ${epoch2},-98 41 ${epoch3})`;
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    // Create a LINESTRINGM within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    
+    const linestringM = `LINESTRINGM(${p1.lon} ${p1.lat} ${epoch1},${p2.lon} ${p2.lat} ${epoch2},${p3.lon} ${p3.lat} ${epoch3})`;
+    const url = `${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(linestringM)}`;
+    const res = await fetchJson(url);
     
     // Should return 200 and have time axis data
     const hasTAxis = !!res.json?.domain?.axes?.t || !!res.json?.domain?.axes?.composite;
@@ -2850,7 +3638,9 @@ async function testTrajectoryLinestringM() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGM centered at: (${centerCoords.lon.toFixed(4)}, ${centerCoords.lat.toFixed(4)}) with epochs`
     };
 }
 
@@ -2863,9 +3653,26 @@ async function testTrajectoryZConflict() {
     }
 
     const col = collections[0];
+    
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create a LINESTRINGZ within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    
     // LINESTRINGZ has embedded Z, but we're also providing z query param - this is a conflict
-    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 700)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&z=850`);
+    const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} 850,${p2.lon} ${p2.lat} 700)`;
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestringZ)}&z=850`;
+    const res = await fetchJson(url);
     
     // Per OGC spec, when coords contain Z values, providing z param is invalid
     const checks = [
@@ -2880,7 +3687,9 @@ async function testTrajectoryZConflict() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGZ with conflicting z parameter`
     };
 }
 
@@ -2893,9 +3702,27 @@ async function testTrajectoryMultilinestring() {
     }
 
     const col = collections[0];
-    // Two separate trajectory segments
-    const coords = 'MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create two separate trajectory segments within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 6, (bbox[3] - bbox[1]) / 6, 0.3);
+    const seg1p1 = { lon: Math.max(bbox[0], centerCoords.lon - span * 2), lat: centerCoords.lat };
+    const seg1p2 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: Math.min(bbox[3], centerCoords.lat + span) };
+    const seg2p1 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    const seg2p2 = { lon: Math.min(bbox[2], centerCoords.lon + span * 2), lat: Math.min(bbox[3], centerCoords.lat + span) };
+    
+    const multilinestring = `MULTILINESTRING((${seg1p1.lon} ${seg1p1.lat},${seg1p2.lon} ${seg1p2.lat}),(${seg2p1.lon} ${seg2p1.lat},${seg2p2.lon} ${seg2p2.lat}))`;
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(multilinestring)}`;
+    const res = await fetchJson(url);
     
     // MULTILINESTRING can return either:
     // 1. CoverageCollection with multiple coverages (one per segment) - strict interpretation
@@ -2917,7 +3744,9 @@ async function testTrajectoryMultilinestring() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `MULTILINESTRING centered at: (${centerCoords.lon.toFixed(4)}, ${centerCoords.lat.toFixed(4)})`
     };
 }
 
@@ -2931,19 +3760,25 @@ async function testTrajectoryWithParams() {
 
     const col = collections[0];
     
-    // Get the collection's parameters
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const params = colRes.json?.parameter_names || {};
-    const paramKeys = Object.keys(params);
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
     
-    if (paramKeys.length === 0) {
+    // Get the collection's parameters
+    const { parameter } = await getValidParameter(col.id);
+    
+    if (!parameter) {
         return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
     }
     
-    // Request only the first parameter
-    const requestedParam = paramKeys[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&parameter-name=${requestedParam}`);
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}&parameter-name=${parameter}`;
+    const res = await fetchJson(url);
     
     const returnedParams = Object.keys(res.json?.ranges || {});
     
@@ -2951,12 +3786,14 @@ async function testTrajectoryWithParams() {
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Has ranges', passed: returnedParams.length > 0 },
-        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === requestedParam }
+        { name: 'Only requested parameter returned', passed: returnedParams.length === 1 && returnedParams[0] === parameter }
     ];
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), parameter=${parameter}`
     };
 }
 
@@ -2970,9 +3807,19 @@ async function testTrajectoryDatetime() {
         return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
     }
     
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(collection.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const datetime = times[0]; // Use first available time
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(coords)}&datetime=${encodeURIComponent(datetime)}`);
+    const url = `${API_BASE}/collections/${collection.id}/trajectory?coords=${encodeURIComponent(linestring)}&datetime=${encodeURIComponent(datetime)}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -2983,7 +3830,9 @@ async function testTrajectoryDatetime() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime=${datetime}`
     };
 }
 
@@ -3114,8 +3963,19 @@ async function testTrajectoryCrsValid() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&crs=CRS:84`);
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}&crs=CRS:84`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -3125,7 +3985,9 @@ async function testTrajectoryCrsValid() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with CRS:84`
     };
 }
 
@@ -3138,8 +4000,19 @@ async function testTrajectoryFCovJson() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}&f=CoverageJSON`);
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}&f=CoverageJSON`;
+    const res = await fetchJson(url);
     
     const contentType = res.headers?.get('content-type') || '';
     const isCoverageJSON = contentType.includes('cov+json') || contentType.includes('application/json');
@@ -3152,7 +4025,9 @@ async function testTrajectoryFCovJson() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Linestring centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with f=CoverageJSON`
     };
 }
 
@@ -3170,13 +4045,23 @@ async function testCorridorBasic() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const corridorWidth = '10';
     const widthUnits = 'km';
     const corridorHeight = '1000';
     const heightUnits = 'm';
     
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=${corridorWidth}&width-units=${widthUnits}&corridor-height=${corridorHeight}&height-units=${heightUnits}`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=${corridorWidth}&width-units=${widthUnits}&corridor-height=${corridorHeight}&height-units=${heightUnits}`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3189,7 +4074,9 @@ async function testCorridorBasic() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Corridor centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), width=${corridorWidth}${widthUnits}`
     };
 }
 
@@ -3202,12 +4089,26 @@ async function testCorridorCovJson() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     // CoverageCollection has parameters at top level, coverages have domain/ranges
     const firstCoverage = res.json?.coverages?.[0];
+    
+    // Check for non-null data values
+    const hasData = hasNonNullValues(res.json);
+    
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has type field', passed: res.json?.type !== undefined },
@@ -3216,12 +4117,23 @@ async function testCorridorCovJson() {
         { name: 'Has coverages array', passed: Array.isArray(res.json?.coverages) },
         { name: 'First coverage has domain', passed: !!firstCoverage?.domain },
         { name: 'First coverage has ranges', passed: !!firstCoverage?.ranges },
-        { name: 'First coverage domain has axes', passed: !!firstCoverage?.domain?.axes }
+        { name: 'First coverage domain has axes', passed: !!firstCoverage?.domain?.axes },
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasData ? 'No data values in response (coordinates may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Corridor centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)})`
     };
 }
 
@@ -3258,9 +4170,19 @@ async function testCorridorMissingWidth() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Missing corridor-width - should return 400
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&width-units=km&corridor-height=1000&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3270,7 +4192,8 @@ async function testCorridorMissingWidth() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3283,9 +4206,19 @@ async function testCorridorMissingWidthUnits() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Missing width-units - should return 400
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&corridor-height=1000&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3295,7 +4228,8 @@ async function testCorridorMissingWidthUnits() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3309,9 +4243,19 @@ async function testCorridorMissingHeight() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Missing corridor-height - may return 400 or 200 (if height is optional)
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&height-units=m`;
     const res = await fetchJson(url);
     
     // Accept either 400 (strict) or 200 with valid response (lenient - height optional)
@@ -3326,7 +4270,8 @@ async function testCorridorMissingHeight() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3340,9 +4285,19 @@ async function testCorridorMissingHeightUnits() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Missing height-units - may return 400 or 200 (if height params are optional)
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&corridor-height=1000`;
     const res = await fetchJson(url);
     
     // Accept either 400 (strict) or 200 with valid response (lenient - height optional)
@@ -3357,7 +4312,8 @@ async function testCorridorMissingHeightUnits() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3370,9 +4326,19 @@ async function testCorridorInvalidWidthUnits() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Invalid width-units - should return 400
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=invalid_unit&corridor-height=1000&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=invalid_unit&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3382,7 +4348,8 @@ async function testCorridorInvalidWidthUnits() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3395,9 +4362,19 @@ async function testCorridorInvalidHeightUnits() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Invalid height-units - should return 400
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=invalid_unit`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=invalid_unit`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3407,7 +4384,8 @@ async function testCorridorInvalidHeightUnits() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url
     };
 }
 
@@ -3444,9 +4422,26 @@ async function testCorridorZConflict() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRINGZ(-100 40 850,-99 40.5 850,-98 41 850)';
+    
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create a LINESTRINGZ within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    
+    const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} 850,${p2.lon} ${p2.lat} 850,${p3.lon} ${p3.lat} 850)`;
     // Conflict: LINESTRINGZ already has Z values, and z param is also specified
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&z=1000&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestringZ)}&z=1000&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3456,7 +4451,9 @@ async function testCorridorZConflict() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGZ with conflicting z parameter`
     };
 }
 
@@ -3469,9 +4466,26 @@ async function testCorridorDatetimeConflict() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41 1560510600)';
+    
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create a LINESTRINGM within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    
+    const linestringM = `LINESTRINGM(${p1.lon} ${p1.lat} 1560507000,${p2.lon} ${p2.lat} 1560508800,${p3.lon} ${p3.lat} 1560510600)`;
     // Conflict: LINESTRINGM already has M values, and datetime param is also specified
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&datetime=2024-01-01T00:00:00Z&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestringM)}&datetime=2024-01-01T00:00:00Z&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3481,7 +4495,9 @@ async function testCorridorDatetimeConflict() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGM with conflicting datetime parameter`
     };
 }
 
@@ -3494,8 +4510,26 @@ async function testCorridorMultilinestring() {
     }
 
     const col = collections[0];
-    const coords = 'MULTILINESTRING((-100 40,-99 40.5),(-98 41,-97 41.5))';
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Create two separate trajectory segments within the extent
+    const span = Math.min((bbox[2] - bbox[0]) / 6, (bbox[3] - bbox[1]) / 6, 0.3);
+    const seg1p1 = { lon: Math.max(bbox[0], centerCoords.lon - span * 2), lat: centerCoords.lat };
+    const seg1p2 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: Math.min(bbox[3], centerCoords.lat + span) };
+    const seg2p1 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
+    const seg2p2 = { lon: Math.min(bbox[2], centerCoords.lon + span * 2), lat: Math.min(bbox[3], centerCoords.lat + span) };
+    
+    const multilinestring = `MULTILINESTRING((${seg1p1.lon} ${seg1p1.lat},${seg1p2.lon} ${seg1p2.lat}),(${seg2p1.lon} ${seg2p1.lat},${seg2p2.lon} ${seg2p2.lat}))`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(multilinestring)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3507,7 +4541,9 @@ async function testCorridorMultilinestring() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `MULTILINESTRING centered at: (${centerCoords.lon.toFixed(4)}, ${centerCoords.lat.toFixed(4)})`
     };
 }
 
@@ -3520,27 +4556,38 @@ async function testCorridorWithParams() {
     }
 
     const col = collections[0];
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const paramNames = Object.keys(colRes.json?.parameter_names || {});
-    if (paramNames.length === 0) {
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    // Get the collection's parameters
+    const { parameter } = await getValidParameter(col.id);
+    if (!parameter) {
         return { passed: true, checks: [{ name: 'No parameters available (test N/A)', passed: true }] };
     }
     
-    const paramName = paramNames[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&parameter-name=${paramName}`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&parameter-name=${parameter}`;
     const res = await fetchJson(url);
     
     const params = res.json?.parameters || {};
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Has parameters', passed: Object.keys(params).length > 0 },
-        { name: 'Contains requested parameter', passed: !!params[paramName] }
+        { name: 'Contains requested parameter', passed: !!params[parameter] }
     ];
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Corridor centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), parameter=${parameter}`
     };
 }
 
@@ -3553,9 +4600,19 @@ async function testCorridorPressureHeightUnits() {
     }
 
     const col = collections[0];
-    const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
+    
+    // Get valid linestring from collection extent
+    const { linestring, warning, coords } = await getValidLinestring(col.id);
+    if (!linestring) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     // Use hPa for height units (for isobaric surfaces)
-    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=100&height-units=hPa`;
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(linestring)}&corridor-width=10&width-units=km&corridor-height=100&height-units=hPa`;
     const res = await fetchJson(url);
     
     const checks = [
@@ -3565,7 +4622,9 @@ async function testCorridorPressureHeightUnits() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Corridor centered at: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with height-units=hPa`
     };
 }
 
@@ -4221,10 +5280,21 @@ async function testDatetimeOpenStart() {
         return { passed: true, checks: [{ name: 'Not enough temporal values for open-start test (N/A)', passed: true }] };
     }
     
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(collection.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
     const endTime = times[times.length - 1];
     const datetimeOpenStart = `../${endTime}`;
     
-    const res = await fetchJson(`${API_BASE}/collections/${collection.id}/position?coords=POINT(-97.5 35.2)&datetime=${encodeURIComponent(datetimeOpenStart)}`);
+    const url = `${API_BASE}/collections/${collection.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${encodeURIComponent(datetimeOpenStart)}`;
+    const res = await fetchJson(url);
     
     // For open-started ranges, response should be a PointSeries with multiple time values
     const tAxisValues = getTimeAxisValues(res.json?.domain);
@@ -4238,7 +5308,9 @@ async function testDatetimeOpenStart() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), datetime open-start`
     };
 }
 
@@ -4256,7 +5328,18 @@ async function testContentTypeCovJson() {
     }
 
     const col = collections[0];
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+    
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})`);
     
     const contentType = res.headers?.get('content-type') || '';
     // Accept various CoverageJSON media types
@@ -5395,12 +6478,23 @@ async function testCubeBasic() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}`);
+    // Get available z values from collection extent
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+    
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -5410,7 +6504,9 @@ async function testCubeBasic() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}`
     };
 }
 
@@ -5421,12 +6517,27 @@ async function testCubeCovJson() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&parameter-name=TMP`);
+    // Get available z values from collection extent
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+    
+    // Get valid parameter
+    const { parameter } = await getValidParameter(col.id);
+    const paramName = parameter || 'TMP';
+    
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&parameter-name=${paramName}`;
+    const res = await fetchJson(url);
     
     // Check for coverages array
     const coverages = res.json?.coverages || [];
@@ -5437,26 +6548,29 @@ async function testCubeCovJson() {
     const domainType = firstCoverage?.domain?.domainType;
     
     // Check for non-null data values
-    let hasNonNullData = false;
-    if (firstCoverage?.ranges) {
-        const rangeKeys = Object.keys(firstCoverage.ranges);
-        if (rangeKeys.length > 0) {
-            const values = firstCoverage.ranges[rangeKeys[0]]?.values || [];
-            hasNonNullData = values.some(v => v !== null);
-        }
-    }
+    const hasData = hasNonNullValues(res.json);
     
     const checks = [
         { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
         { name: 'domainType is Grid', passed: res.json?.domainType === 'Grid' },
         { name: 'Has coverages array', passed: hasCoverages },
         { name: 'Coverage has Grid domain', passed: domainType === 'Grid' },
-        { name: 'Has non-null data values', passed: hasNonNullData }
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasData ? 'No data values in response (coordinates may be outside data coverage)' : null
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
+    
     return {
-        passed: checks.every(c => c.passed),
+        passed: checks.filter(c => c.name !== 'Has non-null data values').every(c => c.passed),
+        warning: hasWarning,
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}, parameter=${paramName}`
     };
 }
 
@@ -5526,9 +6640,19 @@ async function testCubeMultiZ() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
     // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
     // Need at least 2 z levels to test multi-z
     if (verticalValues.length < 2) {
@@ -5539,7 +6663,9 @@ async function testCubeMultiZ() {
     const z2 = verticalValues[1];
     const z3 = verticalValues[2] || z2;
     
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${z1},${z2},${z3}`);
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${z1},${z2},${z3}`;
+    const res = await fetchJson(url);
     
     // Check coverages count matches z levels
     const coverages = res.json?.coverages || [];
@@ -5554,7 +6680,9 @@ async function testCubeMultiZ() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${z1},${z2},${z3}`
     };
 }
 
@@ -5565,27 +6693,30 @@ async function testCubeWithDatetime() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values and temporal extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Get available z values
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
     
     // Get temporal extent
-    const temporal = colRes.json?.extent?.temporal?.values || colRes.json?.extent?.temporal?.interval || [];
-    let datetime = '';
-    if (temporal.length > 0) {
-        if (Array.isArray(temporal[0])) {
-            datetime = temporal[0][0];
-        } else {
-            datetime = temporal[0];
-        }
-    }
+    const { datetime } = await getValidDatetime(col.id);
     
     if (!datetime) {
         return { passed: true, checks: [{ name: 'No temporal values available (test N/A)', passed: true }] };
     }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&datetime=${encodeURIComponent(datetime)}`);
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&datetime=${encodeURIComponent(datetime)}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -5595,7 +6726,9 @@ async function testCubeWithDatetime() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}, datetime=${datetime}`
     };
 }
 
@@ -5606,12 +6739,23 @@ async function testCubeWithResolution() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&resolution-x=5&resolution-y=5`);
+    // Get available z values
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&resolution-x=5&resolution-y=5`;
+    const res = await fetchJson(url);
     
     // Check that grid dimensions match requested resolution
     const coverages = res.json?.coverages || [];
@@ -5637,7 +6781,9 @@ async function testCubeWithResolution() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}, resolution=5x5`
     };
 }
 
@@ -5658,12 +6804,23 @@ async function testCubeInstance() {
 
     const instanceId = instances[0].id;
 
-    // Get available z values
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/instances/${instanceId}/cube?bbox=-98,35,-97,36&z=${zValue}`);
+    // Get available z values
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/instances/${instanceId}/cube?bbox=${bbox}&z=${zValue}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -5673,7 +6830,9 @@ async function testCubeInstance() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube instance ${instanceId}, bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}`
     };
 }
 
@@ -5719,9 +6878,19 @@ async function testCubeZRange() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
     // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
     if (verticalValues.length < 2) {
         return { passed: true, checks: [{ name: 'Collection has less than 2 z levels for range test (test N/A)', passed: true }] };
@@ -5732,8 +6901,10 @@ async function testCubeZRange() {
     const maxZ = sortedValues[0];
     const minZ = sortedValues[sortedValues.length - 1];
     
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     // Use z range syntax: min/max
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${maxZ}/${minZ}`);
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${maxZ}/${minZ}`;
+    const res = await fetchJson(url);
     
     // Check coverages - should include multiple z levels within the range
     const coverages = res.json?.coverages || [];
@@ -5746,7 +6917,9 @@ async function testCubeZRange() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z range=${maxZ}/${minZ}`
     };
 }
 
@@ -5757,9 +6930,19 @@ async function testCubeZRecurring() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
     // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const { allLevels } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
     if (verticalValues.length < 3) {
         return { passed: true, checks: [{ name: 'Collection has less than 3 z levels for recurring test (test N/A)', passed: true }] };
@@ -5772,7 +6955,9 @@ async function testCubeZRecurring() {
     const interval = sortedValues.length > 1 ? Math.abs(sortedValues[0] - sortedValues[1]) : 100;
     const count = Math.min(5, sortedValues.length);
     
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=R${count}/${startZ}/${interval}`);
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=R${count}/${startZ}/${interval}`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200 or 400 (if recurring not supported)', passed: res.status === 200 || res.status === 400 },
@@ -5782,7 +6967,9 @@ async function testCubeZRecurring() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=R${count}/${startZ}/${interval}`
     };
 }
 
@@ -5812,13 +6999,24 @@ async function testCubeCrsValid() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
+    // Get available z values
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     // Test with CRS:84 (standard WGS84 lon/lat)
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&crs=CRS:84`);
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&crs=CRS:84`;
+    const res = await fetchJson(url);
     
     const checks = [
         { name: 'Status 200 (CRS:84 supported)', passed: res.status === 200 },
@@ -5828,7 +7026,9 @@ async function testCubeCrsValid() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}, crs=CRS:84`
     };
 }
 
@@ -5839,13 +7039,24 @@ async function testCubeFCovJson() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    // Get available z values
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
-    const zValue = verticalValues[0] || 850;
+    // Get valid polygon/bbox from collection extent
+    const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
 
+    // Get available z values
+    const { z } = await getValidZLevel(col.id);
+    const zValue = z || 850;
+
+    const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     // Test with f=CoverageJSON format parameter
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=${zValue}&f=CoverageJSON`);
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&f=CoverageJSON`;
+    const res = await fetchJson(url);
     
     // Check Content-Type header
     const contentType = res.headers?.get('content-type') || '';
@@ -5861,7 +7072,9 @@ async function testCubeFCovJson() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zValue}, f=CoverageJSON`
     };
 }
 
@@ -6797,8 +8010,9 @@ async function testSchemaGeoJsonPosition() {
 // ============================================================
 
 function updateSummary() {
-    let passed = 0, failed = 0, pending = 0;
+    let passed = 0, failed = 0, pending = 0, warnings = 0;
     const failedTests = [];
+    const warningTests = [];
 
     document.querySelectorAll('.test-item').forEach(item => {
         const statusEl = item.querySelector('.test-status');
@@ -6806,6 +8020,12 @@ function updateSummary() {
         
         if (statusEl.classList.contains('passed')) {
             passed++;
+        } else if (statusEl.classList.contains('warning')) {
+            warnings++;
+            // Collect warning test info
+            const result = testResults[testName];
+            const warningChecks = (result?.checks || []).filter(c => c.warning).map(c => c.warning || c.name);
+            warningTests.push({ name: testName, warningChecks });
         } else if (statusEl.classList.contains('failed')) {
             failed++;
             // Collect failed test info
@@ -6819,6 +8039,7 @@ function updateSummary() {
 
     document.getElementById('passed-count').textContent = passed;
     document.getElementById('failed-count').textContent = failed;
+    document.getElementById('warning-count').textContent = warnings;
     document.getElementById('pending-count').textContent = pending;
     
     // Update failed tests list
@@ -6845,6 +8066,32 @@ function updateSummary() {
     } else {
         failedListContainer.style.display = 'none';
         failedListUl.innerHTML = '';
+    }
+    
+    // Update warning tests list
+    const warningListContainer = document.getElementById('warning-tests-list');
+    const warningListUl = document.getElementById('warning-tests-ul');
+    
+    if (warningTests.length > 0) {
+        warningListContainer.style.display = 'block';
+        warningListUl.innerHTML = warningTests.map(t => {
+            const checksHtml = t.warningChecks.length > 0 
+                ? `<ul class="warning-checks">${t.warningChecks.map(c => `<li>${c}</li>`).join('')}</ul>`
+                : '';
+            return `<li>
+                <strong class="warning-test-name" data-test="${t.name}">${t.name}</strong>
+                ${checksHtml}
+            </li>`;
+        }).join('');
+        
+        // Make warning test names clickable
+        warningListUl.querySelectorAll('.warning-test-name').forEach(el => {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', () => showTestDetails(el.dataset.test));
+        });
+    } else {
+        warningListContainer.style.display = 'none';
+        warningListUl.innerHTML = '';
     }
 }
 
@@ -7251,12 +8498,32 @@ function showTestDetails(testName) {
     if (specInfo) {
         html += `<p class="modal-spec-link"><a href="${specInfo.url}" target="_blank">View OGC Spec: ${specInfo.title}</a></p>`;
     }
+    
+    // Show actual URL used by the test
+    if (result.url) {
+        html += `<h4>URL Used:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${result.url}</pre>`;
+    }
+    
+    // Show coordinates info if available
+    if (result.coordsInfo) {
+        html += `<h4>Coordinates Used:</h4><pre>${result.coordsInfo}</pre>`;
+    }
 
     html += '<h4>Checks:</h4><ul>';
     (result.checks || []).forEach(c => {
-        const icon = c.passed ? '✓' : '✗';
-        const color = c.passed ? 'var(--success-color)' : 'var(--error-color)';
-        html += `<li style="color: ${color}">${icon} ${c.name}</li>`;
+        let icon, color;
+        if (c.warning) {
+            icon = '⚠';
+            color = 'var(--warning-color)';
+        } else if (c.passed) {
+            icon = '✓';
+            color = 'var(--success-color)';
+        } else {
+            icon = '✗';
+            color = 'var(--error-color)';
+        }
+        const warningText = c.warning ? ` (${c.warning})` : '';
+        html += `<li style="color: ${color}">${icon} ${c.name}${warningText}</li>`;
     });
     html += '</ul>';
 

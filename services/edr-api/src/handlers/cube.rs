@@ -111,6 +111,22 @@ async fn cube_query(
         );
     };
 
+    // Check if this collection supports cube queries (requires numeric vertical levels)
+    let has_vertical_levels = collection_def
+        .parameters
+        .iter()
+        .any(|p| p.levels.iter().any(|l| matches!(l, LevelValue::Numeric(_))));
+
+    if !has_vertical_levels {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(format!(
+                "Collection '{}' does not support cube queries. Cube queries require collections with numeric vertical levels (e.g., pressure levels). Use the area query instead.",
+                collection_id
+            )),
+        );
+    }
+
     // Check for required bbox parameter (OGC EDR Requirement A.28.D/F)
     let bbox_str = match &params.bbox {
         Some(b) if !b.trim().is_empty() => b.as_str(),

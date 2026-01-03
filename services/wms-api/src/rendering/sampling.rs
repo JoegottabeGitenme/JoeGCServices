@@ -6,7 +6,7 @@
 //! Key features:
 //! - Model-aware projection handling (GFS global, HRRR Lambert, MRMS regional, GOES geostationary)
 //! - Bilinear interpolation for smooth value queries
-//! - Unit conversion for display values
+//! - Unit conversion for display values (using native units from Zarr metadata)
 
 use projection::{Geostationary, LambertConformal};
 use storage::Catalog;
@@ -15,6 +15,7 @@ use tracing::info;
 use super::loaders::{load_grid_data, query_point_from_zarr};
 use super::resampling::bilinear_interpolate;
 use super::types::GoesProjectionParams;
+use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use grid_processor::GridProcessorFactory;
 
@@ -28,6 +29,7 @@ use grid_processor::GridProcessorFactory;
 /// - `catalog`: Catalog for finding datasets
 /// - `metrics`: Metrics collector
 /// - `grid_processor_factory`: Factory for Zarr-based point queries
+/// - `layer_configs`: Layer configuration registry for unit conversion
 /// - `layer`: Layer name (e.g., "gfs_TMP")
 /// - `bbox`: Bounding box [min_lon, min_lat, max_lon, max_lat]
 /// - `width`: Map width in pixels
@@ -45,6 +47,7 @@ pub async fn query_point_value(
     catalog: &Catalog,
     _metrics: &MetricsCollector,
     grid_processor_factory: &GridProcessorFactory,
+    layer_configs: &LayerConfigRegistry,
     layer: &str,
     bbox: [f64; 4],
     width: u32,
@@ -237,9 +240,23 @@ pub async fn query_point_value(
         }]);
     }
 
-    // Convert value based on parameter type
+    // Get native units from Zarr metadata (source of truth)
+    let native_units = entry
+        .zarr_metadata
+        .as_ref()
+        .and_then(|m| m.get("units").and_then(|v| v.as_str()))
+        .unwrap_or("");
+
+    // Get layer config for display unit preferences
+    let layer_config = layer_configs.get_layer_by_param(model, &parameter);
+
+    // Create unit config using native units from Zarr + display from layer config
+    let unit_config =
+        UnitConfig::from_zarr_and_config(native_units, layer_config.map(|lc| &lc.units));
+
+    // Convert value using the unit config
     let (display_value, display_unit, raw_unit, param_name) =
-        convert_parameter_value(&parameter, value);
+        convert_value_with_config(value, &unit_config, &parameter);
 
     Ok(vec![FeatureInfo {
         layer_name: layer.to_string(),
@@ -612,7 +629,74 @@ pub fn sample_grid_value_with_projection(
 // Unit conversion
 // ============================================================================
 
-/// Convert parameter value to display format with appropriate units
+use crate::layer_config::UnitConfig;
+
+/// Convert parameter value using UnitConfig (preferred method).
+///
+/// This function uses native units from Zarr metadata and display preferences
+/// from layer config to perform the appropriate conversion.
+///
+/// # Arguments
+/// * `value` - Raw value from Zarr data
+/// * `unit_config` - Unit configuration with native/display/conversion info
+/// * `parameter` - Parameter name for display purposes
+///
+/// # Returns
+/// Tuple of (converted_value, display_unit, native_unit, parameter_name)
+pub fn convert_value_with_config(
+    value: f32,
+    unit_config: &UnitConfig,
+    parameter: &str,
+) -> (f64, String, String, String) {
+    let converted = unit_config.conversion.apply(value as f64);
+    let display_name = get_parameter_display_name(parameter);
+
+    (
+        converted,
+        unit_config.effective_display().to_string(),
+        unit_config.native.clone(),
+        display_name,
+    )
+}
+
+/// Get a human-readable display name for a parameter code.
+fn get_parameter_display_name(parameter: &str) -> String {
+    match parameter.to_uppercase().as_str() {
+        "TMP" => "Temperature".to_string(),
+        "DPT" => "Dew Point Temperature".to_string(),
+        "RH" => "Relative Humidity".to_string(),
+        "UGRD" => "U Wind Component".to_string(),
+        "VGRD" => "V Wind Component".to_string(),
+        "GUST" => "Wind Gust".to_string(),
+        "PRES" | "PRMSL" => "Pressure".to_string(),
+        "HGT" => "Geopotential Height".to_string(),
+        "APCP" => "Precipitation".to_string(),
+        "CAPE" => "CAPE".to_string(),
+        "CIN" => "CIN".to_string(),
+        "VIS" => "Visibility".to_string(),
+        "PWAT" => "Precipitable Water".to_string(),
+        "TCDC" => "Total Cloud Cover".to_string(),
+        "LCDC" => "Low Cloud Cover".to_string(),
+        "MCDC" => "Medium Cloud Cover".to_string(),
+        "HCDC" => "High Cloud Cover".to_string(),
+        "REFC" => "Composite Reflectivity".to_string(),
+        _ => parameter.to_string(),
+    }
+}
+
+/// Convert parameter value to display format with appropriate units.
+///
+/// # Deprecated
+/// This function uses hardcoded conversions based on parameter name patterns.
+/// Prefer `convert_value_with_config()` which uses UnitConfig from Zarr metadata
+/// and layer config for accurate conversions.
+///
+/// # Arguments
+/// * `parameter` - Parameter name (e.g., "TMP", "PRES")
+/// * `value` - Raw value from data
+///
+/// # Returns
+/// Tuple of (converted_value, display_unit, native_unit, parameter_name)
 pub fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String, String) {
     if parameter.contains("TMP") || parameter.contains("TEMP") {
         // Temperature: Kelvin to Celsius

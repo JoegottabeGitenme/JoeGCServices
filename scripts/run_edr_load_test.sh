@@ -382,8 +382,13 @@ random_point() {
     local min_lon=$1 max_lon=$2 min_lat=$3 max_lat=$4
     python3 -c "
 import random
-lon = random.uniform($min_lon, $max_lon)
-lat = random.uniform($min_lat, $max_lat)
+# Clamp to valid WGS84 range
+min_lon = max(-180.0, $min_lon)
+max_lon = min(180.0, $max_lon)
+min_lat = max(-90.0, $min_lat)
+max_lat = min(90.0, $max_lat)
+lon = random.uniform(min_lon, max_lon)
+lat = random.uniform(min_lat, max_lat)
 print(f'POINT({lon:.4f} {lat:.4f})')
 "
 }
@@ -394,30 +399,36 @@ random_polygon() {
     python3 -c "
 import random
 size = $size
+# Clamp to valid WGS84 range first
+bbox_min_lon = max(-180.0, $min_lon)
+bbox_max_lon = min(180.0, $max_lon)
+bbox_min_lat = max(-90.0, $min_lat)
+bbox_max_lat = min(90.0, $max_lat)
+
 # Ensure we have room for the polygon
-effective_min_lon = $min_lon + size/2
-effective_max_lon = $max_lon - size/2
-effective_min_lat = $min_lat + size/2
-effective_max_lat = $max_lat - size/2
+effective_min_lon = bbox_min_lon + size/2
+effective_max_lon = bbox_max_lon - size/2
+effective_min_lat = bbox_min_lat + size/2
+effective_max_lat = bbox_max_lat - size/2
 
 # Handle case where bbox is smaller than polygon size
 if effective_min_lon >= effective_max_lon:
-    effective_min_lon = $min_lon
-    effective_max_lon = $max_lon
-    size = min(size, $max_lon - $min_lon)
+    effective_min_lon = bbox_min_lon
+    effective_max_lon = bbox_max_lon
+    size = min(size, bbox_max_lon - bbox_min_lon)
 if effective_min_lat >= effective_max_lat:
-    effective_min_lat = $min_lat
-    effective_max_lat = $max_lat
-    size = min(size, $max_lat - $min_lat)
+    effective_min_lat = bbox_min_lat
+    effective_max_lat = bbox_max_lat
+    size = min(size, bbox_max_lat - bbox_min_lat)
 
 center_lon = random.uniform(effective_min_lon, effective_max_lon)
 center_lat = random.uniform(effective_min_lat, effective_max_lat)
 half = size / 2
 
-min_x = center_lon - half
-max_x = center_lon + half
-min_y = center_lat - half
-max_y = center_lat + half
+min_x = max(-180.0, center_lon - half)
+max_x = min(180.0, center_lon + half)
+min_y = max(-90.0, center_lat - half)
+max_y = min(90.0, center_lat + half)
 
 print(f'POLYGON(({min_x:.4f} {min_y:.4f},{max_x:.4f} {min_y:.4f},{max_x:.4f} {max_y:.4f},{min_x:.4f} {max_y:.4f},{min_x:.4f} {min_y:.4f}))')
 "
@@ -430,30 +441,36 @@ random_bbox() {
 import random
 
 size = $size
+# Clamp to valid WGS84 range first
+bbox_min_lon = max(-180.0, $min_lon)
+bbox_max_lon = min(180.0, $max_lon)
+bbox_min_lat = max(-90.0, $min_lat)
+bbox_max_lat = min(90.0, $max_lat)
+
 # Ensure we have room for the bbox
-effective_min_lon = $min_lon + size/2
-effective_max_lon = $max_lon - size/2
-effective_min_lat = $min_lat + size/2
-effective_max_lat = $max_lat - size/2
+effective_min_lon = bbox_min_lon + size/2
+effective_max_lon = bbox_max_lon - size/2
+effective_min_lat = bbox_min_lat + size/2
+effective_max_lat = bbox_max_lat - size/2
 
 # Handle case where bounds are smaller than bbox size
 if effective_min_lon >= effective_max_lon:
-    effective_min_lon = $min_lon
-    effective_max_lon = $max_lon
-    size = min(size, ($max_lon - $min_lon) * 0.8)
+    effective_min_lon = bbox_min_lon
+    effective_max_lon = bbox_max_lon
+    size = min(size, (bbox_max_lon - bbox_min_lon) * 0.8)
 if effective_min_lat >= effective_max_lat:
-    effective_min_lat = $min_lat
-    effective_max_lat = $max_lat
-    size = min(size, ($max_lat - $min_lat) * 0.8)
+    effective_min_lat = bbox_min_lat
+    effective_max_lat = bbox_max_lat
+    size = min(size, (bbox_max_lat - bbox_min_lat) * 0.8)
 
 center_lon = random.uniform(effective_min_lon, effective_max_lon)
 center_lat = random.uniform(effective_min_lat, effective_max_lat)
 half = size / 2
 
-west = center_lon - half
-east = center_lon + half
-south = center_lat - half
-north = center_lat + half
+west = max(-180.0, center_lon - half)
+east = min(180.0, center_lon + half)
+south = max(-90.0, center_lat - half)
+north = min(90.0, center_lat + half)
 
 # Format: west,south,east,north
 print(f'{west:.4f},{south:.4f},{east:.4f},{north:.4f}')
@@ -470,21 +487,27 @@ import math
 length = $length
 num_points = $points
 
+# Clamp to valid WGS84 range first
+bbox_min_lon = max(-180.0, $min_lon)
+bbox_max_lon = min(180.0, $max_lon)
+bbox_min_lat = max(-90.0, $min_lat)
+bbox_max_lat = min(90.0, $max_lat)
+
 # Ensure we have room for the linestring
-effective_min_lon = $min_lon + length/2
-effective_max_lon = $max_lon - length/2
-effective_min_lat = $min_lat + length/2
-effective_max_lat = $max_lat - length/2
+effective_min_lon = bbox_min_lon + length/2
+effective_max_lon = bbox_max_lon - length/2
+effective_min_lat = bbox_min_lat + length/2
+effective_max_lat = bbox_max_lat - length/2
 
 # Handle case where bbox is smaller than line length
 if effective_min_lon >= effective_max_lon:
-    effective_min_lon = $min_lon
-    effective_max_lon = $max_lon
-    length = min(length, ($max_lon - $min_lon) * 0.8)
+    effective_min_lon = bbox_min_lon
+    effective_max_lon = bbox_max_lon
+    length = min(length, (bbox_max_lon - bbox_min_lon) * 0.8)
 if effective_min_lat >= effective_max_lat:
-    effective_min_lat = $min_lat
-    effective_max_lat = $max_lat
-    length = min(length, ($max_lat - $min_lat) * 0.8)
+    effective_min_lat = bbox_min_lat
+    effective_max_lat = bbox_max_lat
+    length = min(length, (bbox_max_lat - bbox_min_lat) * 0.8)
 
 # Start point
 start_lon = random.uniform(effective_min_lon, effective_max_lon)
@@ -504,9 +527,9 @@ for i in range(num_points):
     lon = start_lon + t * length * math.cos(angle) + curve_offset * math.cos(perp_angle)
     lat = start_lat + t * length * math.sin(angle) + curve_offset * math.sin(perp_angle)
     
-    # Clamp to bbox
-    lon = max($min_lon, min($max_lon, lon))
-    lat = max($min_lat, min($max_lat, lat))
+    # Clamp to valid WGS84 range
+    lon = max(-180.0, min(180.0, lon))
+    lat = max(-90.0, min(90.0, lat))
     
     coords.append(f'{lon:.4f} {lat:.4f}')
 

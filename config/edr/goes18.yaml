@@ -1,0 +1,104 @@
+# GOES-18 (GOES West) EDR Configuration
+# Observation data from geostationary satellite
+#
+# Key differences from NWP models:
+# - No forecast hours (observation data)
+# - No vertical levels (all data at top-of-atmosphere)
+# - Instances represent observation timestamps, not model runs
+# - Updates every ~5 minutes
+#
+# Coverage: Western CONUS, Pacific (-175 to -100 lon, 14.5 to 55.5 lat)
+#
+# NOTE: Only parameters that are currently being ingested are listed here.
+# To add more bands, update config/models/goes18.yaml 'bands' list and add
+# the corresponding parameters below.
+
+model: goes18
+
+collections:
+  # ===========================================================================
+  # Instance-based collections (access all available observation timestamps)
+  # ===========================================================================
+  
+  # Infrared band - brightness temperature (currently ingested: band 13 only)
+  - id: goes18-infrared
+    title: "GOES-18 Infrared"
+    description: "Clean Longwave IR brightness temperature (10.3um). Available day and night."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+    run_mode: instances
+
+  # ===========================================================================
+  # Latest-only collections (quick access to most recent data)
+  # These use the non-instance endpoints for simpler access patterns:
+  #   GET /edr/collections/goes18-infrared-latest/position?coords=POINT(-120 35)
+  # ===========================================================================
+  
+  - id: goes18-infrared-latest
+    title: "GOES-18 Infrared (Latest)"
+    description: "Most recent Clean Longwave IR imagery."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+    run_mode: latest
+
+# ===========================================================================
+# Future collections (uncomment when corresponding bands are ingested)
+# ===========================================================================
+# To enable these, add the band numbers to config/models/goes18.yaml:
+#   bands: [ 1, 2, 3, 8, 9, 10, 13, 14 ]
+#
+# Visible bands (bands 1, 2, 3) - daytime only:
+#  - id: goes18-visible
+#    title: "GOES-18 Visible Imagery"
+#    description: "Visible reflectance bands (0.47-0.86um). Best during daytime."
+#    level_filter:
+#      level_type: top_of_atmosphere
+#      level_code: 8
+#    parameters:
+#      - name: CMI_C01
+#        levels: [visible_blue]
+#      - name: CMI_C02
+#        levels: [visible_red]
+#      - name: CMI_C03
+#        levels: [visible_veggie]
+#    run_mode: instances
+#
+# Water vapor bands (bands 8, 9, 10):
+#  - id: goes18-water-vapor
+#    title: "GOES-18 Water Vapor"
+#    description: "Water vapor channel brightness temperatures (6.2-7.3um)."
+#    level_filter:
+#      level_type: top_of_atmosphere
+#      level_code: 8
+#    parameters:
+#      - name: CMI_C08
+#        levels: [upper_vapor]
+#      - name: CMI_C09
+#        levels: [mid_vapor]
+#      - name: CMI_C10
+#        levels: [low_vapor]
+#    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 36          # ~3 hours at 5-min intervals
+  max_vertical_levels: 1      # No vertical dimension for satellite data
+  max_response_size_mb: 100   # GOES grids are large (~5000x3000)
+  max_area_sq_degrees: 50     # Limit area queries due to high resolution
+  max_radius_km: 250          # Limit radius queries

@@ -12,6 +12,9 @@ pub struct GridData {
     /// Whether the underlying grid uses 0-360 longitude convention (like GFS).
     /// This is needed for proper coordinate handling even when bbox is a partial region.
     pub grid_uses_360: bool,
+    /// Native units from the data source (e.g., "K", "Pa", "%").
+    /// Read from Zarr metadata as the authoritative source of truth.
+    pub native_units: String,
 }
 
 /// Dynamic GOES projection parameters extracted from NetCDF file
