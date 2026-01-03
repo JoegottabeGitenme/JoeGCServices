@@ -101,7 +101,8 @@ pub async fn list_instances_handler(
 
         // Build extent with spatial bbox and temporal range
         let extent = if let Some(bbox) = spatial_bbox {
-            Extent::with_spatial(bbox, None).with_temporal(TemporalExtent::new(Some(start_str), end_str))
+            Extent::with_spatial(bbox, None)
+                .with_temporal(TemporalExtent::new(Some(start_str), end_str))
         } else {
             Extent {
                 spatial: None,
@@ -241,7 +242,8 @@ pub async fn get_instance_handler(
 
     // Build extent with spatial bbox and temporal range
     let extent = if let Some(bbox) = spatial_bbox {
-        Extent::with_spatial(bbox, None).with_temporal(TemporalExtent::new(Some(start_str), end_str))
+        Extent::with_spatial(bbox, None)
+            .with_temporal(TemporalExtent::new(Some(start_str), end_str))
     } else {
         Extent {
             spatial: None,

@@ -251,10 +251,8 @@ pub async fn query_point_value(
     let layer_config = layer_configs.get_layer_by_param(model, &parameter);
 
     // Create unit config using native units from Zarr + display from layer config
-    let unit_config = UnitConfig::from_zarr_and_config(
-        native_units,
-        layer_config.map(|lc| &lc.units),
-    );
+    let unit_config =
+        UnitConfig::from_zarr_and_config(native_units, layer_config.map(|lc| &lc.units));
 
     // Convert value using the unit config
     let (display_value, display_unit, raw_unit, param_name) =
