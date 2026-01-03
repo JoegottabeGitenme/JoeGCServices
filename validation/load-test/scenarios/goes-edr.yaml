@@ -1,0 +1,526 @@
+# GOES-18 EDR Load Test Scenarios
+#
+# This file defines EDR API load test scenarios for GOES-18 satellite imagery.
+# Run with: scripts/run_edr_load_test.sh scenarios/goes-edr.yaml
+#
+# Key differences from HRRR:
+# - Observation data (no forecast hours)
+# - Single parameter (CMI_C13) currently ingested
+# - No vertical levels (top-of-atmosphere only)
+# - Higher temporal frequency (~5 min updates, ~36 obs over 3 hours)
+# - Larger grid resolution (~5000x3000 pixels, ~1km)
+# - NO cube queries (no vertical dimension)
+#
+# Note: "../.." means "all available times" per OGC EDR spec
+
+name: goes-edr
+description: |
+  GOES-18 EDR API load test scenarios for satellite imagery.
+  Tests position, area, trajectory, corridor, and radius queries.
+  Note: No cube queries as GOES has no vertical dimension.
+
+base_url: http://localhost:8083/edr
+duration_secs: 60
+concurrency: 10
+warmup_secs: 5
+
+# Collections to test
+collections:
+  - goes18-infrared
+  - goes18-infrared-latest
+
+# =============================================================================
+# Position Query Scenarios
+# =============================================================================
+position_queries:
+  # Basic position query (latest)
+  - name: position_basic
+    collection: goes18-infrared-latest
+    coords: "POINT(-120 35)"
+    parameters: ["CMI_C13"]
+    weight: 2.0
+    description: "Basic IR point query (California)"
+    
+  # Position with specific instance
+  - name: position_with_instance
+    collection: goes18-infrared
+    coords: "POINT(-110 40)"
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "Point query at specific observation time"
+    
+  # Position at different locations across coverage
+  - name: position_hawaii
+    collection: goes18-infrared-latest
+    coords: "POINT(-155 20)"
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Hawaii (edge of GOES-18 coverage)"
+    
+  - name: position_pacific
+    collection: goes18-infrared-latest
+    coords: "POINT(-140 30)"
+    parameters: ["CMI_C13"]
+    weight: 0.8
+    description: "Pacific Ocean"
+    
+  - name: position_seattle
+    collection: goes18-infrared-latest
+    coords: "POINT(-122.3 47.6)"
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Seattle"
+    
+  # Random location position
+  - name: position_random
+    collection: goes18-infrared-latest
+    random_bbox:
+      min_lon: -160
+      max_lon: -105
+      min_lat: 20
+      max_lat: 50
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "Random point within GOES-18 coverage"
+
+# =============================================================================
+# Time Series Queries (satellite observation history)
+# =============================================================================
+time_series_queries:
+  # Full observation history at a point (~36 observations over 3 hours)
+  - name: timeseries_full
+    collection: goes18-infrared
+    coords: "POINT(-120 35)"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 1.5
+    description: "Full time series (~3 hours of 5-min obs)"
+    
+  # Time series at major cities
+  - name: timeseries_la
+    collection: goes18-infrared
+    coords: "POINT(-118.2 34.0)"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 1.0
+    description: "Los Angeles observation history"
+    
+  - name: timeseries_sf
+    collection: goes18-infrared
+    coords: "POINT(-122.4 37.8)"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 1.0
+    description: "San Francisco observation history"
+    
+  # Random location time series
+  - name: timeseries_random
+    collection: goes18-infrared
+    random_bbox:
+      min_lon: -160
+      max_lon: -105
+      min_lat: 20
+      max_lat: 50
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 1.0
+    description: "Random location time series"
+
+# =============================================================================
+# Area Query Scenarios
+# =============================================================================
+area_queries:
+  # Small area - 1x1 degree
+  - name: area_small
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-121 34,-120 34,-120 35,-121 35,-121 34))"
+    parameters: ["CMI_C13"]
+    weight: 2.0
+    description: "1x1 deg area (Los Angeles region)"
+    
+  # Medium area - 2x2 degrees
+  - name: area_medium
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-122 33,-120 33,-120 35,-122 35,-122 33))"
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "2x2 deg area (Southern California)"
+    
+  # Larger area - 5x5 degrees
+  - name: area_large
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-125 30,-120 30,-120 35,-125 35,-125 30))"
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "5x5 deg area (California coast)"
+    
+  # Complex polygon - coastal outline
+  - name: area_complex
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-122.5 37,-121.5 37,-121.5 38,-120.5 38,-120.5 37.5,-121.5 37,-122.5 37))"
+    parameters: ["CMI_C13"]
+    weight: 0.5
+    description: "Complex polygon (Bay Area)"
+    
+  # Area with time series (HEAVY)
+  - name: area_timeseries
+    collection: goes18-infrared
+    coords: "POLYGON((-121 34,-120 34,-120 35,-121 35,-121 34))"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.5
+    description: "HEAVY: 1x1 deg area over all observations"
+    
+  # Random area
+  - name: area_random
+    collection: goes18-infrared-latest
+    random_bbox:
+      min_lon: -160
+      max_lon: -105
+      min_lat: 20
+      max_lat: 50
+    polygon_size: 2.0
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "Random 2x2 deg area within coverage"
+
+# =============================================================================
+# Radius Query Scenarios
+# =============================================================================
+radius_queries:
+  # Small radius - 25km
+  - name: radius_small
+    collection: goes18-infrared-latest
+    coords: "POINT(-118.2 34.0)"
+    within: 25
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 2.0
+    description: "25km radius (Los Angeles)"
+    
+  # Medium radius - 50km
+  - name: radius_medium
+    collection: goes18-infrared-latest
+    coords: "POINT(-122.4 37.8)"
+    within: 50
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "50km radius (San Francisco)"
+    
+  # Large radius - 100km
+  - name: radius_large
+    collection: goes18-infrared-latest
+    coords: "POINT(-115 36)"
+    within: 100
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "100km radius (Las Vegas area)"
+    
+  # Near max radius - 200km
+  - name: radius_near_max
+    collection: goes18-infrared-latest
+    coords: "POINT(-120 35)"
+    within: 200
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 0.5
+    description: "200km radius (near 250km limit)"
+    
+  # Radius with time series (HEAVY)
+  - name: radius_timeseries
+    collection: goes18-infrared
+    coords: "POINT(-120 35)"
+    within: 50
+    within_units: km
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.5
+    description: "HEAVY: 50km radius over all observations"
+    
+  # Random location radius
+  - name: radius_random
+    collection: goes18-infrared-latest
+    random_bbox:
+      min_lon: -160
+      max_lon: -105
+      min_lat: 20
+      max_lat: 50
+    within: 50
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Random 50km radius"
+
+# =============================================================================
+# Trajectory Query Scenarios
+# =============================================================================
+trajectory_queries:
+  # Short trajectory - 2 points
+  - name: trajectory_short
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-121 35,-119 36)"
+    parameters: ["CMI_C13"]
+    weight: 2.0
+    description: "Short 2-point trajectory"
+    
+  # Medium trajectory - 4 points
+  - name: trajectory_medium
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-125 35,-122 36,-119 37,-116 38)"
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "4-point trajectory across California"
+    
+  # Long trajectory - coastal path
+  - name: trajectory_long
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-124 32,-122 34,-120 36,-118 38,-116 40)"
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Long coastal trajectory (5 points)"
+    
+  # Cross-Pacific trajectory
+  - name: trajectory_pacific
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-155 20,-140 25,-125 30)"
+    parameters: ["CMI_C13"]
+    weight: 0.5
+    description: "Hawaii to California trajectory"
+    
+  # Trajectory with time series (HEAVY)
+  - name: trajectory_timeseries
+    collection: goes18-infrared
+    coords: "LINESTRING(-121 35,-119 36)"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.5
+    description: "HEAVY: Trajectory over all observations"
+    
+  # Random trajectory
+  - name: trajectory_random
+    collection: goes18-infrared-latest
+    random_bbox:
+      min_lon: -150
+      max_lon: -110
+      min_lat: 25
+      max_lat: 45
+    linestring_length: 3.0
+    linestring_points: 3
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Random 3-point trajectory"
+
+# =============================================================================
+# Corridor Query Scenarios
+# =============================================================================
+corridor_queries:
+  # Narrow corridor - 10km
+  - name: corridor_narrow
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-121 35,-119 36)"
+    corridor_width: 10
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    weight: 2.0
+    description: "10km wide corridor"
+    
+  # Medium corridor - 25km
+  - name: corridor_medium
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-125 35,-120 37,-115 39)"
+    corridor_width: 25
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    weight: 1.5
+    description: "25km wide corridor (3 points)"
+    
+  # Wide corridor - 50km
+  - name: corridor_wide
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-122 34,-118 38)"
+    corridor_width: 50
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "50km wide corridor"
+    
+  # Corridor with miles units
+  - name: corridor_miles
+    collection: goes18-infrared-latest
+    coords: "LINESTRING(-120 35,-118 36,-116 37)"
+    corridor_width: 20
+    width_units: mi
+    corridor_height: 30000
+    height_units: ft
+    parameters: ["CMI_C13"]
+    weight: 0.8
+    description: "20 mile wide corridor"
+    
+  # Corridor with time series (HEAVY)
+  - name: corridor_timeseries
+    collection: goes18-infrared
+    coords: "LINESTRING(-121 35,-119 36)"
+    corridor_width: 20
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.3
+    description: "HEAVY: Corridor over all observations"
+    
+  # Random corridor
+  - name: corridor_random
+    collection: goes18-infrared-latest
+    random_bbox:
+      min_lon: -150
+      max_lon: -110
+      min_lat: 25
+      max_lat: 45
+    linestring_length: 2.0
+    linestring_points: 2
+    corridor_width: 20
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    weight: 1.0
+    description: "Random corridor"
+
+# =============================================================================
+# Stress Test Scenarios (HEAVY queries to push server limits)
+# =============================================================================
+stress_test_queries:
+  # Large area with all observations
+  - name: stress_large_area_timeseries
+    collection: goes18-infrared
+    coords: "POLYGON((-125 30,-120 30,-120 35,-125 35,-125 30))"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.3
+    description: "HEAVY: 5x5 deg area over ~36 observations"
+    
+  # Near-maximum radius with time series
+  - name: stress_max_radius_timeseries
+    collection: goes18-infrared
+    coords: "POINT(-120 35)"
+    within: 200
+    within_units: km
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.3
+    description: "HEAVY: 200km radius over all observations"
+    
+  # Long corridor with time series
+  - name: stress_long_corridor
+    collection: goes18-infrared
+    coords: "LINESTRING(-130 30,-120 35,-110 40)"
+    corridor_width: 30
+    width_units: km
+    corridor_height: 10000
+    height_units: m
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.2
+    description: "HEAVY: Long corridor over all observations"
+    
+  # Multi-point time series
+  - name: stress_multipoint_timeseries
+    collection: goes18-infrared
+    coords: "MULTIPOINT((-118 34),(-122 37),(-115 36))"
+    parameters: ["CMI_C13"]
+    datetime: "../.."
+    weight: 0.3
+    description: "HEAVY: 3 points over all observations"
+    
+  # Maximum area near limit
+  - name: stress_max_area
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-127 28,-120 28,-120 35,-127 35,-127 28))"
+    parameters: ["CMI_C13"]
+    weight: 0.3
+    description: "HEAVY: 7x7 deg area (49 sq deg, near 50 limit)"
+
+# =============================================================================
+# Edge Cases (validation scenarios)
+# =============================================================================
+edge_cases:
+  # Near maximum area (should succeed)
+  - name: area_near_max
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-127 28,-120 28,-120 35,-127 35,-127 28))"
+    parameters: ["CMI_C13"]
+    weight: 0.3
+    expected_status: 200
+    description: "7x7 deg area - near max allowed (50 sq deg)"
+    
+  # Area too large (should fail)
+  - name: area_too_large
+    collection: goes18-infrared-latest
+    coords: "POLYGON((-140 20,-100 20,-100 50,-140 50,-140 20))"
+    parameters: ["CMI_C13"]
+    weight: 0.1
+    expected_status: [400, 413]
+    description: "40x30 deg area - should be rejected"
+    
+  # Radius too large (should fail)
+  - name: radius_too_large
+    collection: goes18-infrared-latest
+    coords: "POINT(-120 35)"
+    within: 500
+    within_units: km
+    parameters: ["CMI_C13"]
+    weight: 0.1
+    expected_status: 413
+    description: "500km radius - exceeds 250km limit"
+    
+  # Point outside coverage (may return null/empty)
+  - name: point_outside_coverage
+    collection: goes18-infrared-latest
+    coords: "POINT(-70 40)"
+    parameters: ["CMI_C13"]
+    weight: 0.1
+    description: "East coast - outside GOES-18 coverage"
+    
+  # Point at edge of coverage
+  - name: point_edge_coverage
+    collection: goes18-infrared-latest
+    coords: "POINT(-175 15)"
+    parameters: ["CMI_C13"]
+    weight: 0.1
+    description: "Far Pacific - edge of GOES-18 coverage"
+
+# Test points for random location generation
+test_points:
+  - name: los_angeles
+    lon: -118.2
+    lat: 34.0
+  - name: san_francisco
+    lon: -122.4
+    lat: 37.8
+  - name: seattle
+    lon: -122.3
+    lat: 47.6
+  - name: phoenix
+    lon: -112.1
+    lat: 33.4
+  - name: denver
+    lon: -104.9
+    lat: 39.7
+  - name: honolulu
+    lon: -157.8
+    lat: 21.3
+  - name: las_vegas
+    lon: -115.1
+    lat: 36.2
+  - name: portland
+    lon: -122.7
+    lat: 45.5
