@@ -1,0 +1,259 @@
+# =============================================================================
+# Weather WMS - Production Overrides
+# =============================================================================
+# This file overrides the base docker-compose.yml for production deployment.
+# It removes exposed ports, adds security, and optimizes for production.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d
+#
+# Changes from base:
+#   - Nginx reverse proxy as single entry point (ports 80, 443)
+#   - All other service ports removed (internal only)
+#   - pgAdmin removed (security)
+#   - Redis password authentication enabled
+#   - Resource limits added
+#   - Cloudflare DDNS container for dynamic IP
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # NGINX REVERSE PROXY (only public-facing service)
+  # ==========================================================================
+  nginx:
+    build:
+      context: ./deploy/production/nginx
+    container_name: weather-wms-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/production/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/production/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ./deploy/production/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      wms-api:
+        condition: service_healthy
+      edr-api:
+        condition: service_healthy
+      web-dashboard:
+        condition: service_healthy
+    networks:
+      - default
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ==========================================================================
+  # CLOUDFLARE TUNNEL (exposes services without port forwarding)
+  # ==========================================================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: weather-wms-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - default
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ==========================================================================
+  # CLOUDFLARE DDNS (keeps DNS updated when IP changes)
+  # Note: Not needed when using Cloudflare Tunnel, but kept for reference
+  # ==========================================================================
+  cloudflare-ddns:
+    image: oznu/cloudflare-ddns:latest
+    container_name: weather-wms-ddns
+    restart: unless-stopped
+    environment:
+      API_KEY: ${CLOUDFLARE_API_TOKEN:-}
+      ZONE: ${DOMAIN:-folkweather.com}
+      PROXIED: "true"
+      RRTYPE: A
+    profiles:
+      - ddns
+    networks:
+      - default
+
+  # ==========================================================================
+  # INFRASTRUCTURE OVERRIDES (remove exposed ports)
+  # ==========================================================================
+  postgres:
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  redis:
+    ports: []
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  minio:
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ==========================================================================
+  # APPLICATION SERVICES (remove ports, add Redis password, resource limits)
+  # ==========================================================================
+  wms-api:
+    ports: []
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ALLOW_HTTP: "true"
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
+      TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-16}
+      ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
+      TILE_CACHE_SIZE_MB: ${TILE_CACHE_SIZE_MB:-8192}
+      TILE_CACHE_TTL_SECS: ${TILE_CACHE_TTL_SECS:-600}
+      ENABLE_PREFETCH: ${ENABLE_PREFETCH:-true}
+      PREFETCH_RINGS: ${PREFETCH_RINGS:-2}
+      PREFETCH_MIN_ZOOM: ${PREFETCH_MIN_ZOOM:-3}
+      PREFETCH_MAX_ZOOM: ${PREFETCH_MAX_ZOOM:-12}
+      ENABLE_CACHE_WARMING: ${ENABLE_CACHE_WARMING:-true}
+      CACHE_WARMING_MAX_ZOOM: ${CACHE_WARMING_MAX_ZOOM:-4}
+      CACHE_WARMING_HOURS: ${CACHE_WARMING_HOURS:-0}
+      CACHE_WARMING_LAYERS: ${CACHE_WARMING_LAYERS:-gfs_TMP:temperature}
+      CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-8}
+      ENABLE_MEMORY_PRESSURE: ${ENABLE_MEMORY_PRESSURE:-true}
+      MEMORY_LIMIT_MB: ${MEMORY_LIMIT_MB:-28000}
+      MEMORY_PRESSURE_THRESHOLD: ${MEMORY_PRESSURE_THRESHOLD:-0.80}
+      MEMORY_PRESSURE_TARGET: ${MEMORY_PRESSURE_TARGET:-0.70}
+      INGESTER_URL: http://ingester:8082
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+
+  edr-api:
+    ports: []
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      EDR_BASE_URL: https://${DOMAIN:-folkweather.com}/edr
+      EDR_CHUNK_CACHE_MB: ${CHUNK_CACHE_SIZE_MB:-8192}
+      EDR_LISTEN_ADDR: "0.0.0.0:8083"
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  web-dashboard:
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  ingester:
+    ports: []
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-weather-data}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ALLOW_HTTP: "true"
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
+      CONFIG_DIR: /app/config
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  downloader:
+    ports: []
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
+      INGESTER_URL: http://ingester:8082/ingest
+      STATUS_PORT: 8081
+      CONFIG_DIR: /app/config
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ==========================================================================
+  # MONITORING (remove exposed ports)
+  # ==========================================================================
+  prometheus:
+    ports: []
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_DAYS:-30}d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  grafana:
+    ports: []
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: https://${DOMAIN:-folkweather.com}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  loki:
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # promtail - no port changes needed, just resource limits
+  promtail:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ==========================================================================
+  # REMOVED SERVICES
+  # ==========================================================================
+  # pgadmin is not included in production - access DB via SSH tunnel if needed
+  pgadmin:
+    deploy:
+      replicas: 0
+
+# =============================================================================
+# ADDITIONAL VOLUMES
+# =============================================================================
+# (No additional volumes needed - Cloudflare origin certs are mounted directly)

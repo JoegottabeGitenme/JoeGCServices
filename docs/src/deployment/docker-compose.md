@@ -160,14 +160,31 @@ services:
         target: /data
 ```
 
-## Production Considerations
+## Production Override
 
-Docker Compose is **not recommended for production**. For production deployments:
+For single-server production deployments, use the production override file:
 
-- Use [Kubernetes](./kubernetes.md) or [Helm](./helm.md)
-- Managed PostgreSQL (AWS RDS, Cloud SQL)
-- Managed Redis (ElastiCache, MemoryStore)
-- S3 instead of MinIO
+```bash
+docker compose -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d
+```
+
+The production override (`deploy/production/docker-compose.prod.yml`) adds:
+
+- **Nginx reverse proxy** as the only exposed service (ports 80/443)
+- **Cloudflare Tunnel** container for CGNAT networks
+- **Resource limits** on all containers
+- **Removed development tools** (pgAdmin)
+- **Internal-only networking** for backend services
+
+See [Production Deployment](./production.md) for the complete production setup guide, which includes TLS configuration, authentication, and the automated deployment script.
+
+## Scaling Considerations
+
+Docker Compose is best for development and small deployments. For larger deployments:
+
+- **Single server production**: Use [Production Deployment](./production.md) with the deploy script
+- **Multi-node / HA**: Use [Kubernetes](./kubernetes.md) or [Helm](./helm.md)
+- **Managed services**: Consider AWS RDS, ElastiCache, and S3 instead of self-hosted
 
 ## Next Steps
 

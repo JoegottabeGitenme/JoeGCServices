@@ -110,3 +110,8 @@ compile_commands.json
 /config.json
 /validation/ogc-compliance/lib/ets-ogcapi-edr10-1.3-aio.jar
 /edr-dump-*/
+/deploy/production/.env.nuc
+/.env.nuc
+/deploy/production/nginx/ssl/origin.cert
+/deploy/production/nginx/ssl/origin.key
+/tunnel.token

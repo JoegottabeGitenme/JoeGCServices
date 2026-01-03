@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FolkWeather - Weather for Everyone</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #f59e0b;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --border: #334155;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, #1e1b4b 100%);
+            padding: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--text);
+        }
+
+        .logo-icon {
+            font-size: 2rem;
+        }
+
+        .logo-text {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .nav-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+            font-size: 0.95rem;
+        }
+
+        .nav-link:hover {
+            color: var(--text);
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 4rem 1.5rem;
+            text-align: center;
+            background: linear-gradient(180deg, transparent 0%, rgba(79, 70, 229, 0.1) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 40%, rgba(79, 70, 229, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 60%, rgba(245, 158, 11, 0.1) 0%, transparent 40%);
+            animation: float 20s ease-in-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            50% { transform: translate(-2%, 2%) rotate(1deg); }
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 8vw, 4rem);
+            font-weight: 800;
+            margin-bottom: 1rem;
+            line-height: 1.1;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-tagline {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Construction Banner */
+        .construction-banner {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            padding: 0.75rem 1.5rem;
+            border-radius: 50px;
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+
+        .construction-banner .icon {
+            font-size: 1.2rem;
+        }
+
+        .construction-banner .text {
+            color: var(--secondary);
+            font-weight: 500;
+        }
+
+        /* Status Indicator */
+        .status-live {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            margin-top: 1rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+            50% { opacity: 0.8; box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+        }
+
+        /* Main Content */
+        .main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem 4rem;
+        }
+
+        /* Section */
+        .section {
+            margin-bottom: 3rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-title .icon {
+            font-size: 1.75rem;
+        }
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: var(--primary);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            font-size: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .card-description {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary-light);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: gap 0.2s;
+        }
+
+        .card-link:hover {
+            gap: 0.75rem;
+        }
+
+        /* Example Tiles Section */
+        .examples-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .examples-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .example-item {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .example-item:hover {
+            border-color: var(--primary);
+        }
+
+        .example-img-container {
+            position: relative;
+            aspect-ratio: 16/10;
+            background: #000;
+            overflow: hidden;
+        }
+
+        .example-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .example-img.loaded {
+            opacity: 1;
+        }
+
+        .example-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-dark) 100%);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .example-placeholder .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .example-info {
+            padding: 0.75rem 1rem;
+        }
+
+        .example-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .example-desc {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        /* EDR Response Examples */
+        .edr-examples-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .edr-example-item {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .edr-example-item:hover {
+            border-color: var(--primary);
+        }
+
+        .edr-example-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .edr-example-header .location-icon {
+            font-size: 1.2rem;
+        }
+
+        .edr-example-header .location-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .edr-example-header .location-id {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        .edr-response-container {
+            position: relative;
+            background: #0d1117;
+            max-height: 200px;
+            overflow: hidden;
+        }
+
+        .edr-response-container::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: linear-gradient(transparent, #0d1117);
+            pointer-events: none;
+        }
+
+        .edr-response {
+            padding: 0.75rem 1rem;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            color: #e6edf3;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        .edr-response .key {
+            color: #7ee787;
+        }
+
+        .edr-response .string {
+            color: #a5d6ff;
+        }
+
+        .edr-response .number {
+            color: #f9826c;
+        }
+
+        .edr-example-info {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border);
+            background: rgba(255,255,255,0.02);
+        }
+
+        .edr-example-title {
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 0.25rem;
+            color: var(--primary-light);
+        }
+
+        .edr-example-desc {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        .edr-example-endpoint {
+            margin-top: 0.5rem;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            word-break: break-all;
+        }
+
+        /* API Endpoints */
+        .endpoint-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .endpoint-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            padding: 1rem;
+            border-radius: 8px;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .endpoint-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .endpoint-method {
+            background: var(--primary);
+            color: white;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .endpoint-path {
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: var(--text);
+        }
+
+        .endpoint-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .endpoint-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .endpoint-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary-light);
+        }
+
+        /* Footer */
+        .footer {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            padding: 2rem 1.5rem;
+            text-align: center;
+        }
+
+        .footer-content {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .footer-text {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: color 0.2s;
+        }
+
+        .footer-link:hover {
+            color: var(--primary-light);
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 640px) {
+            .nav-links {
+                display: none;
+            }
+
+            .hero {
+                padding: 3rem 1rem;
+            }
+
+            .hero-tagline {
+                font-size: 1.1rem;
+            }
+
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .examples-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .endpoint-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .endpoint-actions {
+                width: 100%;
+            }
+
+            .endpoint-btn {
+                flex: 1;
+                text-align: center;
+            }
+        }
+
+        /* Accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+
+        /* Code block */
+        code {
+            background: var(--bg-dark);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">
+                <span class="logo-icon">&#9729;</span>
+                <span class="logo-text">FolkWeather</span>
+            </a>
+            <nav class="nav-links">
+                <a href="#services" class="nav-link">Services</a>
+                <a href="#examples" class="nav-link">Examples</a>
+                <a href="#api" class="nav-link">API</a>
+            </nav>
+        </div>
+    </header>
+
+    <section class="hero">
+        <div class="hero-content">
+            <div class="construction-banner">
+                <span class="icon">&#128679;</span>
+                <span class="text">Under Construction - More features coming soon!</span>
+            </div>
+            <h1>Weather for <span>Everyone</span></h1>
+            <p class="hero-tagline">
+                Free, open weather data services powered by OGC standards. 
+                Access NOAA weather data through WMS, WMTS, and EDR APIs.
+            </p>
+            <div class="status-live">
+                <span class="status-dot"></span>
+                <span>Services Online</span>
+            </div>
+        </div>
+    </section>
+
+    <main class="main">
+        <!-- Services Section -->
+        <section class="section" id="services">
+            <h2 class="section-title">
+                <span class="icon">&#128268;</span>
+                Available Services
+            </h2>
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127758;</span>
+                        <span class="card-title">WMS - Web Map Service</span>
+                    </div>
+                    <p class="card-description">
+                        OGC-compliant Web Map Service for rendering weather data as map images.
+                        Supports GetCapabilities, GetMap, and GetFeatureInfo operations.
+                    </p>
+                    <a href="/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" class="card-link" target="_blank">
+                        View Capabilities <span>&#8594;</span>
+                    </a>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#129518;</span>
+                        <span class="card-title">WMTS - Tiled Map Service</span>
+                    </div>
+                    <p class="card-description">
+                        High-performance tiled map service for efficient weather visualization.
+                        Pre-rendered tiles for fast loading in web mapping applications.
+                    </p>
+                    <a href="/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" class="card-link" target="_blank">
+                        View Capabilities <span>&#8594;</span>
+                    </a>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128200;</span>
+                        <span class="card-title">EDR - Environmental Data</span>
+                    </div>
+                    <p class="card-description">
+                        OGC API - Environmental Data Retrieval for point, area, and trajectory queries.
+                        Get weather data in GeoJSON or CoverageJSON formats.
+                    </p>
+                    <a href="/edr" class="card-link" target="_blank">
+                        Explore API <span>&#8594;</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Examples Section -->
+        <section class="section" id="examples">
+            <h2 class="section-title">
+                <span class="icon">&#127912;</span>
+                Live Examples
+            </h2>
+            <div class="examples-section">
+                <p class="card-description">
+                    Real-time weather data rendered from our WMS service. Click any image to open the full request.
+                </p>
+                <div class="examples-grid">
+                    <!-- GFS Global Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-1">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="GFS Global Temperature"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-1').style.display='none';"
+                                 onerror="document.getElementById('placeholder-1').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GFS Temperature</div>
+                            <div class="example-desc">Global Forecast System - 2m temperature worldwide</div>
+                        </div>
+                    </a>
+
+                    <!-- HRRR High-Res Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=hrrr_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=21,-123,48,-61&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-2">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=hrrr_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=21,-123,48,-61&WIDTH=400&HEIGHT=218&FORMAT=image/png"
+                                 alt="HRRR Temperature"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-2').style.display='none';"
+                                 onerror="document.getElementById('placeholder-2').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">HRRR Temperature</div>
+                            <div class="example-desc">High-Resolution Rapid Refresh - 3km CONUS</div>
+                        </div>
+                    </a>
+
+                    <!-- GOES-18 Infrared -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-180,54,-90&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-3">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-180,54,-90&WIDTH=400&HEIGHT=218&FORMAT=image/png"
+                                 alt="GOES-18 Infrared"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3').style.display='none';"
+                                 onerror="document.getElementById('placeholder-3').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GOES-18 Infrared</div>
+                            <div class="example-desc">GOES West - Clean Longwave IR (10.3um)</div>
+                        </div>
+                    </a>
+
+                    <!-- MRMS Radar Reflectivity -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mrms_REFL&STYLES=enhanced&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-4">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mrms_REFL&STYLES=enhanced&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="MRMS Radar"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-4').style.display='none';"
+                                 onerror="document.getElementById('placeholder-4').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">MRMS Radar</div>
+                            <div class="example-desc">Multi-Radar Multi-Sensor - Reflectivity composite</div>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- EDR Examples Section -->
+        <section class="section" id="edr-examples">
+            <h2 class="section-title">
+                <span class="icon">&#128200;</span>
+                EDR Point Queries
+            </h2>
+            <div class="examples-section">
+                <p class="card-description">
+                    OGC API - Environmental Data Retrieval returns weather data as CoverageJSON. Click to see the full response.
+                </p>
+                <div class="edr-examples-grid">
+                    <!-- Denver Airport -->
+                    <a href="/edr/collections/hrrr-surface/locations/KDEN?parameter-name=GUST,VIS,CAPE" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#9992;</span>
+                            <span class="location-name">Denver International</span>
+                            <span class="location-id">KDEN</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-1"><span class="key">"parameters"</span>: {
+  <span class="key">"GUST"</span>: { <span class="key">"unit"</span>: <span class="string">"m/s"</span> },
+  <span class="key">"VIS"</span>: { <span class="key">"unit"</span>: <span class="string">"m"</span> },
+  <span class="key">"CAPE"</span>: { <span class="key">"unit"</span>: <span class="string">"J/kg"</span> }
+},
+<span class="key">"ranges"</span>: {
+  <span class="key">"GUST"</span>: { <span class="key">"values"</span>: [<span class="number">5.2</span>] },
+  <span class="key">"VIS"</span>: { <span class="key">"values"</span>: [<span class="number">24140.0</span>] },
+  <span class="key">"CAPE"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">HRRR Surface Data</div>
+                            <div class="edr-example-desc">Wind gusts, visibility, and CAPE at Denver airport</div>
+                            <div class="edr-example-endpoint">/edr/collections/hrrr-surface/locations/KDEN</div>
+                        </div>
+                    </a>
+
+                    <!-- JFK Airport -->
+                    <a href="/edr/collections/hrrr-isobaric/locations/KJFK?parameter-name=TMP,RH&z=850" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#9992;</span>
+                            <span class="location-name">JFK International</span>
+                            <span class="location-id">KJFK</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-2"><span class="key">"domain"</span>: {
+  <span class="key">"axes"</span>: {
+    <span class="key">"x"</span>: { <span class="key">"values"</span>: [<span class="number">-73.7781</span>] },
+    <span class="key">"y"</span>: { <span class="key">"values"</span>: [<span class="number">40.6413</span>] },
+    <span class="key">"z"</span>: { <span class="key">"values"</span>: [<span class="number">850</span>] }
+  }
+},
+<span class="key">"ranges"</span>: {
+  <span class="key">"TMP"</span>: { <span class="key">"values"</span>: [<span class="number">271.5</span>] },
+  <span class="key">"RH"</span>: { <span class="key">"values"</span>: [<span class="number">78.2</span>] }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">HRRR 850mb Data</div>
+                            <div class="edr-example-desc">Temperature and humidity at pressure level</div>
+                            <div class="edr-example-endpoint">/edr/collections/hrrr-isobaric/locations/KJFK?z=850</div>
+                        </div>
+                    </a>
+
+                    <!-- LAX Airport -->
+                    <a href="/edr/collections/hrrr-surface/locations/KLAX?parameter-name=GUST,PRES,VIS" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#9992;</span>
+                            <span class="location-name">Los Angeles International</span>
+                            <span class="location-id">KLAX</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-3"><span class="key">"type"</span>: <span class="string">"Coverage"</span>,
+<span class="key">"domain"</span>: {
+  <span class="key">"domainType"</span>: <span class="string">"Point"</span>,
+  <span class="key">"axes"</span>: {
+    <span class="key">"x"</span>: { <span class="key">"values"</span>: [<span class="number">-118.4085</span>] },
+    <span class="key">"y"</span>: { <span class="key">"values"</span>: [<span class="number">33.9416</span>] }
+  }
+},
+<span class="key">"ranges"</span>: {
+  <span class="key">"PRES"</span>: { <span class="key">"values"</span>: [<span class="number">101325</span>] }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">HRRR Surface Data</div>
+                            <div class="edr-example-desc">Pressure, gusts, and visibility at LAX</div>
+                            <div class="edr-example-endpoint">/edr/collections/hrrr-surface/locations/KLAX</div>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- API Endpoints Section -->
+        <section class="section" id="api">
+            <h2 class="section-title">
+                <span class="icon">&#128187;</span>
+                API Endpoints
+            </h2>
+            <div class="endpoint-list">
+                <div class="endpoint-item">
+                    <div class="endpoint-info">
+                        <span class="endpoint-method">GET</span>
+                        <span class="endpoint-path">/wms</span>
+                    </div>
+                    <div class="endpoint-actions">
+                        <a href="/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" class="endpoint-btn" target="_blank">GetCapabilities</a>
+                    </div>
+                </div>
+                <div class="endpoint-item">
+                    <div class="endpoint-info">
+                        <span class="endpoint-method">GET</span>
+                        <span class="endpoint-path">/wmts</span>
+                    </div>
+                    <div class="endpoint-actions">
+                        <a href="/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" class="endpoint-btn" target="_blank">GetCapabilities</a>
+                    </div>
+                </div>
+                <div class="endpoint-item">
+                    <div class="endpoint-info">
+                        <span class="endpoint-method">GET</span>
+                        <span class="endpoint-path">/edr</span>
+                    </div>
+                    <div class="endpoint-actions">
+                        <a href="/edr" class="endpoint-btn" target="_blank">Landing Page</a>
+                        <a href="/edr/collections" class="endpoint-btn" target="_blank">Collections</a>
+                        <a href="/edr/api" class="endpoint-btn" target="_blank">OpenAPI</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Data Sources Section -->
+        <section class="section">
+            <h2 class="section-title">
+                <span class="icon">&#128202;</span>
+                Available Data Sources
+            </h2>
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127758;</span>
+                        <span class="card-title">GFS - Global Forecast</span>
+                    </div>
+                    <p class="card-description">
+                        Global Forecast System with 0.25 degree resolution. Temperature, wind, humidity, precipitation, and more with forecasts out to 384 hours.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127782;</span>
+                        <span class="card-title">HRRR - High Resolution</span>
+                    </div>
+                    <p class="card-description">
+                        High-Resolution Rapid Refresh with 3km resolution and hourly updates. Best for short-term forecasts over CONUS.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128752;</span>
+                        <span class="card-title">MRMS Radar</span>
+                    </div>
+                    <p class="card-description">
+                        Multi-Radar Multi-Sensor composite with 2-minute updates. Real-time precipitation and reflectivity over CONUS.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128225;</span>
+                        <span class="card-title">GOES-18 Satellite</span>
+                    </div>
+                    <p class="card-description">
+                        GOES West geostationary satellite imagery. Clean longwave infrared (10.3um) with 5-minute updates.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Coming Soon Section -->
+        <section class="section">
+            <h2 class="section-title">
+                <span class="icon">&#128640;</span>
+                Coming Soon
+            </h2>
+            <div class="cards-grid">
+                <div class="card" style="opacity: 0.7;">
+                    <div class="card-header">
+                        <span class="card-icon">&#127774;</span>
+                        <span class="card-title">GOES-16 East</span>
+                    </div>
+                    <p class="card-description">
+                        GOES East satellite imagery covering the eastern US, Atlantic, and Gulf of Mexico.
+                    </p>
+                </div>
+                <div class="card" style="opacity: 0.7;">
+                    <div class="card-header">
+                        <span class="card-icon">&#127754;</span>
+                        <span class="card-title">NAM Model</span>
+                    </div>
+                    <p class="card-description">
+                        North American Mesoscale model for regional forecasts with 12km resolution.
+                    </p>
+                </div>
+                <div class="card" style="opacity: 0.7;">
+                    <div class="card-header">
+                        <span class="card-icon">&#9968;</span>
+                        <span class="card-title">NWS Alerts</span>
+                    </div>
+                    <p class="card-description">
+                        Real-time severe weather alerts, watches, and warnings from the National Weather Service.
+                    </p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <p class="footer-text">
+                FolkWeather provides free access to NOAA weather data through standard OGC APIs.<br>
+                Built with Rust. Data from NOAA/NWS.
+            </p>
+            <div class="footer-links">
+                <a href="https://github.com" class="footer-link">GitHub</a>
+                <a href="https://www.ogc.org/standards/wms" class="footer-link">OGC WMS Spec</a>
+                <a href="https://www.ogc.org/standards/wmts" class="footer-link">OGC WMTS Spec</a>
+                <a href="https://ogcapi.ogc.org/edr/" class="footer-link">OGC EDR Spec</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Lazy load images
+        document.addEventListener('DOMContentLoaded', function() {
+            const images = document.querySelectorAll('.example-img[data-src]');
+            images.forEach(img => {
+                img.src = img.dataset.src;
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,6 +1,5 @@
 - Would like to get different output formats (geotiff, black/white png, etc) in WMS and WMTS
 - getFeatureInfo should support arbitrary html output
-- we have a projection crate and also reprojecting logic in the grid processor crate
 - could we implement some sort of 'use this gradient' style magic? essentially just pass a b64 string of json or
   something to provide a colormap in a get request
 - mayyybe we implement that magic AI/ML super duper compression thing igor showed off, would need to render each tile
@@ -11,10 +10,6 @@
 - need to disable all caching and 'optimizations' to get a baseline performance metric, then apply them one by one to
   see
   how they impact performance
-- load testing needs to be cleaned up, we should have only a handlful of scenarios and just use some outside scripts to
-  manage things like cold/warm cache etc.
-- need to consider actually deploying this to ec2 or something
-    - this will bring up a whole wormy can involving security and rate limiting and api access and tokens and shit
 - implement renderer queue after we've deleted the renderer worker stuff???
     - The Renderer Worker is a background service that consumes render jobs from a Redis queue and generates PNG tiles
       for caching. It enables cache warming, prefetching, and scheduled tile rendering without blocking client requests.
