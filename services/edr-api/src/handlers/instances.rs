@@ -53,6 +53,14 @@ pub async fn list_instances_handler(
         }
     };
 
+    // Get spatial bbox from catalog (shared across all instances for this model)
+    let spatial_bbox = state
+        .catalog
+        .get_model_bbox(model_name)
+        .await
+        .ok()
+        .map(|b| [b.min_x, b.min_y, b.max_x, b.max_y]);
+
     // Build instance list
     let mut instances = Vec::new();
     for (reference_time, _count) in runs {
@@ -91,10 +99,15 @@ pub async fn list_instances_handler(
             None => (run_id.clone(), None),
         };
 
-        let extent = Extent {
-            spatial: None,
-            temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
-            vertical: None,
+        // Build extent with spatial bbox and temporal range
+        let extent = if let Some(bbox) = spatial_bbox {
+            Extent::with_spatial(bbox, None).with_temporal(TemporalExtent::new(Some(start_str), end_str))
+        } else {
+            Extent {
+                spatial: None,
+                temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
+                vertical: None,
+            }
         };
         instance = instance.with_extent(extent);
 
@@ -185,6 +198,14 @@ pub async fn get_instance_handler(
             .unwrap();
     }
 
+    // Get spatial bbox from catalog
+    let spatial_bbox = state
+        .catalog
+        .get_model_bbox(model_name)
+        .await
+        .ok()
+        .map(|b| [b.min_x, b.min_y, b.max_x, b.max_y]);
+
     let mut instance = Instance::new(&instance_id).with_title(format!(
         "{} run at {}",
         model_name.to_uppercase(),
@@ -218,10 +239,15 @@ pub async fn get_instance_handler(
         None => (instance_id.clone(), None),
     };
 
-    let extent = Extent {
-        spatial: None,
-        temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
-        vertical: None,
+    // Build extent with spatial bbox and temporal range
+    let extent = if let Some(bbox) = spatial_bbox {
+        Extent::with_spatial(bbox, None).with_temporal(TemporalExtent::new(Some(start_str), end_str))
+    } else {
+        Extent {
+            spatial: None,
+            temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
+            vertical: None,
+        }
     };
     instance = instance.with_extent(extent);
 

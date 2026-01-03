@@ -393,4 +393,71 @@ limits:
         assert_eq!(config.collections[0].parameters.len(), 1);
         assert_eq!(config.limits.max_parameters_per_request, 5);
     }
+
+    #[test]
+    fn test_goes_config_yaml_parsing() {
+        // Test parsing GOES-style observation config with top_of_atmosphere level
+        let yaml = r#"
+model: goes18
+collections:
+  - id: goes18-infrared
+    title: "GOES-18 Infrared"
+    description: "Infrared window brightness temperatures"
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+      - name: CMI_C14
+        levels: [ir]
+    run_mode: instances
+  - id: goes18-infrared-latest
+    title: "GOES-18 Infrared (Latest)"
+    description: "Most recent infrared imagery"
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+    run_mode: latest
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+limits:
+  max_time_steps: 36
+  max_vertical_levels: 1
+  max_area_sq_degrees: 50
+"#;
+
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model, "goes18");
+        assert_eq!(config.collections.len(), 2);
+
+        // Check instances collection
+        let instances_coll = &config.collections[0];
+        assert_eq!(instances_coll.id, "goes18-infrared");
+        assert_eq!(instances_coll.level_filter.level_type, "top_of_atmosphere");
+        assert_eq!(instances_coll.level_filter.level_code, Some(8));
+        assert_eq!(instances_coll.parameters.len(), 2);
+        assert!(matches!(instances_coll.run_mode, RunMode::Instances));
+
+        // Check named levels parse correctly
+        let param = &instances_coll.parameters[0];
+        assert_eq!(param.name, "CMI_C13");
+        assert_eq!(param.levels.len(), 1);
+        assert!(matches!(&param.levels[0], LevelValue::Named(s) if s == "clean_ir"));
+
+        // Check latest collection
+        let latest_coll = &config.collections[1];
+        assert_eq!(latest_coll.id, "goes18-infrared-latest");
+        assert!(matches!(latest_coll.run_mode, RunMode::Latest));
+
+        // Check limits
+        assert_eq!(config.limits.max_time_steps, 36);
+        assert_eq!(config.limits.max_vertical_levels, 1);
+        assert_eq!(config.limits.max_area_sq_degrees, Some(50.0));
+    }
 }
