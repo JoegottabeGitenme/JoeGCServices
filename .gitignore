@@ -115,3 +115,6 @@ compile_commands.json
 /deploy/production/nginx/ssl/origin.cert
 /deploy/production/nginx/ssl/origin.key
 /tunnel.token
+
+# Security scan results
+/scripts/security-scan-results/
