@@ -140,8 +140,6 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: wms-api
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   tls:
   - hosts:

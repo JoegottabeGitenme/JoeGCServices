@@ -118,8 +118,6 @@ minio:
 ingress:
   enabled: true
   className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
     - host: weather-wms.example.com
       paths:

@@ -9,8 +9,6 @@ RUN apk add --no-cache \
     curl \
     bash
 
-# Create directories for Let's Encrypt and certbot webroot
-RUN mkdir -p /var/www/certbot /etc/letsencrypt /var/log/nginx
 
 # Copy nginx config (will be replaced during deployment with generated version)
 COPY nginx.conf.template /etc/nginx/nginx.conf.template

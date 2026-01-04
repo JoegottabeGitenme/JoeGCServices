@@ -128,8 +128,7 @@ load_config() {
   [[ -z "${REMOTE_HOST:-}" ]] && missing+=("REMOTE_HOST")
   [[ -z "${DOMAIN:-}" ]] && missing+=("DOMAIN")
   [[ -z "${SSH_KEY_PATH:-}" ]] && missing+=("SSH_KEY_PATH")
-  [[ -z "${LETSENCRYPT_EMAIL:-}" ]] && missing+=("LETSENCRYPT_EMAIL")
-  
+
   if [[ ${#missing[@]} -gt 0 ]]; then
     log_error "Missing required configuration:"
     for field in "${missing[@]}"; do
