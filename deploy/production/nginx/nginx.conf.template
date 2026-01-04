@@ -11,6 +11,10 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
+    # === SECURITY ===
+    # Hide nginx version in error pages and Server header
+    server_tokens off;
+
     # === PERFORMANCE ===
     sendfile on;
     tcp_nopush on;
@@ -64,11 +68,24 @@ http {
         listen 80;
         server_name __DOMAIN__ localhost;
 
-        # Security Headers (Cloudflare adds HSTS, but we add others)
+        # === SECURITY HEADERS ===
+        # HSTS - Force HTTPS for 1 year (Cloudflare also adds this, but defense in depth)
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        # Prevent MIME type sniffing
         add_header X-Content-Type-Options nosniff always;
+        # Clickjacking protection
         add_header X-Frame-Options SAMEORIGIN always;
-        add_header X-XSS-Protection "1; mode=block" always;
+        # Referrer policy
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        # Content Security Policy - permissive for HTML pages with inline scripts
+        # For API responses, CSP is less relevant but doesn't hurt
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
+        # Permissions Policy - disable unused browser features
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()" always;
+        # Cross-Origin policies for Spectre mitigation
+        add_header Cross-Origin-Embedder-Policy "unsafe-none" always;
+        add_header Cross-Origin-Opener-Policy "same-origin-allow-popups" always;
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;
 
         # Health check for nginx itself
         location /health {
@@ -81,6 +98,28 @@ http {
         # Block direct /metrics (Prometheus) but allow /api/metrics (dashboard)
         location = /metrics {
             return 404;
+        }
+
+        # Block sensitive files that should not be publicly accessible
+        location = /Dockerfile {
+            return 404;
+        }
+        location = /docker-compose.yml {
+            return 404;
+        }
+        location = /.env {
+            return 404;
+        }
+        location ~ /\. {
+            return 404;
+        }
+        location = /robots.txt {
+            add_header Content-Type text/plain;
+            return 200 "User-agent: *\nAllow: /\nAllow: /wms\nAllow: /wmts\nAllow: /edr\nDisallow: /admin\nDisallow: /api/\nDisallow: /grafana/\n";
+        }
+        location = /favicon.ico {
+            return 204;
+            access_log off;
         }
 
         # === PUBLIC ENDPOINTS (rate limited, no auth) ===
@@ -276,12 +315,23 @@ http {
         ssl_session_timeout 1d;
         ssl_session_tickets off;
 
-        # Security Headers
+        # === SECURITY HEADERS ===
+        # HSTS - Force HTTPS for 1 year
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        # Prevent MIME type sniffing
         add_header X-Content-Type-Options nosniff always;
+        # Clickjacking protection
         add_header X-Frame-Options SAMEORIGIN always;
-        add_header X-XSS-Protection "1; mode=block" always;
+        # Referrer policy
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        # Content Security Policy - permissive for HTML pages with inline scripts
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
+        # Permissions Policy - disable unused browser features
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()" always;
+        # Cross-Origin policies for Spectre mitigation
+        add_header Cross-Origin-Embedder-Policy "unsafe-none" always;
+        add_header Cross-Origin-Opener-Policy "same-origin-allow-popups" always;
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;
 
         # Health check
         location /health {
@@ -294,6 +344,28 @@ http {
         # Block direct /metrics (Prometheus) but allow /api/metrics (dashboard)
         location = /metrics {
             return 404;
+        }
+
+        # Block sensitive files that should not be publicly accessible
+        location = /Dockerfile {
+            return 404;
+        }
+        location = /docker-compose.yml {
+            return 404;
+        }
+        location = /.env {
+            return 404;
+        }
+        location ~ /\. {
+            return 404;
+        }
+        location = /robots.txt {
+            add_header Content-Type text/plain;
+            return 200 "User-agent: *\nAllow: /\nAllow: /wms\nAllow: /wmts\nAllow: /edr\nDisallow: /admin\nDisallow: /api/\nDisallow: /grafana/\n";
+        }
+        location = /favicon.ico {
+            return 204;
+            access_log off;
         }
 
         # === PUBLIC ENDPOINTS (rate limited, no auth) ===

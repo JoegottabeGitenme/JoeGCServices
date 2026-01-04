@@ -45,7 +45,7 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 bytes = "1.5"
 
 # Storage
-object_store = { version = "0.9", features = ["aws", "http"] }
+object_store = { version = "0.11", features = ["aws", "http"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }
 redis = { version = "0.27", features = ["tokio-comp", "streams"] }
 

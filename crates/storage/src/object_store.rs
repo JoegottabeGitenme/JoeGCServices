@@ -75,7 +75,7 @@ impl ObjectStorage {
         debug!(size = data.len(), "Writing object");
 
         self.store
-            .put(&location, data)
+            .put(&location, data.into())
             .await
             .map_err(|e| WmsError::StorageError(format!("Failed to write {}: {}", path, e)))?;
 
