@@ -2,18 +2,24 @@
 
 // Smart API URL detection:
 // - localhost:8000 (docker-compose) -> use localhost:8080
-// - Otherwise (K8s ingress) -> use relative URLs (same origin)
-const API_BASE = window.location.port === '8000' ? 'http://localhost:8080' : '';
-const DOWNLOADER_URL = window.location.port === '8000' ? 'http://localhost:8081' : '/downloader';
-const EDR_URL = window.location.port === '8000' ? 'http://localhost:8083/edr' : '/edr';
+// - Otherwise (production/K8s) -> use relative URLs (same origin)
+const IS_LOCAL_DEV = window.location.port === '8000';
+const API_BASE = IS_LOCAL_DEV ? 'http://localhost:8080' : '';
+const DOWNLOADER_URL = IS_LOCAL_DEV ? 'http://localhost:8081' : '/downloader';
+const EDR_URL = IS_LOCAL_DEV ? 'http://localhost:8083/edr' : '/edr';
 const REDIS_URL = `${API_BASE}/api/ingestion`;
 
-// External service URLs - can be customized for different environments
-const EXTERNAL_URLS = {
+// External service URLs - different for local dev vs production
+const EXTERNAL_URLS = IS_LOCAL_DEV ? {
     minio: 'http://localhost:9001',
     grafana: 'http://localhost:3000',
     prometheus: 'http://localhost:9090',
     k8sDashboard: 'http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/',
+} : {
+    minio: '/minio/',
+    grafana: '/grafana/',
+    prometheus: null,  // Not exposed in production
+    k8sDashboard: null,  // Not exposed in production
 };
 let map;
 let wmsLayer = null;

@@ -4,7 +4,9 @@
 // CONFIGURATION
 // ============================================================
 
-const DEFAULT_API_BASE = 'http://localhost:8083/edr';
+// Smart endpoint detection
+const IS_LOCAL_DEV = window.location.port === '8000';
+const DEFAULT_API_BASE = IS_LOCAL_DEV ? 'http://localhost:8083/edr' : `${window.location.origin}/edr`;
 let API_BASE = localStorage.getItem('edr-compliance-endpoint') || DEFAULT_API_BASE;
 
 // Test state

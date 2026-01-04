@@ -70,6 +70,7 @@
 
 - [Overview](./deployment/README.md)
   - [Docker Compose](./deployment/docker-compose.md)
+  - [Production Deployment](./deployment/production.md)
   - [Kubernetes](./deployment/kubernetes.md)
   - [Helm Chart](./deployment/helm.md)
   - [Monitoring](./deployment/monitoring.md)

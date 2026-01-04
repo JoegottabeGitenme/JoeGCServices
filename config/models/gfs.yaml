@@ -11,7 +11,7 @@ model:
   id: gfs
   name: "GFS - Global Forecast System"
   description: "NCEP Global Forecast System, 0.25° resolution"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -43,14 +43,14 @@ schedule:
   cycles: [ 0, 6, 12, 18 ]              # UTC hours (00z, 06z, 12z, 18z)
   forecast_hours:
     start: 0
-    end: 15                          # ~15 hours of forecast
-    step: 3                           # Every 3 hours
+    end: 24                          # ~24 hours of forecast
+    step: 1                           # Every 1 hour
   poll_interval_secs: 3600            # Check for new data every hour
   delay_hours: 4                      # Data typically available 4 hours after cycle time
 
 retention:
-  hours: 6                          # Keep data for 6 hours
-  keep_latest_runs: 1               # Always keep at least 1 complete run (safeguard)
+  hours: 12                          # Keep data for 6 hours
+  keep_latest_runs: 2               # Always keep at least 1 complete run (safeguard)
 
 # Precaching configuration - disabled for now
 precaching:

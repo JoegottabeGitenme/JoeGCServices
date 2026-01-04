@@ -7,7 +7,8 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 | Method | Best For | Complexity | Scalability |
 |--------|----------|------------|-------------|
 | [Docker Compose](./docker-compose.md) | Development, testing | Low | Single node |
-| [Kubernetes](./kubernetes.md) | Production | Medium | Horizontal |
+| [Production (Single Server)](./production.md) | Small-medium production | Low | Single node |
+| [Kubernetes](./kubernetes.md) | Large production | Medium | Horizontal |
 | [Helm Chart](./helm.md) | Production (K8s) | Low | Horizontal |
 
 ## Quick Comparison
@@ -24,6 +25,23 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 - No built-in HA
 
 **Use when**: Local development, testing, small deployments
+
+---
+
+### Production (Single Server)
+**Pros**:
+- Production-ready with TLS, rate limiting, auth
+- Nginx reverse proxy included
+- Cloudflare Tunnel support (for CGNAT/Starlink)
+- Auto-generated secure passwords
+- One-command deployment and updates
+
+**Cons**:
+- Single-node only
+- No horizontal scaling
+- Requires Cloudflare for TLS
+
+**Use when**: Small-medium production deployments, home servers, single-node setups
 
 ---
 
@@ -167,6 +185,7 @@ See [Monitoring](./monitoring.md) for details.
 Choose your deployment method:
 
 - [Docker Compose](./docker-compose.md) - Local development
+- [Production (Single Server)](./production.md) - Single-server production with TLS
 - [Kubernetes](./kubernetes.md) - Production (raw manifests)
-- [Helm Chart](./helm.md) - Production (recommended)
+- [Helm Chart](./helm.md) - Production (recommended for K8s)
 - [Monitoring](./monitoring.md) - Set up observability
