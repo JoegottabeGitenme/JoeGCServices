@@ -1,14 +1,14 @@
-# HRRR EDR Configuration
-# High-Resolution Rapid Refresh - 3km resolution CONUS coverage
+# GFS EDR Configuration
+# Global Forecast System - 0.25° resolution global coverage
 #
-# Coverage: CONUS (-122.7 to -60.9 lon, 21.1 to 47.8 lat)
-# Resolution: 3km
-# Update frequency: Hourly (every hour, 00z-23z)
+# Coverage: Global (-180 to 180 lon, -90 to 90 lat)
+# Resolution: 0.25° (~27km at equator)
+# Update frequency: Every 6 hours (00z, 06z, 12z, 18z)
 #
 # NOTE: Only parameters that are currently being ingested are listed here.
-# See config/models/hrrr.yaml for the full parameter definitions.
+# See config/models/gfs.yaml for the full parameter definitions.
 
-model: hrrr
+model: gfs
 
 collections:
   # ===========================================================================
@@ -16,50 +16,48 @@ collections:
   # ===========================================================================
   
   # Upper-air data on pressure levels
-  - id: hrrr-isobaric
-    title: "HRRR - Isobaric Levels"
-    description: "Upper-air parameters on pressure levels (1000, 925, 850, 700, 500, 300, 250 hPa)"
+  - id: gfs-isobaric
+    title: "GFS - Isobaric Levels"
+    description: "Upper-air parameters on pressure levels (1000-10 hPa)"
     level_filter:
       level_type: isobaric
       level_code: 100
     parameters:
       - name: TMP
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
       - name: HGT
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
       - name: UGRD
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
       - name: VGRD
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
       - name: RH
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
     run_mode: instances
 
   # Surface-level parameters
-  - id: hrrr-surface
-    title: "HRRR - Surface"
-    description: "Surface-level parameters including pressure, precipitation, convective indices, and visibility"
+  - id: gfs-surface
+    title: "GFS - Surface"
+    description: "Surface-level parameters including precipitation, convective indices, and visibility"
     level_filter:
       level_type: surface
       level_code: 1
     parameters:
-      - name: PRES
+      - name: GUST
+        levels: [surface]
+      - name: APCP
         levels: [surface]
       - name: CAPE
         levels: [surface]
       - name: CIN
         levels: [surface]
-      - name: APCP
-        levels: [surface]
       - name: VIS
-        levels: [surface]
-      - name: GUST
         levels: [surface]
     run_mode: instances
 
   # Parameters at specific heights above ground level
-  - id: hrrr-height-agl
-    title: "HRRR - Heights Above Ground"
+  - id: gfs-height-agl
+    title: "GFS - Heights Above Ground"
     description: "Parameters at specific heights above ground level (2m temp/humidity, 10m wind)"
     level_filter:
       level_type: height_above_ground
@@ -78,8 +76,8 @@ collections:
     run_mode: instances
 
   # Column-integrated atmospheric parameters
-  - id: hrrr-atmosphere
-    title: "HRRR - Entire Atmosphere"
+  - id: gfs-atmosphere
+    title: "GFS - Entire Atmosphere"
     description: "Column-integrated atmospheric parameters (precipitable water, cloud cover, reflectivity)"
     level_filter:
       level_type: entire_atmosphere
@@ -87,19 +85,18 @@ collections:
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
-      - name: REFC
-        levels: [entire_atmosphere]
       - name: TCDC
+        levels: [entire_atmosphere]
+      - name: REFC
         levels: [entire_atmosphere]
     run_mode: instances
 
   # Cloud cover by layer
-  - id: hrrr-cloud-layers
-    title: "HRRR - Cloud Layers"
+  - id: gfs-cloud-layers
+    title: "GFS - Cloud Layers"
     description: "Cloud cover by layer (low, middle, high)"
     level_filter:
       level_type: cloud_layer
-      # GRIB2 Table 4.5: 214=low cloud layer, 224=middle cloud layer, 234=high cloud layer
       level_codes: [214, 224, 234]
     parameters:
       - name: LCDC
@@ -110,54 +107,64 @@ collections:
         levels: [high_cloud_layer]
     run_mode: instances
 
+  # Mean sea level pressure
+  - id: gfs-msl
+    title: "GFS - Mean Sea Level"
+    description: "Mean sea level pressure"
+    level_filter:
+      level_type: mean_sea_level
+      level_code: 101
+    parameters:
+      - name: PRMSL
+        levels: [mean_sea_level]
+    run_mode: instances
+
   # ===========================================================================
   # Latest-only collections (quick access to most recent model run)
   # These use the non-instance endpoints for simpler access patterns:
-  #   GET /edr/collections/hrrr-surface-latest/position?coords=POINT(-100 40)
+  #   GET /edr/collections/gfs-surface-latest/position?coords=POINT(-100 40)
   # ===========================================================================
   
-  - id: hrrr-isobaric-latest
-    title: "HRRR - Isobaric Levels (Latest)"
+  - id: gfs-isobaric-latest
+    title: "GFS - Isobaric Levels (Latest)"
     description: "Most recent upper-air data on pressure levels"
     level_filter:
       level_type: isobaric
       level_code: 100
     parameters:
       - name: TMP
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
       - name: HGT
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
       - name: UGRD
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
       - name: VGRD
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
       - name: RH
-        levels: [1000, 925, 850, 700, 500, 300, 250]
+        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
     run_mode: latest
 
-  - id: hrrr-surface-latest
-    title: "HRRR - Surface (Latest)"
+  - id: gfs-surface-latest
+    title: "GFS - Surface (Latest)"
     description: "Most recent surface-level data"
     level_filter:
       level_type: surface
       level_code: 1
     parameters:
-      - name: PRES
+      - name: GUST
+        levels: [surface]
+      - name: APCP
         levels: [surface]
       - name: CAPE
         levels: [surface]
       - name: CIN
         levels: [surface]
-      - name: APCP
-        levels: [surface]
       - name: VIS
-        levels: [surface]
-      - name: GUST
         levels: [surface]
     run_mode: latest
 
-  - id: hrrr-height-agl-latest
-    title: "HRRR - Heights Above Ground (Latest)"
+  - id: gfs-height-agl-latest
+    title: "GFS - Heights Above Ground (Latest)"
     description: "Most recent data at specific heights above ground"
     level_filter:
       level_type: height_above_ground
@@ -175,8 +182,8 @@ collections:
         levels: [10]
     run_mode: latest
 
-  - id: hrrr-atmosphere-latest
-    title: "HRRR - Entire Atmosphere (Latest)"
+  - id: gfs-atmosphere-latest
+    title: "GFS - Entire Atmosphere (Latest)"
     description: "Most recent column-integrated data"
     level_filter:
       level_type: entire_atmosphere
@@ -184,14 +191,14 @@ collections:
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
-      - name: REFC
-        levels: [entire_atmosphere]
       - name: TCDC
+        levels: [entire_atmosphere]
+      - name: REFC
         levels: [entire_atmosphere]
     run_mode: latest
 
-  - id: hrrr-cloud-layers-latest
-    title: "HRRR - Cloud Layers (Latest)"
+  - id: gfs-cloud-layers-latest
+    title: "GFS - Cloud Layers (Latest)"
     description: "Most recent cloud cover by layer"
     level_filter:
       level_type: cloud_layer
@@ -205,6 +212,17 @@ collections:
         levels: [high_cloud_layer]
     run_mode: latest
 
+  - id: gfs-msl-latest
+    title: "GFS - Mean Sea Level (Latest)"
+    description: "Most recent mean sea level pressure"
+    level_filter:
+      level_type: mean_sea_level
+      level_code: 101
+    parameters:
+      - name: PRMSL
+        levels: [mean_sea_level]
+    run_mode: latest
+
 settings:
   output_formats:
     - application/vnd.cov+json
@@ -214,12 +232,12 @@ settings:
     - "CRS:84"
 
 # Response size limits
-# HRRR is 3km resolution (~0.027°), so area queries return many more points than GFS
-# A 100 sq degree query returns ~137,000 points (vs ~1,600 for GFS at 0.25°)
+# GFS is 0.25° resolution (~27km), so area queries return fewer points than HRRR
+# A 200 sq degree query returns ~3,200 points (vs ~274,000 for HRRR at 3km)
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 48              # 48 hours of forecast data
-  max_vertical_levels: 20         # Accommodates all 7 isobaric levels
-  max_response_size_mb: 50        # Lower than GFS due to higher resolution
-  max_area_sq_degrees: 100        # ~1000km x 1000km (stricter due to resolution)
-  max_radius_km: 500              # Smaller radius due to high point density
+  max_time_steps: 24              # 24 hours of forecast data
+  max_vertical_levels: 20         # Accommodates all 17 isobaric levels
+  max_response_size_mb: 100       # Higher than HRRR due to lower resolution
+  max_area_sq_degrees: 200        # ~2000km x 1000km regional area
+  max_radius_km: 750              # Larger radius acceptable at this resolution
