@@ -1,0 +1,200 @@
+id: ogc-version-disclosure
+
+info:
+  name: OGC API Version and Technology Disclosure
+  author: weather-wms-security
+  severity: info
+  description: |
+    Identifies version information and technology stack details exposed by
+    OGC services. While not directly exploitable, this information aids
+    attackers in identifying known vulnerabilities.
+    
+    Checks for:
+    - Server software versions
+    - Framework versions
+    - OGC service versions
+    - API implementation details
+  reference:
+    - https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/01-Information_Gathering/
+  tags: version,disclosure,recon,wms,wmts,edr,ogc
+
+http:
+  # WMS GetCapabilities version info
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetCapabilities"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        name: wms_version
+        regex:
+          - 'version="([0-9.]+)"'
+        group: 1
+
+      - type: regex
+        name: service_title
+        regex:
+          - '<Title>([^<]+)</Title>'
+        group: 1
+
+      - type: regex
+        name: service_abstract
+        regex:
+          - '<Abstract>([^<]+)</Abstract>'
+        group: 1
+
+  # WMTS GetCapabilities version info
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        name: wmts_version
+        regex:
+          - 'version="([0-9.]+)"'
+        group: 1
+
+      - type: regex
+        name: service_type
+        regex:
+          - '<ows:ServiceType>([^<]+)</ows:ServiceType>'
+        group: 1
+
+  # EDR API version info
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr"
+      - "{{BaseURL}}/edr/api"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: json
+        name: api_title
+        json:
+          - '.title'
+
+      - type: json
+        name: api_version
+        json:
+          - '.info.version'
+
+      - type: json
+        name: api_description
+        json:
+          - '.description'
+
+  # Check HTTP headers for version info
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetCapabilities"
+      - "{{BaseURL}}/edr"
+      - "{{BaseURL}}/"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 400
+          - 404
+
+    extractors:
+      - type: regex
+        name: server_header
+        part: header
+        regex:
+          - "Server: ([^\r\n]+)"
+        group: 1
+
+      - type: regex
+        name: powered_by
+        part: header
+        regex:
+          - "X-Powered-By: ([^\r\n]+)"
+        group: 1
+
+      - type: regex
+        name: asp_version
+        part: header
+        regex:
+          - "X-AspNet-Version: ([^\r\n]+)"
+        group: 1
+
+  # Check for exposed .well-known or version endpoints
+  - method: GET
+    path:
+      - "{{BaseURL}}/version"
+      - "{{BaseURL}}/api/version"
+      - "{{BaseURL}}/.well-known/host-meta"
+      - "{{BaseURL}}/health"
+      - "{{BaseURL}}/api/health"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        words:
+          - "version"
+          - "build"
+          - "commit"
+          - "healthy"
+        condition: or
+
+    extractors:
+      - type: regex
+        name: version_info
+        regex:
+          - '"version"[:\s]*"([^"]+)"'
+          - '"build"[:\s]*"([^"]+)"'
+          - '"commit"[:\s]*"([^"]+)"'
+        group: 1
+
+  # Check for API documentation endpoints
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger"
+      - "{{BaseURL}}/swagger-ui"
+      - "{{BaseURL}}/swagger.json"
+      - "{{BaseURL}}/openapi.json"
+      - "{{BaseURL}}/api-docs"
+      - "{{BaseURL}}/docs"
+      - "{{BaseURL}}/redoc"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        words:
+          - "swagger"
+          - "openapi"
+          - "paths"
+          - "Swagger UI"
+        condition: or
+
+    extractors:
+      - type: regex
+        name: openapi_version
+        regex:
+          - '"openapi"[:\s]*"([^"]+)"'
+          - '"swagger"[:\s]*"([^"]+)"'
+        group: 1

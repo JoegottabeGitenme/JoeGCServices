@@ -1,0 +1,331 @@
+id: ogc-wmts-sqli-all-params
+
+info:
+  name: OGC WMTS SQL Injection - All Parameters
+  author: weather-wms-security
+  severity: critical
+  description: |
+    Tests all WMTS parameters for SQL injection vulnerabilities including:
+    - LAYER, STYLE (layer/style selection)
+    - TILEMATRIXSET, TILEMATRIX, TILEROW, TILECOL (tile addressing)
+    - FORMAT (output format)
+    - TIME, RUN, FORECAST, ELEVATION (weather dimensions)
+    - I, J, INFOFORMAT (GetFeatureInfo)
+  reference:
+    - https://owasp.org/www-community/attacks/SQL_Injection
+    - https://www.ogc.org/standards/wmts
+  tags: sqli,wmts,ogc,injection,critical
+
+variables:
+  base_layer: "gfs_TMP"
+  base_tms: "WebMercatorQuad"
+
+http:
+  # Test LAYER parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{payload}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "{{base_layer}}'"
+        - "{{base_layer}}' OR '1'='1"
+        - "{{base_layer}}' OR '1'='1'--"
+        - "{{base_layer}}'; SELECT 1--"
+        - "{{base_layer}}\" OR \"1\"=\"1"
+        - "1 UNION SELECT NULL,NULL,NULL--"
+        - "{{base_layer}}' AND 1=CONVERT(int,@@version)--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "mysql_fetch"
+          - "ORA-"
+          - "PostgreSQL"
+          - "sqlite"
+          - "syntax error"
+          - "unterminated string"
+          - "database error"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)(sql|database|query).*error"
+
+  # Test STYLE parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE={{payload}}&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "default'"
+        - "default' OR '1'='1"
+        - "' OR '1'='1'--"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TILEMATRIXSET parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{payload}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "{{base_tms}}'"
+        - "{{base_tms}}' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TILEMATRIX parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX={{payload}}&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "0'"
+        - "0' OR '1'='1"
+        - "'; SELECT 1--"
+        - "0 UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TILEROW parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW={{payload}}&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "0'"
+        - "0' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TILECOL parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL={{payload}}&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "0'"
+        - "0' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test FORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "image/png'"
+        - "image/png' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test TIME dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&TIME={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z'"
+        - "2024-01-01' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test RUN dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&RUN={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z'"
+        - "' OR '1'='1"
+        - "'; DROP TABLE--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test FORECAST dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&FORECAST={{payload}}"
+
+    payloads:
+      payload:
+        - "0'"
+        - "0' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test ELEVATION dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&ELEVATION={{payload}}"
+
+    payloads:
+      payload:
+        - "850'"
+        - "850' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test GetFeatureInfo I/J parameters
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetFeatureInfo&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&I={{payload}}&J=128&INFOFORMAT=application/json"
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetFeatureInfo&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&I=128&J={{payload}}&INFOFORMAT=application/json"
+
+    payloads:
+      payload:
+        - "128'"
+        - "128 OR 1=1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test INFOFORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetFeatureInfo&LAYER={{base_layer}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png&I=128&J=128&INFOFORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "application/json'"
+        - "' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Time-based blind SQLi in LAYER
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER={{payload}}&STYLE=default&TILEMATRIXSET={{base_tms}}&TILEMATRIX=0&TILEROW=0&TILECOL=0&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "{{base_layer}}' AND SLEEP(5)--"
+        - "{{base_layer}}' AND pg_sleep(5)--"
+        - "{{base_layer}}'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"

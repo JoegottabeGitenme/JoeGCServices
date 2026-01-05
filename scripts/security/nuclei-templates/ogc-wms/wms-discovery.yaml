@@ -1,0 +1,51 @@
+id: ogc-wms-discovery
+
+info:
+  name: OGC WMS Service Discovery
+  author: weather-wms-security
+  severity: info
+  description: |
+    Discovers WMS service details including version, layers, and supported formats.
+    This template extracts information from GetCapabilities for use in subsequent scans.
+  reference:
+    - https://www.ogc.org/standards/wms
+  tags: wms,ogc,discovery,recon
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetCapabilities"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        words:
+          - "WMS_Capabilities"
+          - "WMT_MS_Capabilities"
+        condition: or
+
+    extractors:
+      - type: regex
+        name: wms_version
+        part: body
+        regex:
+          - 'version="([0-9.]+)"'
+        group: 1
+
+      - type: regex
+        name: wms_layers
+        part: body
+        regex:
+          - '<Name>([^<]+)</Name>'
+        group: 1
+
+      - type: regex
+        name: wms_formats
+        part: body
+        regex:
+          - '<Format>([^<]+)</Format>'
+        group: 1
