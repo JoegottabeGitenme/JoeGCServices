@@ -1,0 +1,10 @@
+# Cargo audit configuration
+# See: https://rustsec.github.io/cargo-audit/
+
+[advisories]
+# RUSTSEC-2023-0071: rsa crate Marvin Attack
+# This is a false positive - we use sqlx with postgres and sqlite only.
+# The rsa crate is listed in Cargo.lock as an optional dependency of sqlx-mysql,
+# but sqlx-mysql is not compiled because we don't enable the "mysql" feature.
+# Verified: cargo tree shows no mysql/rsa in actual dependency tree.
+ignore = ["RUSTSEC-2023-0071"]
