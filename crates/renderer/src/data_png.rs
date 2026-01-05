@@ -7,7 +7,7 @@
 //! ## Encoding Format
 //!
 //! - **R channel**: High byte of 16-bit normalized value
-//! - **G channel**: Low byte of 16-bit normalized value  
+//! - **G channel**: Low byte of 16-bit normalized value
 //! - **B channel**: Reserved (set to 0)
 //! - **A channel**: Data validity mask (255 = valid, 0 = no data/outside polygon)
 //!
