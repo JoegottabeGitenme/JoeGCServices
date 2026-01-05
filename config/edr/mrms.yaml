@@ -1,0 +1,101 @@
+# MRMS EDR Configuration
+# Multi-Radar Multi-Sensor - ~1km resolution CONUS coverage
+#
+# Coverage: CONUS (-130 to -60 lon, 20 to 55 lat)
+# Resolution: ~1km (0.01°)
+# Update frequency: ~2 minutes (observation data)
+#
+# This is observation data (not forecast), so:
+# - Instances represent observation timestamps, not model runs
+# - No forecast hours dimension
+# - All parameters are at height above MSL
+#
+# NOTE: Only parameters that are currently being ingested are listed here.
+# See config/models/mrms.yaml for the full parameter definitions.
+
+model: mrms
+
+collections:
+  # ===========================================================================
+  # Instance-based collections (access all available observation timestamps)
+  # ===========================================================================
+  
+  # Radar reflectivity - the primary mosaic product
+  - id: mrms-reflectivity
+    title: "MRMS - Radar Reflectivity"
+    description: "Seamless Hybrid Scan Reflectivity - fully composited radar mosaic"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: REFL
+        levels: [0]
+    run_mode: instances
+
+  # Precipitation products - rate and accumulations
+  - id: mrms-precipitation
+    title: "MRMS - Precipitation"
+    description: "Precipitation rate and accumulation products from multi-sensor analysis"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: PRECIP_RATE
+        levels: [0]
+      - name: QPE_01H
+        levels: [0]
+      - name: QPE_24H
+        levels: [0]
+    run_mode: instances
+
+  # ===========================================================================
+  # Latest-only collections (quick access to most recent observation)
+  # These use the non-instance endpoints for simpler access patterns:
+  #   GET /edr/collections/mrms-reflectivity-latest/position?coords=POINT(-100 40)
+  # ===========================================================================
+  
+  - id: mrms-reflectivity-latest
+    title: "MRMS - Radar Reflectivity (Latest)"
+    description: "Most recent radar reflectivity mosaic"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: REFL
+        levels: [0]
+    run_mode: latest
+
+  - id: mrms-precipitation-latest
+    title: "MRMS - Precipitation (Latest)"
+    description: "Most recent precipitation data"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: PRECIP_RATE
+        levels: [0]
+      - name: QPE_01H
+        levels: [0]
+      - name: QPE_24H
+        levels: [0]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+
+# Response size limits
+# MRMS is ~1km resolution (0.01°), which is 3x finer than HRRR
+# A 10 sq degree query returns ~100,000 points (10° / 0.01° = 1000 points per degree)
+# These limits are stricter than HRRR to account for the higher resolution
+limits:
+  max_parameters_per_request: 4       # Only 4 parameters available
+  max_time_steps: 30                  # ~1 hour of observations at 2-min intervals
+  max_vertical_levels: 1              # No vertical dimension for radar data
+  max_response_size_mb: 50            # Same as HRRR
+  max_area_sq_degrees: 25             # ~500km x 500km (stricter due to 1km resolution)
+  max_radius_km: 250                  # Smaller radius due to very high point density

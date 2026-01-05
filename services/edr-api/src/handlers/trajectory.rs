@@ -526,6 +526,7 @@ fn build_level_string(
         "entire_atmosphere" => Some("entire atmosphere".to_string()),
         "isobaric" => level_value.map(|v| format!("{} mb", v as i32)),
         "height_above_ground" => level_value.map(|v| format!("{} m above ground", v as i32)),
+        "height_above_msl" => level_value.map(|v| format!("{} m above MSL", v as i32)),
         "cloud_layer" => {
             // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
             // (x2=bottom, x3=top, x4=layer; some products use different codes)

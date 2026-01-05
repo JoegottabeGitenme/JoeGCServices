@@ -576,6 +576,10 @@ fn build_level_string(
             // Height above ground stored as "X m above ground"
             level_value.map(|v| format!("{} m above ground", v as i32))
         }
+        "height_above_msl" => {
+            // Height above mean sea level stored as "X m above MSL"
+            level_value.map(|v| format!("{} m above MSL", v as i32))
+        }
         "cloud_layer" => {
             // Map cloud layer codes to names
             // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
