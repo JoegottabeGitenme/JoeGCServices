@@ -24,7 +24,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::LevelValue;
-use crate::content_negotiation::{negotiate_format, OutputFormat};
+use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::location_cache::LocationCacheKey;
 use crate::state::AppState;
@@ -192,6 +192,11 @@ async fn location_query(
         Ok(format) => format,
         Err(response) => return response,
     };
+
+    // PNG output is not supported for locations queries (point data)
+    if let Some(response) = check_png_not_supported(output_format, "locations") {
+        return response;
+    }
 
     // Build cache key early to check cache before expensive operations
     // Include format in cache key to ensure different formats are cached separately
@@ -598,6 +603,10 @@ async fn location_query(
                 );
             }
         },
+        OutputFormat::Png => {
+            // PNG is rejected earlier in check_png_not_supported, this should never be reached
+            unreachable!("PNG format should have been rejected earlier")
+        }
     };
 
     // Cache the response

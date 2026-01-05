@@ -6,6 +6,7 @@
 //! - Wind barbs
 //! - Wind arrows
 //! - Style-based color mapping
+//! - Data PNG encoding for GPU shaders
 //!
 //! ## Performance Optimizations
 //!
@@ -18,10 +19,17 @@
 //! - **Parallel processing**: Uses rayon for parallel row processing in render functions.
 //! - **Buffer pooling**: Thread-local buffer pools reduce allocation pressure under load.
 //!   See [`buffer_pool`] module for details.
+//!
+//! ## Data PNG Encoding
+//!
+//! The [`data_png`] module provides 16-bit PNG encoding for GPU shader consumption.
+//! This is optimized for WebGL texture upload and weather data visualization,
+//! similar to the approach used by Windy.com.
 
 pub mod barbs;
 pub mod buffer_pool;
 pub mod contour;
+pub mod data_png;
 pub mod gradient;
 pub mod png;
 pub mod style;

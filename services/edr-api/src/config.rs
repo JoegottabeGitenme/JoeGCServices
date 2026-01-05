@@ -228,9 +228,11 @@ impl Default for ModelSettings {
 
 fn default_output_formats() -> Vec<String> {
     // Supported output formats for EDR data queries
+    // Note: image/png is supported for area queries only (returns 16-bit encoded data for GPU shaders)
     vec![
         "application/vnd.cov+json".to_string(),
         "application/geo+json".to_string(),
+        "image/png".to_string(),
     ]
 }
 

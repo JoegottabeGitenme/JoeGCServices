@@ -13,6 +13,7 @@ pub const DATA_QUERY_MEDIA_TYPES: &[&str] = &[
     "application/prs.coverage+json",
     "application/geo+json",
     "application/json", // We can return CoverageJSON as JSON
+    "image/png",        // 16-bit encoded PNG for GPU shaders
 ];
 
 /// Supported media types for metadata queries (collections, landing, etc.)
@@ -26,6 +27,8 @@ pub enum OutputFormat {
     CoverageJson,
     /// GeoJSON format
     GeoJson,
+    /// PNG format - 16-bit encoded data for GPU shader consumption
+    Png,
 }
 
 impl OutputFormat {
@@ -34,6 +37,7 @@ impl OutputFormat {
         match self {
             OutputFormat::CoverageJson => "application/vnd.cov+json",
             OutputFormat::GeoJson => "application/geo+json",
+            OutputFormat::Png => "image/png",
         }
     }
 
@@ -49,6 +53,7 @@ impl OutputFormat {
                 // Default to CoverageJSON for generic JSON request
                 Some(OutputFormat::CoverageJson)
             }
+            "png" | "image/png" => Some(OutputFormat::Png),
             _ => None,
         }
     }
@@ -64,8 +69,14 @@ impl OutputFormat {
                 // Default to CoverageJSON for generic JSON
                 Some(OutputFormat::CoverageJson)
             }
+            "image/png" => Some(OutputFormat::Png),
             _ => None,
         }
+    }
+
+    /// Check if this format is binary (not text-based)
+    pub fn is_binary(&self) -> bool {
+        matches!(self, OutputFormat::Png)
     }
 }
 
@@ -228,7 +239,7 @@ fn invalid_format_response(format: &str) -> Response {
         "http://www.opengis.net/def/exceptions/ogcapi-edr-1/1.0/invalid-parameter-value",
         400,
         format!(
-            "Invalid output format '{}'. Supported formats: CoverageJSON, GeoJSON",
+            "Invalid output format '{}'. Supported formats: CoverageJSON, GeoJSON, PNG",
             format
         ),
     )
@@ -251,6 +262,37 @@ pub fn check_data_query_accept(headers: &HeaderMap) -> Result<(), Response> {
 /// Helper to check Accept header for metadata queries
 pub fn check_metadata_accept(headers: &HeaderMap) -> Result<(), Response> {
     check_accept_header(headers, METADATA_MEDIA_TYPES)
+}
+
+/// Check if PNG format is requested - returns an error response for query types that don't support PNG
+///
+/// PNG output is only supported for area queries (gridded data).
+/// Other query types (position, radius, trajectory, etc.) should use this
+/// function to reject PNG requests early.
+pub fn check_png_not_supported(output_format: OutputFormat, query_type: &str) -> Option<Response> {
+    if output_format == OutputFormat::Png {
+        let exc = ExceptionResponse::new(
+            "http://www.opengis.net/def/exceptions/ogcapi-edr-1/1.0/invalid-parameter-value",
+            400,
+            format!(
+                "PNG output is not supported for {} queries. PNG is only available for area queries which return gridded data.",
+                query_type
+            ),
+        )
+        .with_title("Bad Request");
+
+        let json = serde_json::to_string(&exc).unwrap_or_default();
+
+        Some(
+            Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap(),
+        )
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +435,56 @@ mod tests {
             "application/vnd.cov+json"
         );
         assert_eq!(OutputFormat::GeoJson.content_type(), "application/geo+json");
+        assert_eq!(OutputFormat::Png.content_type(), "image/png");
+    }
+
+    #[test]
+    fn test_output_format_png_from_query_param() {
+        assert_eq!(
+            OutputFormat::from_query_param("png"),
+            Some(OutputFormat::Png)
+        );
+        assert_eq!(
+            OutputFormat::from_query_param("PNG"),
+            Some(OutputFormat::Png)
+        );
+        assert_eq!(
+            OutputFormat::from_query_param("image/png"),
+            Some(OutputFormat::Png)
+        );
+    }
+
+    #[test]
+    fn test_output_format_png_from_media_type() {
+        assert_eq!(
+            OutputFormat::from_media_type("image/png"),
+            Some(OutputFormat::Png)
+        );
+    }
+
+    #[test]
+    fn test_accept_png() {
+        let headers = make_headers("image/png");
+        assert!(check_data_query_accept(&headers).is_ok());
+    }
+
+    #[test]
+    fn test_negotiate_format_png() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            negotiate_format(&headers, Some("png")).unwrap(),
+            OutputFormat::Png
+        );
+
+        let headers = make_headers("image/png");
+        assert_eq!(negotiate_format(&headers, None).unwrap(), OutputFormat::Png);
+    }
+
+    #[test]
+    fn test_output_format_is_binary() {
+        assert!(!OutputFormat::CoverageJson.is_binary());
+        assert!(!OutputFormat::GeoJson.is_binary());
+        assert!(OutputFormat::Png.is_binary());
     }
 
     // Tests for negotiate_format

@@ -26,7 +26,7 @@ info:
     
     For forecast models (GFS, HRRR), data is organized by model run time (instance).
     Each query endpoint has an instance variant that allows querying a specific model run.
-    
+
   contact:
     name: Weather WMS Support
   license:
@@ -290,6 +290,16 @@ paths:
       description: |
         Sample data within a polygon area.
         
+        When requesting PNG format (f=png or Accept: image/png), the response is a 16-bit 
+        encoded PNG optimized for GPU shader consumption. This format encodes data values 
+        into RGBA channels for efficient WebGL texture upload:
+        - R+G channels: 16-bit normalized value (R=high byte, G=low byte)
+        - B channel: Reserved
+        - A channel: Data validity mask (255=valid, 0=no data/outside polygon)
+        
+        PNG output requires exactly one parameter (use parameter-name to select).
+        Metadata is embedded in PNG tEXt chunks and returned in response headers.
+        
         The coords parameter should contain a WKT POLYGON:
         `POLYGON((-100 35, -95 35, -95 40, -100 40, -100 35))`
       parameters:
@@ -304,7 +314,29 @@ paths:
         - $ref: '#/components/parameters/resolution-y'
       responses:
         '200':
-          $ref: '#/components/responses/CoverageResponse'
+          description: Data within the specified area
+          content:
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+            image/png:
+              schema:
+                type: string
+                format: binary
+                description: |
+                  16-bit encoded PNG for GPU shader consumption.
+                  Response headers include:
+                  - X-EDR-Parameter: Parameter name
+                  - X-EDR-Units: Unit symbol
+                  - X-EDR-Min: Minimum value for decoding
+                  - X-EDR-Max: Maximum value for decoding
+                  - X-EDR-Encoding: Encoding type (uint16)
+                  - X-EDR-BBox: Bounding box (west,south,east,north)
+                  - X-EDR-Width: Image width in pixels
+                  - X-EDR-Height: Image height in pixels
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -1030,6 +1062,11 @@ components:
         - `CoverageJSON` or `application/prs.coverage+json`
         - `GeoJSON` or `application/geo+json`
         - `json` (defaults to CoverageJSON)
+        Response format. For area queries, PNG format returns 16-bit encoded 
+        data optimized for GPU shader consumption (requires single parameter).
+      style: form
+      explode: false
+
       schema:
         type: string
         enum:
