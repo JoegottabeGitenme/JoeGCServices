@@ -421,6 +421,14 @@ async fn corridor_query(
         );
     }
 
+    // Validate embedded Z coordinates against collection's vertical extent
+    if line_type.has_z() {
+        let embedded_z_values: Vec<f64> = waypoints.iter().filter_map(|wp| wp.z).collect();
+        if let Err(e) = validate_z_against_vertical_extent(&embedded_z_values, collection_def) {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e));
+        }
+    }
+
     // Check for conflicting datetime parameter when coords already has M
     if line_type.has_m() && params.datetime.is_some() {
         return error_response(
@@ -440,7 +448,16 @@ async fn corridor_query(
         None
     } else if let Some(ref z) = params.z {
         match PositionQuery::parse_z(z) {
-            Ok(values) => Some(values),
+            Ok(values) => {
+                // Validate z values against collection's vertical extent
+                if let Err(e) = validate_z_against_vertical_extent(&values, collection_def) {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(e),
+                    );
+                }
+                Some(values)
+            }
             Err(e) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,
@@ -897,7 +914,6 @@ fn build_level_string(
         "entire_atmosphere" => Some("entire atmosphere".to_string()),
         "isobaric" => level_value.map(|v| format!("{} mb", v as i32)),
         "height_above_ground" => level_value.map(|v| format!("{} m above ground", v as i32)),
-        "height_above_msl" => level_value.map(|v| format!("{} m above MSL", v as i32)),
         "cloud_layer" => {
             // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
             // (x2=bottom, x3=top, x4=layer; some products use different codes)
@@ -928,6 +944,61 @@ fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(json.into())
         .unwrap()
+}
+
+/// Extract unique numeric vertical levels from all parameters in a collection.
+/// Returns None if collection has no vertical extent (e.g., surface-only).
+fn get_collection_vertical_levels(
+    collection_def: &crate::config::CollectionDefinition,
+) -> Option<Vec<f64>> {
+    let mut levels: Vec<f64> = collection_def
+        .parameters
+        .iter()
+        .flat_map(|p| p.levels.iter())
+        .filter_map(|l| match l {
+            LevelValue::Numeric(n) => Some(*n),
+            LevelValue::Named(_) => None,
+        })
+        .collect();
+
+    if levels.is_empty() {
+        return None;
+    }
+
+    // Sort and deduplicate
+    levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    levels.dedup();
+    Some(levels)
+}
+
+/// Validate Z coordinate values against the collection's advertised vertical extent.
+/// Per OGC EDR spec: "the Z coordinate shall be within the range of vertical levels
+/// advertised in the Collection metadata"
+///
+/// Returns Ok(()) if valid, or Err with descriptive message if invalid.
+fn validate_z_against_vertical_extent(
+    z_values: &[f64],
+    collection_def: &crate::config::CollectionDefinition,
+) -> Result<(), String> {
+    // If collection has no vertical extent advertised, skip validation
+    // (vertical is optional per OGC EDR spec)
+    let Some(available_levels) = get_collection_vertical_levels(collection_def) else {
+        return Ok(());
+    };
+
+    for z in z_values {
+        if !available_levels
+            .iter()
+            .any(|level| (*level - *z).abs() < f64::EPSILON)
+        {
+            return Err(format!(
+                "Z coordinate {} is outside the collection's vertical extent. Must be one of: {:?}",
+                z, available_levels
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
