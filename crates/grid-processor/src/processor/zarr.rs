@@ -624,17 +624,25 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
     }
 
     async fn read_point(&self, lon: f64, lat: f64) -> Result<Option<f32>> {
+        let grid_bbox = &self.metadata.bbox;
+
+        // Normalize longitude for grids using 0-360 convention (e.g., GFS)
+        let normalized_lon = if grid_bbox.uses_0_360_longitude() && lon < 0.0 {
+            lon + 360.0
+        } else {
+            lon
+        };
+
         // Check if point is within grid bounds
-        if !self.metadata.bbox.contains(lon, lat) {
+        if !grid_bbox.contains(normalized_lon, lat) {
             return Ok(None);
         }
 
         // Calculate grid indices (floating point for interpolation)
         let (res_x, res_y) = self.metadata.resolution();
-        let grid_bbox = &self.metadata.bbox;
         let (grid_w, grid_h) = self.metadata.shape;
 
-        let grid_x = (lon - grid_bbox.min_lon) / res_x;
+        let grid_x = (normalized_lon - grid_bbox.min_lon) / res_x;
         let grid_y = (grid_bbox.max_lat - lat) / res_y;
 
         // Check if we're very close to an exact grid point (within 1% of cell size)
