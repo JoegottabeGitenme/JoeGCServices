@@ -416,3 +416,115 @@ mod tests {
         );
     }
 }
+
+#[test]
+fn test_ndfd_projection() {
+    let proj = LambertConformal::ndfd();
+
+    // First grid point should map to (0, 0)
+    let (i, j) = proj.geo_to_grid(20.191999, -121.554001);
+    println!("First point (20.19, -121.55): i={:.2}, j={:.2}", i, j);
+    assert!((i - 0.0).abs() < 0.5, "i should be ~0, got {}", i);
+    assert!((j - 0.0).abs() < 0.5, "j should be ~0, got {}", j);
+
+    // Test some known cities - Seattle should be in upper left area
+    let (i, j) = proj.geo_to_grid(47.6, -122.3);
+    println!("Seattle (47.6, -122.3): i={:.0}, j={:.0}", i, j);
+
+    // Seattle should have small i (west) and large j (north)
+    assert!(
+        i < 500.0,
+        "Seattle should be in western part of grid, i={}",
+        i
+    );
+    assert!(
+        j > 800.0,
+        "Seattle should be in northern part of grid, j={}",
+        j
+    );
+
+    // Miami should be in lower right area
+    let (i, j) = proj.geo_to_grid(25.8, -80.2);
+    println!("Miami (25.8, -80.2): i={:.0}, j={:.0}", i, j);
+
+    // Miami should have large i (east) and small j (south)
+    assert!(
+        i > 1500.0,
+        "Miami should be in eastern part of grid, i={}",
+        i
+    );
+    assert!(
+        j < 400.0,
+        "Miami should be in southern part of grid, j={}",
+        j
+    );
+
+    // Check corners
+    println!("\nGrid corners:");
+    let (lat, lon) = proj.grid_to_geo(0.0, 0.0);
+    println!("  SW (0,0): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(2144.0, 0.0);
+    println!("  SE (2144,0): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(0.0, 1376.0);
+    println!("  NW (0,1376): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(2144.0, 1376.0);
+    println!("  NE (2144,1376): lat={:.2}, lon={:.2}", lat, lon);
+}
+
+#[test]
+fn test_ndfd_detailed_transform() {
+    let proj = LambertConformal::ndfd();
+
+    // Test Miami (25.8, -80.2) - should be in lower-right of grid
+    let (i, j) = proj.geo_to_grid(25.8, -80.2);
+    println!("Miami (25.8°N, 80.2°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+
+    // Verify roundtrip
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test Denver (39.7, -105.0) - should be center-west
+    let (i, j) = proj.geo_to_grid(39.7, -105.0);
+    println!("\nDenver (39.7°N, 105.0°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test a point in Kansas at center of grid
+    let (i, j) = proj.geo_to_grid(38.5, -98.0);
+    println!("\nKansas center (38.5°N, 98.0°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test grid bounds
+    let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+    println!("\nGrid bounds:");
+    println!("  Lon: {:.2}° to {:.2}°", min_lon, max_lon);
+    println!("  Lat: {:.2}° to {:.2}°", min_lat, max_lat);
+
+    // Verify dimensions
+    let (nx, ny) = proj.dimensions();
+    println!("  Size: {} x {}", nx, ny);
+
+    // Check that grid indices for corners are correct
+    let (lat_sw, lon_sw) = proj.grid_to_geo(0.0, 0.0);
+    let (lat_ne, lon_ne) = proj.grid_to_geo((nx - 1) as f64, (ny - 1) as f64);
+    println!("\nGrid corner geographic coords:");
+    println!("  (0,0) -> ({:.4}°, {:.4}°)", lat_sw, lon_sw);
+    println!(
+        "  ({},{}) -> ({:.4}°, {:.4}°)",
+        nx - 1,
+        ny - 1,
+        lat_ne,
+        lon_ne
+    );
+
+    // Test that Miami is in valid range
+    assert!(i >= 0.0 && i < nx as f64, "Miami i out of range");
+    assert!(j >= 0.0 && j < ny as f64, "Miami j out of range");
+}

@@ -20,6 +20,21 @@ use crate::tables::{build_filter_for_model, build_tables_for_model};
 use crate::upload::upload_zarr_directory;
 use crate::{IngestOptions, IngestionResult};
 
+/// Flip rows in a grid from south-to-north to north-to-south order.
+///
+/// Our Zarr storage convention is row 0 = northernmost (top-to-bottom),
+/// but some GRIB2 files (like NDFD with scanning mode +j) store data
+/// with row 0 = southernmost (south-to-north).
+fn flip_rows(data: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let mut flipped = Vec::with_capacity(data.len());
+    for row in (0..height).rev() {
+        let start = row * width;
+        let end = start + width;
+        flipped.extend_from_slice(&data[start..end]);
+    }
+    flipped
+}
+
 /// Ingest a GRIB2 file into Zarr format.
 ///
 /// Parses the GRIB2 file, extracts target parameters, writes Zarr pyramids,
@@ -170,9 +185,22 @@ pub async fn ingest_grib2(
             continue;
         }
 
+        // Flip rows for grids with south-to-north scanning (NDFD scanning mode 64)
+        // Our Zarr storage convention is north-to-south (top-to-bottom)
+        let grid_data = if model == "ndfd" {
+            // NDFD uses scanning mode with +j (south-to-north), flip to north-to-south
+            flip_rows(&grid_data, width, height)
+        } else {
+            grid_data
+        };
+
         // Calculate bounding box
         let gp_bbox = if model == "hrrr" {
             let proj = LambertConformal::hrrr();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+            GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+        } else if model == "ndfd" {
+            let proj = LambertConformal::ndfd();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
             GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
         } else {
