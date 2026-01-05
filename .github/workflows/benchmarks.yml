@@ -271,7 +271,28 @@ jobs:
             echo "gh-pages branch already exists"
           fi
 
+      - name: Check if benchmarks produced results
+        id: check-results
+        run: |
+          if [ -f benchmark_results.json ]; then
+            # Check if the JSON array has any entries
+            RESULT_COUNT=$(python3 -c "import json; print(len(json.load(open('benchmark_results.json'))))")
+            echo "result_count=$RESULT_COUNT" >> $GITHUB_OUTPUT
+            if [ "$RESULT_COUNT" -gt 0 ]; then
+              echo "has_results=true" >> $GITHUB_OUTPUT
+              echo "Found $RESULT_COUNT benchmark results"
+            else
+              echo "has_results=false" >> $GITHUB_OUTPUT
+              echo "No benchmark results found (benchmarks may have been skipped)"
+            fi
+          else
+            echo "has_results=false" >> $GITHUB_OUTPUT
+            echo "result_count=0" >> $GITHUB_OUTPUT
+            echo "benchmark_results.json not found"
+          fi
+
       - name: Store benchmark result
+        if: steps.check-results.outputs.has_results == 'true'
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Rust Benchmarks
@@ -297,7 +318,17 @@ jobs:
         run: |
           echo "## 📊 Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
+          # Check if benchmarks actually ran
+          HAS_RESULTS="${{ steps.check-results.outputs.has_results }}"
+          if [[ "$HAS_RESULTS" != "true" ]]; then
+            echo "⏭️ **No benchmarks were executed.** The changed crates don't have benchmarks defined." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Benchmarks are only available for:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`crates/renderer/\` (when renderer, projection, or wms-common changes)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Show which crates were benchmarked
           echo "### Crates Benchmarked" >> $GITHUB_STEP_SUMMARY
           echo "| Crate | Changed | Benchmarked |" >> $GITHUB_STEP_SUMMARY
