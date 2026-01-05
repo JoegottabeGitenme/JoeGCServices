@@ -142,7 +142,7 @@ timeout 10m docker run --rm \
 echo "[NUCLEI] Focused security templates phase complete"
 
 # =============================================================================
-# Phase 4: Run custom OGC templates (uses extended targets)
+# Phase 4: Run custom OGC templates (uses BASE URL only - templates have full paths)
 # =============================================================================
 echo "[NUCLEI] Phase 4: Running custom OGC API templates (max ${OGC_SCAN_TIMEOUT} minutes)..."
 
@@ -150,13 +150,20 @@ if [[ -d "$CUSTOM_TEMPLATES" ]]; then
     TEMPLATE_COUNT=$(find "$CUSTOM_TEMPLATES" -name "*.yaml" | wc -l)
     echo "[NUCLEI] Found ${TEMPLATE_COUNT} custom OGC templates"
     
+    # IMPORTANT: Custom OGC templates use {{BaseURL}}/wms, {{BaseURL}}/edr/... paths
+    # So we must only pass the BASE site URL, not the full endpoint URLs
+    # Otherwise we get double paths like /edr/collections/edr/collections/...
+    OGC_BASE_TARGET="${OUTPUT_DIR}/raw/nuclei-ogc-base.txt"
+    echo "${TARGET}/" > "$OGC_BASE_TARGET"
+    echo "[NUCLEI] Using base URL only for OGC templates: ${TARGET}/"
+    
     # Run custom templates - these are specifically designed for our API
     timeout ${OGC_SCAN_TIMEOUT}m docker run --rm \
         -v "${OUTPUT_DIR}:/output" \
         -v "${CUSTOM_TEMPLATES}:/custom-templates:ro" \
         --network host \
         projectdiscovery/nuclei:latest \
-        -l "/output/raw/nuclei-targets.txt" \
+        -l "/output/raw/nuclei-ogc-base.txt" \
         -t "/custom-templates/" \
         -H "Authorization: Basic ${AUTH_B64}" \
         -severity critical,high,medium,low,info \
@@ -185,12 +192,18 @@ fi
 echo "[NUCLEI] Phase 5: Running OOB detection templates (max ${OOB_SCAN_TIMEOUT} minutes)..."
 
 if [[ -d "$CUSTOM_TEMPLATES" ]]; then
+    # Use base URL only for OOB templates (same reason as Phase 4)
+    OGC_BASE_TARGET="${OUTPUT_DIR}/raw/nuclei-ogc-base.txt"
+    if [[ ! -f "$OGC_BASE_TARGET" ]]; then
+        echo "${TARGET}/" > "$OGC_BASE_TARGET"
+    fi
+    
     timeout ${OOB_SCAN_TIMEOUT}m docker run --rm \
         -v "${OUTPUT_DIR}:/output" \
         -v "${CUSTOM_TEMPLATES}:/custom-templates:ro" \
         --network host \
         projectdiscovery/nuclei:latest \
-        -l "/output/raw/nuclei-base-targets.txt" \
+        -l "/output/raw/nuclei-ogc-base.txt" \
         -t "/custom-templates/ogc-wms/wms-ssrf-sld.yaml" \
         -t "/custom-templates/ogc-edr/edr-ssrf-coords.yaml" \
         -H "Authorization: Basic ${AUTH_B64}" \

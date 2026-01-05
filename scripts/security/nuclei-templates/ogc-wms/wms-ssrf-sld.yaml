@@ -192,16 +192,19 @@ http:
     attack: batteringram
     stop-at-first-match: true
 
-    matchers-condition: or
+    matchers-condition: and
     matchers:
+      # Must be a successful response (not 400/404/500 error)
+      - type: status
+        status:
+          - 200
+      
+      # And contain actual file content indicators
       - type: regex
         regex:
           - "root:[x*]:0:0"
           - "daemon:[x*]:"
-
-      - type: word
-        words:
-          - "[extensions]"
+          - "\\[extensions\\]"
           - "for 16-bit app support"
-          - "localhost"
+          - "127\\.0\\.0\\.1\\s+localhost"
         condition: or

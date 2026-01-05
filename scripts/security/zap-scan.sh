@@ -7,6 +7,9 @@
 # - Ajax spider for JavaScript-heavy pages
 # - Passive scanning (security headers, cookies, etc.)
 # - Active scanning (SQL injection, XSS, CSRF, etc.)
+#
+# Note: Some false positives are expected for OGC API endpoints (WMS/WMTS/EDR)
+# because ZAP doesn't understand OGC parameter syntax. See SECURITY-NOTES.md
 # =============================================================================
 
 set -euo pipefail
@@ -20,6 +23,7 @@ mkdir -p "$ZAP_OUTPUT_DIR"
 
 echo "[ZAP] Starting OWASP ZAP full active scan..."
 echo "[ZAP] This may take 15-30 minutes depending on the target size..."
+echo "[ZAP] Note: OGC API endpoints may generate false positives - see SECURITY-NOTES.md"
 
 # Build ZAP config for authentication
 ZAP_AUTH_CONFIG=""
@@ -233,6 +237,37 @@ TOTAL_INFO=$((PUB_INFO + AUTH_INFO))
 echo "[ZAP] Findings: ${TOTAL_HIGH} high, ${TOTAL_MED} medium, ${TOTAL_LOW} low, ${TOTAL_INFO} info"
 echo "[ZAP] Reports saved to ${ZAP_OUTPUT_DIR}/"
 
+# =============================================================================
+# Identify known false positives
+# =============================================================================
+# Count findings that are known false positives for OGC APIs
+# These are documented in scripts/security/SECURITY-NOTES.md
+count_false_positives() {
+    local json_file="$1"
+    local fp_count=0
+    if [[ -f "$json_file" ]]; then
+        # Path Traversal on WMS/WMTS endpoints (OGC parameter syntax)
+        local pt_wms=$(jq '[.site[].alerts[] | select(.name == "Path Traversal" and (.instances[].uri | contains("/wms") or contains("/wmts")))] | length' "$json_file" 2>/dev/null || echo "0")
+        # Source Code Disclosure - SQL (matches "Select" in UI text)
+        local sql_select=$(jq '[.site[].alerts[] | select(.name == "Source Code Disclosure - SQL" and (.instances[].evidence | test("Select an item|SELECT.*FROM"; "i") | not))] | length' "$json_file" 2>/dev/null || echo "0")
+        # Source Code Disclosure - File Inclusion on WMS/WMTS (OGC parameters)
+        local fi_wms=$(jq '[.site[].alerts[] | select(.name == "Source Code Disclosure - File Inclusion" and (.instances[].uri | contains("/wms") or contains("/wmts")))] | length' "$json_file" 2>/dev/null || echo "0")
+        fp_count=$((pt_wms + sql_select + fi_wms))
+    fi
+    echo "$fp_count"
+}
+
+PUBLIC_FP=$(count_false_positives "${ZAP_OUTPUT_DIR}/zap-public-report.json")
+AUTH_FP=0
+if [[ -f "${ZAP_OUTPUT_DIR}/zap-auth-report.json" ]]; then
+    AUTH_FP=$(count_false_positives "${ZAP_OUTPUT_DIR}/zap-auth-report.json")
+fi
+TOTAL_FP=$((PUBLIC_FP + AUTH_FP))
+
+if [[ $TOTAL_FP -gt 0 ]]; then
+    echo "[ZAP] Note: ${TOTAL_FP} findings are likely false positives (OGC API syntax)"
+fi
+
 # Create summary JSON for report generator
 cat > "${OUTPUT_DIR}/raw/zap-summary.json" << EOF
 {
@@ -245,6 +280,8 @@ cat > "${OUTPUT_DIR}/raw/zap-summary.json" << EOF
         "low": ${TOTAL_LOW},
         "info": ${TOTAL_INFO}
     },
+    "known_false_positives": ${TOTAL_FP},
+    "notes": "Some findings on /wms, /wmts, /edr endpoints are false positives due to OGC API parameter syntax. See scripts/security/SECURITY-NOTES.md for details.",
     "reports": {
         "public": "zap/zap-public-report.html",
         "authenticated": "zap/zap-auth-report.html",
