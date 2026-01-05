@@ -22,7 +22,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::LevelValue;
-use crate::content_negotiation::{negotiate_format, OutputFormat};
+use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 
@@ -91,6 +91,11 @@ async fn radius_query(
             return response;
         }
     };
+
+    // PNG output is not supported for radius queries
+    if let Some(response) = check_png_not_supported(output_format, "radius") {
+        return response;
+    }
 
     let config = state.edr_config.read().await;
 
@@ -583,6 +588,10 @@ async fn radius_query(
                 );
             }
         },
+        OutputFormat::Png => {
+            // PNG is rejected earlier in check_png_not_supported, this should never be reached
+            unreachable!("PNG format should have been rejected earlier")
+        }
     };
 
     Response::builder()

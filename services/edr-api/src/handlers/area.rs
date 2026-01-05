@@ -11,6 +11,7 @@ use edr_protocol::{
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
 use grid_processor::{BoundingBox, DatasetQuery};
+use renderer::data_png::{compute_data_range, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -218,6 +219,17 @@ async fn area_query(
         }
         requested_params
     };
+
+    // PNG output requires exactly one parameter
+    if output_format == OutputFormat::Png && params_to_query.len() != 1 {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(format!(
+                "PNG output requires exactly one parameter. Use parameter-name to select a single parameter. Requested: {}",
+                if params_to_query.is_empty() { "none".to_string() } else { params_to_query.join(", ") }
+            )),
+        );
+    }
 
     // Get the bbox of the polygon for grid queries
     let bbox = area_query_struct.bbox();
@@ -514,38 +526,169 @@ async fn area_query(
     }
 
     // Serialize response based on requested format
-    let (json, content_type) = match output_format {
+    match output_format {
+        OutputFormat::Png => {
+            // PNG output - encode data as 16-bit PNG for GPU shaders
+            // We already validated that there's exactly one parameter
+            let param_name = &params_to_query[0];
+
+            // Find the parameter definition for units
+            let param_def = collection_def
+                .parameters
+                .iter()
+                .find(|p| p.name == *param_name);
+
+            // Build the level string
+            let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
+
+            // Build the DatasetQuery
+            let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+
+            if let Some(level) = &level_str {
+                query = query.at_level(level);
+            }
+
+            if let Some(valid_time) = query_time {
+                query = query.at_valid_time(valid_time);
+            }
+
+            if let Some(ref_time) = reference_time {
+                query = query.at_run(ref_time);
+            }
+
+            // Get metadata for units
+            let metadata = state.grid_data_service.get_metadata(&query).await.ok();
+            let units_str = metadata
+                .as_ref()
+                .map(|m| m.units.clone())
+                .unwrap_or_default();
+
+            // Read the region for this parameter
+            let param_region = match state
+                .grid_data_service
+                .read_region(&query, &grid_bbox, None)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Failed to read region for PNG: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error(format!("Failed to read data: {}", e)),
+                    );
+                }
+            };
+
+            // Apply polygon mask - set values outside polygon to None
+            let mut masked_data: Vec<Option<f32>> = Vec::with_capacity(param_region.data.len());
+
+            for (idx, &value) in param_region.data.iter().enumerate() {
+                let row = idx / param_region.width;
+                let col = idx % param_region.width;
+
+                // Calculate lon/lat for this grid cell
+                let lon =
+                    param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
+                let lat =
+                    param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
+
+                // Check if point is inside any polygon
+                let inside_any = all_area_queries
+                    .iter()
+                    .any(|aq| aq.contains_point(lon, lat));
+                if inside_any && !value.is_nan() {
+                    masked_data.push(Some(value));
+                } else {
+                    masked_data.push(None);
+                }
+            }
+
+            // Compute value range from the data
+            let (min_val, max_val) = compute_data_range(&masked_data);
+
+            // Create encoder and encode to PNG
+            let encoder = DataPngEncoder::new(min_val, max_val);
+            let png_bbox = [
+                param_region.bbox.min_lon,
+                param_region.bbox.min_lat,
+                param_region.bbox.max_lon,
+                param_region.bbox.max_lat,
+            ];
+
+            let encoded = match encoder.encode_with_metadata(
+                &masked_data,
+                param_region.width,
+                param_region.height,
+                param_name,
+                &units_str,
+                png_bbox,
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::error!("Failed to encode PNG: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error(format!("Failed to encode PNG: {}", e)),
+                    );
+                }
+            };
+
+            // Build response with metadata headers
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CACHE_CONTROL, "max-age=300")
+                .header("X-EDR-Parameter", param_name.as_str())
+                .header("X-EDR-Units", &units_str)
+                .header("X-EDR-Min", format!("{}", min_val))
+                .header("X-EDR-Max", format!("{}", max_val))
+                .header("X-EDR-Encoding", "uint16")
+                .header(
+                    "X-EDR-BBox",
+                    format!(
+                        "{},{},{},{}",
+                        png_bbox[0], png_bbox[1], png_bbox[2], png_bbox[3]
+                    ),
+                )
+                .header("X-EDR-Width", format!("{}", param_region.width))
+                .header("X-EDR-Height", format!("{}", param_region.height))
+                .body(encoded.png_bytes.into())
+                .unwrap()
+        }
         OutputFormat::GeoJson => {
             let geojson = EdrFeatureCollection::from(&coverage);
             match serde_json::to_string_pretty(&geojson) {
-                Ok(j) => (j, output_format.content_type()),
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, output_format.content_type())
+                    .header(header::CACHE_CONTROL, "max-age=300")
+                    .body(json.into())
+                    .unwrap(),
                 Err(e) => {
                     tracing::error!("Failed to serialize GeoJSON: {}", e);
-                    return error_response(
+                    error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         ExceptionResponse::internal_error("Failed to serialize response"),
-                    );
+                    )
                 }
             }
         }
         OutputFormat::CoverageJson => match serde_json::to_string_pretty(&coverage) {
-            Ok(j) => (j, output_format.content_type()),
+            Ok(json) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, output_format.content_type())
+                .header(header::CACHE_CONTROL, "max-age=300")
+                .body(json.into())
+                .unwrap(),
             Err(e) => {
                 tracing::error!("Failed to serialize CoverageJSON: {}", e);
-                return error_response(
+                error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ExceptionResponse::internal_error("Failed to serialize response"),
-                );
+                )
             }
         },
-    };
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "max-age=300")
-        .body(json.into())
-        .unwrap()
+    }
 }
 
 /// Build a catalog-compatible level string from EDR config.
@@ -666,5 +809,66 @@ mod tests {
 
         assert!(area_query.contains_point(-99.0, 36.0));
         assert!(!area_query.contains_point(-101.0, 36.0));
+    }
+
+    #[test]
+    fn test_png_encoder_integration() {
+        // Test that the PNG encoder works with typical area query data
+        let data: Vec<Option<f32>> = vec![
+            Some(10.0),
+            Some(15.0),
+            None, // Outside polygon
+            Some(20.0),
+            Some(12.5),
+            Some(17.5),
+            None,
+            Some(22.5),
+            Some(11.0),
+        ];
+
+        let (min_val, max_val) = compute_data_range(&data);
+        assert_eq!(min_val, 10.0);
+        assert_eq!(max_val, 22.5);
+
+        let encoder = DataPngEncoder::new(min_val, max_val);
+        let result = encoder.encode_with_metadata(
+            &data,
+            3,
+            3,
+            "temperature",
+            "K",
+            [-100.0, 35.0, -98.0, 37.0],
+        );
+
+        assert!(result.is_ok());
+        let encoded = result.unwrap();
+
+        // Verify PNG signature
+        assert_eq!(&encoded.png_bytes[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+
+        // Verify metadata
+        assert_eq!(encoded.metadata.parameter_name, "temperature");
+        assert_eq!(encoded.metadata.units, "K");
+        assert_eq!(encoded.metadata.width, 3);
+        assert_eq!(encoded.metadata.height, 3);
+    }
+
+    #[test]
+    fn test_png_encoder_all_null_data() {
+        // Test handling of completely masked/no-data regions
+        let data: Vec<Option<f32>> = vec![None, None, None, None];
+
+        let (min_val, max_val) = compute_data_range(&data);
+        // Should use default range for all-null data
+        assert_eq!(min_val, 0.0);
+        assert_eq!(max_val, 1.0);
+
+        let encoder = DataPngEncoder::new(min_val, max_val);
+        let result = encoder.encode(&data, 2, 2);
+
+        assert!(result.is_ok());
+        // Should produce a valid (transparent) PNG
+        let encoded = result.unwrap();
+        assert!(!encoded.png_bytes.is_empty());
     }
 }

@@ -133,7 +133,18 @@ paths:
     get:
       operationId: getArea
       summary: Area query
-      description: Sample data within a polygon area
+      description: |
+        Sample data within a polygon area.
+        
+        When requesting PNG format (f=png or Accept: image/png), the response is a 16-bit 
+        encoded PNG optimized for GPU shader consumption. This format encodes data values 
+        into RGBA channels for efficient WebGL texture upload:
+        - R+G channels: 16-bit normalized value (R=high byte, G=low byte)
+        - B channel: Reserved
+        - A channel: Data validity mask (255=valid, 0=no data/outside polygon)
+        
+        PNG output requires exactly one parameter (use parameter-name to select).
+        Metadata is embedded in PNG tEXt chunks and returned in response headers.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -154,6 +165,21 @@ paths:
             application/geo+json:
               schema:
                 $ref: '#/components/schemas/GeoJSON'
+            image/png:
+              schema:
+                type: string
+                format: binary
+                description: |
+                  16-bit encoded PNG for GPU shader consumption.
+                  Response headers include:
+                  - X-EDR-Parameter: Parameter name
+                  - X-EDR-Units: Unit symbol
+                  - X-EDR-Min: Minimum value for decoding
+                  - X-EDR-Max: Maximum value for decoding
+                  - X-EDR-Encoding: Encoding type (uint16)
+                  - X-EDR-BBox: Bounding box (west,south,east,north)
+                  - X-EDR-Width: Image width in pixels
+                  - X-EDR-Height: Image height in pixels
         '400':
           description: Invalid request parameters
         '404':
@@ -439,10 +465,12 @@ components:
       required: false
       style: form
       explode: false
-      description: Response format
+      description: |
+        Response format. For area queries, PNG format returns 16-bit encoded 
+        data optimized for GPU shader consumption (requires single parameter).
       schema:
         type: string
-        enum: [CoverageJSON, GeoJSON, json]
+        enum: [CoverageJSON, GeoJSON, json, png]
         default: CoverageJSON
 
     resolution-x:
