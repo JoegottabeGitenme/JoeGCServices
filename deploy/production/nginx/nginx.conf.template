@@ -79,7 +79,9 @@ http {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         # Content Security Policy - permissive for HTML pages with inline scripts
         # For API responses, CSP is less relevant but doesn't hurt
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
+        # Includes CDNs for Leaflet (cdnjs.cloudflare.com, unpkg.com) used by admin dashboard
+        # blob: in img-src needed for compliance page image rendering
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com https://cdnjs.cloudflare.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
         # Permissions Policy - disable unused browser features
         add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()" always;
         # Cross-Origin policies for Spectre mitigation
@@ -330,7 +332,9 @@ http {
         # Referrer policy
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         # Content Security Policy - permissive for HTML pages with inline scripts
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
+        # Includes CDNs for Leaflet (cdnjs.cloudflare.com, unpkg.com) used by admin dashboard
+        # blob: in img-src needed for compliance page image rendering
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.redoc.ly https://static.cloudflareinsights.com https://cdnjs.cloudflare.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
         # Permissions Policy - disable unused browser features
         add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()" always;
         # Cross-Origin policies for Spectre mitigation
