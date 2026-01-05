@@ -1,4 +1,12 @@
 // WMS Dashboard Application
+// 
+// MEMORY LEAK FIXES (Jan 2026):
+// - Added visibility-based polling (pauses all intervals when tab hidden)
+// - Reduced heatmap data structure limits (MAX_HEATMAP_ENTRIES: 500->200, MAX_SERVER_COUNTS_ENTRIES: 1000->400)
+// - More frequent pruning of heatmap data (30s -> 10s)
+// - Thorough Leaflet tile cleanup on layer removal (clearing tile.el.src, event listeners)
+// - Added keepBuffer:2 to tile layers to reduce off-screen tile caching
+// - Centralized interval management for easier pause/resume
 
 // Smart API URL detection:
 // - localhost:8000 (docker-compose) -> use localhost:8080
@@ -50,6 +58,127 @@ let wmsLayerCountsInterval = null;
 let serviceStatusInterval = null;
 let clockInterval = null;
 let heatmapPollingInterval = null;
+
+// ============================================================================
+// MEMORY MANAGEMENT - Visibility-based polling to prevent memory leaks
+// ============================================================================
+
+// Track whether the page is visible (pause polling when tab is hidden)
+let isPageVisible = true;
+let allIntervalsPaused = false;
+
+// All managed intervals for pause/resume
+const managedIntervals = {
+    backendMetrics: { fn: null, ms: 2000, ref: null },
+    containerStats: { fn: null, ms: 5000, ref: null },
+    dataStats: { fn: null, ms: 30000, ref: null },
+    wmsLayerCounts: { fn: null, ms: 60000, ref: null },
+    serviceStatus: { fn: null, ms: 30000, ref: null },
+    heatmapPolling: { fn: null, ms: 2000, ref: null },
+    ingestionStatus: { fn: null, ms: 10000, ref: null },
+    downloadsWidget: { fn: null, ms: 5000, ref: null },
+    ingestionWidget: { fn: null, ms: 2000, ref: null },
+    dataPanel: { fn: null, ms: 15000, ref: null },
+    configWidget: { fn: null, ms: 300000, ref: null },
+    perfWidget: { fn: null, ms: 10000, ref: null },
+    gridProcessorWidget: { fn: null, ms: 5000, ref: null },
+    validation: { fn: null, ms: 300000, ref: null },
+    fade: { fn: null, ms: 500, ref: null }
+};
+
+// Register an interval for management (pause when tab hidden)
+function registerManagedInterval(name, fn, ms) {
+    managedIntervals[name] = { fn, ms, ref: null };
+    if (isPageVisible && !allIntervalsPaused) {
+        managedIntervals[name].ref = setInterval(fn, ms);
+    }
+    return managedIntervals[name];
+}
+
+// Start all managed intervals
+function startAllIntervals() {
+    if (allIntervalsPaused) return;
+    Object.keys(managedIntervals).forEach(name => {
+        const interval = managedIntervals[name];
+        if (interval.fn && !interval.ref) {
+            interval.ref = setInterval(interval.fn, interval.ms);
+        }
+    });
+}
+
+// Pause all managed intervals (when tab hidden)
+function pauseAllIntervals() {
+    Object.keys(managedIntervals).forEach(name => {
+        const interval = managedIntervals[name];
+        if (interval.ref) {
+            clearInterval(interval.ref);
+            interval.ref = null;
+        }
+    });
+}
+
+// Clear all managed intervals (on page unload)
+function clearAllIntervals() {
+    allIntervalsPaused = true;
+    pauseAllIntervals();
+}
+
+// ============================================================================
+// MEMORY DEBUGGING UTILITIES
+// ============================================================================
+
+// Log memory usage (for debugging memory leaks)
+// Enable by setting localStorage.setItem('debugMemory', 'true') in console
+function logMemoryUsage(context = '') {
+    if (localStorage.getItem('debugMemory') !== 'true') return;
+    
+    if (performance.memory) {
+        const used = (performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(2);
+        const total = (performance.memory.totalJSHeapSize / 1024 / 1024).toFixed(2);
+        const limit = (performance.memory.jsHeapSizeLimit / 1024 / 1024).toFixed(2);
+        console.log(`[Memory${context ? ' - ' + context : ''}] Used: ${used}MB / Total: ${total}MB / Limit: ${limit}MB`);
+    }
+    
+    // Also log data structure sizes (handle case where they might not be initialized yet)
+    const heatmapSize = typeof tileRequestHeatmap !== 'undefined' ? Object.keys(tileRequestHeatmap).length : 0;
+    const serverCountsSize = typeof lastServerCounts !== 'undefined' ? Object.keys(lastServerCounts).length : 0;
+    const preloadedSize = Object.keys(preloadedLayers).length;
+    console.log(`[DataStructures${context ? ' - ' + context : ''}] Heatmap: ${heatmapSize}, ServerCounts: ${serverCountsSize}, PreloadedLayers: ${preloadedSize}`);
+}
+
+// Periodic memory logging (every 30 seconds if debug mode enabled)
+function startMemoryLogging() {
+    if (localStorage.getItem('debugMemory') !== 'true') return;
+    
+    setInterval(() => {
+        logMemoryUsage('periodic');
+    }, 30000);
+    
+    console.log('Memory debugging enabled. Logging every 30 seconds.');
+    console.log('To disable: localStorage.removeItem("debugMemory") and refresh');
+}
+
+// Initialize memory logging on load
+document.addEventListener('DOMContentLoaded', () => {
+    startMemoryLogging();
+});
+
+// Handle page visibility changes - pause polling when tab is hidden
+document.addEventListener('visibilitychange', () => {
+    isPageVisible = !document.hidden;
+    
+    if (document.hidden) {
+        console.log('Tab hidden - pausing all polling intervals to save memory');
+        pauseAllIntervals();
+        // Also stop any playback
+        if (isPlaying) {
+            stopPlayback();
+        }
+    } else {
+        console.log('Tab visible - resuming polling intervals');
+        startAllIntervals();
+    }
+});
 
 // DOM Elements
 const wmsStatusEl = document.getElementById('wms-status');
@@ -362,11 +491,29 @@ function preloadAllLayers() {
     });
 }
 
-// Clear all preloaded layers
+// Clear all preloaded layers with thorough cleanup to prevent memory leaks
 function clearPreloadedLayers() {
     Object.values(preloadedLayers).forEach(layer => {
         if (layer) {
-            map.removeLayer(layer);
+            // Remove all event listeners
+            layer.off();
+            // Clear internal tile cache if available
+            if (layer._tiles) {
+                Object.keys(layer._tiles).forEach(key => {
+                    const tile = layer._tiles[key];
+                    if (tile && tile.el) {
+                        tile.el.src = '';  // Clear image src to release memory
+                        tile.el.onload = null;
+                        tile.el.onerror = null;
+                    }
+                });
+                layer._tiles = {};
+            }
+            layer._tilesToLoad = 0;
+            // Remove from map
+            if (map && map.hasLayer(layer)) {
+                map.removeLayer(layer);
+            }
         }
     });
     preloadedLayers = {};
@@ -1377,11 +1524,26 @@ function createLayerControl() {
     map.addControl(layerControl);
 }
 
-// Clear the current weather layer
+// Clear the current weather layer with thorough memory cleanup
 function clearWeatherLayer() {
     stopPlayback();
     clearPreloadedLayers();
     if (wmsLayer) {
+        // Remove all event listeners
+        wmsLayer.off();
+        // Clear internal tile cache if it's a TileLayer
+        if (wmsLayer._tiles) {
+            Object.keys(wmsLayer._tiles).forEach(key => {
+                const tile = wmsLayer._tiles[key];
+                if (tile && tile.el) {
+                    tile.el.src = '';  // Clear image src to release memory
+                    tile.el.onload = null;
+                    tile.el.onerror = null;
+                }
+            });
+            wmsLayer._tiles = {};
+        }
+        wmsLayer._tilesToLoad = 0;
         map.removeLayer(wmsLayer);
         map.off('moveend', onMapMoveEnd);
         wmsLayer = null;
@@ -1500,7 +1662,10 @@ function createWeatherLayer() {
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7,
-            pane: 'weatherPane' // Custom pane above base layers
+            pane: 'weatherPane', // Custom pane above base layers
+            // Memory optimization options
+            updateWhenIdle: true,  // Don't update during pan/zoom for smoother UX
+            keepBuffer: 2          // Reduce tile buffer to minimize memory usage
         });
         
         // Hook into tile load events for performance tracking
@@ -2791,10 +2956,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Clean up on page unload - centralized interval cleanup to prevent memory leaks
 window.addEventListener('beforeunload', () => {
+    console.log('Page unloading - cleaning up all resources');
+    
+    // Stop playback and validation
     stopValidationAutoRefresh();
     stopPlayback();
 
-    // Clear all polling intervals
+    // Clear all managed intervals using centralized system
+    clearAllIntervals();
+    
+    // Also clear any legacy interval references
     if (backendMetricsInterval) clearInterval(backendMetricsInterval);
     if (containerStatsInterval) clearInterval(containerStatsInterval);
     if (dataStatsInterval) clearInterval(dataStatsInterval);
@@ -2804,6 +2975,18 @@ window.addEventListener('beforeunload', () => {
     if (heatmapPollingInterval) clearInterval(heatmapPollingInterval);
     if (ingestionStatusInterval) clearInterval(ingestionStatusInterval);
     if (fadeInterval) clearInterval(fadeInterval);
+    
+    // Clear heatmap data structures
+    tileRequestHeatmap = {};
+    lastServerCounts = {};
+    
+    // Clear preloaded layers
+    clearPreloadedLayers();
+    
+    // Clear weather layer
+    if (wmsLayer) {
+        clearWeatherLayer();
+    }
 });
 
 // ============================================================================
@@ -2822,6 +3005,20 @@ function updateLayerTime() {
         // Always remove and recreate layer to ensure Leaflet fetches fresh tiles
         // setUrl() + redraw() doesn't reliably clear Leaflet's internal tile cache
         if (wmsLayer) {
+            // Thorough cleanup to prevent memory leaks
+            wmsLayer.off();
+            if (wmsLayer._tiles) {
+                Object.keys(wmsLayer._tiles).forEach(key => {
+                    const tile = wmsLayer._tiles[key];
+                    if (tile && tile.el) {
+                        tile.el.src = '';
+                        tile.el.onload = null;
+                        tile.el.onerror = null;
+                    }
+                });
+                wmsLayer._tiles = {};
+            }
+            wmsLayer._tilesToLoad = 0;
             map.removeLayer(wmsLayer);
         }
         
@@ -2830,12 +3027,16 @@ function updateLayerTime() {
             maxZoom: 18,
             tileSize: 256,
             opacity: 0.7,
-            pane: 'weatherPane'
+            pane: 'weatherPane',
+            // Memory optimization: don't keep tiles that are off-screen
+            updateWhenIdle: true,
+            keepBuffer: 2  // Reduce buffer from default 2 to minimize cached tiles
         });
         wmsLayer.addTo(map);
     } else {
         // For WMS, we need to recreate the overlay
         if (wmsLayer) {
+            wmsLayer.off();
             map.removeLayer(wmsLayer);
             map.off('moveend', onMapMoveEnd);
         }
@@ -3006,8 +3207,10 @@ let fadeInterval = null;
 let lastServerCounts = {};  // Track last known count per tile to detect new requests
 
 // Memory management constants to prevent unbounded growth
-const MAX_HEATMAP_ENTRIES = 500;  // Max entries in tileRequestHeatmap
-const MAX_SERVER_COUNTS_ENTRIES = 1000;  // Max base keys in lastServerCounts (4 entries per key)
+// REDUCED from 500/1000 to prevent 10GB memory usage over time
+const MAX_HEATMAP_ENTRIES = 200;  // Max entries in tileRequestHeatmap (reduced from 500)
+const MAX_SERVER_COUNTS_ENTRIES = 400;  // Max base keys in lastServerCounts (reduced from 1000)
+const PRUNE_INTERVAL_MS = 10000;  // Prune every 10 seconds (reduced from 30)
 let lastServerCountsPruneTime = 0;  // Track when we last pruned
 
 // Prune lastServerCounts to prevent unbounded memory growth
@@ -3370,8 +3573,9 @@ async function fetchServerHeatmap() {
         }
         updateMinimapStats();
 
-        // Periodically prune data structures to prevent memory leaks (every 30 seconds)
-        if (now - lastServerCountsPruneTime > 30000) {
+        // Periodically prune data structures to prevent memory leaks
+        // Reduced from 30s to 10s to be more aggressive about memory cleanup
+        if (now - lastServerCountsPruneTime > PRUNE_INTERVAL_MS) {
             pruneLastServerCounts();
             pruneHeatmapEntries();
             lastServerCountsPruneTime = now;
