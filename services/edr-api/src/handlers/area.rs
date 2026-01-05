@@ -530,6 +530,12 @@ async fn area_query(
         OutputFormat::Png => {
             // PNG output - encode data as 16-bit PNG for GPU shaders
             // We already validated that there's exactly one parameter
+            //
+            // Note: The query-building logic below mirrors the JSON path above (lines ~436-449).
+            // While this is duplication, extracting it adds complexity since:
+            // - JSON path iterates multiple parameters in a loop with different error handling
+            // - PNG path handles exactly one parameter with different response formatting
+            // The duplication is intentional to keep each code path self-contained and readable.
             let param_name = &params_to_query[0];
 
             // Find the parameter definition for units
