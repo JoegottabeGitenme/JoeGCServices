@@ -412,9 +412,9 @@ pub fn sample_grid_value(
     lat: f64,
     model: &str,
 ) -> Result<f32, String> {
-    // Handle HRRR's Lambert Conformal projection
-    if model == "hrrr" {
-        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    // Handle Lambert Conformal projections (HRRR, NDFD)
+    if model == "hrrr" || model == "ndfd" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
     // Handle MRMS regional lat/lon grid
@@ -441,16 +441,21 @@ pub fn sample_grid_value(
     bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, true)
 }
 
-/// Sample a Lambert Conformal grid (HRRR) at a geographic point
+/// Sample a Lambert Conformal grid (HRRR, NDFD) at a geographic point
 pub fn sample_lambert_grid_value(
     grid_data: &[f32],
     grid_width: usize,
     grid_height: usize,
     lon: f64,
     lat: f64,
+    model: &str,
 ) -> Result<f32, String> {
-    // Create HRRR projection
-    let proj = LambertConformal::hrrr();
+    // Select appropriate Lambert projection based on model
+    let proj = if model == "ndfd" {
+        LambertConformal::ndfd()
+    } else {
+        LambertConformal::hrrr()
+    };
 
     // Convert geographic coordinates (lat, lon) to Lambert grid coordinates (i, j)
     let (grid_x, grid_y) = proj.geo_to_grid(lat, lon);
@@ -458,8 +463,12 @@ pub fn sample_lambert_grid_value(
     // Bounds check
     if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 || grid_y >= grid_height as f64 {
         return Err(format!(
-            "Point ({}, {}) outside HRRR grid bounds (grid coords: {}, {})",
-            lon, lat, grid_x, grid_y
+            "Point ({}, {}) outside {} grid bounds (grid coords: {}, {})",
+            lon,
+            lat,
+            model.to_uppercase(),
+            grid_x,
+            grid_y
         ));
     }
 
@@ -524,9 +533,9 @@ pub fn sample_grid_value_with_projection(
     goes_projection: Option<&GoesProjectionParams>,
     grid_bbox: Option<[f32; 4]>,
 ) -> Result<f32, String> {
-    // Handle HRRR's Lambert Conformal projection
-    if model == "hrrr" {
-        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    // Handle Lambert Conformal projections (HRRR, NDFD)
+    if model == "hrrr" || model == "ndfd" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
     // Handle MRMS regional lat/lon grid

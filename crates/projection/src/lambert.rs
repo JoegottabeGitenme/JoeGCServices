@@ -143,6 +143,27 @@ impl LambertConformal {
         )
     }
 
+    /// Create projection parameters for NDFD CONUS 2.5km grid.
+    ///
+    /// NDFD uses Lambert Conformal with:
+    /// - First point: 20.191999°N, 238.445999°E (= -121.554001°W)
+    /// - LoV: 265.0°E (= -95.0°W)
+    /// - Standard parallels: 25.0°N (both - tangent cone)
+    /// - Grid: 2145 x 1377, 2539.703m spacing
+    pub fn ndfd() -> Self {
+        Self::from_grib2(
+            20.191999,   // lat1
+            -121.554001, // lon1 (238.445999 - 360)
+            -95.0,       // LoV (265.0 - 360)
+            25.0,        // latin1
+            25.0,        // latin2
+            2539.703,    // dx
+            2539.703,    // dy
+            2145,        // nx
+            1377,        // ny
+        )
+    }
+
     /// Convert geographic coordinates (lat/lon in degrees) to grid indices (i, j).
     ///
     /// Returns (i, j) where i is the column (x) and j is the row (y).

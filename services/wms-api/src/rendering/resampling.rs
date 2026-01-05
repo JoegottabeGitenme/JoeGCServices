@@ -5,7 +5,7 @@
 //!
 //! - Geographic (lat/lon) to geographic
 //! - Geographic to Web Mercator (EPSG:3857)
-//! - Lambert Conformal (HRRR) to geographic/Mercator
+//! - Lambert Conformal (HRRR, NDFD) to geographic/Mercator
 //! - Geostationary (GOES) to geographic/Mercator
 //!
 //! All resampling uses bilinear interpolation for smooth results.
@@ -415,8 +415,8 @@ pub fn resample_grid_for_bbox_with_proj(
     goes_projection: Option<&GoesProjectionParams>,
     grid_uses_360: bool,
 ) -> Vec<f32> {
-    // Use Lambert Conformal resampling for HRRR (native projection)
-    if model == "hrrr" {
+    // Use Lambert Conformal resampling for HRRR and NDFD (native projection)
+    if model == "hrrr" || model == "ndfd" {
         debug!(
             model = model,
             use_mercator = use_mercator,
@@ -425,25 +425,34 @@ pub fn resample_grid_for_bbox_with_proj(
             output_width = output_width,
             output_height = output_height,
             output_bbox = ?output_bbox,
-            "Using Lambert Conformal resampling for HRRR"
+            "Using Lambert Conformal resampling for {}", model
         );
+        // Select the appropriate Lambert projection based on model
+        let proj = if model == "ndfd" {
+            LambertConformal::ndfd()
+        } else {
+            LambertConformal::hrrr()
+        };
+
         if use_mercator {
-            resample_lambert_to_mercator(
+            resample_lambert_to_mercator_with_proj(
                 data,
                 data_width,
                 data_height,
                 output_width,
                 output_height,
                 output_bbox,
+                &proj,
             )
         } else {
-            resample_lambert_to_geographic(
+            resample_lambert_to_geographic_with_proj(
                 data,
                 data_width,
                 data_height,
                 output_width,
                 output_height,
                 output_bbox,
+                &proj,
             )
         }
     } else if model == "goes16" || model == "goes18" || model == "goes" {
@@ -725,6 +734,163 @@ fn resample_lambert_to_mercator(
                 || grid_j >= data_height as f64 - 1.0
             {
                 // Outside HRRR coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+/// Resample from Lambert Conformal grid to geographic output with custom projection
+///
+/// This handles the projection transformation from any Lambert Conformal grid
+/// (HRRR, NDFD, etc.) to a regular lat/lon grid for WMS output.
+fn resample_lambert_to_geographic_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &LambertConformal,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel, find the corresponding grid point in the Lambert grid
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate geographic coordinates of this output pixel (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+            let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
+
+            // Convert geographic to Lambert grid indices
+            let (grid_i, grid_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+/// Resample from Lambert Conformal grid to Web Mercator output with custom projection
+///
+/// This handles the projection transformation from any Lambert Conformal grid
+/// (HRRR, NDFD, etc.) to Web Mercator (EPSG:3857) for WMTS tiles.
+fn resample_lambert_to_mercator_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &LambertConformal,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    // Convert lat bounds to Mercator Y coordinates for proper Y-axis spacing
+    let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
+    let max_merc_y = lat_to_mercator_y(out_max_lat as f64);
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate position in output image (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            // Longitude is linear in degrees
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+
+            // Y position uses Mercator spacing, then convert back to latitude
+            // y_ratio 0 = top = max_merc_y, y_ratio 1 = bottom = min_merc_y
+            let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
+            let lat = mercator_y_to_lat(merc_y);
+
+            // Convert geographic to Lambert grid indices
+            let (grid_i, grid_j) = proj.geo_to_grid(lat, lon as f64);
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
                 continue;
             }
 
