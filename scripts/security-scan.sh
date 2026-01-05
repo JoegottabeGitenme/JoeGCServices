@@ -108,8 +108,9 @@ Available Scans:
   tls       - TLS/SSL configuration analysis (testssl.sh)
   headers   - Security headers check
   cargo     - Rust dependency CVE scan (cargo-audit)
-  nuclei    - Vulnerability scanning with Nuclei templates
-  zap       - OWASP ZAP full active scan
+  nuclei    - Vulnerability scanning with Nuclei templates (includes custom OGC templates)
+  zap       - OWASP ZAP full active scan (spider-based)
+  zap-api   - OWASP ZAP API scan with OpenAPI specs (parameter-aware fuzzing)
   auth      - Authentication bypass tests
   rate      - Rate limiting verification
 
@@ -376,6 +377,25 @@ run_zap_scan() {
     print_success "ZAP scan complete ($(format_duration ${SCAN_TIMES[zap]}))"
 }
 
+run_zap_api_scan() {
+    if ! should_run_scan "zap-api"; then
+        print_info "Skipping ZAP API scan"
+        return 0
+    fi
+
+    print_step "Running OWASP ZAP API scan with OpenAPI specs..."
+    local start_time=$(date +%s)
+
+    if [[ -x "${SECURITY_DIR}/zap-api-scan.sh" ]]; then
+        "${SECURITY_DIR}/zap-api-scan.sh" "$TARGET" "$OUTPUT_DIR" "$AUTH_B64" "$PROJECT_ROOT" || true
+    else
+        print_warning "ZAP API scan script not found or not executable"
+    fi
+
+    record_time "zap-api" "$start_time"
+    print_success "ZAP API scan complete ($(format_duration ${SCAN_TIMES[zap-api]}))"
+}
+
 run_auth_check() {
     if ! should_run_scan "auth"; then
         print_info "Skipping auth bypass check"
@@ -441,7 +461,7 @@ print_summary() {
 
     # Print timing for each scan
     echo -e "  ${BOLD}Scan Times:${NC}"
-    for scan in tls headers cargo nuclei zap auth rate; do
+    for scan in tls headers cargo nuclei zap zap-api auth rate; do
         if [[ -v SCAN_TIMES[$scan] ]]; then
             printf "    %-12s %s\n" "$scan:" "$(format_duration ${SCAN_TIMES[$scan]})"
         fi
@@ -503,6 +523,7 @@ main() {
     
     run_nuclei_scan
     run_zap_scan
+    run_zap_api_scan
     run_auth_check
     run_rate_limit_check
 

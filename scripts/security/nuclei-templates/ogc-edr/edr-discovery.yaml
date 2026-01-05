@@ -1,0 +1,100 @@
+id: ogc-edr-discovery
+
+info:
+  name: OGC EDR API Discovery
+  author: weather-wms-security
+  severity: info
+  description: |
+    Discovers EDR API details including collections, parameters, and supported
+    query types. Extracts information for use in subsequent security scans.
+  reference:
+    - https://ogcapi.ogc.org/edr/
+  tags: edr,ogc,discovery,recon,api
+
+http:
+  # Landing page discovery
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr"
+      - "{{BaseURL}}/edr/"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        words:
+          - "links"
+          - "title"
+        condition: and
+
+    extractors:
+      - type: json
+        name: edr_title
+        json:
+          - '.title'
+
+  # Collections discovery
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        words:
+          - "collections"
+
+    extractors:
+      - type: json
+        name: collection_ids
+        json:
+          - '.collections[].id'
+
+      - type: json
+        name: collection_titles
+        json:
+          - '.collections[].title'
+
+  # Conformance discovery
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/conformance"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: json
+        name: conformance_classes
+        json:
+          - '.conformsTo[]'
+
+  # API definition discovery
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/api"
+
+    matchers:
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: json
+        name: api_version
+        json:
+          - '.info.version'
+
+      - type: json
+        name: api_paths
+        json:
+          - '.paths | keys[]'

@@ -1,0 +1,145 @@
+id: ogc-error-disclosure
+
+info:
+  name: OGC API Verbose Error Disclosure
+  author: weather-wms-security
+  severity: low
+  description: |
+    Detects verbose error messages in OGC services that may leak sensitive
+    information such as:
+    - Stack traces
+    - Internal paths
+    - Database information
+    - Framework/library versions
+    - Configuration details
+    
+    Tests malformed requests to trigger error responses.
+  reference:
+    - https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/08-Testing_for_Error_Handling/
+  tags: error,disclosure,info-leak,wms,wmts,edr,ogc
+
+http:
+  # WMS malformed request
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=InvalidRequest"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS="
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=nonexistent_layer_12345"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=test&CRS=INVALID"
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=test&BBOX=invalid"
+      - "{{BaseURL}}/wms"
+      - "{{BaseURL}}/wms?SERVICE=INVALID"
+
+    matchers-condition: or
+    matchers:
+      # Stack traces
+      - type: word
+        words:
+          - "at line"
+          - "stack trace"
+          - "Traceback"
+          - "Exception in"
+          - "panic:"
+          - "thread '"
+          - "goroutine"
+        condition: or
+
+      # Internal paths
+      - type: regex
+        regex:
+          - "/home/[a-z]+/"
+          - "/var/www/"
+          - "/opt/"
+          - "/usr/local/"
+          - "C:\\\\Users\\\\"
+          - "/app/"
+          - "/workspace/"
+
+      # Database info
+      - type: word
+        words:
+          - "PostgreSQL"
+          - "MySQL"
+          - "sqlite"
+          - "SQLSTATE"
+          - "relation \""
+          - "column \""
+        condition: or
+
+      # Framework info
+      - type: word
+        words:
+          - "axum::"
+          - "tokio::"
+          - "actix"
+          - "rocket::"
+          - "hyper::"
+          - "Django"
+          - "Flask"
+          - "Express"
+        condition: or
+
+    extractors:
+      - type: regex
+        name: paths
+        regex:
+          - "(/[a-zA-Z0-9_-]+)+\\.(rs|py|js|java|go|rb):[0-9]+"
+          - "/[a-zA-Z0-9/_-]+/[a-zA-Z0-9_-]+\\.[a-z]+"
+
+  # WMTS malformed request
+  - method: GET
+    path:
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=InvalidRequest"
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER="
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER=nonexistent"
+      - "{{BaseURL}}/wmts?SERVICE=WMTS&REQUEST=GetTile&LAYER=test&TILEMATRIX=-1"
+      - "{{BaseURL}}/wmts"
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "at line"
+          - "stack trace"
+          - "Traceback"
+          - "panic:"
+        condition: or
+
+      - type: regex
+        regex:
+          - "/home/[a-z]+/"
+          - "/var/www/"
+
+  # EDR malformed request
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/nonexistent_collection_12345"
+      - "{{BaseURL}}/edr/collections/gfs/position?coords=INVALID"
+      - "{{BaseURL}}/edr/collections/gfs/position?coords=POINT(invalid)"
+      - "{{BaseURL}}/edr/collections/gfs/position"
+      - "{{BaseURL}}/edr/invalid"
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "at line"
+          - "stack trace"
+          - "Traceback"
+          - "panic:"
+          - "Error:"
+        condition: or
+
+      - type: regex
+        regex:
+          - "/home/[a-z]+/"
+          - "/var/www/"
+          - ":[0-9]+:[0-9]+"
+
+    extractors:
+      - type: regex
+        name: error_details
+        regex:
+          - "Error: [^\n]+"
+          - "Exception: [^\n]+"
+          - "failed: [^\n]+"

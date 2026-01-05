@@ -33,9 +33,10 @@ if [[ -n "$AUTH_B64" ]]; then
 fi
 
 # Phase 1: Scan public endpoints (no auth)
-echo "[ZAP] Phase 1: Scanning public endpoints..."
+# Limit: 20 minutes max (ZAP's -m flag isn't always reliable)
+echo "[ZAP] Phase 1: Scanning public endpoints (max 20 minutes)..."
 
-docker run --rm \
+timeout 20m docker run --rm \
     -v "${ZAP_OUTPUT_DIR}:/zap/wrk:rw" \
     -t ghcr.io/zaproxy/zaproxy:stable \
     zap-full-scan.py \
@@ -45,9 +46,11 @@ docker run --rm \
     -w "zap-public-report.md" \
     -a \
     -j \
-    -m 5 \
+    -m 10 \
     -I \
-    2>&1 | tee "${OUTPUT_DIR}/raw/zap-public-scan.log" || true
+    2>&1 | tee "${OUTPUT_DIR}/raw/zap-public-scan.log" || {
+        echo "[ZAP] Public scan completed or timed out after 20 minutes"
+    }
 
 # Phase 2: Scan authenticated endpoints (if credentials available)
 if [[ -n "$AUTH_B64" ]]; then
@@ -133,8 +136,9 @@ if [[ -n "$AUTH_B64" ]]; then
 </configuration>
 CONTEXT_EOF
 
-    # Scan authenticated endpoints
-    docker run --rm \
+    # Scan authenticated endpoints (max 15 minutes)
+    echo "[ZAP] Scanning authenticated endpoints (max 15 minutes)..."
+    timeout 15m docker run --rm \
         -v "${ZAP_OUTPUT_DIR}:/zap/wrk:rw" \
         -t ghcr.io/zaproxy/zaproxy:stable \
         zap-full-scan.py \
@@ -144,7 +148,7 @@ CONTEXT_EOF
         -w "zap-auth-report.md" \
         -a \
         -j \
-        -m 5 \
+        -m 10 \
         -I \
         -z "-config replacer.full_list(0).description=BasicAuth \
             -config replacer.full_list(0).enabled=true \
@@ -152,7 +156,9 @@ CONTEXT_EOF
             -config replacer.full_list(0).matchstr=Authorization \
             -config replacer.full_list(0).regex=false \
             -config replacer.full_list(0).replacement='Basic ${AUTH_B64}'" \
-        2>&1 | tee "${OUTPUT_DIR}/raw/zap-auth-scan.log" || true
+        2>&1 | tee "${OUTPUT_DIR}/raw/zap-auth-scan.log" || {
+            echo "[ZAP] Auth scan completed or timed out after 15 minutes"
+        }
 fi
 
 # Combine results

