@@ -31,6 +31,7 @@ use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
+use crate::validation::validate_z_against_vertical_extent;
 
 /// WKT representation for EPSG:4326
 const WGS84_WKT: &str = r#"GEOGCS["Unknown", DATUM["Unknown", SPHEROID["WGS_1984", 6378137.0, 298.257223563]], PRIMEM["Greenwich",0], UNIT["degree", 0.017453], AXIS["Lon", EAST], AXIS["Lat", NORTH]]"#;
@@ -766,61 +767,6 @@ fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(json.into())
         .unwrap()
-}
-
-/// Extract unique numeric vertical levels from all parameters in a collection.
-/// Returns None if collection has no vertical extent (e.g., surface-only).
-fn get_collection_vertical_levels(
-    collection_def: &crate::config::CollectionDefinition,
-) -> Option<Vec<f64>> {
-    let mut levels: Vec<f64> = collection_def
-        .parameters
-        .iter()
-        .flat_map(|p| p.levels.iter())
-        .filter_map(|l| match l {
-            LevelValue::Numeric(n) => Some(*n),
-            LevelValue::Named(_) => None,
-        })
-        .collect();
-
-    if levels.is_empty() {
-        return None;
-    }
-
-    // Sort and deduplicate
-    levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    levels.dedup();
-    Some(levels)
-}
-
-/// Validate Z coordinate values against the collection's advertised vertical extent.
-/// Per OGC EDR spec: "the Z coordinate shall be within the range of vertical levels
-/// advertised in the Collection metadata"
-///
-/// Returns Ok(()) if valid, or Err with descriptive message if invalid.
-fn validate_z_against_vertical_extent(
-    z_values: &[f64],
-    collection_def: &crate::config::CollectionDefinition,
-) -> Result<(), String> {
-    // If collection has no vertical extent advertised, skip validation
-    // (vertical is optional per OGC EDR spec)
-    let Some(available_levels) = get_collection_vertical_levels(collection_def) else {
-        return Ok(());
-    };
-
-    for z in z_values {
-        if !available_levels
-            .iter()
-            .any(|level| (*level - *z).abs() < f64::EPSILON)
-        {
-            return Err(format!(
-                "Z coordinate {} is outside the collection's vertical extent. Must be one of: {:?}",
-                z, available_levels
-            ));
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
