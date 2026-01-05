@@ -18,6 +18,7 @@ use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
+use crate::validation::validate_z_against_vertical_extent;
 
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
@@ -156,7 +157,16 @@ async fn area_query(
     // Parse vertical levels
     let z_values = if let Some(ref z) = params.z {
         match edr_protocol::PositionQuery::parse_z(z) {
-            Ok(values) => Some(values),
+            Ok(values) => {
+                // Validate z values against collection's vertical extent
+                if let Err(e) = validate_z_against_vertical_extent(&values, collection_def) {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(e),
+                    );
+                }
+                Some(values)
+            }
             Err(e) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,

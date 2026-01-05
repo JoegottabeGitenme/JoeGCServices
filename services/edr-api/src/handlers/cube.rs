@@ -31,6 +31,7 @@ use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
+use crate::validation::validate_z_against_vertical_extent;
 
 /// WKT representation for EPSG:4326
 const WGS84_WKT: &str = r#"GEOGCS["Unknown", DATUM["Unknown", SPHEROID["WGS_1984", 6378137.0, 298.257223563]], PRIMEM["Greenwich",0], UNIT["degree", 0.017453], AXIS["Lon", EAST], AXIS["Lat", NORTH]]"#;
@@ -166,7 +167,13 @@ async fn cube_query(
 
     // Parse vertical levels
     let z_values = match edr_protocol::PositionQuery::parse_z(z_str) {
-        Ok(values) => values,
+        Ok(values) => {
+            // Validate z values against collection's vertical extent
+            if let Err(e) = validate_z_against_vertical_extent(&values, collection_def) {
+                return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e));
+            }
+            values
+        }
         Err(e) => {
             return error_response(
                 StatusCode::BAD_REQUEST,

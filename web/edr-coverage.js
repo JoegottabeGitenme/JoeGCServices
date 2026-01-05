@@ -252,6 +252,7 @@ class EDRCoverageValidator {
 
     /**
      * Load the list of available collections from the API
+     * Only shows collections that have data (temporal extent with values)
      */
     async loadCollectionList() {
         const select = document.getElementById('collection-filter-select');
@@ -263,20 +264,40 @@ class EDRCoverageValidator {
                 throw new Error(`HTTP ${response.status}`);
             }
             const data = await response.json();
-            this.availableCollections = data.collections || [];
+            const allCollections = data.collections || [];
+            
+            // Filter to only collections that have data (temporal extent with values)
+            this.availableCollections = allCollections.filter(col => {
+                const temporalValues = col.extent?.temporal?.values || [];
+                const temporalInterval = col.extent?.temporal?.interval || [];
+                // Collection has data if it has temporal values OR a non-null temporal interval
+                const hasTemporalData = temporalValues.length > 0 || 
+                    (temporalInterval.length > 0 && temporalInterval[0]?.[0] !== null);
+                return hasTemporalData;
+            });
+            
+            const skippedCount = allCollections.length - this.availableCollections.length;
             
             // Populate select
             select.innerHTML = '';
             this.availableCollections.forEach(col => {
                 const option = document.createElement('option');
                 option.value = col.id;
-                option.textContent = col.title || col.id;
+                // Show time count in the label
+                const timeCount = col.extent?.temporal?.values?.length || 0;
+                const timeLabel = timeCount > 0 ? ` (${timeCount} times)` : '';
+                option.textContent = (col.title || col.id) + timeLabel;
                 option.title = col.description || col.id;
                 select.appendChild(option);
             });
             
             if (this.availableCollections.length === 0) {
-                select.innerHTML = '<option value="" disabled>No collections found</option>';
+                select.innerHTML = '<option value="" disabled>No collections with data found</option>';
+            }
+            
+            // Log skipped collections
+            if (skippedCount > 0) {
+                console.log(`Filtered out ${skippedCount} collections with no temporal data`);
             }
         } catch (e) {
             console.error('Failed to load collections:', e);

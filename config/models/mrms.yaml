@@ -10,9 +10,9 @@ model:
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
 dimensions:
-  type: observation        # "observation" = TIME dimension (ISO8601 timestamps)
-  time: true               # TIME dimension - observation timestamp
-  elevation: false         # No vertical levels for radar data
+  type: observation # "observation" = TIME dimension (ISO8601 timestamps)
+  time: true # TIME dimension - observation timestamp
+  elevation: false # No vertical levels for radar data
 
 source:
   type: aws_s3_grib2
@@ -23,7 +23,7 @@ source:
 
 grid:
   projection: latlon
-  resolution: "0.01deg"                  # ~1km
+  resolution: "0.01deg" # ~1km
   bbox:
     min_lon: -130.0
     min_lat: 20.0
@@ -34,15 +34,17 @@ grid:
     y: 3500
 
 schedule:
-  type: observation                      # Observation data, not forecast
-  poll_interval_secs: 120                # Check every 2 minutes (data updates ~2min)
+  type: observation # Observation data, not forecast
+  poll_interval_secs: 120 # Check every 2 minutes (data updates ~2min)
   # Note: lookback_minutes is deprecated for observation models.
   # The downloader now uses retention.hours to determine how far back to look for data.
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 1                              # Keep 1 hour of radar data
-  keep_latest_observations: 60          # Always keep ~2 hours of observations (updates every ~2 min)
+  hours: 2 # Keep 2 hours to capture hourly QPE products
+  keep_latest_observations: 120 # ~2 hours of observations (updates every ~2 min)
+  # TODO: Consider splitting QPE products into separate model config with different
+  # retention settings, since they update hourly vs REFL/PRECIP_RATE every 2 minutes
 
 # Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
 precaching:
@@ -63,9 +65,9 @@ parameters:
     description: "Seamless Hybrid Scan Reflectivity"
     downsample: max
     grib2:
-      discipline: 209                    # MRMS local table
-      category: 8                        # Reflectivity category in MRMS
-      number: 8                          # SeamlessHSR parameter number
+      discipline: 209 # MRMS local table
+      category: 8 # Reflectivity category in MRMS
+      number: 8 # SeamlessHSR parameter number
     product: "SeamlessHSR_00.00"
     levels:
       - type: height_above_msl
@@ -84,8 +86,8 @@ parameters:
     downsample: max
     grib2:
       discipline: 209
-      category: 6                        # Precipitation category in MRMS
-      number: 1                          # PrecipRate parameter number
+      category: 6 # Precipitation category in MRMS
+      number: 1 # PrecipRate parameter number
     product: "PrecipRate_00.00"
     levels:
       - type: height_above_msl
@@ -98,13 +100,14 @@ parameters:
     valid_range: [0, 100]
 
   # Quantitative Precipitation Estimate - 1 hour
+  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=37
   - name: QPE_01H
     description: "1-Hour Precipitation Accumulation"
     downsample: mean
     grib2:
       discipline: 209
-      category: 1
-      number: 1                          # QPE
+      category: 6
+      number: 37
     product: "MultiSensor_QPE_01H_Pass2_00.00"
     levels:
       - type: height_above_msl
@@ -114,16 +117,17 @@ parameters:
     style: precipitation
     units: "mm"
     display_units: "mm"
-    valid_range: [0, 200]
+    valid_range: [-10, 200]
 
   # Quantitative Precipitation Estimate - 24 hour
+  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=41
   - name: QPE_24H
     description: "24-Hour Precipitation Accumulation"
     downsample: mean
     grib2:
       discipline: 209
-      category: 1
-      number: 1
+      category: 6
+      number: 41
     product: "MultiSensor_QPE_24H_Pass2_00.00"
     levels:
       - type: height_above_msl
@@ -133,4 +137,4 @@ parameters:
     style: precipitation
     units: "mm"
     display_units: "mm"
-    valid_range: [0, 500]
+    valid_range: [-10, 500]

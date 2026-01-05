@@ -28,6 +28,7 @@ use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::location_cache::LocationCacheKey;
 use crate::state::AppState;
+use crate::validation::validate_z_against_vertical_extent;
 
 /// Query parameters for locations list endpoint.
 #[derive(Debug, Deserialize, Default)]
@@ -255,7 +256,16 @@ async fn location_query(
     // Parse vertical levels
     let z_values = if let Some(ref z) = params.z {
         match ParsedPositionQuery::parse_z(z) {
-            Ok(values) => Some(values),
+            Ok(values) => {
+                // Validate z values against collection's vertical extent
+                if let Err(e) = validate_z_against_vertical_extent(&values, collection_def) {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(e),
+                    );
+                }
+                Some(values)
+            }
             Err(e) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,

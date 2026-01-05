@@ -24,15 +24,15 @@ collections:
       level_code: 100
     parameters:
       - name: TMP
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
       - name: HGT
-        levels: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
       - name: UGRD
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        levels: [1000, 700, 500, 300, 200, 100]
       - name: VGRD
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        levels: [1000, 700, 500, 300, 200, 100]
       - name: RH
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
+        levels: [1000, 700, 500, 300]
     run_mode: instances
 
   # Surface-level parameters
@@ -58,7 +58,7 @@ collections:
   # Parameters at specific heights above ground level
   - id: gfs-height-agl
     title: "GFS - Heights Above Ground"
-    description: "Parameters at specific heights above ground level (2m temp/humidity, 10m wind)"
+    description: "Parameters at specific heights above ground level (2m temp/humidity/wind)"
     level_filter:
       level_type: height_above_ground
       level_code: 103
@@ -70,24 +70,20 @@ collections:
       - name: RH
         levels: [2]
       - name: UGRD
-        levels: [10]
+        levels: [2]
       - name: VGRD
-        levels: [10]
+        levels: [2]
     run_mode: instances
 
   # Column-integrated atmospheric parameters
   - id: gfs-atmosphere
     title: "GFS - Entire Atmosphere"
-    description: "Column-integrated atmospheric parameters (precipitable water, cloud cover, reflectivity)"
+    description: "Column-integrated atmospheric parameters (precipitable water)"
     level_filter:
       level_type: entire_atmosphere
       level_code: 200
     parameters:
       - name: PWAT
-        levels: [entire_atmosphere]
-      - name: TCDC
-        levels: [entire_atmosphere]
-      - name: REFC
         levels: [entire_atmosphere]
     run_mode: instances
 
@@ -133,15 +129,15 @@ collections:
       level_code: 100
     parameters:
       - name: TMP
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
       - name: HGT
-        levels: [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
+        levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
       - name: UGRD
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        levels: [1000, 700, 500, 300, 200, 100]
       - name: VGRD
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
+        levels: [1000, 700, 500, 300, 200, 100]
       - name: RH
-        levels: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
+        levels: [1000, 700, 500, 300]
     run_mode: latest
 
   - id: gfs-surface-latest
@@ -177,9 +173,9 @@ collections:
       - name: RH
         levels: [2]
       - name: UGRD
-        levels: [10]
+        levels: [2]
       - name: VGRD
-        levels: [10]
+        levels: [2]
     run_mode: latest
 
   - id: gfs-atmosphere-latest
@@ -190,10 +186,6 @@ collections:
       level_code: 200
     parameters:
       - name: PWAT
-        levels: [entire_atmosphere]
-      - name: TCDC
-        levels: [entire_atmosphere]
-      - name: REFC
         levels: [entire_atmosphere]
     run_mode: latest
 

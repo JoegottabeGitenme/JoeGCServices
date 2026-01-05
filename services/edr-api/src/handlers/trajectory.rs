@@ -30,6 +30,7 @@ use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
+use crate::validation::validate_z_against_vertical_extent;
 
 /// Query parameters for trajectory endpoint.
 #[derive(Debug, Deserialize)]
@@ -146,6 +147,14 @@ async fn trajectory_query(
         );
     }
 
+    // Validate embedded Z coordinates against collection's vertical extent
+    if line_type.has_z() {
+        let embedded_z_values: Vec<f64> = waypoints.iter().filter_map(|wp| wp.z).collect();
+        if let Err(e) = validate_z_against_vertical_extent(&embedded_z_values, collection_def) {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e));
+        }
+    }
+
     // Check for conflicting datetime parameter when coords already has M
     // Per OGC EDR spec: An error SHALL be thrown if coords=LINESTRINGM and datetime is specified
     if line_type.has_m() && params.datetime.is_some() {
@@ -164,7 +173,16 @@ async fn trajectory_query(
         None
     } else if let Some(ref z) = params.z {
         match PositionQuery::parse_z(z) {
-            Ok(values) => Some(values),
+            Ok(values) => {
+                // Validate z values against collection's vertical extent
+                if let Err(e) = validate_z_against_vertical_extent(&values, collection_def) {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(e),
+                    );
+                }
+                Some(values)
+            }
             Err(e) => {
                 return error_response(
                     StatusCode::BAD_REQUEST,

@@ -404,7 +404,7 @@ async function runAllTests() {
         'position-missing-coords', 'position-multipoint',
         'position-no-query-params', 'position-crs-valid', 'position-f-covjson',
         // Z Parameter
-        'z-single', 'z-multiple', 'z-range', 'z-recurring', 'z-invalid',
+        'z-single', 'z-multiple', 'z-range', 'z-recurring', 'z-invalid', 'z-outside-extent',
         // Datetime Parameter
         'datetime-instant', 'datetime-range', 'datetime-list', 'datetime-open-end', 'datetime-open-start',
         // Area Query
@@ -424,7 +424,8 @@ async function runAllTests() {
         'trajectory-z-conflict', 'trajectory-multilinestring', 'trajectory-with-params',
         'trajectory-datetime',
         'trajectory-no-query-params', 'trajectory-invalid-linestringm', 'trajectory-invalid-linestringz',
-        'trajectory-invalid-linestringzm', 'trajectory-invalid-time',
+        'trajectory-invalid-linestringzm', 'trajectory-linestringz-invalid-z', 'trajectory-z-param-invalid',
+        'trajectory-invalid-time',
         'trajectory-crs-valid', 'trajectory-f-covjson',
         // Corridor Query
         'corridor-basic', 'corridor-covjson', 'corridor-missing-coords',
@@ -436,6 +437,7 @@ async function runAllTests() {
         // Corridor Query - Additional Tests
         'corridor-invalid-linestringm', 'corridor-invalid-linestringz', 'corridor-invalid-linestringzm',
         'corridor-zm-z-conflict', 'corridor-zm-datetime-conflict',
+        'corridor-linestringz-invalid-z', 'corridor-z-param-invalid',
         'corridor-linestringz', 'corridor-linestringm', 'corridor-linestringzm',
         'corridor-with-datetime', 'corridor-with-z', 'corridor-instance', 'corridor-not-found',
         'corridor-crs-valid', 'corridor-f-covjson',
@@ -580,6 +582,8 @@ async function executeTest(testName) {
             return testZRecurring();
         case 'z-invalid':
             return testZInvalid();
+        case 'z-outside-extent':
+            return testZOutsideExtent();
         case 'datetime-instant':
             return testDatetimeInstant();
         case 'datetime-range':
@@ -676,6 +680,10 @@ async function executeTest(testName) {
             return testTrajectoryInvalidLinestringZ();
         case 'trajectory-invalid-linestringzm':
             return testTrajectoryInvalidLinestringZM();
+        case 'trajectory-linestringz-invalid-z':
+            return testTrajectoryLinestringZInvalidZ();
+        case 'trajectory-z-param-invalid':
+            return testTrajectoryZParamInvalid();
         case 'trajectory-invalid-time':
             return testTrajectoryInvalidTime();
         case 'trajectory-crs-valid':
@@ -726,6 +734,10 @@ async function executeTest(testName) {
             return testCorridorZMZConflict();
         case 'corridor-zm-datetime-conflict':
             return testCorridorZMDatetimeConflict();
+        case 'corridor-linestringz-invalid-z':
+            return testCorridorLinestringZInvalidZ();
+        case 'corridor-z-param-invalid':
+            return testCorridorZParamInvalid();
         case 'corridor-linestringz':
             return testCorridorLinestringZ();
         case 'corridor-linestringm':
@@ -967,6 +979,9 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=R5/1000/100`];
         case 'z-invalid':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=abc`];
+        case 'z-outside-extent':
+            // z=99999 should be outside any collection's vertical extent
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=99999`];
         case 'datetime-instant':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}`];
         case 'datetime-range':
@@ -1065,6 +1080,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZ(-100 40,-99 40.5)`];
         case 'trajectory-invalid-linestringzm':
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZM(-100 40 850,-99 40.5 850)`];
+        case 'trajectory-linestringz-invalid-z':
+            // Z value 99999 should be outside the collection's vertical extent
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)`];
+        case 'trajectory-z-param-invalid':
+            // z parameter value 99999 should be outside the collection's vertical extent
+            return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&z=99999`];
         case 'trajectory-invalid-time':
             return [`${API_BASE}/collections/${colId}/trajectory?coords=LINESTRINGM(-100 40 invalid,-99 40.5 notadate,-98 41 alsonotadate)`];
         case 'trajectory-crs-valid':
@@ -1078,6 +1099,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&crs=CRS:84`];
         case 'corridor-f-covjson':
             return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&f=CoverageJSON`];
+        case 'corridor-linestringz-invalid-z':
+            // Z value 99999 should be outside the collection's vertical extent
+            return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`];
+        case 'corridor-z-param-invalid':
+            // z parameter value 99999 should be outside the collection's vertical extent
+            return [`${API_BASE}/collections/${colId}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&z=99999`];
         case 'error-404-collection':
             return [`${API_BASE}/collections/nonexistent-collection-12345`];
         case 'error-400-coords':
@@ -2158,6 +2185,47 @@ async function testZInvalid() {
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
         { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res,
+        url
+    };
+}
+
+// z parameter outside collection's vertical extent
+async function testZOutsideExtent() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Use z=99999 which should be outside any reasonable vertical extent
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=99999`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 (z outside vertical extent)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined },
+        { name: 'Error mentions Z or vertical extent', passed: 
+            (res.json?.detail && (res.json.detail.toLowerCase().includes('z') || 
+             res.json.detail.toLowerCase().includes('vertical') ||
+             res.json.detail.toLowerCase().includes('extent'))) ||
+            res.status === 400 }
     ];
     return {
         passed: checks.every(c => c.passed),
@@ -3932,6 +4000,63 @@ async function testTrajectoryInvalidLinestringZM() {
     };
 }
 
+// Trajectory LINESTRINGZ with Z coordinate outside collection's vertical extent
+async function testTrajectoryLinestringZInvalidZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRINGZ with Z value 99999 - outside any reasonable vertical extent
+    const coords = 'LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)';
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
+    
+    const checks = [
+        { name: 'Status 400 (Z outside vertical extent)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined },
+        { name: 'Error mentions Z or vertical extent', passed: 
+            (res.json?.detail && (res.json.detail.toLowerCase().includes('z') || 
+             res.json.detail.toLowerCase().includes('vertical') ||
+             res.json.detail.toLowerCase().includes('extent'))) ||
+            res.status === 400 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Trajectory z parameter with value outside collection's vertical extent
+async function testTrajectoryZParamInvalid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRING with z parameter value 99999 - outside any reasonable vertical extent
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&z=99999`);
+    
+    const checks = [
+        { name: 'Status 400 (z param outside vertical extent)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined },
+        { name: 'Error mentions Z or vertical extent', passed: 
+            (res.json?.detail && (res.json.detail.toLowerCase().includes('z') || 
+             res.json.detail.toLowerCase().includes('vertical') ||
+             res.json.detail.toLowerCase().includes('extent'))) ||
+            res.status === 400 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
 // Trajectory with invalid time coordinates (Abstract Test B.113)
 async function testTrajectoryInvalidTime() {
     const listRes = await fetchJson(`${API_BASE}/collections`);
@@ -4776,6 +4901,65 @@ async function testCorridorZMDatetimeConflict() {
     const checks = [
         { name: 'Status 400 for LINESTRINGZM + datetime conflict', passed: res.status === 400 },
         { name: 'Has error type', passed: !!res.json?.type }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor LINESTRINGZ with Z coordinate outside collection's vertical extent
+async function testCorridorLinestringZInvalidZ() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRINGZ with Z value 99999 - outside any reasonable vertical extent
+    const coords = 'LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)';
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 (Z outside vertical extent)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined },
+        { name: 'Error mentions Z or vertical extent', passed: 
+            (res.json?.detail && (res.json.detail.toLowerCase().includes('z') || 
+             res.json.detail.toLowerCase().includes('vertical') ||
+             res.json.detail.toLowerCase().includes('extent'))) ||
+            res.status === 400 }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res
+    };
+}
+
+// Corridor z parameter with value outside collection's vertical extent
+async function testCorridorZParamInvalid() {
+    const listRes = await fetchJson(`${API_BASE}/collections`);
+    const collections = listRes.json?.collections || [];
+    if (collections.length === 0) {
+        return { passed: false, error: 'No collections available', checks: [] };
+    }
+
+    const col = collections[0];
+    // LINESTRING with z parameter value 99999 - outside any reasonable vertical extent
+    const url = `${API_BASE}/collections/${col.id}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&z=99999&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 (z param outside vertical extent)', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json?.type !== undefined || res.json?.detail !== undefined },
+        { name: 'Error mentions Z or vertical extent', passed: 
+            (res.json?.detail && (res.json.detail.toLowerCase().includes('z') || 
+             res.json.detail.toLowerCase().includes('vertical') ||
+             res.json.detail.toLowerCase().includes('extent'))) ||
+            res.status === 400 }
     ];
     return {
         passed: checks.every(c => c.passed),

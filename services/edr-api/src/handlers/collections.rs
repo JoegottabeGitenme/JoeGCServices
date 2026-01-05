@@ -147,13 +147,17 @@ pub async fn list_collections_handler(
             .with_corridor(&state.base_url, &collection_def.id)
             .with_locations(&state.base_url, &collection_def.id);
 
-        // Only add cube for collections with vertical levels
-        let has_vertical_levels = collection_def
-            .parameters
-            .iter()
-            .any(|p| p.levels.iter().any(|l| matches!(l, LevelValue::Numeric(_))));
+        // Only add cube for collections with multiple vertical levels
+        // Single-level collections (like MRMS) don't benefit from cube queries
+        let has_multiple_vertical_levels = collection_def.parameters.iter().any(|p| {
+            p.levels
+                .iter()
+                .filter(|l| matches!(l, LevelValue::Numeric(_)))
+                .count()
+                > 1
+        });
 
-        if has_vertical_levels {
+        if has_multiple_vertical_levels {
             queries = queries.with_cube(&state.base_url, &collection_def.id);
         }
 
@@ -238,13 +242,17 @@ pub async fn get_collection_handler(
         .with_corridor(&state.base_url, &collection_def.id)
         .with_locations(&state.base_url, &collection_def.id);
 
-    // Only add cube for collections with vertical levels
-    let has_vertical_levels = collection_def
-        .parameters
-        .iter()
-        .any(|p| p.levels.iter().any(|l| matches!(l, LevelValue::Numeric(_))));
+    // Only add cube for collections with multiple vertical levels
+    // Single-level collections (like MRMS) don't benefit from cube queries
+    let has_multiple_vertical_levels = collection_def.parameters.iter().any(|p| {
+        p.levels
+            .iter()
+            .filter(|l| matches!(l, LevelValue::Numeric(_)))
+            .count()
+            > 1
+    });
 
-    if has_vertical_levels {
+    if has_multiple_vertical_levels {
         queries = queries.with_cube(&state.base_url, &collection_def.id);
     }
 
