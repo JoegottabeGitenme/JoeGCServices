@@ -1,0 +1,262 @@
+# NDFD - National Digital Forecast Database Configuration
+# NWS official digital gridded forecasts, 2.5km CONUS resolution
+# Data source: https://tgftp.nws.noaa.gov/SL.us008001/ST.opnl/DF.gr2/DC.ndfd/
+#
+# NDFD is a continuously-updated forecast database, NOT a run/forecast model.
+# Forecasters at local NWS offices manually edit grids throughout the day.
+# Each file contains multiple forecast valid times (Days 1-3 = ~43 hourly forecasts).
+
+model:
+  id: ndfd
+  name: "NDFD - National Digital Forecast Database"
+  description: "NWS official digital gridded forecasts for CONUS, 2.5km resolution"
+  enabled: true
+
+# WMS/WMTS dimension configuration
+# NDFD uses TIME dimension only (like observations) since there's no run/cycle concept
+dimensions:
+  type: observation       # TIME dimension (valid time based)
+  run: false              # No RUN dimension - NDFD updates continuously
+  forecast: false         # No FORECAST dimension
+  time: true              # TIME dimension - forecast valid times
+  elevation: true         # ELEVATION dimension for levels
+
+# Data source - HTTP from NWS Telecommunications Gateway
+# NOTE: NDFD uses WMO bulletin headers that wrap GRIB2 messages
+# The grib2-parser's ndfd module handles stripping these headers
+source:
+  type: http
+  base_url: "https://tgftp.nws.noaa.gov"
+  # Days 1-3 data (highest temporal resolution, hourly for some elements)
+  prefix_template: "SL.us008001/ST.opnl/DF.gr2/DC.ndfd/AR.conus/VP.001-003"
+  # Each parameter is in a separate file containing all forecast times
+  # Files are named ds.<element>.bin (e.g., ds.temp.bin, ds.wspd.bin)
+  file_pattern: "ds.{parameter}.bin"
+  # NDFD files have WMO bulletin headers that need to be stripped
+  format: ndfd_grib2
+
+# Grid definition - CONUS 2.5km Lambert Conformal
+# Reference: https://vlab.noaa.gov/web/mdl/ndfd-spatial-reference-system
+grid:
+  projection: lambert_conformal
+  resolution: "2.5km"
+  bbox:
+    # Approximate geographic bounds (actual grid is in Lambert Conformal)
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+  projection_params:
+    # NDFD CONUS 2.5km grid parameters from GRIB2 Section 3
+    lat1: 20.191999          # Latitude of first grid point (degrees)
+    lon1: 238.445999         # Longitude of first grid point (degrees, east)
+    lov: 265.0               # Orientation longitude (central meridian)
+    latin1: 25.0             # First standard parallel
+    latin2: 25.0             # Second standard parallel (tangent cone)
+    dx: 2539.703             # X-direction grid length (meters)
+    dy: 2539.703             # Y-direction grid length (meters)
+    nx: 2145                 # Number of points on parallel
+    ny: 1377                 # Number of points on meridian
+    earth_radius: 6371200    # Earth radius (meters)
+
+# Schedule - Poll for updates periodically
+# NDFD is updated continuously as forecasters make changes
+schedule:
+  type: observation        # Treat like observation data (continuous updates)
+  poll_interval_secs: 3600 # Check for updates every hour
+  lookback_minutes: 180    # Look back 3 hours for recent data
+
+# Retention - Keep minimal data to save disk space
+# Since NDFD is always the "current best forecast", we only need recent versions
+retention:
+  hours: 24                         # Keep data for 24 hours (allows rollback)
+  keep_latest_updates: 2            # Keep at least 2 recent versions
+
+# Precaching - disabled for now
+precaching:
+  enabled: false
+
+# GRIB2 Parameters - Core Weather (8 parameters)
+# Reference: https://vlab.noaa.gov/web/mdl/ndfd-grib-all-sections
+#
+# GRIB2 Level type codes for NDFD:
+#   1 = surface
+#   103 = height above ground (in m)
+
+parameters:
+  # ==========================================================================
+  # Temperature Parameters
+  # ==========================================================================
+  
+  # Temperature (hourly)
+  - name: TMP
+    description: "Temperature"
+    file: temp                    # ds.temp.bin
+    grib2:
+      discipline: 0               # Meteorological products
+      category: 0                 # Temperature
+      number: 0                   # Temperature
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    style: temperature
+    units: K
+    display_units: "F"
+    conversion: K_to_F
+    valid_range: [ 180, 340 ]     # ~-130F to 150F
+
+  # Dew Point Temperature (hourly)
+  - name: DPT
+    description: "Dew Point Temperature"
+    file: td                      # ds.td.bin
+    grib2:
+      discipline: 0
+      category: 0
+      number: 6                   # Dew Point Temperature
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    style: temperature
+    units: K
+    display_units: "F"
+    conversion: K_to_F
+    valid_range: [ 180, 320 ]
+
+  # ==========================================================================
+  # Wind Parameters
+  # ==========================================================================
+
+  # Wind Speed (hourly)
+  - name: WSPD
+    description: "Wind Speed"
+    file: wspd                    # ds.wspd.bin
+    grib2:
+      discipline: 0
+      category: 2                 # Momentum
+      number: 1                   # Wind Speed
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    style: wind
+    units: m/s
+    display_units: "mph"
+    conversion: ms_to_mph
+    valid_range: [ 0, 100 ]
+
+  # Wind Direction (hourly)
+  - name: WDIR
+    description: "Wind Direction"
+    file: wdir                    # ds.wdir.bin
+    grib2:
+      discipline: 0
+      category: 2
+      number: 0                   # Wind Direction
+    downsample: nearest           # Direction needs special handling
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    style: wind_direction
+    units: "degrees"
+    valid_range: [ 0, 360 ]
+
+  # Wind Gust (hourly)
+  - name: GUST
+    description: "Wind Speed (Gust)"
+    file: wgust                   # ds.wgust.bin
+    grib2:
+      discipline: 0
+      category: 2
+      number: 22                  # Wind Speed (Gust)
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: wind
+    units: m/s
+    display_units: "mph"
+    conversion: ms_to_mph
+    valid_range: [ 0, 100 ]
+
+  # ==========================================================================
+  # Moisture Parameters
+  # ==========================================================================
+
+  # Relative Humidity (hourly)
+  - name: RH
+    description: "Relative Humidity"
+    file: rhm                     # ds.rhm.bin
+    grib2:
+      discipline: 0
+      category: 1                 # Moisture
+      number: 1                   # Relative Humidity
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    style: humidity
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+  # ==========================================================================
+  # Sky/Cloud Parameters
+  # ==========================================================================
+
+  # Sky Cover (Total Cloud Cover)
+  - name: SKY
+    description: "Sky Cover (Total Cloud Cover)"
+    file: sky                     # ds.sky.bin
+    grib2:
+      discipline: 0
+      category: 6                 # Cloud
+      number: 1                   # Total Cloud Cover
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: cloud
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+  # ==========================================================================
+  # Precipitation Parameters
+  # ==========================================================================
+
+  # 12-Hour Probability of Precipitation
+  - name: POP12
+    description: "12-Hour Probability of Precipitation"
+    file: pop12                   # ds.pop12.bin
+    grib2:
+      discipline: 0
+      category: 1
+      number: 8                   # Total Precipitation (used with probability template)
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    style: probability
+    units: "%"
+    valid_range: [ 0, 100 ]
+
+# Composite layers - wind barbs from speed/direction
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [ WSPD, WDIR ]
+    renderer: wind_barbs_spd_dir    # Different renderer for speed/dir vs U/V
+    style: wind_barbs

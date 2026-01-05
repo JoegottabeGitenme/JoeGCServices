@@ -1,0 +1,99 @@
+# NDFD EDR Configuration
+# Defines collections grouped by parameter type for the OGC EDR API
+#
+# NDFD (National Digital Forecast Database) provides NWS official digital 
+# gridded forecasts. Uses TIME dimension only (observation-style) since
+# NDFD updates continuously without discrete run cycles.
+
+model: ndfd
+
+collections:
+  # Temperature collection
+  - id: ndfd-temperature
+    title: "NDFD - Temperature"
+    description: "Temperature and dew point forecasts at 2m above ground"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+    run_mode: times           # TIME dimension only (no runs)
+
+  # Wind collection (speed/direction at 10m)
+  - id: ndfd-wind
+    title: "NDFD - Wind"
+    description: "Wind speed and direction at 10m above ground"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: WSPD
+        levels: [10]
+      - name: WDIR
+        levels: [10]
+    run_mode: times
+
+  # Wind gusts (surface level)
+  - id: ndfd-wind-gust
+    title: "NDFD - Wind Gusts"
+    description: "Surface wind gust forecasts"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: GUST
+        levels: [surface]
+    run_mode: times
+
+  # Humidity collection
+  - id: ndfd-humidity
+    title: "NDFD - Humidity"
+    description: "Relative humidity forecasts at 2m above ground"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: RH
+        levels: [2]
+    run_mode: times
+
+  # Sky cover collection
+  - id: ndfd-sky
+    title: "NDFD - Sky Cover"
+    description: "Total cloud/sky cover forecasts"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: SKY
+        levels: [surface]
+    run_mode: times
+
+  # Precipitation probability collection
+  - id: ndfd-precipitation
+    title: "NDFD - Precipitation Probability"
+    description: "12-hour probability of precipitation forecasts"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: POP12
+        levels: [surface]
+    run_mode: times
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 72              # Up to 3 days of hourly data
+  max_vertical_levels: 5
+  max_response_size_mb: 50

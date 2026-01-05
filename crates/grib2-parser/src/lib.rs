@@ -18,6 +18,13 @@
 //! - Section 7: Data (~1.2 MB for GFS) - Compressed grid values
 //! - Section 8: End (4 bytes) - "7777" terminator
 //!
+//! # NDFD Support
+//!
+//! This crate also supports NDFD (National Digital Forecast Database) files,
+//! which wrap GRIB2 messages with WMO bulletin headers. Use `strip_wmo_headers`
+//! to extract clean GRIB2 messages from NDFD files, or use `NdfdReader` for
+//! convenient iteration over NDFD bulletins.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -42,10 +49,12 @@
 //! }
 //! ```
 
+pub mod ndfd;
 pub mod sections;
 pub mod tables;
 pub mod unpacking;
 
+pub use ndfd::{strip_wmo_headers, NdfdReader};
 pub use tables::{Grib2Tables, LevelDescription};
 pub use unpacking::unpack_simple;
 

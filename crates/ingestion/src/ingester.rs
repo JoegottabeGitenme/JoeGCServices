@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::grib2;
 use crate::metadata::{detect_file_type, FileType};
 use crate::netcdf;
+use grib2_parser::strip_wmo_headers;
 
 /// Options for ingestion operations.
 #[derive(Debug, Clone, Default)]
@@ -90,6 +91,18 @@ impl Ingester {
                     &self.storage,
                     &self.catalog,
                     decompressed,
+                    file_path,
+                    &options,
+                )
+                .await
+            }
+            FileType::NdfdGrib2 => {
+                // Strip WMO bulletin headers and ingest as GRIB2
+                let stripped = strip_wmo_headers(&data);
+                grib2::ingest_grib2(
+                    &self.storage,
+                    &self.catalog,
+                    Bytes::from(stripped),
                     file_path,
                     &options,
                 )

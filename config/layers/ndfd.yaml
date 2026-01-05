@@ -1,0 +1,148 @@
+# NDFD Layer Configuration
+# Defines WMS/WMTS layers exposed for the NDFD model
+# CONUS coverage only, 2.5km resolution
+#
+# NDFD uses TIME dimension only (observation-style) since it updates continuously.
+# Unlike HRRR/GFS, there is no RUN or FORECAST dimension.
+
+model: ndfd
+display_name: "NDFD - National Digital Forecast Database"
+
+# NDFD covers CONUS
+default_bbox:
+  west: -130.0
+  south: 20.0
+  east: -60.0
+  north: 55.0
+
+layers:
+  # ==========================================================================
+  # Temperature Layers
+  # ==========================================================================
+
+  - id: ndfd_TMP
+    parameter: TMP
+    title: "Temperature"
+    abstract: "Air temperature forecast at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "F"
+      conversion: K_to_F
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: ndfd_DPT
+    parameter: DPT
+    title: "Dew Point Temperature"
+    abstract: "Dew point temperature forecast at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "F"
+      conversion: K_to_F
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Wind Layers
+  # ==========================================================================
+
+  - id: ndfd_WSPD
+    parameter: WSPD
+    title: "Wind Speed"
+    abstract: "Wind speed forecast at 10m above ground"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: mph
+      conversion: ms_to_mph
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: ndfd_WDIR
+    parameter: WDIR
+    title: "Wind Direction"
+    abstract: "Wind direction forecast at 10m above ground (degrees from north)"
+    style_file: wind_direction.json
+    units:
+      native: degrees
+      display: degrees
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: ndfd_GUST
+    parameter: GUST
+    title: "Wind Gust"
+    abstract: "Surface wind gust forecast"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: mph
+      conversion: ms_to_mph
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: ndfd_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Wind Barbs"
+    abstract: "Wind direction and speed barbs (composite of WSPD/WDIR)"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [ WSPD, WDIR ]
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Moisture Layers
+  # ==========================================================================
+
+  - id: ndfd_RH
+    parameter: RH
+    title: "Relative Humidity"
+    abstract: "Relative humidity forecast at 2m above ground"
+    style_file: humidity.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Sky/Cloud Layers
+  # ==========================================================================
+
+  - id: ndfd_SKY
+    parameter: SKY
+    title: "Sky Cover"
+    abstract: "Total cloud cover forecast (percentage)"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Precipitation Layers
+  # ==========================================================================
+
+  - id: ndfd_POP12
+    parameter: POP12
+    title: "Probability of Precipitation (12hr)"
+    abstract: "12-hour probability of precipitation forecast"
+    style_file: probability.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "surface"
+        default: true
