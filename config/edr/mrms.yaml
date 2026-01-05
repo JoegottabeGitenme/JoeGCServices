@@ -17,29 +17,18 @@ model: mrms
 
 collections:
   # ===========================================================================
-  # Instance-based collections (access all available observation timestamps)
+  # Instance-based collection (access all available observation timestamps)
   # ===========================================================================
   
-  # Radar reflectivity - the primary mosaic product
-  - id: mrms-reflectivity
-    title: "MRMS - Radar Reflectivity"
-    description: "Seamless Hybrid Scan Reflectivity - fully composited radar mosaic"
+  - id: mrms-single-level
+    title: "MRMS - Single Level"
+    description: "Radar reflectivity and precipitation products from multi-sensor analysis"
     level_filter:
       level_type: height_above_msl
       level_code: 102
     parameters:
       - name: REFL
         levels: [0]
-    run_mode: instances
-
-  # Precipitation products - rate and accumulations
-  - id: mrms-precipitation
-    title: "MRMS - Precipitation"
-    description: "Precipitation rate and accumulation products from multi-sensor analysis"
-    level_filter:
-      level_type: height_above_msl
-      level_code: 102
-    parameters:
       - name: PRECIP_RATE
         levels: [0]
       - name: QPE_01H
@@ -49,29 +38,20 @@ collections:
     run_mode: instances
 
   # ===========================================================================
-  # Latest-only collections (quick access to most recent observation)
-  # These use the non-instance endpoints for simpler access patterns:
-  #   GET /edr/collections/mrms-reflectivity-latest/position?coords=POINT(-100 40)
+  # Latest-only collection (quick access to most recent observation)
+  # Uses the non-instance endpoints for simpler access patterns:
+  #   GET /edr/collections/mrms-single-level-latest/position?coords=POINT(-100 40)
   # ===========================================================================
   
-  - id: mrms-reflectivity-latest
-    title: "MRMS - Radar Reflectivity (Latest)"
-    description: "Most recent radar reflectivity mosaic"
+  - id: mrms-single-level-latest
+    title: "MRMS - Single Level (Latest)"
+    description: "Most recent radar and precipitation data"
     level_filter:
       level_type: height_above_msl
       level_code: 102
     parameters:
       - name: REFL
         levels: [0]
-    run_mode: latest
-
-  - id: mrms-precipitation-latest
-    title: "MRMS - Precipitation (Latest)"
-    description: "Most recent precipitation data"
-    level_filter:
-      level_type: height_above_msl
-      level_code: 102
-    parameters:
       - name: PRECIP_RATE
         levels: [0]
       - name: QPE_01H
