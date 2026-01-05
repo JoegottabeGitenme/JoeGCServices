@@ -53,7 +53,7 @@ pub struct SourceConfig {
     /// S3 bucket name (for aws_s3 types)
     #[serde(default)]
     pub bucket: String,
-    /// Base URL for HTTP sources (e.g., "https://tgftp.nws.noaa.gov")
+    /// Base URL for HTTP sources (e.g., `https://tgftp.nws.noaa.gov`)
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
