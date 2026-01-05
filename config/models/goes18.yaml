@@ -5,56 +5,56 @@ model:
   id: goes18
   name: "GOES-18 - GOES West"
   description: "GOES-18 (GOES West) satellite imagery, ABI CONUS product"
-  enabled: true
+  enabled: false
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
 dimensions:
-  type: observation        # "observation" = TIME dimension (ISO8601 timestamps)
-  time: true               # TIME dimension - observation timestamp
-  elevation: false         # No vertical levels for satellite imagery
+  type: observation # "observation" = TIME dimension (ISO8601 timestamps)
+  time: true # TIME dimension - observation timestamp
+  elevation: false # No vertical levels for satellite imagery
 
 source:
   type: aws_s3_goes
   bucket: noaa-goes18
-  product: "ABI-L2-CMIPC"                # CONUS Cloud and Moisture Imagery
+  product: "ABI-L2-CMIPC" # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [ 13 ]                            # Start with Clean IR only for testing
+  bands: [13] # Start with Clean IR only for testing
 
 grid:
   projection: geostationary
-  resolution: "1km"                      # Approximate
+  resolution: "1km" # Approximate
   bbox:
     min_lon: -175.0
     min_lat: 14.5
     max_lon: -100.0
     max_lat: 55.5
   projection_params:
-    satellite_longitude: -137.0          # GOES-West orbital position
-    satellite_height: 35786023.0         # meters
-    semi_major_axis: 6378137.0           # WGS84
-    semi_minor_axis: 6356752.31414       # WGS84
+    satellite_longitude: -137.0 # GOES-West orbital position
+    satellite_height: 35786023.0 # meters
+    semi_major_axis: 6378137.0 # WGS84
+    semi_minor_axis: 6356752.31414 # WGS84
 
 schedule:
-  type: observation                      # Observation data, not forecast
-  poll_interval_secs: 300                # Check every 5 minutes
+  type: observation # Observation data, not forecast
+  poll_interval_secs: 300 # Check every 5 minutes
   # Note: lookback_minutes is deprecated for observation models.
   # The downloader now uses retention.hours to determine how far back to look for data.
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 3                              # Keep 3 hours of imagery
-  keep_latest_observations: 24          # Always keep ~2 hours of observations (updates every ~5 min)
+  hours: 3 # Keep 3 hours of imagery
+  keep_latest_observations: 24 # Always keep ~2 hours of observations (updates every ~5 min)
 
 # Precaching configuration - proactively warm GridDataCache
 # NOTE: GOES grids are large (~60-240MB each in memory), so keep_recent should be low
 precaching:
   enabled: true
-  keep_recent: 3                        # Keep 3 most recent observations (~15 min, ~1.5GB)
-  warm_on_ingest: true                  # Immediately warm when new data ingested
-  poll_interval_secs: 60                # Background poll every 60s for missed data
-  parameters: [ CMI_C02, CMI_C13 ]        # Only precache most-used bands (visible red, IR)
+  keep_recent: 3 # Keep 3 most recent observations (~15 min, ~1.5GB)
+  warm_on_ingest: true # Immediately warm when new data ingested
+  poll_interval_secs: 60 # Background poll every 60s for missed data
+  parameters: [CMI_C02, CMI_C13] # Only precache most-used bands (visible red, IR)
 
 parameters:
   # Blue Visible (0.47µm)
@@ -64,24 +64,24 @@ parameters:
     band: 1
     levels:
       - type: top_of_atmosphere
-        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_blue"
     style: goes_visible
     units: "reflectance"
-    valid_range: [ 0, 1.5 ]  # Reflectance factor (can exceed 1.0 for bright surfaces)
+    valid_range: [0, 1.5] # Reflectance factor (can exceed 1.0 for bright surfaces)
 
-  # Red Visible (0.64µm)  
+  # Red Visible (0.64µm)
   - name: CMI_C02
     description: "Red Visible (0.64µm)"
     downsample: mean
     band: 2
     levels:
       - type: top_of_atmosphere
-        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_red"
     style: goes_visible
     units: "reflectance"
-    valid_range: [ 0, 1.5 ]  # Reflectance factor
+    valid_range: [0, 1.5] # Reflectance factor
 
   # Upper-Level Water Vapor (6.2µm)
   - name: CMI_C08
@@ -90,12 +90,12 @@ parameters:
     band: 8
     levels:
       - type: top_of_atmosphere
-        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "upper_vapor"
     style: goes_ir
     units: "K"
     display_units: "K"
-    valid_range: [ 180, 350 ]  # Brightness temperature range
+    valid_range: [180, 350] # Brightness temperature range
 
   # Clean IR (10.3µm)
   - name: CMI_C13
@@ -104,9 +104,9 @@ parameters:
     band: 13
     levels:
       - type: top_of_atmosphere
-        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "clean_ir"
     style: goes_ir
     units: "K"
     display_units: "K"
-    valid_range: [ 180, 350 ]  # Brightness temperature range
+    valid_range: [180, 350] # Brightness temperature range
