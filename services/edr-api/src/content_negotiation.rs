@@ -583,4 +583,21 @@ mod tests {
         let headers = make_headers("text/html");
         assert!(negotiate_format(&headers, None).is_err());
     }
+
+    #[test]
+    fn test_check_png_not_supported_returns_error_for_png() {
+        // PNG format should return an error response for non-area query types
+        let response = check_png_not_supported(OutputFormat::Png, "position");
+        assert!(response.is_some());
+
+        let resp = response.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_check_png_not_supported_returns_none_for_other_formats() {
+        // Non-PNG formats should return None (no error)
+        assert!(check_png_not_supported(OutputFormat::CoverageJson, "position").is_none());
+        assert!(check_png_not_supported(OutputFormat::GeoJson, "position").is_none());
+    }
 }

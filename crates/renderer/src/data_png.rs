@@ -57,7 +57,7 @@ pub struct DataPngMetadata {
     pub min_value: f32,
     /// Maximum value used for normalization
     pub max_value: f32,
-    /// Bounding box [west, south, east, north]
+    /// Bounding box as [west, south, east, north] (minLon, minLat, maxLon, maxLat)
     pub bbox: [f64; 4],
     /// Image width in pixels
     pub width: u32,
@@ -338,7 +338,10 @@ impl DataPngEncoder {
     }
 }
 
-/// Compute min and max from data, ignoring None values
+/// Compute min and max from data, ignoring None values.
+///
+/// Returns (min, max) tuple. If all values are None/NaN, returns (0.0, 1.0).
+/// If all values are the same, returns a range of +/- 0.5 around that value.
 pub fn compute_data_range(data: &[Option<f32>]) -> (f32, f32) {
     let mut min_val = f32::INFINITY;
     let mut max_val = f32::NEG_INFINITY;
