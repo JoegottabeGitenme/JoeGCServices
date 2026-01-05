@@ -250,18 +250,6 @@ pub async fn load_grid_data_from_zarr(
     // so we don't need the goes_projection params for rendering
     let goes_projection = None;
 
-    // Extract native units from Zarr metadata (source of truth)
-    let native_units = if zarr_meta.units.is_empty() || zarr_meta.units == "unknown" {
-        debug!(
-            model = %entry.model,
-            parameter = %entry.parameter,
-            "Zarr metadata has unknown/empty units"
-        );
-        String::new()
-    } else {
-        zarr_meta.units.clone()
-    };
-
     Ok(GridData {
         data: region.data,
         width: region.width,
@@ -269,7 +257,6 @@ pub async fn load_grid_data_from_zarr(
         bbox: Some(actual_bbox),
         goes_projection,
         grid_uses_360,
-        native_units,
     })
 }
 
