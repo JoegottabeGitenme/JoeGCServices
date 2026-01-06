@@ -528,3 +528,77 @@ fn test_ndfd_detailed_transform() {
     assert!(i >= 0.0 && i < nx as f64, "Miami i out of range");
     assert!(j >= 0.0 && j < ny as f64, "Miami j out of range");
 }
+
+#[test]
+fn test_ndfd_vs_hrrr_comparison() {
+    // Both NDFD and HRRR use Lambert Conformal
+    // Compare how they handle similar geographic points
+
+    let ndfd = LambertConformal::ndfd();
+    let hrrr = LambertConformal::hrrr();
+
+    // Test point in center of CONUS
+    let kansas = (38.5, -98.0);
+
+    let (ndfd_i, ndfd_j) = ndfd.geo_to_grid(kansas.0, kansas.1);
+    let (hrrr_i, hrrr_j) = hrrr.geo_to_grid(kansas.0, kansas.1);
+
+    println!("Kansas (38.5°N, 98°W):");
+    println!(
+        "  NDFD: i={:.1}, j={:.1} (grid: {} x {})",
+        ndfd_i, ndfd_j, ndfd.nx, ndfd.ny
+    );
+    println!(
+        "  HRRR: i={:.1}, j={:.1} (grid: {} x {})",
+        hrrr_i, hrrr_j, hrrr.nx, hrrr.ny
+    );
+
+    // Verify Kansas is within both grids
+    assert!(
+        ndfd_i >= 0.0 && ndfd_i < ndfd.nx as f64,
+        "Kansas should be in NDFD grid"
+    );
+    assert!(
+        ndfd_j >= 0.0 && ndfd_j < ndfd.ny as f64,
+        "Kansas should be in NDFD grid"
+    );
+    assert!(
+        hrrr_i >= 0.0 && hrrr_i < hrrr.nx as f64,
+        "Kansas should be in HRRR grid"
+    );
+    assert!(
+        hrrr_j >= 0.0 && hrrr_j < hrrr.ny as f64,
+        "Kansas should be in HRRR grid"
+    );
+
+    // Verify Kansas is roughly in the middle of both grids
+    let ndfd_i_ratio = ndfd_i / ndfd.nx as f64;
+    let ndfd_j_ratio = ndfd_j / ndfd.ny as f64;
+    let hrrr_i_ratio = hrrr_i / hrrr.nx as f64;
+    let hrrr_j_ratio = hrrr_j / hrrr.ny as f64;
+
+    println!(
+        "  NDFD ratios: i={:.2}, j={:.2}",
+        ndfd_i_ratio, ndfd_j_ratio
+    );
+    println!(
+        "  HRRR ratios: i={:.2}, j={:.2}",
+        hrrr_i_ratio, hrrr_j_ratio
+    );
+
+    // Both should have Kansas somewhere in the middle 30-70% range
+    assert!(
+        ndfd_i_ratio > 0.3 && ndfd_i_ratio < 0.7,
+        "Kansas i should be ~middle in NDFD"
+    );
+    assert!(
+        ndfd_j_ratio > 0.3 && ndfd_j_ratio < 0.7,
+        "Kansas j should be ~middle in NDFD"
+    );
+
+    // Verify roundtrip
+    let (lat, lon) = ndfd.grid_to_geo(ndfd_i, ndfd_j);
+    println!("  NDFD roundtrip: ({:.6}, {:.6})", lat, lon);
+    assert!((lat - kansas.0).abs() < 0.001, "Latitude roundtrip failed");
+    assert!((lon - kansas.1).abs() < 0.001, "Longitude roundtrip failed");
+}
