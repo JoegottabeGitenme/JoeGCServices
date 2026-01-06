@@ -172,12 +172,36 @@ pub async fn ingest_grib2(
 
         // Handle scanning mode differences between GRIB sources and our storage convention.
         //
-        // NDFD uses +j scanning (south-to-north), meaning GRIB row 0 = south.
-        // Our Lambert projection has j=0 at south, matching NDFD's storage order.
-        // So NDFD data does NOT need flipping - the data order matches the projection.
+        // The `grib` crate automatically normalizes scanning modes when decoding values.
+        // NDFD uses scan mode 80 (0x50) in the raw file, but the decoded data is already
+        // in standard WE:SN order (j=0 at south, j increases going north).
         //
-        // Note: If data appears upside-down, ensure you re-ingest after deploying
-        // this code - previously ingested data may have incorrect row ordering.
+        // Our Lambert projection convention matches this:
+        // - i=0 is westernmost column, i increases going east
+        // - j=0 is southernmost row, j increases going north
+        // - Data index = j * width + i
+        //
+        // NO transformation is needed for NDFD data.
+
+        // Log diagnostic values to verify correct indexing
+        if model == "ndfd" {
+            // LA at (-118.2°, 34°N): grid i=239, j=572
+            // NY at (-74°, 41°N): grid i=1810, j=856
+            let la_idx = 572 * width + 239;
+            let ny_idx = 856 * width + 1810;
+            let la_val = grid_data.get(la_idx).copied().unwrap_or(f32::NAN);
+            let ny_val = grid_data.get(ny_idx).copied().unwrap_or(f32::NAN);
+            info!(
+                param = %param,
+                la_idx = la_idx,
+                la_val = la_val,
+                ny_idx = ny_idx,
+                ny_val = ny_val,
+                width = width,
+                height = height,
+                "NDFD diagnostic: values at known coordinates (LA should be ~68, NY should be ~85 for SKY)"
+            );
+        }
 
         // Calculate bounding box
         let gp_bbox = if model == "hrrr" {

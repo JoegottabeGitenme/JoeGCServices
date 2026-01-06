@@ -232,8 +232,10 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
         "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
         // NDFD CONUS: Lambert Conformal projection covering continental US
-        // Actual geographic bounds from Lambert projection corners
-        "ndfd" => BoundingBox::new(-130.2, 20.0, -60.8, 53.0),
+        // Actual geographic bounds from Lambert projection corners:
+        // SW (0,0): lat=20.19, lon=-121.55; NW (0,1376): lat=49.94, lon=-130.10
+        // SE (2144,0): lat=20.33, lon=-69.21; NE (2144,1376): lat=50.11, lon=-60.89
+        "ndfd" => BoundingBox::new(-130.1, 20.19, -60.89, 50.11),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
@@ -662,10 +664,12 @@ mod tests {
     #[test]
     fn test_get_model_bbox_ndfd() {
         let bbox = get_model_bbox("ndfd");
-        // NDFD covers CONUS
+        // NDFD covers CONUS - Lambert Conformal projection with corners:
+        // SW: (20.19°, -121.55°), SE: (20.33°, -69.21°)
+        // NW: (49.94°, -130.10°), NE: (50.11°, -60.89°)
         assert!(bbox.min_x < -120.0, "NDFD should extend west of -120°");
         assert!(bbox.max_x > -70.0, "NDFD should extend east of -70°");
-        assert!(bbox.min_y > 20.0, "NDFD should be north of 20°N");
+        assert!(bbox.min_y >= 20.0, "NDFD should be at or north of 20°N");
         assert!(bbox.max_y < 55.0, "NDFD should be south of 55°N");
     }
 

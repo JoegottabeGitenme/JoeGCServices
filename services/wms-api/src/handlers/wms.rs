@@ -390,6 +390,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let bbox = params.bbox.as_deref();
     let crs = params.crs.as_deref();
     let format = params.format.as_deref();
+    let version = params.version.as_deref();
 
     // Validate CRS
     if let Err(e) = validate_crs(crs) {
@@ -470,6 +471,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             height,
             bbox,
             crs,
+            version,
             &dimensions,
         )
         .await
@@ -483,6 +485,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             height,
             bbox,
             crs,
+            version,
             &dimensions,
         )
         .await
@@ -830,6 +833,7 @@ async fn render_weather_data(
     height: u32,
     bbox: Option<&str>,
     crs: Option<&str>,
+    version: Option<&str>,
     dimensions: &DimensionParams,
 ) -> Result<Vec<u8>, WmsError> {
     // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
@@ -862,7 +866,7 @@ async fn render_weather_data(
 
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
-        let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
+        let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs, version));
 
         // Get wind barbs style file
         let wind_style_file = state
@@ -887,7 +891,7 @@ async fn render_weather_data(
     }
 
     // Parse BBOX parameter
-    let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
+    let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs, version));
 
     info!(forecast_hour = ?forecast_hour, observation_time = ?observation_time, level = ?level, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
 
@@ -969,6 +973,7 @@ async fn render_multi_layer(
     height: u32,
     bbox: Option<&str>,
     crs: Option<&str>,
+    version: Option<&str>,
     dimensions: &DimensionParams,
 ) -> Result<Vec<u8>, WmsError> {
     use image::{ImageBuffer, Rgba, RgbaImage};
@@ -991,7 +996,7 @@ async fn render_multi_layer(
 
         // Render this layer
         match render_weather_data(
-            state, layer_name, style, width, height, bbox, crs, dimensions,
+            state, layer_name, style, width, height, bbox, crs, version, dimensions,
         )
         .await
         {
@@ -1071,7 +1076,16 @@ fn alpha_blend(dst: image::Rgba<u8>, src: image::Rgba<u8>) -> image::Rgba<u8> {
 
 //TODO do we need to parse bbox for any arbitrary CRS?
 /// Parse a BBOX string into [min_lon, min_lat, max_lon, max_lat]
-fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
+///
+/// WMS axis order depends on CRS and version:
+/// - WMS 1.1.x: Always X,Y (lon,lat for geographic CRS)
+/// - WMS 1.3.0 with EPSG:4326 (CRS:84 variant): X,Y (lon,lat)
+/// - WMS 1.3.0 with EPSG:4326 (standard): Y,X (lat,lon)
+/// - Web Mercator (EPSG:3857): Always X,Y
+///
+/// We use CRS:84 semantics (lon,lat) for EPSG:4326 to match common client behavior,
+/// since most clients (including Leaflet, OpenLayers) send lon,lat regardless of WMS version.
+fn parse_bbox(bbox_str: &str, crs: Option<&str>, version: Option<&str>) -> Option<[f32; 4]> {
     let coords: Vec<f64> = bbox_str
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
@@ -1080,12 +1094,24 @@ fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
     if coords.len() == 4 {
         let crs_str = crs.unwrap_or("EPSG:4326");
         let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+            // Web Mercator: convert from meters to WGS84
             let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
             let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
             (min_lon, min_lat, max_lon, max_lat)
+        } else if let Some(v) = version {
+            // Version explicitly specified
+            if v.starts_with("1.3") && crs_str.contains("4326") && !crs_str.contains("CRS:84") {
+                // WMS 1.3.0 with EPSG:4326 (not CRS:84): axis order is lat,lon
+                // BBOX = minY,minX,maxY,maxX = minLat,minLon,maxLat,maxLon
+                (coords[1], coords[0], coords[3], coords[2])
+            } else {
+                // WMS 1.1.x or CRS:84: axis order is X,Y (lon,lat)
+                (coords[0], coords[1], coords[2], coords[3])
+            }
         } else {
-            // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
-            (coords[1], coords[0], coords[3], coords[2])
+            // No version specified: assume common client behavior (lon,lat order)
+            // Most mapping libraries (Leaflet, OpenLayers) send lon,lat regardless
+            (coords[0], coords[1], coords[2], coords[3])
         };
 
         Some([
@@ -1393,12 +1419,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_bbox_wgs84() {
+    fn test_parse_bbox_wgs84_v130() {
         // WMS 1.3.0 EPSG:4326 format: min_lat, min_lon, max_lat, max_lon
-        let bbox = parse_bbox("30.0,-120.0,50.0,-80.0", Some("EPSG:4326"));
+        let bbox = parse_bbox("30.0,-120.0,50.0,-80.0", Some("EPSG:4326"), Some("1.3.0"));
         assert!(bbox.is_some());
         let b = bbox.unwrap();
         // Should be converted to [min_lon, min_lat, max_lon, max_lat]
+        assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
+        assert!((b[1] - 30.0).abs() < 0.01); // min_lat
+        assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
+        assert!((b[3] - 50.0).abs() < 0.01); // max_lat
+    }
+
+    #[test]
+    fn test_parse_bbox_wgs84_v111() {
+        // WMS 1.1.1 EPSG:4326 format: min_lon, min_lat, max_lon, max_lat
+        let bbox = parse_bbox("-120.0,30.0,-80.0,50.0", Some("EPSG:4326"), Some("1.1.1"));
+        assert!(bbox.is_some());
+        let b = bbox.unwrap();
+        // Should stay as [min_lon, min_lat, max_lon, max_lat]
+        assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
+        assert!((b[1] - 30.0).abs() < 0.01); // min_lat
+        assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
+        assert!((b[3] - 50.0).abs() < 0.01); // max_lat
+    }
+
+    #[test]
+    fn test_parse_bbox_wgs84_no_version() {
+        // No version specified: uses lon,lat order (1.1.x style, common client behavior)
+        let bbox = parse_bbox("-120.0,30.0,-80.0,50.0", Some("EPSG:4326"), None);
+        assert!(bbox.is_some());
+        let b = bbox.unwrap();
+        // Should stay as [min_lon, min_lat, max_lon, max_lat]
         assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
         assert!((b[1] - 30.0).abs() < 0.01); // min_lat
         assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
@@ -1411,6 +1463,7 @@ mod tests {
         let bbox = parse_bbox(
             "-13358338.9,3503549.8,-8766409.9,6446275.8",
             Some("EPSG:3857"),
+            None,
         );
         assert!(bbox.is_some());
         let b = bbox.unwrap();
@@ -1423,10 +1476,10 @@ mod tests {
 
     #[test]
     fn test_parse_bbox_invalid() {
-        let bbox = parse_bbox("invalid", None);
+        let bbox = parse_bbox("invalid", None, None);
         assert!(bbox.is_none());
 
-        let bbox = parse_bbox("1,2,3", None);
+        let bbox = parse_bbox("1,2,3", None, None);
         assert!(bbox.is_none());
     }
 
