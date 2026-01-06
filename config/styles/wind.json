@@ -8,7 +8,7 @@
     "wind_speed_knots": {
       "default": true,
       "name": "Wind Speed (Knots)",
-      "description": "Wind speed gradient in knots",
+      "description": "NOAA-style wind speed gradient in knots (pink to red)",
       "type": "gradient",
       "units": "kt",
       "transform": {
@@ -16,55 +16,76 @@
       },
       "range": {
         "min": 0,
-        "max": 100
+        "max": 60
       },
       "stops": [
-        { "value": 0, "color": "#FFFFFF", "label": "Calm" },
-        { "value": 5, "color": "#AAFFAA", "label": "5 kt" },
-        { "value": 10, "color": "#00FF00", "label": "10 kt" },
-        { "value": 15, "color": "#00C000", "label": "15 kt" },
-        { "value": 20, "color": "#FFFF00", "label": "20 kt" },
-        { "value": 25, "color": "#FFC000", "label": "25 kt" },
-        { "value": 30, "color": "#FF8000", "label": "30 kt" },
-        { "value": 40, "color": "#FF4000", "label": "40 kt" },
-        { "value": 50, "color": "#FF0000", "label": "50 kt" },
-        { "value": 64, "color": "#C00000", "label": "64 kt (Storm)" },
-        { "value": 80, "color": "#800080", "label": "80 kt" },
-        { "value": 100, "color": "#FF00FF", "label": "100+ kt" }
+        { "value": 0, "color": "#FFFFFF00", "label": "Calm" },
+        { "value": 3, "color": "#FFE8F0", "label": "3 kt" },
+        { "value": 5, "color": "#FFD0E8", "label": "5 kt" },
+        { "value": 8, "color": "#F0B8E0", "label": "8 kt" },
+        { "value": 10, "color": "#E0A0D8", "label": "10 kt" },
+        { "value": 12, "color": "#D088D0", "label": "12 kt" },
+        { "value": 15, "color": "#B870C8", "label": "15 kt" },
+        { "value": 18, "color": "#9060C0", "label": "18 kt" },
+        { "value": 20, "color": "#7050B8", "label": "20 kt" },
+        { "value": 22, "color": "#5050C0", "label": "22 kt" },
+        { "value": 25, "color": "#3070D0", "label": "25 kt" },
+        { "value": 28, "color": "#2090D8", "label": "28 kt" },
+        { "value": 30, "color": "#10B0E0", "label": "30 kt" },
+        { "value": 32, "color": "#00C8C8", "label": "32 kt" },
+        { "value": 35, "color": "#20D890", "label": "35 kt" },
+        { "value": 38, "color": "#60E060", "label": "38 kt" },
+        { "value": 40, "color": "#A0E830", "label": "40 kt" },
+        { "value": 42, "color": "#D0E800", "label": "42 kt" },
+        { "value": 45, "color": "#F0C000", "label": "45 kt" },
+        { "value": 50, "color": "#F08000", "label": "50 kt" },
+        { "value": 55, "color": "#E04000", "label": "55 kt" },
+        { "value": 60, "color": "#C00000", "label": "60+ kt" }
       ],
       "interpolation": "linear",
       "out_of_range": "extend",
       "legend": {
         "title": "Wind Speed (kt)",
-        "labels": ["Calm", "10", "20", "30", "50", "64", "100+"]
+        "labels": ["5", "10", "15", "20", "25", "30", "35", "40", "45"]
       }
     },
     "wind_speed_mps": {
       "name": "Wind Speed (m/s)",
-      "description": "Wind speed gradient in meters per second",
+      "description": "NOAA-style wind speed gradient in m/s (pink to red)",
       "type": "gradient",
       "units": "m/s",
       "range": {
         "min": 0,
-        "max": 50
+        "max": 30
       },
       "stops": [
-        { "value": 0, "color": "#FFFFFF", "label": "Calm" },
-        { "value": 2, "color": "#AAFFAA", "label": "2" },
-        { "value": 5, "color": "#00FF00", "label": "5" },
-        { "value": 10, "color": "#00C000", "label": "10" },
-        { "value": 15, "color": "#FFFF00", "label": "15" },
-        { "value": 20, "color": "#FF8000", "label": "20" },
-        { "value": 25, "color": "#FF0000", "label": "25" },
-        { "value": 30, "color": "#C00000", "label": "30" },
-        { "value": 40, "color": "#800080", "label": "40" },
-        { "value": 50, "color": "#FF00FF", "label": "50+" }
+        { "value": 0, "color": "#FFFFFF00", "label": "Calm" },
+        { "value": 1, "color": "#FFE8F0", "label": "1" },
+        { "value": 2, "color": "#FFD0E8", "label": "2" },
+        { "value": 3, "color": "#F0B8E0", "label": "3" },
+        { "value": 4, "color": "#E0A0D8", "label": "4" },
+        { "value": 5, "color": "#D088D0", "label": "5" },
+        { "value": 6, "color": "#B870C8", "label": "6" },
+        { "value": 7, "color": "#9060C0", "label": "7" },
+        { "value": 8, "color": "#7050B8", "label": "8" },
+        { "value": 9, "color": "#5050C0", "label": "9" },
+        { "value": 10, "color": "#3070D0", "label": "10" },
+        { "value": 12, "color": "#10B0E0", "label": "12" },
+        { "value": 14, "color": "#00C8C8", "label": "14" },
+        { "value": 16, "color": "#20D890", "label": "16" },
+        { "value": 18, "color": "#60E060", "label": "18" },
+        { "value": 20, "color": "#A0E830", "label": "20" },
+        { "value": 22, "color": "#D0E800", "label": "22" },
+        { "value": 24, "color": "#F0C000", "label": "24" },
+        { "value": 26, "color": "#F08000", "label": "26" },
+        { "value": 28, "color": "#E04000", "label": "28" },
+        { "value": 30, "color": "#C00000", "label": "30+" }
       ],
       "interpolation": "linear",
       "out_of_range": "extend",
       "legend": {
         "title": "Wind Speed (m/s)",
-        "labels": ["Calm", "5", "10", "20", "30", "50+"]
+        "labels": ["2", "5", "10", "15", "20", "25", "30"]
       }
     },
     "wind_component": {

@@ -630,6 +630,7 @@ async fn wmts_get_tile(
             &style_file,
             "isolines",
             forecast_hour,
+            observation_time,
             elevation,
             true,
         )
@@ -891,8 +892,9 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
             bbox_array,
             &style_file,
             "isolines",
-            None,
-            None,
+            None, // forecast_hour
+            None, // observation_time - prefetch uses latest
+            None, // level
             true,
         )
         .await

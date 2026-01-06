@@ -19,8 +19,6 @@
   the two outlined in the spec
 - add some sort of json schema for the various yaml files so that making new ones is less of a pain
 - web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
-    - this may have been due to the 10s of thousands of objects in minio
-    - see if this happens again after we fixed the orphaned files issue
     - it still happens and its still happening after claude 'fixed' the memory leaks
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - need to give the swagger docs a human pass to catch some of the errors

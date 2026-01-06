@@ -720,6 +720,22 @@ impl ContourStyle {
                 level += interval;
             }
 
+            // Add special levels that aren't already in the list
+            // (e.g., 32°F freezing level when using 10°F intervals)
+            if let Some(ref special_levels) = self.contour.special_levels {
+                for special in special_levels {
+                    let special_val = special.value;
+                    // Only add if within range and not already present
+                    if special_val >= min && special_val <= max {
+                        let already_present =
+                            levels.iter().any(|&l| (l - special_val).abs() < 0.01);
+                        if !already_present {
+                            levels.push(special_val);
+                        }
+                    }
+                }
+            }
+
             // Sort levels
             levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -747,8 +763,12 @@ pub fn apply_transform(value: f32, transform: Option<&Transform>) -> f32 {
                 value / 100.0
             } else if transform_type == "k_to_c" || transform_type == "kelvin_to_celsius" {
                 value - 273.15
+            } else if transform_type == "k_to_f" || transform_type == "kelvin_to_fahrenheit" {
+                (value - 273.15) * 9.0 / 5.0 + 32.0
             } else if transform_type == "m_to_km" {
                 value / 1000.0
+            } else if transform_type == "ms_to_mph" || transform_type == "mps_to_mph" {
+                value * 2.23694
             } else if transform_type == "mps_to_knots" {
                 value * 1.94384
             } else if transform_type == "linear" {

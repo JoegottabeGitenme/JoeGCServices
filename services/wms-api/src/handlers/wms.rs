@@ -928,6 +928,7 @@ async fn render_weather_data(
             &style_file,
             "isolines",
             forecast_hour,
+            observation_time,
             level.as_deref(),
             use_mercator,
         )

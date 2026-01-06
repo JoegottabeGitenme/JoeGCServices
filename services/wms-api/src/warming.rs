@@ -288,8 +288,9 @@ async fn warm_single_tile(
             256,
             bbox_array,
             &style_file,
-            "isolines", // style name within the file
-            Some(forecast_hour),
+            "isolines",               // style name within the file
+            Some(forecast_hour),      // forecast_hour
+            None,                     // observation_time - warming uses forecast_hour
             default_level.as_deref(), // Use default level
             true,                     // use_mercator
         )

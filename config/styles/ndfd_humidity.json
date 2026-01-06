@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "NDFD Relative Humidity Style",
+    "description": "NOAA-style relative humidity colormap for NDFD"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Relative Humidity",
+      "description": "NOAA-style relative humidity from dry (red) to saturated (green)",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#96000000", "label": "0%" },
+        { "value": 5, "color": "#C8000080", "label": "5%" },
+        { "value": 10, "color": "#C80000", "label": "10%" },
+        { "value": 15, "color": "#E13200", "label": "15%" },
+        { "value": 20, "color": "#F06400", "label": "20%" },
+        { "value": 25, "color": "#F08C00", "label": "25%" },
+        { "value": 30, "color": "#F0B400", "label": "30%" },
+        { "value": 35, "color": "#E6D200", "label": "35%" },
+        { "value": 40, "color": "#D2E600", "label": "40%" },
+        { "value": 45, "color": "#B4F000", "label": "45%" },
+        { "value": 50, "color": "#96FA00", "label": "50%" },
+        { "value": 55, "color": "#78F018", "label": "55%" },
+        { "value": 60, "color": "#64E632", "label": "60%" },
+        { "value": 65, "color": "#50D246", "label": "65%" },
+        { "value": 70, "color": "#3CBC50", "label": "70%" },
+        { "value": 75, "color": "#32AA50", "label": "75%" },
+        { "value": 80, "color": "#289650", "label": "80%" },
+        { "value": 85, "color": "#1E8246", "label": "85%" },
+        { "value": 90, "color": "#146E3C", "label": "90%" },
+        { "value": 95, "color": "#0A5A32", "label": "95%" },
+        { "value": 100, "color": "#004628", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Relative Humidity (%)",
+        "labels": ["10", "20", "30", "40", "50", "60", "70", "80", "90"]
+      }
+    }
+  }
+}

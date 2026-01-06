@@ -107,7 +107,7 @@ layers:
     parameter: RH
     title: "Relative Humidity"
     abstract: "Relative humidity forecast at 2m above ground"
-    style_file: humidity.json
+    style_file: ndfd_humidity.json
     units:
       native: "%"
       display: "%"
