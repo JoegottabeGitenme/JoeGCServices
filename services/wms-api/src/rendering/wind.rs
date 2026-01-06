@@ -760,6 +760,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         chunk_shape: u_zarr_meta.chunk_shape,
         num_chunks: u_zarr_meta.num_chunks,
         fill_value: u_zarr_meta.fill_value,
+        row_origin: u_zarr_meta.row_origin,
     };
 
     // Create U processor
@@ -785,6 +786,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         chunk_shape: v_zarr_meta.chunk_shape,
         num_chunks: v_zarr_meta.num_chunks,
         fill_value: v_zarr_meta.fill_value,
+        row_origin: v_zarr_meta.row_origin,
     };
 
     // Create V processor

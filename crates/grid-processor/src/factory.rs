@@ -128,6 +128,7 @@ impl From<&ZarrMetadata> for GridMetadata {
             chunk_shape: zarr.chunk_shape,
             num_chunks: zarr.num_chunks,
             fill_value: zarr.fill_value,
+            row_origin: zarr.row_origin,
         }
     }
 }
@@ -145,6 +146,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     fn create_test_zarr_metadata() -> ZarrMetadata {
+        use crate::types::RowOrigin;
         ZarrMetadata {
             model: "gfs".to_string(),
             parameter: "TMP".to_string(),
@@ -159,6 +161,7 @@ mod tests {
             fill_value: f32::NAN,
             dtype: "float32".to_string(),
             compression: "blosc".to_string(),
+            row_origin: RowOrigin::North,
         }
     }
 

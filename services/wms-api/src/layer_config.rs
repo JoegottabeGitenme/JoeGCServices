@@ -15,10 +15,14 @@ use tracing::{info, warn};
 pub enum UnitConversion {
     /// Kelvin to Celsius: C = K - 273.15
     KToC,
+    /// Kelvin to Fahrenheit: F = (K - 273.15) * 9/5 + 32
+    KToF,
     /// Pascal to hectoPascal: hPa = Pa / 100
     PaToHPa,
     /// Meters to kilometers: km = m / 1000
     MToKm,
+    /// Meters per second to miles per hour: mph = m/s * 2.237
+    MsToMph,
     /// No conversion needed
     None,
 }
@@ -28,8 +32,10 @@ impl UnitConversion {
     pub fn from_str(s: &str) -> Self {
         match s {
             "K_to_C" => Self::KToC,
+            "K_to_F" => Self::KToF,
             "Pa_to_hPa" => Self::PaToHPa,
             "m_to_km" => Self::MToKm,
+            "ms_to_mph" => Self::MsToMph,
             _ => Self::None,
         }
     }
@@ -38,8 +44,10 @@ impl UnitConversion {
     pub fn apply(&self, value: f64) -> f64 {
         match self {
             Self::KToC => value - 273.15,
+            Self::KToF => (value - 273.15) * 9.0 / 5.0 + 32.0,
             Self::PaToHPa => value / 100.0,
             Self::MToKm => value / 1000.0,
+            Self::MsToMph => value * 2.23694,
             Self::None => value,
         }
     }
@@ -63,10 +71,14 @@ impl UnitConversion {
         match (native_upper.as_str(), display_normalized.as_str()) {
             // Temperature: Kelvin to Celsius
             ("K", "C") | ("K", "CELSIUS") => Self::KToC,
+            // Temperature: Kelvin to Fahrenheit
+            ("K", "F") | ("K", "FAHRENHEIT") => Self::KToF,
             // Pressure: Pascal to hectoPascal
             ("PA", "HPA") | ("PA", "HECTOPASCAL") | ("PA", "MB") | ("PA", "MBAR") => Self::PaToHPa,
             // Distance: meters to kilometers
             ("M", "KM") | ("M", "KILOMETERS") => Self::MToKm,
+            // Speed: meters per second to miles per hour
+            ("M/S", "MPH") | ("M/S", "MI/H") => Self::MsToMph,
             // Same units - no conversion
             _ if native_upper == display_normalized => Self::None,
             // Unknown combination - no conversion
@@ -78,8 +90,10 @@ impl UnitConversion {
     pub fn display_symbol(&self) -> &'static str {
         match self {
             Self::KToC => "°C",
+            Self::KToF => "°F",
             Self::PaToHPa => "hPa",
             Self::MToKm => "km",
+            Self::MsToMph => "mph",
             Self::None => "",
         }
     }
@@ -723,6 +737,8 @@ mod tests {
         assert_eq!(UnitConversion::infer("K", "°C"), UnitConversion::KToC);
         assert_eq!(UnitConversion::infer("K", "C"), UnitConversion::KToC);
         assert_eq!(UnitConversion::infer("k", "c"), UnitConversion::KToC); // case insensitive
+        assert_eq!(UnitConversion::infer("K", "°F"), UnitConversion::KToF);
+        assert_eq!(UnitConversion::infer("K", "F"), UnitConversion::KToF);
 
         // Pressure conversions
         assert_eq!(UnitConversion::infer("Pa", "hPa"), UnitConversion::PaToHPa);
@@ -732,12 +748,14 @@ mod tests {
         // Distance conversions
         assert_eq!(UnitConversion::infer("m", "km"), UnitConversion::MToKm);
 
+        // Speed conversions
+        assert_eq!(UnitConversion::infer("m/s", "mph"), UnitConversion::MsToMph);
+
         // Same units - no conversion
         assert_eq!(UnitConversion::infer("m/s", "m/s"), UnitConversion::None);
         assert_eq!(UnitConversion::infer("%", "%"), UnitConversion::None);
 
         // Unknown combination - no conversion
-        assert_eq!(UnitConversion::infer("K", "F"), UnitConversion::None); // Not implemented
         assert_eq!(UnitConversion::infer("foo", "bar"), UnitConversion::None);
     }
 

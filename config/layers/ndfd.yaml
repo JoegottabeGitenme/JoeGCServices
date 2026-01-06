@@ -24,7 +24,7 @@ layers:
     parameter: TMP
     title: "Temperature"
     abstract: "Air temperature forecast at 2m above ground"
-    style_file: temperature.json
+    style_file: ndfd_temperature.json
     units:
       native: K
       display: "F"
@@ -37,7 +37,7 @@ layers:
     parameter: DPT
     title: "Dew Point Temperature"
     abstract: "Dew point temperature forecast at 2m above ground"
-    style_file: temperature.json
+    style_file: ndfd_temperature.json
     units:
       native: K
       display: "F"

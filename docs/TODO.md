@@ -39,6 +39,7 @@
 - System design high level architecture diagram isn't right anymore
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
+  - currently in WMS need EDR next
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
 - looping radar (only product that does this) absolutely eats up the chunk cache
 - let's try to get registered on the OGC implementation database
@@ -50,3 +51,7 @@
 - need to update prometheus and grafana and loki and stuff for the EDR api still
 - need to check units in WMS now that we fixed units being passed into zarr format during ingestion
 - let's remove the minikube stuff from the start.sh script
+- need to investigate 10m and 2m wind data between these different models
+- fix start script to skip over minikube stuff
+- consider removing k8s and minikube deployments
+- create robots.txt with goodies

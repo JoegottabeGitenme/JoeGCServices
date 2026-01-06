@@ -12,7 +12,9 @@ use zarrs::storage::ReadableStorageTraits;
 use crate::cache::{hash_path, ChunkCache};
 use crate::config::GridProcessorConfig;
 use crate::error::{GridProcessorError, Result};
-use crate::types::{BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata};
+use crate::types::{
+    BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata, RowOrigin,
+};
 
 use super::GridProcessor;
 
@@ -248,6 +250,18 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             .map(f32::from_ne_bytes)
             .unwrap_or(f32::NAN);
 
+        // Parse row_origin (defaults to North for backward compatibility)
+        // "south" means row 0 is at min_lat (Lambert Conformal convention)
+        // "north" means row 0 is at max_lat (standard geographic convention)
+        let row_origin = attrs
+            .get("row_origin")
+            .and_then(|v| v.as_str())
+            .map(|s| match s.to_lowercase().as_str() {
+                "south" => RowOrigin::South,
+                _ => RowOrigin::North,
+            })
+            .unwrap_or(RowOrigin::North);
+
         // Grid shape: Zarr is [rows, cols] but we store as (width, height)
         let grid_shape = (shape[1] as usize, shape[0] as usize);
 
@@ -269,6 +283,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             chunk_shape,
             num_chunks,
             fill_value,
+            row_origin,
         })
     }
 
@@ -419,6 +434,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     }
 
     /// Assemble chunks into a contiguous grid region.
+    ///
+    /// This method handles both grid conventions:
+    /// - `RowOrigin::North`: Row 0 is at max_lat (top) - standard geographic grids
+    /// - `RowOrigin::South`: Row 0 is at min_lat (bottom) - Lambert Conformal grids
     fn assemble_region(
         &self,
         bbox: &BoundingBox,
@@ -429,23 +448,43 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let grid_bbox = &self.metadata.bbox;
         let (chunk_w, chunk_h) = self.metadata.chunk_shape;
         let (grid_w, grid_h) = self.metadata.shape;
+        let row_origin = self.metadata.row_origin;
 
         // Normalize bbox to grid's coordinate system (handles 0-360 vs -180/180)
         let norm_bbox = bbox.normalize_to_grid(grid_bbox);
 
         // Calculate output region bounds in grid coordinates
+        // Column calculation is the same for both conventions
         let min_col = ((norm_bbox.min_lon - grid_bbox.min_lon) / res_x)
             .floor()
             .max(0.0) as usize;
         let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / res_x)
             .ceil()
             .min(grid_w as f64) as usize;
-        let min_row = ((grid_bbox.max_lat - norm_bbox.max_lat) / res_y)
-            .floor()
-            .max(0.0) as usize;
-        let max_row = ((grid_bbox.max_lat - norm_bbox.min_lat) / res_y)
-            .ceil()
-            .min(grid_h as f64) as usize;
+
+        // Row calculation depends on row_origin
+        let (min_row, max_row) = match row_origin {
+            RowOrigin::North => {
+                // Row 0 is at max_lat (top), row increases going south
+                let min_r = ((grid_bbox.max_lat - norm_bbox.max_lat) / res_y)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((grid_bbox.max_lat - norm_bbox.min_lat) / res_y)
+                    .ceil()
+                    .min(grid_h as f64) as usize;
+                (min_r, max_r)
+            }
+            RowOrigin::South => {
+                // Row 0 is at min_lat (bottom), row increases going north
+                let min_r = ((norm_bbox.min_lat - grid_bbox.min_lat) / res_y)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((norm_bbox.max_lat - grid_bbox.min_lat) / res_y)
+                    .ceil()
+                    .min(grid_h as f64) as usize;
+                (min_r, max_r)
+            }
+        };
 
         let out_width = max_col - min_col;
         let out_height = max_row - min_row;
@@ -497,12 +536,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         }
 
         // Calculate actual bbox of the output region
-        let actual_bbox = BoundingBox::new(
-            grid_bbox.min_lon + min_col as f64 * res_x,
-            grid_bbox.max_lat - max_row as f64 * res_y,
-            grid_bbox.min_lon + max_col as f64 * res_x,
-            grid_bbox.max_lat - min_row as f64 * res_y,
-        );
+        let actual_bbox = match row_origin {
+            RowOrigin::North => BoundingBox::new(
+                grid_bbox.min_lon + min_col as f64 * res_x,
+                grid_bbox.max_lat - max_row as f64 * res_y,
+                grid_bbox.min_lon + max_col as f64 * res_x,
+                grid_bbox.max_lat - min_row as f64 * res_y,
+            ),
+            RowOrigin::South => BoundingBox::new(
+                grid_bbox.min_lon + min_col as f64 * res_x,
+                grid_bbox.min_lat + min_row as f64 * res_y,
+                grid_bbox.min_lon + max_col as f64 * res_x,
+                grid_bbox.min_lat + max_row as f64 * res_y,
+            ),
+        };
 
         Ok(GridRegion::new(
             output,
@@ -643,7 +690,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         let (grid_w, grid_h) = self.metadata.shape;
 
         let grid_x = (normalized_lon - grid_bbox.min_lon) / res_x;
-        let grid_y = (grid_bbox.max_lat - lat) / res_y;
+        let grid_y = match self.metadata.row_origin {
+            RowOrigin::North => (grid_bbox.max_lat - lat) / res_y,
+            RowOrigin::South => (lat - grid_bbox.min_lat) / res_y,
+        };
 
         // Check if we're very close to an exact grid point (within 1% of cell size)
         // If so, return the exact grid cell value without interpolation
@@ -910,6 +960,7 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
             chunk_shape: level.chunk_shape,
             num_chunks: level.num_chunks(),
             fill_value: f32::NAN,
+            row_origin: self.multiscale.row_origin,
         }
     }
 
@@ -950,6 +1001,7 @@ mod tests {
             chunk_shape: (512, 512),
             num_chunks: (3, 2),
             fill_value: f32::NAN,
+            row_origin: RowOrigin::North,
         };
 
         // Calculate chunks for a small bbox

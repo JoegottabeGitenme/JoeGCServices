@@ -700,6 +700,9 @@ fn resample_lambert_to_geographic_with_proj(
 
     let mut output = vec![f32::NAN; output_width * output_height];
 
+    // Debug: log some sample grid lookups for NDFD mirroring investigation
+    let mut debug_count = 0;
+
     // For each output pixel, find the corresponding grid point in the Lambert grid
     for out_y in 0..output_height {
         for out_x in 0..output_width {
@@ -712,6 +715,45 @@ fn resample_lambert_to_geographic_with_proj(
 
             // Convert geographic to Lambert grid indices
             let (grid_i, grid_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Debug: log a few sample points and their values
+            if debug_count < 10
+                && (out_x == output_width / 4 || out_x == 3 * output_width / 4)
+                && out_y == output_height / 2
+            {
+                let i1 = grid_i.floor() as usize;
+                let j1 = grid_j.floor() as usize;
+                let val = if i1 < data_width && j1 < data_height {
+                    data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN)
+                } else {
+                    f32::NAN
+                };
+                // Also check value at mirrored column
+                let mirror_i = if i1 < data_width {
+                    data_width - 1 - i1
+                } else {
+                    0
+                };
+                let mirror_val = if mirror_i < data_width && j1 < data_height {
+                    data.get(j1 * data_width + mirror_i)
+                        .copied()
+                        .unwrap_or(f32::NAN)
+                } else {
+                    f32::NAN
+                };
+                tracing::info!(
+                    out_x = out_x,
+                    lon = lon,
+                    lat = lat,
+                    grid_i = i1,
+                    grid_j = j1,
+                    value = val,
+                    mirror_i = mirror_i,
+                    mirror_value = mirror_val,
+                    "Lambert debug: checking if data is mirrored"
+                );
+                debug_count += 1;
+            }
 
             // Check if within grid bounds
             if grid_i < 0.0

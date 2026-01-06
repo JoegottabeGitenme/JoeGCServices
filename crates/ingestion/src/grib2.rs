@@ -9,7 +9,8 @@ use tracing::{debug, info, warn};
 use zarrs_filesystem::FilesystemStore;
 
 use grid_processor::{
-    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter,
+    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, PyramidConfig, RowOrigin,
+    ZarrWriter,
 };
 use projection::LambertConformal;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
@@ -203,22 +204,33 @@ pub async fn ingest_grib2(
             );
         }
 
-        // Calculate bounding box
-        let gp_bbox = if model == "hrrr" {
+        // Calculate bounding box and row origin
+        // HRRR and NDFD use Lambert Conformal projection where row 0 is at the south (min_lat)
+        // Standard geographic grids (GFS, MRMS) have row 0 at the north (max_lat)
+        let (gp_bbox, row_origin) = if model == "hrrr" {
             let proj = LambertConformal::hrrr();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
-            GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+            )
         } else if model == "ndfd" {
             let proj = LambertConformal::ndfd();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
-            GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+            )
         } else {
             let grib_bbox = get_bbox_from_grid(&message.grid_definition);
-            GpBoundingBox::new(
-                grib_bbox.min_x,
-                grib_bbox.min_y,
-                grib_bbox.max_x,
-                grib_bbox.max_y,
+            (
+                GpBoundingBox::new(
+                    grib_bbox.min_x,
+                    grib_bbox.min_y,
+                    grib_bbox.max_x,
+                    grib_bbox.max_y,
+                ),
+                RowOrigin::North,
             )
         };
 
@@ -239,6 +251,7 @@ pub async fn ingest_grib2(
             reference_time,
             forecast_hour,
             &zarr_storage_path,
+            row_origin,
         )
         .await
         {
@@ -339,6 +352,7 @@ async fn write_and_upload_zarr(
     reference_time: DateTime<Utc>,
     forecast_hour: u32,
     storage_path: &str,
+    row_origin: RowOrigin,
 ) -> Result<(u64, serde_json::Value)> {
     // Create temporary directory for Zarr output
     let temp_dir = tempfile::tempdir()?;
@@ -375,6 +389,7 @@ async fn write_and_upload_zarr(
             forecast_hour,
             &pyramid_config,
             downsample_method,
+            row_origin,
         )
         .map_err(|e| IngestionError::ZarrWrite(format!("Failed to write Zarr: {}", e)))?;
 

@@ -603,10 +603,13 @@ async fn wmts_get_tile(
         )
         .await
     } else if style == "isolines" {
-        if state.model_dimensions.is_observation(model) {
+        // Isolines are not supported for radar/satellite imagery, but ARE supported
+        // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
+        let is_imagery_model = matches!(model, "mrms" | "goes16" | "goes18");
+        if is_imagery_model {
             return wmts_exception(
                 "StyleNotDefined",
-                "Isolines not supported for observation layers",
+                "Isolines not supported for radar/satellite imagery layers",
                 StatusCode::BAD_REQUEST,
             );
         }

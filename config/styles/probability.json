@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Probability Styles",
+    "description": "Styles for probability parameters (PoP, etc.)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Probability of Precipitation",
+      "description": "Probability of precipitation from 0-100%",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0%" },
+        { "value": 10, "color": "#E8F4E8", "label": "10%" },
+        { "value": 20, "color": "#C8E6C8", "label": "20%" },
+        { "value": 30, "color": "#A8D8A8", "label": "30%" },
+        { "value": 40, "color": "#7BC87B", "label": "40%" },
+        { "value": 50, "color": "#4DB84D", "label": "50%" },
+        { "value": 60, "color": "#3498DB", "label": "60%" },
+        { "value": 70, "color": "#2980B9", "label": "70%" },
+        { "value": 80, "color": "#1F618D", "label": "80%" },
+        { "value": 90, "color": "#154360", "label": "90%" },
+        { "value": 100, "color": "#0B2447", "label": "100%" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Probability of Precipitation (%)",
+        "labels": ["0%", "25%", "50%", "75%", "100%"]
+      }
+    },
+    "categorical": {
+      "name": "PoP Categories",
+      "description": "Precipitation probability in NWS-style categories",
+      "type": "gradient",
+      "units": "%",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "None (0%)" },
+        { "value": 10, "color": "#E8F5E9", "label": "Slight Chance (10-20%)" },
+        { "value": 20, "color": "#C8E6C9", "label": "Slight Chance" },
+        { "value": 30, "color": "#81C784", "label": "Chance (30-50%)" },
+        { "value": 50, "color": "#4CAF50", "label": "Chance" },
+        { "value": 60, "color": "#64B5F6", "label": "Likely (60-70%)" },
+        { "value": 70, "color": "#42A5F5", "label": "Likely" },
+        { "value": 80, "color": "#1E88E5", "label": "Very Likely (80-100%)" },
+        { "value": 100, "color": "#1565C0", "label": "Definite" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Precipitation Probability",
+        "labels": ["None", "Slight Chance", "Chance", "Likely", "Definite"]
+      }
+    }
+  }
+}

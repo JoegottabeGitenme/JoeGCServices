@@ -333,8 +333,10 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
         let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
         let la1 = decode_grib2_signed(&gd[24..28]);
         let lo1 = decode_grib2_signed(&gd[28..32]);
-        // Scanning mode for Lambert is at byte 64 (0-indexed)
-        let scanning_mode = gd[64];
+        // Scanning mode for Lambert is at octet 65 of section 3 (1-based) = byte 64 (0-based)
+        // Since gd starts at byte 14 of the section, scanning mode is at gd[50]
+        // Octet 65 = byte 64 from section start, byte 64 - 14 = byte 50 in gd
+        let scanning_mode = gd[50];
 
         Ok(GridDefinition {
             grid_shape,

@@ -900,9 +900,12 @@ async fn render_weather_data(
     let use_mercator = crs_str.contains("3857");
 
     if style == "isolines" {
-        if state.model_dimensions.is_observation(model) {
+        // Isolines are not supported for radar/satellite imagery, but ARE supported
+        // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
+        let is_imagery_model = matches!(model, "mrms" | "goes16" | "goes18");
+        if is_imagery_model {
             return Err(WmsError::StyleNotDefined(format!(
-                "Style 'isolines' is not supported for {} layers.",
+                "Style 'isolines' is not supported for radar/satellite imagery layers like {}.",
                 model.to_uppercase()
             )));
         }
