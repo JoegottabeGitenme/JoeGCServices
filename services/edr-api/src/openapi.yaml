@@ -153,8 +153,8 @@ paths:
         - $ref: '#/components/parameters/parameter-name'
         - $ref: '#/components/parameters/crs'
         - $ref: '#/components/parameters/f'
-        - $ref: '#/components/parameters/resolution-x'
-        - $ref: '#/components/parameters/resolution-y'
+        - $ref: '#/components/parameters/width'
+        - $ref: '#/components/parameters/height'
       responses:
         '200':
           description: Data within the specified area
@@ -492,6 +492,36 @@ components:
       description: Vertical resolution for area queries
       schema:
         type: number
+
+    width:
+      name: width
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        Requested output width in pixels (PNG only, max 4096).
+        If specified, height must also be specified.
+        Uses nearest-neighbor resampling from native grid resolution.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 4096
+
+    height:
+      name: height
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        Requested output height in pixels (PNG only, max 4096).
+        If specified, width must also be specified.
+        Uses nearest-neighbor resampling from native grid resolution.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 4096
 
   schemas:
     LandingPage:

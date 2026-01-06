@@ -214,6 +214,10 @@ pub struct ModelSettings {
     /// Supported CRS list.
     #[serde(default = "default_supported_crs")]
     pub supported_crs: Vec<String>,
+
+    /// Cache policy for responses.
+    #[serde(default)]
+    pub cache_policy: CachePolicy,
 }
 
 impl Default for ModelSettings {
@@ -222,8 +226,31 @@ impl Default for ModelSettings {
             output_formats: default_output_formats(),
             default_crs: default_crs(),
             supported_crs: default_supported_crs(),
+            cache_policy: CachePolicy::default(),
         }
     }
+}
+
+/// Cache policy settings for HTTP responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachePolicy {
+    /// Cache-Control max-age for PNG responses in seconds.
+    /// Default varies by typical model update frequency.
+    #[serde(default = "default_png_max_age")]
+    pub png_max_age: u32,
+}
+
+impl Default for CachePolicy {
+    fn default() -> Self {
+        Self {
+            png_max_age: default_png_max_age(),
+        }
+    }
+}
+
+/// Default PNG cache max-age: 5 minutes (300 seconds)
+fn default_png_max_age() -> u32 {
+    300
 }
 
 fn default_output_formats() -> Vec<String> {
@@ -364,6 +391,25 @@ mod tests {
         let settings = ModelSettings::default();
         assert!(!settings.output_formats.is_empty());
         assert_eq!(settings.default_crs, "CRS:84");
+    }
+
+    #[test]
+    fn test_cache_policy_defaults() {
+        let policy = CachePolicy::default();
+        assert_eq!(policy.png_max_age, 300); // 5 minutes
+    }
+
+    #[test]
+    fn test_cache_policy_yaml_parsing() {
+        let yaml = r#"
+model: test
+collections: []
+settings:
+  cache_policy:
+    png_max_age: 3600
+"#;
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.settings.cache_policy.png_max_age, 3600);
     }
 
     #[test]

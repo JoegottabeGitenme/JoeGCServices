@@ -112,6 +112,8 @@ settings:
   supported_crs:
     - "CRS:84"
     # TODO: Add EPSG:4326 when axis order handling is implemented
+  cache_policy:
+    png_max_age: 3600  # 1 hour - HRRR updates hourly
 
 limits:
   max_parameters_per_request: 10

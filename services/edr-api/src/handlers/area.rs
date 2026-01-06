@@ -20,6 +20,42 @@ use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 
+/// Resample data using nearest-neighbor interpolation.
+///
+/// This is fast and preserves discrete values well. For smoother results
+/// with continuous data like temperature, bilinear interpolation would be better.
+///
+/// TODO: Add bilinear interpolation option for parameters that benefit from smoothing.
+fn resample_nearest(
+    data: &[Option<f32>],
+    src_width: usize,
+    src_height: usize,
+    dst_width: usize,
+    dst_height: usize,
+) -> Vec<Option<f32>> {
+    let mut result = Vec::with_capacity(dst_width * dst_height);
+
+    for dst_y in 0..dst_height {
+        for dst_x in 0..dst_width {
+            // Map destination pixel to source pixel (nearest neighbor)
+            let src_x = (dst_x as f64 * src_width as f64 / dst_width as f64) as usize;
+            let src_y = (dst_y as f64 * src_height as f64 / dst_height as f64) as usize;
+
+            // Clamp to valid range
+            let src_x = src_x.min(src_width - 1);
+            let src_y = src_y.min(src_height - 1);
+
+            let src_idx = src_y * src_width + src_x;
+            result.push(data[src_idx]);
+        }
+    }
+
+    result
+}
+
+/// Maximum allowed PNG dimension (width or height)
+const MAX_PNG_DIMENSION: usize = 4096;
+
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
 pub struct AreaQueryParams {
@@ -41,6 +77,14 @@ pub struct AreaQueryParams {
 
     /// Output format.
     pub f: Option<String>,
+
+    /// Requested output width in pixels (PNG only, max 4096).
+    /// If specified, height must also be specified.
+    pub width: Option<u32>,
+
+    /// Requested output height in pixels (PNG only, max 4096).
+    /// If specified, width must also be specified.
+    pub height: Option<u32>,
 }
 
 /// GET /edr/collections/:collection_id/area
@@ -230,6 +274,47 @@ async fn area_query(
             )),
         );
     }
+
+    // Validate width/height parameters (PNG only)
+    let requested_dimensions: Option<(usize, usize)> = match (params.width, params.height) {
+        (Some(w), Some(h)) => {
+            if output_format != OutputFormat::Png {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(
+                        "width and height parameters are only supported for PNG output (f=png)",
+                    ),
+                );
+            }
+            let w = w as usize;
+            let h = h as usize;
+            if w == 0 || h == 0 {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request("width and height must be greater than 0"),
+                );
+            }
+            if w > MAX_PNG_DIMENSION || h > MAX_PNG_DIMENSION {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "width and height must not exceed {}. Requested: {}x{}",
+                        MAX_PNG_DIMENSION, w, h
+                    )),
+                );
+            }
+            Some((w, h))
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(
+                    "Both width and height must be specified together, or neither",
+                ),
+            );
+        }
+        (None, None) => None,
+    };
 
     // Get the bbox of the polygon for grid queries
     let bbox = area_query_struct.bbox();
@@ -609,8 +694,27 @@ async fn area_query(
                 }
             }
 
-            // Compute value range from the data
+            // Compute value range from the source data (before resampling)
             let (min_val, max_val) = compute_data_range(&masked_data);
+
+            // Apply resampling if requested dimensions differ from source
+            let (output_data, output_width, output_height) =
+                if let Some((req_width, req_height)) = requested_dimensions {
+                    if req_width != param_region.width || req_height != param_region.height {
+                        let resampled = resample_nearest(
+                            &masked_data,
+                            param_region.width,
+                            param_region.height,
+                            req_width,
+                            req_height,
+                        );
+                        (resampled, req_width, req_height)
+                    } else {
+                        (masked_data, param_region.width, param_region.height)
+                    }
+                } else {
+                    (masked_data, param_region.width, param_region.height)
+                };
 
             // Create encoder and encode to PNG
             let encoder = DataPngEncoder::new(min_val, max_val);
@@ -622,9 +726,9 @@ async fn area_query(
             ];
 
             let encoded = match encoder.encode_with_metadata(
-                &masked_data,
-                param_region.width,
-                param_region.height,
+                &output_data,
+                output_width,
+                output_height,
                 param_name,
                 &units_str,
                 png_bbox,
@@ -640,10 +744,15 @@ async fn area_query(
             };
 
             // Build response with metadata headers
+            // Use per-model cache policy for PNG responses
+            let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/png")
-                .header(header::CACHE_CONTROL, "max-age=300")
+                .header(
+                    header::CACHE_CONTROL,
+                    format!("max-age={}", png_cache_max_age),
+                )
                 .header("X-EDR-Parameter", param_name.as_str())
                 .header("X-EDR-Units", &units_str)
                 .header("X-EDR-Min", format!("{}", min_val))
@@ -656,8 +765,8 @@ async fn area_query(
                         png_bbox[0], png_bbox[1], png_bbox[2], png_bbox[3]
                     ),
                 )
-                .header("X-EDR-Width", format!("{}", param_region.width))
-                .header("X-EDR-Height", format!("{}", param_region.height))
+                .header("X-EDR-Width", format!("{}", output_width))
+                .header("X-EDR-Height", format!("{}", output_height))
                 .body(encoded.png_bytes.into())
                 .unwrap()
         }
@@ -876,5 +985,95 @@ mod tests {
         // Should produce a valid (transparent) PNG
         let encoded = result.unwrap();
         assert!(!encoded.png_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_resample_nearest_upsample() {
+        // 2x2 -> 4x4 (double size)
+        let data: Vec<Option<f32>> = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 4, 4);
+        assert_eq!(result.len(), 16);
+
+        // Top-left quadrant should all be 1.0
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(1.0));
+        assert_eq!(result[4], Some(1.0));
+        assert_eq!(result[5], Some(1.0));
+
+        // Bottom-right quadrant should all be 4.0
+        assert_eq!(result[10], Some(4.0));
+        assert_eq!(result[11], Some(4.0));
+        assert_eq!(result[14], Some(4.0));
+        assert_eq!(result[15], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_downsample() {
+        // 4x4 -> 2x2 (half size)
+        let data: Vec<Option<f32>> = vec![
+            Some(1.0),
+            Some(1.0),
+            Some(2.0),
+            Some(2.0),
+            Some(1.0),
+            Some(1.0),
+            Some(2.0),
+            Some(2.0),
+            Some(3.0),
+            Some(3.0),
+            Some(4.0),
+            Some(4.0),
+            Some(3.0),
+            Some(3.0),
+            Some(4.0),
+            Some(4.0),
+        ];
+
+        let result = resample_nearest(&data, 4, 4, 2, 2);
+        assert_eq!(result.len(), 4);
+
+        // Should pick center-ish pixels
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(2.0));
+        assert_eq!(result[2], Some(3.0));
+        assert_eq!(result[3], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_preserves_none() {
+        // Ensure None values are preserved through resampling
+        let data: Vec<Option<f32>> = vec![Some(1.0), None, None, Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 4, 4);
+        assert_eq!(result.len(), 16);
+
+        // Top-left should be Some(1.0)
+        assert_eq!(result[0], Some(1.0));
+
+        // Top-right quadrant should be None
+        assert_eq!(result[2], None);
+        assert_eq!(result[3], None);
+
+        // Bottom-right should be Some(4.0)
+        assert_eq!(result[15], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_same_size() {
+        // Same size should return equivalent data
+        let data: Vec<Option<f32>> = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 2, 2);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(2.0));
+        assert_eq!(result[2], Some(3.0));
+        assert_eq!(result[3], Some(4.0));
+    }
+
+    #[test]
+    fn test_max_png_dimension_constant() {
+        assert_eq!(MAX_PNG_DIMENSION, 4096);
     }
 }

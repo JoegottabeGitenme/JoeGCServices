@@ -5,9 +5,14 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::http::header::HeaderName;
 use axum::{routing::get, Extension, Router};
 use clap::Parser;
-use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
+use tower_http::{
+    compression::CompressionLayer,
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -202,7 +207,27 @@ async fn run_server(args: Args) {
         .layer(Extension(state))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive());
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+                .expose_headers([
+                    // Standard headers
+                    HeaderName::from_static("cache-control"),
+                    HeaderName::from_static("content-type"),
+                    HeaderName::from_static("etag"),
+                    // Custom EDR PNG headers for frontend consumption
+                    HeaderName::from_static("x-edr-parameter"),
+                    HeaderName::from_static("x-edr-units"),
+                    HeaderName::from_static("x-edr-min"),
+                    HeaderName::from_static("x-edr-max"),
+                    HeaderName::from_static("x-edr-encoding"),
+                    HeaderName::from_static("x-edr-bbox"),
+                    HeaderName::from_static("x-edr-width"),
+                    HeaderName::from_static("x-edr-height"),
+                ]),
+        );
 
     // Parse listen address
     let addr: SocketAddr = args.listen.parse().expect("Invalid listen address");
