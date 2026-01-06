@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::cleanup::delete_ingested_file;
 use crate::config::{self, ModelConfig};
 use crate::download::DownloadManager;
 use crate::state::DownloadState;
@@ -68,6 +69,8 @@ pub struct Scheduler {
     ingester_url: Option<String>,
     client: Client,
     config_dir: PathBuf,
+    /// Output directory for completed downloads (for cleanup)
+    output_dir: PathBuf,
     /// Cached model configs
     model_configs: Vec<ModelConfig>,
     /// AWS S3 client for listing files
@@ -81,6 +84,7 @@ impl Scheduler {
         max_concurrent: usize,
         ingester_url: Option<String>,
         config_dir: PathBuf,
+        output_dir: PathBuf,
     ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -110,6 +114,7 @@ impl Scheduler {
             ingester_url,
             client,
             config_dir,
+            output_dir,
             model_configs,
             s3_client,
         }
@@ -209,6 +214,8 @@ impl Scheduler {
                                     Ok(response) if response.status().is_success() => {
                                         info!(file = %record.filename, "Ingestion triggered successfully");
                                         let _ = state.mark_ingested(&record.url).await;
+                                        // Delete source file after successful ingestion
+                                        delete_ingested_file(&path.parent().unwrap_or(&path), &record.filename).await;
                                     }
                                     Ok(response) => {
                                         warn!(
@@ -911,6 +918,8 @@ impl Scheduler {
                 Ok(response) if response.status().is_success() => {
                     info!(file = %filename, "Ingestion triggered successfully");
                     self.state.mark_ingested(&url).await?;
+                    // Delete source file after successful ingestion
+                    delete_ingested_file(&self.output_dir, &filename).await;
                 }
                 Ok(response) => {
                     warn!(

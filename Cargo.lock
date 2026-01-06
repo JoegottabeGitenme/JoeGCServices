@@ -1425,6 +1425,7 @@ dependencies = [
  "chrono",
  "clap",
  "dotenvy",
+ "filetime",
  "futures",
  "metrics",
  "metrics-exporter-prometheus",
@@ -1433,6 +1434,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
@@ -1635,6 +1637,18 @@ checksum = "d013fc25338cc558c5c2cfbad646908fb23591e2404481826742b651c9af7160"
 dependencies = [
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc0505cd1b6fa6580283f6bdf70a73fcf4aba1184038c90902b92b3dd0df63ed"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "libredox",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

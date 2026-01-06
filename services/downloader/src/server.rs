@@ -5,6 +5,7 @@
 //! - Recent and active downloads list
 //! - Download schedule information
 //! - Time series data for charts
+//! - Prometheus metrics (including cleanup metrics)
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
+use crate::cleanup::CleanupMetrics;
 use crate::scheduler::ModelSchedule;
 use crate::state::{DownloadState, DownloadStatus};
 
@@ -149,6 +151,7 @@ pub struct RetryQuery {
 pub struct ServerState {
     pub download_state: Arc<DownloadState>,
     pub model_schedules: Vec<ModelSchedule>,
+    pub cleanup_metrics: Arc<CleanupMetrics>,
 }
 
 // ============================================================================
@@ -169,6 +172,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         .route("/timeseries", get(timeseries_handler))
         .route("/retry", get(retry_handler))
         .route("/health", get(health_handler))
+        .route("/metrics", get(metrics_handler))
         .layer(cors)
         .layer(Extension(state))
 }
@@ -478,6 +482,64 @@ async fn health_handler() -> impl IntoResponse {
         "status": "ok",
         "service": "downloader"
     }))
+}
+
+/// GET /metrics - Prometheus metrics endpoint
+async fn metrics_handler(Extension(state): Extension<Arc<ServerState>>) -> impl IntoResponse {
+    let ds = &state.download_state;
+
+    // Get download stats
+    let stats = ds.get_stats().await.unwrap_or_default();
+
+    // Build Prometheus metrics output
+    let mut output = String::new();
+
+    // Download stats
+    output.push_str("# HELP downloader_downloads_pending Number of pending downloads\n");
+    output.push_str("# TYPE downloader_downloads_pending gauge\n");
+    output.push_str(&format!("downloader_downloads_pending {}\n", stats.pending));
+
+    output.push_str("# HELP downloader_downloads_in_progress Number of downloads in progress\n");
+    output.push_str("# TYPE downloader_downloads_in_progress gauge\n");
+    output.push_str(&format!(
+        "downloader_downloads_in_progress {}\n",
+        stats.in_progress
+    ));
+
+    output.push_str("# HELP downloader_downloads_failed Number of failed downloads\n");
+    output.push_str("# TYPE downloader_downloads_failed gauge\n");
+    output.push_str(&format!("downloader_downloads_failed {}\n", stats.failed));
+
+    output.push_str("# HELP downloader_downloads_completed_total Total completed downloads\n");
+    output.push_str("# TYPE downloader_downloads_completed_total counter\n");
+    output.push_str(&format!(
+        "downloader_downloads_completed_total {}\n",
+        stats.completed
+    ));
+
+    output.push_str("# HELP downloader_bytes_downloaded_total Total bytes downloaded\n");
+    output.push_str("# TYPE downloader_bytes_downloaded_total counter\n");
+    output.push_str(&format!(
+        "downloader_bytes_downloaded_total {}\n",
+        stats.total_bytes_downloaded
+    ));
+
+    // Cleanup metrics
+    output.push_str(&state.cleanup_metrics.to_prometheus());
+
+    // Service info
+    output.push_str("# HELP downloader_info Downloader service information\n");
+    output.push_str("# TYPE downloader_info gauge\n");
+    output.push_str(&format!(
+        "downloader_info{{version=\"{}\"}} 1\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; charset=utf-8")],
+        output,
+    )
 }
 
 // ============================================================================

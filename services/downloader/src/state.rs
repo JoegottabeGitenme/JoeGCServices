@@ -612,6 +612,59 @@ impl DownloadState {
 
         Ok(result.rows_affected() > 0)
     }
+
+    // ==================== Cleanup Methods ====================
+
+    /// Get filenames of all ingested downloads (for orphan file detection).
+    pub async fn get_ingested_filenames(&self) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT filename FROM completed_downloads WHERE ingested = 1")
+                .fetch_all(&self.pool)
+                .await?;
+
+        Ok(rows.into_iter().map(|(f,)| f).collect())
+    }
+
+    /// Delete completed_downloads records older than retention_days where ingested=1.
+    ///
+    /// Returns the number of records deleted.
+    pub async fn prune_old_completed(&self, retention_days: u32) -> Result<u64> {
+        let cutoff = (Utc::now() - chrono::Duration::days(retention_days as i64)).to_rfc3339();
+
+        let result =
+            sqlx::query("DELETE FROM completed_downloads WHERE ingested = 1 AND completed_at < ?")
+                .bind(&cutoff)
+                .execute(&self.pool)
+                .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete failed download records older than max_age_days.
+    ///
+    /// Returns the number of records deleted.
+    pub async fn prune_old_failed(&self, max_age_days: u32) -> Result<u64> {
+        let cutoff = (Utc::now() - chrono::Duration::days(max_age_days as i64)).to_rfc3339();
+
+        let result =
+            sqlx::query("DELETE FROM downloads WHERE status = 'failed' AND updated_at < ?")
+                .bind(&cutoff)
+                .execute(&self.pool)
+                .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Vacuum the database to reclaim space after deletions.
+    pub async fn vacuum(&self) -> Result<()> {
+        sqlx::query("VACUUM")
+            .execute(&self.pool)
+            .await
+            .context("Failed to vacuum database")?;
+
+        debug!("Database vacuumed");
+        Ok(())
+    }
 }
 
 /// Completed download record.
@@ -634,7 +687,7 @@ pub struct HourlyStats {
 }
 
 /// Statistics about download state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DownloadStats {
     pub pending: u64,
     pub in_progress: u64,
