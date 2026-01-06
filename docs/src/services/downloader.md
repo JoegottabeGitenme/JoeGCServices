@@ -16,7 +16,8 @@ The Downloader service fetches weather data files from NOAA sources with robust 
 3. **Retry Logic**: Exponential backoff for transient failures
 4. **Progress Tracking**: Persistent state across restarts
 5. **Ingestion Trigger**: Notifies [Ingester Service](./ingester.md) when downloads complete
-6. **Status API**: HTTP endpoints for monitoring and control
+6. **Automatic Cleanup**: Deletes source files after successful ingestion to prevent disk growth
+7. **Status API**: HTTP endpoints for monitoring and control
 
 ## Architecture
 
@@ -353,6 +354,38 @@ async fn trigger_ingestion(
 }
 ```
 
+---
+
+### 6. Automatic File Cleanup
+
+After successful ingestion, source files are automatically deleted to prevent unbounded disk growth. The cleanup system operates at multiple levels:
+
+**Immediate Deletion**: Source files are deleted immediately after ingestion succeeds:
+```rust
+// After successful ingestion response
+state.mark_ingested(&url).await?;
+delete_ingested_file(&output_dir, &filename).await;
+```
+
+**Periodic Cleanup**: A background task runs hourly to catch any orphaned files:
+- Deletes stale `.partial` files in temp directory (older than 1 hour)
+- Deletes orphan files marked as ingested but still on disk
+- Prunes old `completed_downloads` records (older than 7 days)
+- Prunes old failed download records (older than 7 days)
+
+**Startup Cleanup**: On service start, cleanup runs immediately to handle any files orphaned from previous runs.
+
+```rust
+// Cleanup configuration
+CleanupConfig {
+    enabled: true,
+    interval_secs: 3600,                    // Run every hour
+    partial_file_max_age_secs: 3600,        // Delete partials older than 1 hour
+    completed_record_retention_days: 7,      // Keep completed records for 7 days
+    failed_record_retention_days: 7,         // Keep failed records for 7 days
+}
+```
+
 ## HTTP API
 
 ### Status Server (Port 8081)
@@ -487,11 +520,30 @@ DOWNLOAD_TIMEOUT_SECS=300             # Per-file timeout
 # Ingestion
 INGESTER_URL=http://ingester:8082/ingest  # Ingester service URL for triggering ingestion
 
+# Cleanup settings
+CLEANUP_INTERVAL_SECS=3600            # How often to run cleanup (default: 1 hour)
+COMPLETED_RECORD_RETENTION_DAYS=7     # Days to keep completed download records
+PARTIAL_FILE_MAX_AGE_SECS=3600        # Max age for partial files before cleanup
+
 # HTTP server
 STATUS_PORT=8081                      # Status API port
 
 # Logging
 RUST_LOG=info
+```
+
+### CLI Options
+
+```bash
+downloader --help
+
+# Cleanup-related options:
+  --disable-cleanup                   Disable automatic cleanup
+  --cleanup-interval-secs <SECS>      Cleanup interval (default: 3600)
+  --completed-record-retention-days <DAYS>  
+                                      Days to keep completed records (default: 7)
+  --partial-file-max-age-secs <SECS>  
+                                      Max age for partial files (default: 3600)
 ```
 
 ### Model Configuration
@@ -555,7 +607,44 @@ With 4 concurrent downloads: **~25-30 GB/hour throughput**
 
 ### Metrics
 
-Query download statistics:
+The downloader exposes Prometheus metrics at `/metrics`:
+
+```bash
+curl http://localhost:8081/metrics
+```
+
+**Download Metrics**:
+```
+# Download counts
+downloader_downloads_pending 5
+downloader_downloads_in_progress 2
+downloader_downloads_failed 1
+downloader_downloads_completed_total 15234
+downloader_bytes_downloaded_total 1234567890
+```
+
+**Cleanup Metrics**:
+```
+# Total files deleted by cleanup
+downloader_cleanup_files_deleted_total 1234
+
+# Total bytes reclaimed by cleanup
+downloader_cleanup_bytes_reclaimed_total 567890123
+
+# Total database records pruned
+downloader_cleanup_db_records_pruned_total 5678
+
+# Unix timestamp of last cleanup run
+downloader_cleanup_last_run_timestamp 1704067200
+
+# Duration of last cleanup run in milliseconds
+downloader_cleanup_last_run_duration_ms 234
+
+# Total errors during cleanup
+downloader_cleanup_errors_total 0
+```
+
+**Query download statistics via API**:
 
 ```bash
 # Recent downloads
@@ -619,19 +708,51 @@ docker stats downloader
 
 **Causes**:
 - Insufficient disk space
-- Old files not cleaned up
+- Cleanup disabled or not working
+- Ingestion failures preventing cleanup
 
 **Solution**:
+
 ```bash
 # Check disk usage
 df -h /data/downloads
 
-# Clean old files
-find /data/downloads -name "*.grib2" -mtime +7 -delete
+# Check if cleanup is running
+curl http://localhost:8081/metrics | grep cleanup
 
-# Configure retention
-RETENTION_DAYS=3
+# Verify cleanup isn't disabled
+# (check for --disable-cleanup flag or service configuration)
+
+# Manual cleanup if needed
+find /data/downloads -name "*.grib2" -mtime +1 -delete
+find /tmp/weather-downloads -name "*.partial" -mtime +1 -delete
 ```
+
+**Note**: The downloader automatically deletes source files after successful ingestion. If disk usage is growing unbounded, check:
+1. Ingestion is succeeding (check ingester logs)
+2. Cleanup task is running (check cleanup metrics)
+3. No `--disable-cleanup` flag is set
+
+---
+
+### Volume Growth After Upgrade
+
+**Symptom**: Large existing data volume from before cleanup was implemented
+
+**Solution**: Delete volumes and redeploy for a clean slate:
+
+```bash
+# Stop services
+docker compose down
+
+# Delete data volumes (WARNING: deletes all downloaded data)
+docker volume rm weather-wms_downloader_data weather-wms_downloader_state
+
+# Restart services
+docker compose up -d
+```
+
+The service will re-download recent data based on retention settings and automatically clean up files after ingestion going forward.
 
 ## Next Steps
 
