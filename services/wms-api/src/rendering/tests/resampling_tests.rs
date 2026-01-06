@@ -506,42 +506,47 @@ fn test_ndfd_lambert_mercator_resampling() {
 fn test_ndfd_lambert_grid_indices() {
     use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
     use projection::LambertConformal;
-    
+
     let proj = LambertConformal::ndfd();
-    
+
     // Test specific coordinates across the CONUS
     let test_points = [
         // (lat, lon, expected_i_approx, expected_j_approx, name)
-        (34.0, -118.2, 239.0, 572.0, "Los Angeles"),  // West
-        (40.7, -74.0, 1810.0, 856.0, "New York"),      // East  
+        (34.0, -118.2, 239.0, 572.0, "Los Angeles"), // West
+        (40.7, -74.0, 1810.0, 856.0, "New York"),    // East
         (38.5, -95.0, 1088.0, 700.0, "Kansas (center)"), // Center
-        (47.6, -122.3, 216.0, 1210.0, "Seattle"),     // NW
-        (25.8, -80.2, 1670.0, 171.0, "Miami"),        // SE
+        (47.6, -122.3, 216.0, 1210.0, "Seattle"),    // NW
+        (25.8, -80.2, 1670.0, 171.0, "Miami"),       // SE
     ];
-    
+
     println!("\nTesting geo_to_grid for key locations:");
     for (lat, lon, expected_i, expected_j, name) in test_points {
         let (i, j) = proj.geo_to_grid(lat, lon);
         let i_err = (i - expected_i).abs();
         let j_err = (j - expected_j).abs();
-        
-        println!("  {}: ({:.1}, {:.1}) -> i={:.1}, j={:.1} (expected i≈{:.0}, j≈{:.0})", 
-                 name, lat, lon, i, j, expected_i, expected_j);
-        
+
+        println!(
+            "  {}: ({:.1}, {:.1}) -> i={:.1}, j={:.1} (expected i≈{:.0}, j≈{:.0})",
+            name, lat, lon, i, j, expected_i, expected_j
+        );
+
         // Allow some tolerance (within 50 grid points)
         assert!(i_err < 50.0, "{} i error too large: {:.1}", name, i_err);
         assert!(j_err < 50.0, "{} j error too large: {:.1}", name, j_err);
     }
-    
+
     // Critical test: ensure western coordinates don't mirror to eastern indices
     // LA should have smaller i than NY
     let (la_i, _) = proj.geo_to_grid(34.0, -118.2);
     let (ny_i, _) = proj.geo_to_grid(40.7, -74.0);
-    
+
     println!("\nMirroring check:");
     println!("  LA (west, -118.2°): i={:.1}", la_i);
     println!("  NY (east, -74.0°): i={:.1}", ny_i);
-    assert!(la_i < ny_i, "LA (west) should have smaller i than NY (east)");
+    assert!(
+        la_i < ny_i,
+        "LA (west) should have smaller i than NY (east)"
+    );
     assert!(la_i < 500.0, "LA i should be in western half of grid");
     assert!(ny_i > 1500.0, "NY i should be in eastern half of grid");
 }
