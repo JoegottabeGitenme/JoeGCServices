@@ -523,6 +523,7 @@ INGESTER_URL=http://ingester:8082/ingest  # Ingester service URL for triggering 
 # Cleanup settings
 CLEANUP_INTERVAL_SECS=3600            # How often to run cleanup (default: 1 hour)
 COMPLETED_RECORD_RETENTION_DAYS=7     # Days to keep completed download records
+FAILED_RECORD_RETENTION_DAYS=7        # Days to keep failed download records
 PARTIAL_FILE_MAX_AGE_SECS=3600        # Max age for partial files before cleanup
 
 # HTTP server
@@ -539,12 +540,17 @@ downloader --help
 
 # Cleanup-related options:
   --disable-cleanup                   Disable automatic cleanup
+  --cleanup-dry-run                   Log what would be deleted without actually deleting
   --cleanup-interval-secs <SECS>      Cleanup interval (default: 3600)
   --completed-record-retention-days <DAYS>  
                                       Days to keep completed records (default: 7)
+  --failed-record-retention-days <DAYS>
+                                      Days to keep failed records (default: 7)
   --partial-file-max-age-secs <SECS>  
                                       Max age for partial files (default: 3600)
 ```
+
+The `--cleanup-dry-run` flag is useful for production debugging to see what would be cleaned up without actually deleting anything.
 
 ### Model Configuration
 
@@ -625,6 +631,9 @@ downloader_bytes_downloaded_total 1234567890
 
 **Cleanup Metrics**:
 ```
+# Total cleanup runs executed
+downloader_cleanup_runs_total 42
+
 # Total files deleted by cleanup
 downloader_cleanup_files_deleted_total 1234
 

@@ -87,6 +87,10 @@ struct Args {
     #[arg(long)]
     disable_cleanup: bool,
 
+    /// Cleanup dry run mode - log what would be deleted without actually deleting
+    #[arg(long)]
+    cleanup_dry_run: bool,
+
     /// Cleanup interval in seconds (default: 3600 = 1 hour)
     #[arg(long, env = "CLEANUP_INTERVAL_SECS", default_value = "3600")]
     cleanup_interval_secs: u64,
@@ -94,6 +98,10 @@ struct Args {
     /// Days to retain completed download records (default: 7)
     #[arg(long, env = "COMPLETED_RECORD_RETENTION_DAYS", default_value = "7")]
     completed_record_retention_days: u32,
+
+    /// Days to retain failed download records (default: 7)
+    #[arg(long, env = "FAILED_RECORD_RETENTION_DAYS", default_value = "7")]
+    failed_record_retention_days: u32,
 
     /// Max age for partial files before cleanup in seconds (default: 3600 = 1 hour)
     #[arg(long, env = "PARTIAL_FILE_MAX_AGE_SECS", default_value = "3600")]
@@ -164,10 +172,11 @@ async fn main() -> Result<()> {
     // Create cleanup config
     let cleanup_config = CleanupConfig {
         enabled: !args.disable_cleanup,
+        dry_run: args.cleanup_dry_run,
         interval_secs: args.cleanup_interval_secs,
         partial_file_max_age_secs: args.partial_file_max_age_secs,
         completed_record_retention_days: args.completed_record_retention_days,
-        failed_record_retention_days: 7, // Fixed at 7 days
+        failed_record_retention_days: args.failed_record_retention_days,
         output_dir: args.output_dir.clone(),
         temp_dir: args.temp_dir.clone(),
     };

@@ -75,6 +75,7 @@ downloader_downloads_completed_total 15234
 downloader_bytes_downloaded_total 1234567890
 
 # Cleanup metrics
+downloader_cleanup_runs_total 42
 downloader_cleanup_files_deleted_total 1234
 downloader_cleanup_bytes_reclaimed_total 567890123
 downloader_cleanup_db_records_pruned_total 5678

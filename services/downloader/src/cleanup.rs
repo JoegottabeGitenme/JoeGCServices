@@ -13,7 +13,6 @@
 //! the source file is no longer needed. Without cleanup, these files accumulate
 //! indefinitely, consuming disk space.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -30,6 +29,8 @@ use crate::state::DownloadState;
 pub struct CleanupConfig {
     /// Enable cleanup (default: true)
     pub enabled: bool,
+    /// Dry run mode - log what would be deleted without actually deleting (default: false)
+    pub dry_run: bool,
     /// Interval between periodic cleanup runs in seconds (default: 3600 = 1 hour)
     pub interval_secs: u64,
     /// Max age for .partial files before deletion in seconds (default: 3600 = 1 hour)
@@ -48,6 +49,7 @@ impl Default for CleanupConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            dry_run: false,
             interval_secs: 3600,
             partial_file_max_age_secs: 3600,
             completed_record_retention_days: 7,
@@ -90,6 +92,7 @@ impl CleanupStats {
 /// Accumulated metrics for Prometheus export.
 #[derive(Debug, Default)]
 pub struct CleanupMetrics {
+    pub runs_total: AtomicU64,
     pub files_deleted_total: AtomicU64,
     pub bytes_reclaimed_total: AtomicU64,
     pub db_records_pruned_total: AtomicU64,
@@ -106,6 +109,7 @@ impl CleanupMetrics {
 
     /// Record stats from a cleanup run.
     pub fn record(&self, stats: &CleanupStats, duration_ms: u64) {
+        self.runs_total.fetch_add(1, Ordering::Relaxed);
         self.files_deleted_total.fetch_add(
             stats.partial_files_deleted + stats.orphan_files_deleted,
             Ordering::Relaxed,
@@ -132,7 +136,10 @@ impl CleanupMetrics {
     /// Format metrics for Prometheus.
     pub fn to_prometheus(&self) -> String {
         format!(
-            "# HELP downloader_cleanup_files_deleted_total Total files deleted by cleanup\n\
+            "# HELP downloader_cleanup_runs_total Total cleanup runs executed\n\
+             # TYPE downloader_cleanup_runs_total counter\n\
+             downloader_cleanup_runs_total {}\n\
+             # HELP downloader_cleanup_files_deleted_total Total files deleted by cleanup\n\
              # TYPE downloader_cleanup_files_deleted_total counter\n\
              downloader_cleanup_files_deleted_total {}\n\
              # HELP downloader_cleanup_bytes_reclaimed_total Total bytes reclaimed by cleanup\n\
@@ -150,6 +157,7 @@ impl CleanupMetrics {
              # HELP downloader_cleanup_errors_total Total errors encountered during cleanup\n\
              # TYPE downloader_cleanup_errors_total counter\n\
              downloader_cleanup_errors_total {}\n",
+            self.runs_total.load(Ordering::Relaxed),
             self.files_deleted_total.load(Ordering::Relaxed),
             self.bytes_reclaimed_total.load(Ordering::Relaxed),
             self.db_records_pruned_total.load(Ordering::Relaxed),
@@ -359,6 +367,19 @@ impl CleanupTask {
             let age = now.duration_since(modified).unwrap_or_default();
             if age > max_age {
                 let size = metadata.len();
+
+                if self.config.dry_run {
+                    info!(
+                        path = %path.display(),
+                        age_secs = age.as_secs(),
+                        size = size,
+                        "[DRY RUN] Would delete stale partial file"
+                    );
+                    stats.partial_files_deleted += 1;
+                    stats.bytes_reclaimed += size;
+                    continue;
+                }
+
                 match tokio::fs::remove_file(&path).await {
                     Ok(()) => {
                         info!(
@@ -396,17 +417,20 @@ impl CleanupTask {
             return Ok(stats);
         }
 
-        // Get all filenames that have been ingested
-        let ingested_filenames = self.state.get_ingested_filenames().await?;
-        let ingested_set: HashSet<String> = ingested_filenames.into_iter().collect();
+        // Get all filenames that have been ingested, with their completion timestamps.
+        // This allows us to safely handle race conditions where a file might be
+        // re-downloaded between fetching the ingested set and checking the filesystem.
+        let ingested_files = self.state.get_ingested_files_with_timestamps().await?;
+        let ingested_map: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> =
+            ingested_files.into_iter().collect();
 
-        if ingested_set.is_empty() {
+        if ingested_map.is_empty() {
             debug!("No ingested files in database, skipping orphan cleanup");
             return Ok(stats);
         }
 
         debug!(
-            count = ingested_set.len(),
+            count = ingested_map.len(),
             "Checking for orphan files against ingested set"
         );
 
@@ -424,25 +448,67 @@ impl CleanupTask {
         while let Some(entry) = entries.next_entry().await? {
             let filename = entry.file_name().to_string_lossy().to_string();
 
-            // If file is in ingested set, it should have been deleted - delete it now
-            if ingested_set.contains(&filename) {
+            // Check if file is in ingested set
+            if let Some(ingested_at) = ingested_map.get(&filename) {
                 let path = entry.path();
-                let size = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-
-                match tokio::fs::remove_file(&path).await {
-                    Ok(()) => {
-                        info!(
-                            file = %filename,
-                            size = size,
-                            "Deleted orphan ingested file"
-                        );
-                        stats.orphan_files_deleted += 1;
-                        stats.bytes_reclaimed += size;
-                    }
+                let metadata = match entry.metadata().await {
+                    Ok(m) => m,
                     Err(e) => {
-                        let msg = format!("Failed to delete orphan file {}: {}", filename, e);
-                        warn!("{}", msg);
-                        stats.errors.push(msg);
+                        debug!(file = %filename, error = %e, "Failed to get file metadata");
+                        continue;
+                    }
+                };
+
+                // Safety check: only delete if the file's modification time is BEFORE
+                // the ingestion timestamp. This prevents deleting a newly re-downloaded
+                // file that happens to have the same name.
+                let file_mtime = match metadata.modified() {
+                    Ok(mtime) => mtime,
+                    Err(e) => {
+                        debug!(file = %filename, error = %e, "Failed to get file mtime");
+                        continue;
+                    }
+                };
+
+                let file_mtime_chrono: chrono::DateTime<chrono::Utc> = file_mtime.into();
+
+                // Add a small buffer (1 second) to account for filesystem time resolution
+                if file_mtime_chrono > *ingested_at + chrono::Duration::seconds(1) {
+                    debug!(
+                        file = %filename,
+                        file_mtime = %file_mtime_chrono,
+                        ingested_at = %ingested_at,
+                        "Skipping file - newer than ingestion record (possible re-download)"
+                    );
+                    continue;
+                }
+
+                let size = metadata.len();
+
+                if self.config.dry_run {
+                    info!(
+                        file = %filename,
+                        size = size,
+                        "[DRY RUN] Would delete orphan ingested file"
+                    );
+                    stats.orphan_files_deleted += 1;
+                    stats.bytes_reclaimed += size;
+                } else {
+                    match tokio::fs::remove_file(&path).await {
+                        Ok(()) => {
+                            info!(
+                                file = %filename,
+                                size = size,
+                                "Deleted orphan ingested file"
+                            );
+                            stats.orphan_files_deleted += 1;
+                            stats.bytes_reclaimed += size;
+                        }
+                        Err(e) => {
+                            let msg = format!("Failed to delete orphan file {}: {}", filename, e);
+                            warn!("{}", msg);
+                            stats.errors.push(msg);
+                        }
                     }
                 }
             }
@@ -540,9 +606,11 @@ mod tests {
     fn test_cleanup_config_default() {
         let config = CleanupConfig::default();
         assert!(config.enabled);
+        assert!(!config.dry_run);
         assert_eq!(config.interval_secs, 3600);
         assert_eq!(config.partial_file_max_age_secs, 3600);
         assert_eq!(config.completed_record_retention_days, 7);
+        assert_eq!(config.failed_record_retention_days, 7);
     }
 
     #[test]
@@ -578,12 +646,14 @@ mod tests {
     #[test]
     fn test_cleanup_metrics_prometheus_format() {
         let metrics = CleanupMetrics::new();
+        metrics.runs_total.store(5, Ordering::Relaxed);
         metrics.files_deleted_total.store(100, Ordering::Relaxed);
         metrics
             .bytes_reclaimed_total
             .store(1024000, Ordering::Relaxed);
 
         let output = metrics.to_prometheus();
+        assert!(output.contains("downloader_cleanup_runs_total 5"));
         assert!(output.contains("downloader_cleanup_files_deleted_total 100"));
         assert!(output.contains("downloader_cleanup_bytes_reclaimed_total 1024000"));
     }
@@ -607,6 +677,7 @@ mod tests {
 
         let config = CleanupConfig {
             enabled: true,
+            dry_run: false,
             interval_secs: 3600,
             partial_file_max_age_secs: 3600, // 1 hour max age
             completed_record_retention_days: 7,
@@ -644,13 +715,22 @@ mod tests {
         .unwrap();
 
         // 2. Create an orphan file (marked as ingested but still on disk)
+        // Set the file's mtime to BEFORE the ingestion time so it gets deleted
         let orphan_filename = "orphan_file.grib2";
         let orphan_path = output_dir.path().join(orphan_filename);
         tokio::fs::write(&orphan_path, "orphan data that should be deleted")
             .await
             .unwrap();
+        // Set file mtime to 1 hour ago (before ingestion)
+        let one_hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        filetime::set_file_mtime(
+            &orphan_path,
+            filetime::FileTime::from_system_time(one_hour_ago),
+        )
+        .unwrap();
 
         // Mark the orphan file as downloaded and ingested in the database
+        // The ingestion timestamp will be "now", which is AFTER the file mtime
         state
             .queue_download(
                 "http://example.com/orphan_file.grib2",
@@ -690,6 +770,7 @@ mod tests {
         // Create and run cleanup task
         let config = CleanupConfig {
             enabled: true,
+            dry_run: false,
             interval_secs: 3600,
             partial_file_max_age_secs: 3600,
             completed_record_retention_days: 7,
@@ -718,8 +799,137 @@ mod tests {
         assert!(keep_path.exists(), "Keep file should NOT be deleted");
 
         // Verify metrics were recorded
+        assert!(metrics.runs_total.load(Ordering::Relaxed) >= 1);
         assert!(metrics.files_deleted_total.load(Ordering::Relaxed) >= 2);
         assert!(metrics.bytes_reclaimed_total.load(Ordering::Relaxed) > 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_race_condition_protection() {
+        // Test that a file re-downloaded AFTER ingestion is NOT deleted
+        use crate::state::DownloadState;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Create a file and mark it as ingested in the database
+        let filename = "redownloaded_file.grib2";
+        let file_path = output_dir.path().join(filename);
+
+        // First, create the ingestion record (simulating past ingestion)
+        state
+            .queue_download(
+                "http://example.com/redownloaded_file.grib2",
+                filename,
+                "test",
+            )
+            .await
+            .unwrap();
+        state
+            .update_status(
+                "http://example.com/redownloaded_file.grib2",
+                crate::state::DownloadStatus::Completed,
+            )
+            .await
+            .unwrap();
+        state
+            .mark_ingested("http://example.com/redownloaded_file.grib2")
+            .await
+            .unwrap();
+
+        // Now create a NEW file with the same name (simulating re-download)
+        tokio::fs::write(&file_path, "newly downloaded data - should NOT be deleted")
+            .await
+            .unwrap();
+
+        // Set the file's mtime to be 10 seconds in the FUTURE to simulate
+        // a file that was re-downloaded after the ingestion record was created
+        let future_time = std::time::SystemTime::now() + Duration::from_secs(10);
+        filetime::set_file_mtime(
+            &file_path,
+            filetime::FileTime::from_system_time(future_time),
+        )
+        .unwrap();
+
+        // Create and run cleanup task
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let cleanup_task = CleanupTask::new(config, state, metrics.clone());
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // File should NOT be deleted because its mtime is after ingestion time
+        assert!(
+            file_path.exists(),
+            "Re-downloaded file should NOT be deleted (race condition protection)"
+        );
+        assert_eq!(
+            stats.orphan_files_deleted, 0,
+            "Should not delete files newer than ingestion time"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dry_run_mode() {
+        use crate::state::DownloadState;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Create a stale partial file
+        let partial_path = temp_dir.path().join("test.grib2.partial");
+        tokio::fs::write(&partial_path, "partial data")
+            .await
+            .unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(7200);
+        filetime::set_file_mtime(
+            &partial_path,
+            filetime::FileTime::from_system_time(two_hours_ago),
+        )
+        .unwrap();
+
+        // Create and run cleanup task in DRY RUN mode
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: true, // DRY RUN!
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let cleanup_task = CleanupTask::new(config, state, metrics.clone());
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Stats should show what WOULD be deleted
+        assert_eq!(
+            stats.partial_files_deleted, 1,
+            "Should report 1 file would be deleted"
+        );
+
+        // But file should still exist!
+        assert!(
+            partial_path.exists(),
+            "File should NOT be deleted in dry run mode"
+        );
     }
 
     #[tokio::test]

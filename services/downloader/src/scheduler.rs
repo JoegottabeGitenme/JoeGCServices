@@ -215,7 +215,14 @@ impl Scheduler {
                                         info!(file = %record.filename, "Ingestion triggered successfully");
                                         let _ = state.mark_ingested(&record.url).await;
                                         // Delete source file after successful ingestion
-                                        delete_ingested_file(&path.parent().unwrap_or(&path), &record.filename).await;
+                                        if let Some(parent) = path.parent() {
+                                            delete_ingested_file(parent, &record.filename).await;
+                                        } else {
+                                            warn!(
+                                                path = %path.display(),
+                                                "Cannot determine parent directory for cleanup"
+                                            );
+                                        }
                                     }
                                     Ok(response) => {
                                         warn!(

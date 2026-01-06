@@ -615,14 +615,23 @@ impl DownloadState {
 
     // ==================== Cleanup Methods ====================
 
-    /// Get filenames of all ingested downloads (for orphan file detection).
-    pub async fn get_ingested_filenames(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT filename FROM completed_downloads WHERE ingested = 1")
-                .fetch_all(&self.pool)
-                .await?;
+    /// Get filenames and completion timestamps of all ingested downloads (for orphan file detection).
+    /// Returns (filename, completed_at) pairs to enable safe deletion with timestamp comparison.
+    pub async fn get_ingested_files_with_timestamps(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT filename, completed_at FROM completed_downloads WHERE ingested = 1",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
-        Ok(rows.into_iter().map(|(f,)| f).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(|(filename, completed_at)| {
+                DateTime::parse_from_rfc3339(&completed_at)
+                    .ok()
+                    .map(|dt| (filename, dt.with_timezone(&Utc)))
+            })
+            .collect())
     }
 
     /// Delete completed_downloads records older than retention_days where ingested=1.
