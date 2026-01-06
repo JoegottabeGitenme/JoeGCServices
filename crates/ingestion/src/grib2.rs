@@ -170,9 +170,14 @@ pub async fn ingest_grib2(
             continue;
         }
 
-        // Note: NDFD uses south-to-north scanning which matches our projection's
-        // convention where j=0 is at the south. No flip needed for NDFD.
-        // Other grids with north-to-south scanning would need flipping here.
+        // Handle scanning mode differences between GRIB sources and our storage convention.
+        //
+        // NDFD uses +j scanning (south-to-north), meaning GRIB row 0 = south.
+        // Our Lambert projection has j=0 at south, matching NDFD's storage order.
+        // So NDFD data does NOT need flipping - the data order matches the projection.
+        //
+        // Note: If data appears upside-down, ensure you re-ingest after deploying
+        // this code - previously ingested data may have incorrect row ordering.
 
         // Calculate bounding box
         let gp_bbox = if model == "hrrr" {
