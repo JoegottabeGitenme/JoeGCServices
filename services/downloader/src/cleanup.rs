@@ -620,4 +620,134 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.partial_file_max_age_secs, 3600);
     }
+
+    #[tokio::test]
+    async fn test_cleanup_full_integration() {
+        use crate::state::DownloadState;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+
+        // Create an in-memory database
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // 1. Create a stale partial file (should be deleted)
+        let partial_path = temp_dir.path().join("test.grib2.partial");
+        tokio::fs::write(&partial_path, "partial data")
+            .await
+            .unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(7200);
+        filetime::set_file_mtime(
+            &partial_path,
+            filetime::FileTime::from_system_time(two_hours_ago),
+        )
+        .unwrap();
+
+        // 2. Create an orphan file (marked as ingested but still on disk)
+        let orphan_filename = "orphan_file.grib2";
+        let orphan_path = output_dir.path().join(orphan_filename);
+        tokio::fs::write(&orphan_path, "orphan data that should be deleted")
+            .await
+            .unwrap();
+
+        // Mark the orphan file as downloaded and ingested in the database
+        state
+            .queue_download(
+                "http://example.com/orphan_file.grib2",
+                orphan_filename,
+                "test",
+            )
+            .await
+            .unwrap();
+        state
+            .update_status(
+                "http://example.com/orphan_file.grib2",
+                crate::state::DownloadStatus::Completed,
+            )
+            .await
+            .unwrap();
+        state
+            .mark_ingested("http://example.com/orphan_file.grib2")
+            .await
+            .unwrap();
+
+        // 3. Create a file that should NOT be deleted (not in database as ingested)
+        let keep_filename = "keep_this_file.grib2";
+        let keep_path = output_dir.path().join(keep_filename);
+        tokio::fs::write(&keep_path, "data to keep").await.unwrap();
+
+        // Verify files exist before cleanup
+        assert!(
+            partial_path.exists(),
+            "Partial file should exist before cleanup"
+        );
+        assert!(
+            orphan_path.exists(),
+            "Orphan file should exist before cleanup"
+        );
+        assert!(keep_path.exists(), "Keep file should exist before cleanup");
+
+        // Create and run cleanup task
+        let config = CleanupConfig {
+            enabled: true,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let cleanup_task = CleanupTask::new(config, state, metrics.clone());
+
+        // Run startup cleanup
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Verify results
+        assert_eq!(
+            stats.partial_files_deleted, 1,
+            "Should delete 1 stale partial file"
+        );
+        assert_eq!(stats.orphan_files_deleted, 1, "Should delete 1 orphan file");
+        assert!(stats.errors.is_empty(), "Should have no errors");
+
+        // Verify files after cleanup
+        assert!(!partial_path.exists(), "Partial file should be deleted");
+        assert!(!orphan_path.exists(), "Orphan file should be deleted");
+        assert!(keep_path.exists(), "Keep file should NOT be deleted");
+
+        // Verify metrics were recorded
+        assert!(metrics.files_deleted_total.load(Ordering::Relaxed) >= 2);
+        assert!(metrics.bytes_reclaimed_total.load(Ordering::Relaxed) > 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_ingested_file() {
+        let output_dir = TempDir::new().unwrap();
+        let filename = "test_delete.grib2";
+        let file_path = output_dir.path().join(filename);
+
+        // Create a test file
+        tokio::fs::write(&file_path, "test data to delete")
+            .await
+            .unwrap();
+        assert!(file_path.exists(), "File should exist before deletion");
+
+        // Delete it
+        delete_ingested_file(output_dir.path(), filename).await;
+
+        // Verify it's gone
+        assert!(!file_path.exists(), "File should be deleted");
+    }
+
+    #[tokio::test]
+    async fn test_delete_ingested_file_missing() {
+        let output_dir = TempDir::new().unwrap();
+        let filename = "nonexistent.grib2";
+
+        // This should not panic, just log a warning
+        delete_ingested_file(output_dir.path(), filename).await;
+        // If we get here without panicking, the test passes
+    }
 }
