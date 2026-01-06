@@ -232,7 +232,8 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
         "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
         // NDFD CONUS: Lambert Conformal projection covering continental US
-        "ndfd" => BoundingBox::new(-124.0, 21.0, -66.0, 50.0),
+        // Actual geographic bounds from Lambert projection corners
+        "ndfd" => BoundingBox::new(-130.2, 20.0, -60.8, 53.0),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }

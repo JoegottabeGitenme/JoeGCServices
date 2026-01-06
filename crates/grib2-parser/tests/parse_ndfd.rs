@@ -110,6 +110,221 @@ fn test_parse_ndfd_file() {
     println!("\nNDFD parsing test passed!");
 }
 
+/// Test RH values to debug horizontal mirroring issue
+#[test]
+fn test_ndfd_rh_values() {
+    let path = std::env::var("NDFD_RH_FILE").unwrap_or_else(|_| "data/ndfd/ds.rhm.bin".to_string());
+
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("Skipping test: {} not found", path);
+            return;
+        }
+    };
+
+    let stripped = grib2_parser::strip_wmo_headers(&data);
+    let tables = Arc::new(Grib2Tables::new());
+    let mut grib_reader = Grib2Reader::new(Bytes::from(stripped), tables);
+
+    let msg = grib_reader
+        .next_message()
+        .expect("Should have a message")
+        .expect("Should parse successfully");
+
+    let grid_data = msg.unpack_data().expect("Should unpack data");
+    let width = msg.grid_definition.num_points_longitude as usize;
+    let height = msg.grid_definition.num_points_latitude as usize;
+
+    println!("RH Grid: {} x {}", width, height);
+
+    // Values from wgrib2:
+    // LA (34°N, 118.2°W): RH = 86.4% at wgrib2 (240, 573) = our (239, 572)
+    // NY (40.7°N, 74°W): RH = 63.4% at wgrib2 (1811, 857) = our (1810, 856)
+    // Denver (39.7°N, 105°W): RH = 26.4%
+
+    let la_idx = 572 * width + 239;
+    let la_val = grid_data[la_idx];
+    println!("LA (239, 572): {:.1}%", la_val);
+
+    let ny_idx = 856 * width + 1810;
+    let ny_val = grid_data[ny_idx];
+    println!("NY (1810, 856): {:.1}%", ny_val);
+
+    // Denver at approximately i=740, j=768
+    let denver_idx = 768 * width + 740;
+    let denver_val = grid_data[denver_idx];
+    println!("Denver (740, 768): {:.1}%", denver_val);
+
+    // Check mirrored positions - if data is mirrored, these would have the "wrong" values
+    let mirror_la_i = (width - 1) - 239; // 1905
+    let mirror_la_idx = 572 * width + mirror_la_i;
+    let mirror_la_val = grid_data[mirror_la_idx];
+    println!("Mirrored LA pos (1905, 572): {:.1}%", mirror_la_val);
+
+    let mirror_denver_i = (width - 1) - 740; // 1404
+    let mirror_denver_idx = 768 * width + mirror_denver_i;
+    let mirror_denver_val = grid_data[mirror_denver_idx];
+    println!("Mirrored Denver pos (1404, 768): {:.1}%", mirror_denver_val);
+
+    // Verify LA value is close to wgrib2's 86.4%
+    assert!(
+        (la_val - 86.4).abs() < 1.0,
+        "LA RH should be ~86.4%, got {:.1}%",
+        la_val
+    );
+
+    // Verify Denver is low humidity (~26%)
+    assert!(
+        denver_val < 40.0,
+        "Denver should have low RH (~26%), got {:.1}%",
+        denver_val
+    );
+
+    // CRITICAL: If mirrored Denver position has low humidity like Denver,
+    // it means the data IS correctly stored and the issue is in rendering
+    // If mirrored Denver has HIGH humidity, the data itself is mirrored
+    println!("\n=== MIRRORING DIAGNOSTIC ===");
+    if mirror_denver_val < 40.0 {
+        println!(
+            "Mirrored Denver also has low RH ({:.1}%) - DATA MAY BE MIRRORED IN STORAGE",
+            mirror_denver_val
+        );
+    } else {
+        println!(
+            "Mirrored Denver has different RH ({:.1}%) - Data storage looks correct",
+            mirror_denver_val
+        );
+    }
+}
+
+/// Test that data values at specific grid points match wgrib2 output.
+/// This validates that our data unpacking and indexing is correct.
+#[test]
+fn test_ndfd_data_values() {
+    let path =
+        std::env::var("NDFD_TEST_FILE").unwrap_or_else(|_| "data/ndfd/ds.temp.bin".to_string());
+
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("Skipping test: {} not found", path);
+            return;
+        }
+    };
+
+    let stripped = grib2_parser::strip_wmo_headers(&data);
+    let tables = Arc::new(Grib2Tables::new());
+    let mut grib_reader = Grib2Reader::new(Bytes::from(stripped), tables);
+
+    let msg = grib_reader
+        .next_message()
+        .expect("Should have a message")
+        .expect("Should parse successfully");
+
+    let grid_data = msg.unpack_data().expect("Should unpack data");
+    let width = msg.grid_definition.num_points_longitude as usize;
+    let height = msg.grid_definition.num_points_latitude as usize;
+
+    println!(
+        "Grid dimensions: {} x {} = {} points",
+        width,
+        height,
+        width * height
+    );
+    println!("Unpacked data length: {}", grid_data.len());
+    assert_eq!(
+        grid_data.len(),
+        width * height,
+        "Data length should match grid size"
+    );
+
+    // Test specific points - values from wgrib2 -ijlat command
+    // wgrib2 uses 1-based indexing, we use 0-based
+
+    // Los Angeles: wgrib2 (240, 573) = our (239, 572)
+    // wgrib2: (240,573),lon=241.794829,lat=33.990493,val=286.5
+    let la_i = 239;
+    let la_j = 572;
+    let la_idx = la_j * width + la_i;
+    let la_val = grid_data[la_idx];
+    println!(
+        "LA (i={}, j={}): idx={}, val={:.1}K",
+        la_i, la_j, la_idx, la_val
+    );
+
+    // Check if LA value is reasonable temperature (~286.5K from wgrib2)
+    // Allow some tolerance since we may have slightly different interpolation
+    assert!(
+        (la_val - 286.5).abs() < 5.0 || la_val.is_nan(),
+        "LA temperature should be around 286.5K, got {}",
+        la_val
+    );
+
+    // New York: wgrib2 (1811, 857) = our (1810, 856)
+    // wgrib2: (1811,857),lon=286.011281,lat=40.689125,val=273.1
+    let ny_i = 1810;
+    let ny_j = 856;
+    let ny_idx = ny_j * width + ny_i;
+    let ny_val = grid_data[ny_idx];
+    println!(
+        "NY (i={}, j={}): idx={}, val={:.1}K",
+        ny_i, ny_j, ny_idx, ny_val
+    );
+
+    // Verify index calculation is correct
+    assert!(ny_idx < grid_data.len(), "NY index should be within bounds");
+
+    // Check grid corners
+    let sw_val = grid_data[0]; // (0, 0) = SW corner
+    let se_val = grid_data[width - 1]; // (width-1, 0) = SE corner
+    let nw_val = grid_data[(height - 1) * width]; // (0, height-1) = NW corner
+    let ne_val = grid_data[(height - 1) * width + width - 1]; // (width-1, height-1) = NE corner
+
+    println!("\nGrid corners:");
+    println!("  SW (0, 0): {:.1}", sw_val);
+    println!("  SE ({}, 0): {:.1}", width - 1, se_val);
+    println!("  NW (0, {}): {:.1}", height - 1, nw_val);
+    println!("  NE ({}, {}): {:.1}", width - 1, height - 1, ne_val);
+
+    // The SW and SE corners should be ocean (missing data = very large values)
+    // based on wgrib2 output showing val=9.999e+20 for corners
+
+    // Check a point that should be land (central US)
+    // Kansas City: approx i=986, j=549 based on projection test
+    let kc_i = 986;
+    let kc_j = 549;
+    let kc_idx = kc_j * width + kc_i;
+    let kc_val = grid_data[kc_idx];
+    println!("\nKansas City (i={}, j={}): {:.1}K", kc_i, kc_j, kc_val);
+
+    // If data appears mirrored horizontally, LA values would appear at NY position
+    // Let's check the mirrored position
+    let mirror_la_i = (width - 1) - la_i; // Mirrored LA position
+    let mirror_la_idx = la_j * width + mirror_la_i;
+    let mirror_la_val = grid_data[mirror_la_idx];
+    println!(
+        "\nMirrored LA position (i={}): {:.1}K",
+        mirror_la_i, mirror_la_val
+    );
+
+    // If the data is correct, LA should have valid temp, mirrored position should be ocean/different
+    if !la_val.is_nan() && la_val < 1e10 {
+        println!("LA has valid temperature data");
+    } else {
+        println!("WARNING: LA position has invalid/missing data - possible mirroring issue!");
+    }
+
+    if !mirror_la_val.is_nan() && mirror_la_val < 1e10 {
+        println!(
+            "Mirrored LA position also has valid data (value: {:.1}K)",
+            mirror_la_val
+        );
+    } else {
+        println!("Mirrored LA position has invalid/missing data (as expected)");
+    }
+}
+
 #[test]
 fn test_ndfd_grid_template() {
     let path =

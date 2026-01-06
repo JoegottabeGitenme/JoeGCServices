@@ -602,3 +602,189 @@ fn test_ndfd_vs_hrrr_comparison() {
     assert!((lat - kansas.0).abs() < 0.001, "Latitude roundtrip failed");
     assert!((lon - kansas.1).abs() < 0.001, "Longitude roundtrip failed");
 }
+
+#[test]
+fn test_ndfd_east_west_coordinates() {
+    let proj = LambertConformal::ndfd();
+
+    // Western point: Los Angeles
+    let (la_i, la_j) = proj.geo_to_grid(34.0, -118.2);
+    println!(
+        "Los Angeles (34.0°N, 118.2°W): i={:.1}, j={:.1}",
+        la_i, la_j
+    );
+
+    // Eastern point: New York
+    let (ny_i, ny_j) = proj.geo_to_grid(40.7, -74.0);
+    println!("New York (40.7°N, 74.0°W): i={:.1}, j={:.1}", ny_i, ny_j);
+
+    // Los Angeles should have SMALLER i than New York (LA is west, NY is east)
+    // In grid coordinates: i increases from west to east
+    assert!(
+        la_i < ny_i,
+        "LA (west) should have smaller i than NY (east): LA i={}, NY i={}",
+        la_i,
+        ny_i
+    );
+
+    // Check that both are within grid bounds
+    assert!(la_i >= 0.0 && la_i < 2145.0, "LA i out of bounds: {}", la_i);
+    assert!(ny_i >= 0.0 && ny_i < 2145.0, "NY i out of bounds: {}", ny_i);
+
+    // Verify grid corners make sense
+    let (sw_lat, sw_lon) = proj.grid_to_geo(0.0, 0.0);
+    let (se_lat, se_lon) = proj.grid_to_geo(2144.0, 0.0);
+    println!("SW corner (i=0): lon={:.2}°", sw_lon);
+    println!("SE corner (i=2144): lon={:.2}°", se_lon);
+
+    // SW should be more westerly (more negative longitude) than SE
+    assert!(
+        sw_lon < se_lon,
+        "SW should be west of SE: SW lon={}, SE lon={}",
+        sw_lon,
+        se_lon
+    );
+}
+
+#[test]
+fn test_ndfd_central_meridian() {
+    // Test that points at same latitude but different sides of central meridian
+    // map to monotonically increasing grid indices (not mirrored)
+    let proj = LambertConformal::ndfd();
+
+    // Central meridian is -95°W (LoV)
+    let lat = 38.5;
+
+    println!(
+        "Testing points at lat={}° around central meridian (-95°W):",
+        lat
+    );
+    println!("Grid is 2145 wide, center would be at i=1072");
+
+    // Points from west to east
+    let (i_120, _) = proj.geo_to_grid(lat, -120.0); // West (California)
+    let (i_105, _) = proj.geo_to_grid(lat, -105.0); // West (Colorado)
+    let (i_95, _) = proj.geo_to_grid(lat, -95.0); // Center (Kansas)
+    let (i_85, _) = proj.geo_to_grid(lat, -85.0); // East (Illinois)
+    let (i_70, _) = proj.geo_to_grid(lat, -70.0); // East (Atlantic coast)
+
+    println!("  -120°W: i={:.1}", i_120);
+    println!("  -105°W: i={:.1}", i_105);
+    println!("   -95°W: i={:.1} (central meridian)", i_95);
+    println!("   -85°W: i={:.1}", i_85);
+    println!("   -70°W: i={:.1}", i_70);
+
+    // Verify monotonic increase from west to east
+    assert!(
+        i_120 < i_105,
+        "i should increase west to east: -120° ({:.1}) < -105° ({:.1})",
+        i_120,
+        i_105
+    );
+    assert!(
+        i_105 < i_95,
+        "i should increase west to east: -105° ({:.1}) < -95° ({:.1})",
+        i_105,
+        i_95
+    );
+    assert!(
+        i_95 < i_85,
+        "i should increase west to east: -95° ({:.1}) < -85° ({:.1})",
+        i_95,
+        i_85
+    );
+    assert!(
+        i_85 < i_70,
+        "i should increase west to east: -85° ({:.1}) < -70° ({:.1})",
+        i_85,
+        i_70
+    );
+}
+
+#[test]
+fn test_ndfd_grid_to_geo_quadrant() {
+    // Test that grid_to_geo returns correct quadrant for all grid positions
+    // This tests for the atan vs atan2 bug where negative y_diff gives wrong quadrant
+    let proj = LambertConformal::ndfd();
+
+    println!("Testing grid_to_geo roundtrip at various grid positions:");
+
+    // Test corners and middle
+    let test_points = [
+        (0.0, 0.0, "SW corner"),
+        (2144.0, 0.0, "SE corner"),
+        (0.0, 1376.0, "NW corner"),
+        (2144.0, 1376.0, "NE corner"),
+        (1072.0, 688.0, "Center"),
+        (239.0, 572.0, "LA position"),
+        (1810.0, 856.0, "NY position"),
+    ];
+
+    for (i, j, label) in test_points {
+        let (lat, lon) = proj.grid_to_geo(i, j);
+        let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+
+        let i_err = (i - i_back).abs();
+        let j_err = (j - j_back).abs();
+
+        println!("  {} (i={:.0}, j={:.0}): lat={:.2}°, lon={:.2}° -> i={:.1}, j={:.1} (err: {:.2}, {:.2})",
+                 label, i, j, lat, lon, i_back, j_back, i_err, j_err);
+
+        // Roundtrip should be accurate
+        assert!(
+            i_err < 0.1,
+            "{} i roundtrip error too large: {:.4}",
+            label,
+            i_err
+        );
+        assert!(
+            j_err < 0.1,
+            "{} j roundtrip error too large: {:.4}",
+            label,
+            j_err
+        );
+
+        // Check that longitude is in expected range (roughly -130 to -60 for CONUS)
+        assert!(
+            lon > -140.0 && lon < -50.0,
+            "{} longitude out of range: {:.2}",
+            label,
+            lon
+        );
+    }
+
+    // Specific check: LA (west) should have more negative longitude than NY (east)
+    let (_, la_lon) = proj.grid_to_geo(239.0, 572.0);
+    let (_, ny_lon) = proj.grid_to_geo(1810.0, 856.0);
+    println!("\nLA lon: {:.2}°, NY lon: {:.2}°", la_lon, ny_lon);
+    assert!(
+        la_lon < ny_lon,
+        "LA should be west of NY: LA lon={:.2}, NY lon={:.2}",
+        la_lon,
+        ny_lon
+    );
+
+    // Intensive test: verify longitude increases monotonically across rows
+    println!("\nChecking longitude monotonicity across rows:");
+    for j in [0, 688, 1376] {
+        let mut last_lon = f64::NEG_INFINITY;
+        let mut monotonic = true;
+        for i in (0..2145).step_by(100) {
+            let (_, lon) = proj.grid_to_geo(i as f64, j as f64);
+            if lon <= last_lon {
+                println!(
+                    "  MONOTONICITY VIOLATION at j={}: i={} lon={:.2} <= prev {:.2}",
+                    j, i, lon, last_lon
+                );
+                monotonic = false;
+            }
+            last_lon = lon;
+        }
+        println!("  j={}: monotonic={}", j, monotonic);
+        assert!(
+            monotonic,
+            "Longitude should increase monotonically from west to east at j={}",
+            j
+        );
+    }
+}
