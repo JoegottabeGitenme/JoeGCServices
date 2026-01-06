@@ -47,3 +47,5 @@ aws-sdk-s3 = "1.11"
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+tempfile = "3"
+filetime = "0.2"

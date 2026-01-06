@@ -60,6 +60,47 @@ docker-compose exec postgres psql -U weatherwms -d weatherwms -c "SELECT 1"
 
 ## Data Issues
 
+### Disk Space Growing Unbounded
+
+**Symptom**: The `downloader_data` volume keeps growing, eventually filling disk
+
+**Causes**:
+- Running an older version without automatic cleanup
+- Cleanup task disabled
+- Ingestion failures preventing file deletion
+
+**Diagnostic**:
+
+```bash
+# Check volume sizes
+docker system df -v | grep downloader
+
+# Check cleanup metrics
+curl http://localhost:8081/metrics | grep cleanup
+
+# Check for ingestion failures
+docker compose logs ingester | grep -i error
+```
+
+**Solutions**:
+
+1. **Upgrade to version with cleanup**: If running an older version, upgrade to get automatic file cleanup after ingestion.
+
+2. **Reset volumes for clean slate**:
+   ```bash
+   docker compose down
+   docker volume rm weather-wms_downloader_data weather-wms_downloader_state
+   docker compose up -d
+   ```
+
+3. **Verify cleanup is enabled**: Check that `--disable-cleanup` is not set in service configuration.
+
+4. **Check ingestion health**: Files are only deleted after successful ingestion. If ingestion is failing, files accumulate.
+
+See [Downloader Service](../services/downloader.md#automatic-file-cleanup) for details on the cleanup system.
+
+---
+
 ### No Data Showing
 
 **Symptom**: WMS returns empty/blank tiles

@@ -64,6 +64,26 @@ wms_cache_misses_total 5000
 rate(wms_cache_hits_total[5m]) / (rate(wms_cache_hits_total[5m]) + rate(wms_cache_misses_total[5m]))
 ```
 
+### Downloader Metrics
+
+```
+# Download counts
+downloader_downloads_pending 5
+downloader_downloads_in_progress 2
+downloader_downloads_failed 1
+downloader_downloads_completed_total 15234
+downloader_bytes_downloaded_total 1234567890
+
+# Cleanup metrics
+downloader_cleanup_runs_total 42
+downloader_cleanup_files_deleted_total 1234
+downloader_cleanup_bytes_reclaimed_total 567890123
+downloader_cleanup_db_records_pruned_total 5678
+downloader_cleanup_last_run_timestamp 1704067200
+downloader_cleanup_last_run_duration_ms 234
+downloader_cleanup_errors_total 0
+```
+
 ### System Metrics
 
 ```
@@ -262,6 +282,16 @@ sum by (endpoint) (rate(wms_requests_total[5m]))
 histogram_quantile(0.95,
   rate(wms_request_duration_seconds_bucket[5m])
 )
+```
+
+**Downloader cleanup rate (bytes reclaimed per hour)**:
+```promql
+increase(downloader_cleanup_bytes_reclaimed_total[1h])
+```
+
+**Cleanup health (errors in last hour)**:
+```promql
+increase(downloader_cleanup_errors_total[1h])
 ```
 
 ## Health Checks

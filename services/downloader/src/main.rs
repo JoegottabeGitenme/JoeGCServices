@@ -5,8 +5,10 @@
 //! - Automatic retry with exponential backoff
 //! - Progress persistence to survive restarts
 //! - Triggers ingestion after download completes
+//! - Automatic cleanup of ingested files
 //! - HTTP status API for monitoring
 
+mod cleanup;
 mod config;
 mod download;
 mod scheduler;
@@ -20,9 +22,10 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use tokio::sync::broadcast;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+use cleanup::{CleanupConfig, CleanupMetrics, CleanupTask};
 use download::{DownloadConfig, DownloadManager};
 use scheduler::Scheduler;
 use server::ServerState;
@@ -79,6 +82,30 @@ struct Args {
     /// Disable status HTTP server
     #[arg(long)]
     no_status_server: bool,
+
+    /// Disable cleanup task
+    #[arg(long)]
+    disable_cleanup: bool,
+
+    /// Cleanup dry run mode - log what would be deleted without actually deleting
+    #[arg(long)]
+    cleanup_dry_run: bool,
+
+    /// Cleanup interval in seconds (default: 3600 = 1 hour)
+    #[arg(long, env = "CLEANUP_INTERVAL_SECS", default_value = "3600")]
+    cleanup_interval_secs: u64,
+
+    /// Days to retain completed download records (default: 7)
+    #[arg(long, env = "COMPLETED_RECORD_RETENTION_DAYS", default_value = "7")]
+    completed_record_retention_days: u32,
+
+    /// Days to retain failed download records (default: 7)
+    #[arg(long, env = "FAILED_RECORD_RETENTION_DAYS", default_value = "7")]
+    failed_record_retention_days: u32,
+
+    /// Max age for partial files before cleanup in seconds (default: 3600 = 1 hour)
+    #[arg(long, env = "PARTIAL_FILE_MAX_AGE_SECS", default_value = "3600")]
+    partial_file_max_age_secs: u64,
 }
 
 #[tokio::main]
@@ -139,6 +166,36 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Create cleanup metrics (shared with server for Prometheus export)
+    let cleanup_metrics = Arc::new(CleanupMetrics::new());
+
+    // Create cleanup config
+    let cleanup_config = CleanupConfig {
+        enabled: !args.disable_cleanup,
+        dry_run: args.cleanup_dry_run,
+        interval_secs: args.cleanup_interval_secs,
+        partial_file_max_age_secs: args.partial_file_max_age_secs,
+        completed_record_retention_days: args.completed_record_retention_days,
+        failed_record_retention_days: args.failed_record_retention_days,
+        output_dir: args.output_dir.clone(),
+        temp_dir: args.temp_dir.clone(),
+    };
+
+    // Create cleanup task
+    let cleanup_task = CleanupTask::new(
+        cleanup_config.clone(),
+        state.clone(),
+        cleanup_metrics.clone(),
+    );
+
+    // Run startup cleanup to handle any orphan files from previous runs
+    if cleanup_config.enabled {
+        info!("Running startup cleanup");
+        if let Err(e) = cleanup_task.run_startup_cleanup().await {
+            warn!(error = %e, "Startup cleanup failed (continuing anyway)");
+        }
+    }
+
     // Create scheduler
     let scheduler = Scheduler::new(
         download_manager.clone(),
@@ -146,6 +203,7 @@ async fn main() -> Result<()> {
         args.max_concurrent,
         args.ingester_url.clone(),
         args.config_dir.clone(),
+        args.output_dir.clone(),
     )
     .await;
 
@@ -156,6 +214,7 @@ async fn main() -> Result<()> {
     let server_state = Arc::new(ServerState {
         download_state: state.clone(),
         model_schedules,
+        cleanup_metrics: cleanup_metrics.clone(),
     });
 
     // Shutdown signal
@@ -192,6 +251,14 @@ async fn main() -> Result<()> {
             info!("Received shutdown signal");
             shutdown_tx_clone.send(()).ok();
         });
+
+        // Start background cleanup task
+        if cleanup_config.enabled {
+            let cleanup_shutdown = shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                cleanup_task.run_forever(cleanup_shutdown).await;
+            });
+        }
 
         scheduler.run_forever(shutdown_tx.subscribe()).await?;
     }
