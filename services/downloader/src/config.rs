@@ -148,6 +148,15 @@ pub struct ScheduleConfig {
     /// For observation data: how far back to look (minutes)
     #[serde(default)]
     pub lookback_minutes: u32,
+    /// Maximum concurrent downloads for this model.
+    /// Each model always gets at least 1 guaranteed slot.
+    /// Additional slots (up to this limit) come from a shared pool.
+    #[serde(default = "default_model_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+fn default_model_max_concurrent() -> usize {
+    2
 }
 
 fn default_schedule_type() -> String {

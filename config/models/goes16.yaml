@@ -39,6 +39,7 @@ grid:
 schedule:
   type: observation                      # Observation data, not forecast
   poll_interval_secs: 300                # Check every 5 minutes
+  max_concurrent: 2                      # Allow up to 2 concurrent downloads for this model
   # Note: lookback_minutes is deprecated for observation models.
   # The downloader now uses retention.hours to determine how far back to look for data.
   # This ensures historical data is downloaded up to the retention limit on startup.

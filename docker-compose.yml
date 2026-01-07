@@ -362,7 +362,7 @@ services:
       - downloader_data:/data/downloads
       - downloader_state:/data/downloader
       - ./config:/app/config:ro
-    command: ["--max-concurrent", "4", "--config-dir", "/app/config"]
+    command: ["--total-max-concurrent", "10", "--config-dir", "/app/config"]
     depends_on:
       ingester:
         condition: service_healthy

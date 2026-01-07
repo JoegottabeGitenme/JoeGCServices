@@ -47,6 +47,7 @@ schedule:
     step: 1 # Every 1 hour
   poll_interval_secs: 3600 # Check for new data every hour
   delay_hours: 4 # Data typically available 4 hours after cycle time
+  max_concurrent: 3 # Allow up to 3 concurrent downloads for this model
 
 retention:
   hours: 12 # Keep data for 12 hours
