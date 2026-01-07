@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JoegottabeGitenme/JoeGCServices/schemas/wms-layer.schema.json",
+  "title": "WMS/WMTS Layer Configuration",
+  "description": "Configuration schema for WMS/WMTS layer definitions",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["model", "display_name", "layers"],
+  "properties": {
+    "model": {
+      "type": "string",
+      "description": "Model ID this layer configuration belongs to",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Human-readable display name for the model"
+    },
+    "default_bbox": {
+      "type": "object",
+      "description": "Default bounding box for all layers",
+      "required": ["west", "south", "east", "north"],
+      "properties": {
+        "west": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "Western boundary (longitude)"
+        },
+        "south": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "Southern boundary (latitude)"
+        },
+        "east": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "Eastern boundary (longitude)"
+        },
+        "north": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "Northern boundary (latitude)"
+        }
+      }
+    },
+    "dimension_type": {
+      "type": "string",
+      "enum": ["forecast", "observation"],
+      "description": "Type of time dimension: 'forecast' for NWP, 'observation' for real-time data"
+    },
+    "layers": {
+      "type": "array",
+      "description": "Layer definitions",
+      "items": {
+        "type": "object",
+        "required": ["id", "parameter", "title"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique layer identifier (used in WMS requests)",
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "parameter": {
+            "type": "string",
+            "description": "Parameter name from the model configuration"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable layer title (shown in GetCapabilities)"
+          },
+          "abstract": {
+            "type": "string",
+            "description": "Detailed layer description"
+          },
+          "style_file": {
+            "type": "string",
+            "description": "JSON style file name (relative to styles directory)",
+            "pattern": "^[a-zA-Z0-9_-]+\\.json$"
+          },
+          "units": {
+            "type": "object",
+            "description": "Unit configuration for the layer",
+            "properties": {
+              "native": {
+                "type": "string",
+                "description": "Native/source units"
+              },
+              "display": {
+                "type": "string",
+                "description": "Display units (after conversion)"
+              },
+              "conversion": {
+                "type": "string",
+                "description": "Unit conversion function name (e.g., 'K_to_C', 'Pa_to_hPa')"
+              }
+            }
+          },
+          "levels": {
+            "type": "array",
+            "description": "Available elevation levels",
+            "items": {
+              "type": "object",
+              "required": ["value"],
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "description": "Level value/identifier"
+                },
+                "default": {
+                  "type": "boolean",
+                  "description": "Whether this is the default level"
+                }
+              }
+            }
+          },
+          "composite": {
+            "type": "boolean",
+            "description": "Whether this is a composite layer (derived from multiple parameters)"
+          },
+          "requires": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Required source parameters for composite layers"
+          },
+          "accumulation": {
+            "type": "boolean",
+            "description": "Whether this is an accumulation layer (precipitation, etc.)"
+          }
+        }
+      }
+    }
+  }
+}

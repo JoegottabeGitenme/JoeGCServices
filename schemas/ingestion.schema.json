@@ -1,0 +1,313 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JoegottabeGitenme/JoeGCServices/schemas/ingestion.schema.json",
+  "title": "Global Ingestion Configuration",
+  "description": "Configuration schema for the weather data ingestion system",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "database": {
+      "type": "object",
+      "description": "PostgreSQL database configuration",
+      "additionalProperties": true,
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Database host (supports ${ENV_VAR} syntax)"
+        },
+        "port": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string", "pattern": "^\\$\\{.+\\}$" }
+          ],
+          "description": "Database port"
+        },
+        "database": {
+          "type": "string",
+          "description": "Database name"
+        },
+        "user": {
+          "type": "string",
+          "description": "Database user"
+        },
+        "password": {
+          "type": "string",
+          "description": "Database password (use env var reference)"
+        },
+        "max_connections": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Maximum connection pool size"
+        },
+        "connection_timeout_secs": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Connection timeout in seconds"
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "description": "Redis cache configuration",
+      "additionalProperties": true,
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Redis host"
+        },
+        "port": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string" }
+          ],
+          "description": "Redis port"
+        },
+        "password": {
+          "type": "string",
+          "description": "Redis password (optional)"
+        },
+        "database": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string" }
+          ],
+          "description": "Redis database number"
+        },
+        "ttl_secs": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string" }
+          ],
+          "description": "Default cache TTL in seconds"
+        },
+        "max_connections": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Maximum Redis connections"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "description": "File storage configuration",
+      "additionalProperties": true,
+      "properties": {
+        "base_path": {
+          "type": "string",
+          "description": "Base directory for data storage"
+        },
+        "temp_path": {
+          "type": "string",
+          "description": "Temporary file directory"
+        },
+        "cache_path": {
+          "type": "string",
+          "description": "Cache directory"
+        },
+        "models": {
+          "type": "object",
+          "description": "Model-specific subdirectory mappings",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "download": {
+      "type": "object",
+      "description": "Download settings",
+      "additionalProperties": true,
+      "properties": {
+        "parallel_downloads": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Number of parallel downloads"
+        },
+        "max_retries": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string" }
+          ],
+          "description": "Maximum retry attempts"
+        },
+        "retry_delay_secs": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string" }
+          ],
+          "description": "Delay between retries"
+        },
+        "connect_timeout_secs": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Connection timeout"
+        },
+        "read_timeout_secs": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Read timeout"
+        },
+        "user_agent": {
+          "type": "string",
+          "description": "HTTP User-Agent header"
+        }
+      }
+    },
+    "ingestion": {
+      "type": "object",
+      "description": "Ingestion behavior settings",
+      "additionalProperties": true,
+      "properties": {
+        "lookback_hours": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string" }
+          ],
+          "description": "How far back to look for data on startup"
+        },
+        "cleanup_enabled": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" }
+          ],
+          "description": "Enable automatic cleanup of old data"
+        },
+        "cleanup_interval_hours": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "How often to run cleanup"
+        },
+        "batch_size": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string" }
+          ],
+          "description": "Batch size for database operations"
+        },
+        "deduplicate": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" }
+          ],
+          "description": "Enable deduplication"
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "additionalProperties": true,
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level (trace, debug, info, warn, error) or env var reference"
+        },
+        "format": {
+          "type": "string",
+          "description": "Log output format (json, pretty) or env var reference"
+        },
+        "target": {
+          "type": "string",
+          "description": "Log target: stdout, stderr, or file path"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Prometheus metrics configuration",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" }
+          ],
+          "description": "Enable metrics endpoint"
+        },
+        "port": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string" }
+          ],
+          "description": "Metrics port"
+        },
+        "path": {
+          "type": "string",
+          "description": "Metrics endpoint path"
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "description": "Health check endpoint configuration",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" }
+          ],
+          "description": "Enable health endpoint"
+        },
+        "port": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string" }
+          ],
+          "description": "Health check port"
+        },
+        "path": {
+          "type": "string",
+          "description": "Health check endpoint path"
+        }
+      }
+    },
+    "models": {
+      "type": "object",
+      "description": "Model loading configuration",
+      "additionalProperties": true,
+      "properties": {
+        "config_dir": {
+          "type": "string",
+          "description": "Directory containing model YAML configs"
+        },
+        "enabled": {
+          "type": "string",
+          "description": "Comma-separated list of enabled models (empty = all)"
+        },
+        "disabled": {
+          "type": "string",
+          "description": "Comma-separated list of disabled models"
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "GRIB2 parameter table configuration",
+      "additionalProperties": true,
+      "properties": {
+        "tables_dir": {
+          "type": "string",
+          "description": "Directory containing parameter table files"
+        },
+        "tables": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of parameter tables to load"
+        }
+      }
+    }
+  }
+}
