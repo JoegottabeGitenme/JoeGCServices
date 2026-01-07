@@ -89,7 +89,6 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature # TODO we don't need style in this file just in the layers file
     units: K
     display_units: °C
     conversion: K_to_C
@@ -127,7 +126,6 @@ parameters:
             10,
           ]
         display_template: "{value} mb"
-    style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
@@ -146,7 +144,6 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
@@ -173,7 +170,6 @@ parameters:
         level_code: 100
         values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
-    style: wind
     units: m/s
     valid_range: [-200, 200] # Wind components can be negative (directional)
 
@@ -194,7 +190,6 @@ parameters:
         level_code: 100
         values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
-    style: wind
     units: m/s
     valid_range: [-200, 200] # Wind components can be negative (directional)
 
@@ -210,7 +205,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: wind
     units: m/s
     valid_range: [0, 150] # Gusts are always positive (magnitude)
 
@@ -230,7 +224,6 @@ parameters:
       - type: mean_sea_level
         level_code: 101
         display: "mean sea level"
-    style: atmospheric
     units: Pa
     display_units: hPa
     conversion: Pa_to_hPa
@@ -250,7 +243,6 @@ parameters:
         values:
           [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
         display_template: "{value} mb"
-    style: geopotential
     units: gpm
     valid_range: [-500, 35000] # From below sea level to stratosphere
 
@@ -275,7 +267,6 @@ parameters:
         level_code: 100
         values: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
         display_template: "{value} mb"
-    style: humidity
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -291,7 +282,6 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: humidity
     units: kg/m^2
     display_units: mm
     valid_range: [0, 100] # 0-100 mm precipitable water
@@ -312,7 +302,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: precipitation
     units: kg/m^2
     display_units: mm
     accumulation: true
@@ -330,7 +319,6 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: reflectivity
     units: dBZ
     valid_range: [-30, 80] # dBZ range for radar reflectivity
 
@@ -350,7 +338,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: cape
     units: J/kg
     valid_range: [0, 10000] # 0-10000 J/kg (extreme CAPE > 5000)
 
@@ -366,7 +353,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: cape
     units: J/kg
     valid_range: [-1000, 0] # CIN is typically negative (inhibition)
 
@@ -386,7 +372,6 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: cloud
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -402,7 +387,6 @@ parameters:
       - type: cloud_layer
         level_code: 214
         display: "low cloud layer"
-    style: cloud
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -418,7 +402,6 @@ parameters:
       - type: cloud_layer
         level_code: 224
         display: "middle cloud layer"
-    style: cloud
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -434,7 +417,6 @@ parameters:
       - type: cloud_layer
         level_code: 234
         display: "high cloud layer"
-    style: cloud
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -454,7 +436,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: visibility
     units: m
     display_units: km
     conversion: m_to_km
@@ -466,4 +447,3 @@ composites:
     description: "Wind barbs visualization"
     requires: [UGRD, VGRD]
     renderer: wind_barbs
-    style: wind_barbs

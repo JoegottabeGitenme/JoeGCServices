@@ -16,8 +16,8 @@
         "max": 100
       },
       "stops": [
-        { "value": 0, "color": "#96000000", "label": "0%" },
-        { "value": 5, "color": "#C8000080", "label": "5%" },
+        { "value": 0, "color": "#C8000040", "label": "0%" },
+        { "value": 5, "color": "#C80000A0", "label": "5%" },
         { "value": 10, "color": "#C80000", "label": "10%" },
         { "value": 15, "color": "#E13200", "label": "15%" },
         { "value": 20, "color": "#F06400", "label": "20%" },

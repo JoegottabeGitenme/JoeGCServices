@@ -197,8 +197,6 @@ pub struct ParameterConfig {
     #[serde(default)]
     pub levels: Vec<serde_yaml::Value>,
     #[serde(default)]
-    pub style: Option<String>,
-    #[serde(default)]
     pub units: Option<String>,
     #[serde(default)]
     pub product: Option<String>,
@@ -218,8 +216,6 @@ pub struct CompositeConfig {
     pub requires: Vec<String>,
     #[serde(default)]
     pub renderer: Option<String>,
-    #[serde(default)]
-    pub style: Option<String>,
 }
 
 impl ModelConfig {

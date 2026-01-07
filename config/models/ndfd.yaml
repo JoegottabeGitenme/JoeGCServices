@@ -102,7 +102,6 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature
     units: K
     display_units: "F"
     conversion: K_to_F
@@ -122,7 +121,6 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature
     units: K
     display_units: "F"
     conversion: K_to_F
@@ -146,7 +144,6 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
-    style: wind
     units: m/s
     display_units: "mph"
     conversion: ms_to_mph
@@ -166,7 +163,6 @@ parameters:
         level_code: 103
         value: 10
         display: "10 m above ground"
-    style: wind_direction
     units: "degrees"
     valid_range: [ 0, 360 ]
 
@@ -183,7 +179,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: wind
     units: m/s
     display_units: "mph"
     conversion: ms_to_mph
@@ -207,7 +202,6 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: humidity
     units: "%"
     valid_range: [ 0, 100 ]
 
@@ -228,7 +222,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: cloud
     units: "%"
     valid_range: [ 0, 100 ]
 
@@ -249,7 +242,6 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: probability
     units: "%"
     valid_range: [ 0, 100 ]
 
@@ -259,4 +251,3 @@ composites:
     description: "Wind barbs visualization"
     requires: [ WSPD, WDIR ]
     renderer: wind_barbs_spd_dir    # Different renderer for speed/dir vs U/V
-    style: wind_barbs

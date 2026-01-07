@@ -66,7 +66,6 @@ parameters:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_blue"
-    style: goes_visible
     units: "reflectance"
     valid_range: [0, 1.5] # Reflectance factor (can exceed 1.0 for bright surfaces)
 
@@ -79,7 +78,6 @@ parameters:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "visible_red"
-    style: goes_visible
     units: "reflectance"
     valid_range: [0, 1.5] # Reflectance factor
 
@@ -92,7 +90,6 @@ parameters:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "upper_vapor"
-    style: goes_ir
     units: "K"
     display_units: "K"
     valid_range: [180, 350] # Brightness temperature range
@@ -106,7 +103,6 @@ parameters:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "clean_ir"
-    style: goes_ir
     units: "K"
     display_units: "K"
     valid_range: [180, 350] # Brightness temperature range
