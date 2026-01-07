@@ -37,7 +37,7 @@
 - System design high level architecture diagram isn't right anymore
 - Minio object storage section is wrong
 - download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
-  - currently in WMS need EDR next
+  - currently in WMS need EDR next (edr is crashing currently)
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
 - looping radar (only product that does this) absolutely eats up the chunk cache
 - let's try to get registered on the OGC implementation database

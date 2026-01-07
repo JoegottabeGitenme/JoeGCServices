@@ -53,27 +53,19 @@ layers:
   - id: ndfd_WSPD
     parameter: WSPD
     title: "Wind Speed"
-    abstract: "Wind speed forecast at 10m above ground"
+    abstract: "Wind speed forecast at 2m above ground"
     style_file: wind.json
     units:
       native: m/s
       display: mph
       conversion: ms_to_mph
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
-  - id: ndfd_WDIR
-    parameter: WDIR
-    title: "Wind Direction"
-    abstract: "Wind direction forecast at 10m above ground (degrees from north)"
-    style_file: wind_direction.json
-    units:
-      native: degrees
-      display: degrees
-    levels:
-      - value: "10 m above ground"
-        default: true
+  # Note: WDIR is available via EDR API but not exposed as a WMS layer
+  # since wind direction on its own is not visually meaningful.
+  # Wind barbs (WIND_BARBS) combine WSPD and WDIR for visualization.
 
   - id: ndfd_GUST
     parameter: GUST
@@ -95,8 +87,9 @@ layers:
     style_file: wind_barbs.json
     composite: true
     requires: [ WSPD, WDIR ]
+    # Note: NDFD wind is at 2m, not 10m like other models
     levels:
-      - value: "10 m above ground"
+      - value: "2 m above ground"
         default: true
 
   # ==========================================================================
