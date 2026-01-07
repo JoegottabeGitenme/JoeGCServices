@@ -1,11 +1,12 @@
-//! Concurrency control for per-model download slots with shared pool.
+//! Concurrency control for per-model download slots with a shared pool.
 //!
 //! This module implements a two-tier concurrency system:
-//! 1. Each model gets 1 guaranteed slot that's always available
+//! 1. Each model gets 1 guaranteed slot that's always available to it
 //! 2. Additional slots come from a shared pool (first-come, first-served)
 //!
-//! This ensures that time-sensitive data (like MRMS radar) is never starved
-//! by bulk downloads (like GFS forecast files).
+//! This ensures that time-sensitive data (like MRMS radar) is never permanently
+//! starved by bulk downloads (like GFS forecast files) - each model can always
+//! make progress using its guaranteed slot.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -101,7 +102,7 @@ impl ConcurrencyManager {
 /// Each model has its own permit manager that provides:
 /// - 1 guaranteed slot via a dedicated semaphore
 /// - Access to additional shared pool slots
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ModelDownloadPermit {
     /// Model identifier for logging
     model_id: String,
@@ -152,9 +153,13 @@ impl ModelDownloadPermit {
     /// Acquire a download slot (guaranteed or shared).
     ///
     /// This will:
-    /// 1. Try to acquire the guaranteed slot first
-    /// 2. If guaranteed is taken and we can use shared, try shared pool
-    /// 3. If all else fails, wait for guaranteed slot (never starve)
+    /// 1. Try to acquire the guaranteed slot first (non-blocking)
+    /// 2. If guaranteed is taken and we can use shared slots, try shared pool (non-blocking)
+    /// 3. If neither is available, block waiting for the guaranteed slot
+    ///
+    /// The guaranteed slot ensures this model will eventually get a slot even if
+    /// the shared pool is exhausted by other models - it may block temporarily,
+    /// but won't be permanently starved since no other model can take its guaranteed slot.
     ///
     /// Returns a guard that releases the slot on drop.
     pub async fn acquire(&self) -> DownloadSlotGuard {
@@ -182,7 +187,8 @@ impl ModelDownloadPermit {
             }
         }
 
-        // Wait for guaranteed slot (never starve)
+        // Block waiting for guaranteed slot - this model owns this slot exclusively,
+        // so it will become available once the current download completes
         let permit = self
             .guaranteed_semaphore
             .clone()

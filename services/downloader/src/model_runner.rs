@@ -135,6 +135,9 @@ impl ModelRunner {
         );
 
         // 3. Queue downloads and filter already downloaded
+        // Note: queue_download uses INSERT OR IGNORE, making this idempotent.
+        // If another model runner queued the same URL between our check and insert,
+        // the duplicate insert is safely ignored.
         let mut pending = Vec::new();
         for file in files {
             if self.state.is_already_downloaded(&file.url).await? {
@@ -271,6 +274,13 @@ impl ModelRunner {
 
         let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
+        // Log individual failure details
+        for failure in &failures {
+            if let Err(e) = failure {
+                warn!(model = %model_id, error = %e, "Download failure detail");
+            }
+        }
+
         info!(
             model = %model_id,
             success = successes.len(),
@@ -330,17 +340,14 @@ impl ModelRunner {
                         model.model.id, date, cycle, forecast_hour
                     );
 
-                    // For forecast files, use forecast hour as a pseudo-timestamp
-                    // Lower forecast hours are "newer" (more current)
-                    // We invert this by using a base time minus forecast hours
-                    let base_time = Utc::now();
-                    let timestamp =
-                        Some(base_time - ChronoDuration::hours(forecast_hour as i64 * 100));
-
+                    // For forecast files, we don't use timestamps for priority sorting.
+                    // Files are discovered in forecast hour order (f000, f001, f002, ...)
+                    // which is the desired download order (earliest forecasts first).
+                    // The sort_by_priority function preserves order for files without timestamps.
                     files.push(DownloadFile {
                         url,
                         filename: output_filename,
-                        timestamp,
+                        timestamp: None,
                     });
                 }
                 Ok(false) => {

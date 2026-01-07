@@ -233,8 +233,17 @@ impl ModelConfig {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let config: ModelConfig = serde_yaml::from_str(&content)
+        let mut config: ModelConfig = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+
+        // Validate and fix max_concurrent - must be at least 1 to avoid deadlock
+        if config.schedule.max_concurrent == 0 {
+            warn!(
+                model = %config.model.id,
+                "max_concurrent cannot be 0, setting to 1"
+            );
+            config.schedule.max_concurrent = 1;
+        }
 
         debug!(model = %config.model.id, path = %path.display(), "Loaded model config");
         Ok(config)
