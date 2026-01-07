@@ -1,0 +1,200 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JoegottabeGitenme/JoeGCServices/schemas/edr-load-test-scenario.schema.json",
+  "title": "EDR Load Test Scenario Configuration",
+  "description": "Configuration schema for OGC EDR API load testing scenarios",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["name", "base_url", "duration_secs", "concurrency"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Scenario name/identifier"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed scenario description"
+    },
+    "base_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Base URL of the EDR API service"
+    },
+    "duration_secs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Test duration in seconds"
+    },
+    "concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of concurrent requests"
+    },
+    "warmup_secs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Warmup period before measurements (seconds)"
+    },
+    "collections": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "EDR collections to test"
+    },
+    "position_queries": {
+      "type": "array",
+      "description": "Position query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "time_series_queries": {
+      "type": "array",
+      "description": "Time series query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "area_queries": {
+      "type": "array",
+      "description": "Area query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "radius_queries": {
+      "type": "array",
+      "description": "Radius query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "trajectory_queries": {
+      "type": "array",
+      "description": "Trajectory query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "corridor_queries": {
+      "type": "array",
+      "description": "Corridor query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "cube_queries": {
+      "type": "array",
+      "description": "Cube query scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "stress_test_queries": {
+      "type": "array",
+      "description": "Stress test scenarios (heavy queries)",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "edge_cases": {
+      "type": "array",
+      "description": "Edge case/validation scenarios",
+      "items": { "$ref": "#/$defs/edr_query" }
+    },
+    "test_points": {
+      "type": "array",
+      "description": "Named test points for random location generation",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "lon": { "type": "number" },
+          "lat": { "type": "number" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "edr_query": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Query scenario name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Query scenario description"
+        },
+        "collection": {
+          "type": "string",
+          "description": "Target EDR collection"
+        },
+        "coords": {
+          "type": "string",
+          "description": "WKT geometry (POINT, POLYGON, LINESTRING, etc.)"
+        },
+        "parameters": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Parameters to query"
+        },
+        "datetime": {
+          "type": "string",
+          "description": "Datetime filter (ISO8601 or '../..' for all)"
+        },
+        "z": {
+          "type": "string",
+          "description": "Vertical level filter"
+        },
+        "within": {
+          "type": "number",
+          "description": "Radius for radius queries"
+        },
+        "within_units": {
+          "type": "string",
+          "enum": ["m", "km", "mi", "ft"],
+          "description": "Units for radius"
+        },
+        "corridor_width": {
+          "type": "number",
+          "description": "Corridor width"
+        },
+        "width_units": {
+          "type": "string",
+          "enum": ["m", "km", "mi", "ft"],
+          "description": "Units for corridor width"
+        },
+        "corridor_height": {
+          "type": "number",
+          "description": "Corridor height"
+        },
+        "height_units": {
+          "type": "string",
+          "enum": ["m", "km", "ft"],
+          "description": "Units for corridor height"
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Relative weight for random selection"
+        },
+        "random_bbox": {
+          "type": "object",
+          "description": "Bounding box for random location generation",
+          "properties": {
+            "min_lon": { "type": "number" },
+            "max_lon": { "type": "number" },
+            "min_lat": { "type": "number" },
+            "max_lat": { "type": "number" }
+          }
+        },
+        "polygon_size": {
+          "type": "number",
+          "description": "Size of random polygon (degrees)"
+        },
+        "linestring_length": {
+          "type": "number",
+          "description": "Length of random linestring (degrees)"
+        },
+        "linestring_points": {
+          "type": "integer",
+          "description": "Number of points in random linestring"
+        },
+        "expected_status": {
+          "oneOf": [
+            { "type": "integer" },
+            { "type": "array", "items": { "type": "integer" } }
+          ],
+          "description": "Expected HTTP status code(s)"
+        }
+      }
+    }
+  }
+}

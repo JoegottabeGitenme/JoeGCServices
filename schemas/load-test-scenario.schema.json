@@ -1,0 +1,169 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JoegottabeGitenme/JoeGCServices/schemas/load-test-scenario.schema.json",
+  "title": "Load Test Scenario Configuration",
+  "description": "Configuration schema for WMS/WMTS load testing scenarios",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["name", "base_url", "duration_secs", "concurrency", "layers", "tile_selection"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Scenario name/identifier"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed scenario description"
+    },
+    "base_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Base URL of the WMS/WMTS service"
+    },
+    "duration_secs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Test duration in seconds"
+    },
+    "concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of concurrent requests"
+    },
+    "warmup_secs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Warmup period before measurements (seconds)"
+    },
+    "seed": {
+      "type": "integer",
+      "description": "Random seed for reproducible tests"
+    },
+    "layers": {
+      "type": "array",
+      "description": "Layer configurations to test",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Layer name (as used in WMS requests)"
+          },
+          "style": {
+            "type": "string",
+            "description": "Style name to use"
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Relative weight for random selection (higher = more frequent)"
+          },
+          "elevation": {
+            "type": "string",
+            "description": "Specific elevation level to request"
+          },
+          "time": {
+            "type": "string",
+            "description": "Specific time to request"
+          }
+        }
+      }
+    },
+    "tile_selection": {
+      "type": "object",
+      "description": "Tile selection strategy",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["random", "sequential", "geographic", "hotspot"],
+          "description": "Selection strategy type"
+        },
+        "zoom_range": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 20 },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Zoom level range [min, max]"
+        },
+        "bbox": {
+          "type": "object",
+          "description": "Bounding box for tile selection",
+          "properties": {
+            "min_lon": { "type": "number", "minimum": -180, "maximum": 180 },
+            "min_lat": { "type": "number", "minimum": -90, "maximum": 90 },
+            "max_lon": { "type": "number", "minimum": -180, "maximum": 180 },
+            "max_lat": { "type": "number", "minimum": -90, "maximum": 90 }
+          }
+        },
+        "hotspots": {
+          "type": "array",
+          "description": "Geographic hotspots for weighted selection",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lon": { "type": "number" },
+              "weight": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "request_params": {
+      "type": "object",
+      "description": "Additional request parameters",
+      "additionalProperties": true,
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Response format (e.g., 'image/png')"
+        },
+        "transparent": {
+          "type": "boolean",
+          "description": "Request transparent tiles"
+        },
+        "srs": {
+          "type": "string",
+          "description": "Coordinate reference system"
+        }
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "description": "Performance assertions (test fails if not met)",
+      "additionalProperties": true,
+      "properties": {
+        "max_p50_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum acceptable p50 latency (ms)"
+        },
+        "max_p95_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum acceptable p95 latency (ms)"
+        },
+        "max_p99_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum acceptable p99 latency (ms)"
+        },
+        "min_rps": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum acceptable requests per second"
+        },
+        "max_error_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Maximum acceptable error rate (0-1)"
+        }
+      }
+    }
+  }
+}
