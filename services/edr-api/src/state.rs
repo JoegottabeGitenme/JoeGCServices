@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use grid_processor::{GridDataService, MinioConfig};
 use storage::Catalog;
 
+use crate::availability::AvailabilityCache;
 use crate::config::EdrConfig;
 use crate::location_cache::LocationCache;
 
@@ -26,6 +27,10 @@ pub struct AppState {
 
     /// Cache for location query responses.
     pub location_cache: Arc<LocationCache>,
+
+    /// Cache for data availability information.
+    /// Used to filter collections/parameters/levels to only advertise what has data.
+    pub availability_cache: Arc<AvailabilityCache>,
 }
 
 impl AppState {
@@ -89,20 +94,34 @@ impl AppState {
 
         let location_cache = Arc::new(LocationCache::new(location_cache_mb, location_cache_ttl));
 
+        // Create availability cache with configurable TTL (default 5 minutes)
+        let availability_cache_ttl: u64 = std::env::var("EDR_AVAILABILITY_CACHE_TTL_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(300); // 5 minutes default
+
+        let availability_cache = Arc::new(AvailabilityCache::new(availability_cache_ttl));
+
         Ok(Self {
             catalog,
             grid_data_service,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,
+            availability_cache,
         })
     }
 
     /// Reload EDR configuration from disk.
+    /// Also invalidates the availability cache since config may reference different parameters/levels.
     pub async fn reload_config(&self) -> Result<()> {
         let new_config = EdrConfig::load_from_dir("config/edr")?;
         let mut config = self.edr_config.write().await;
         *config = new_config;
+
+        // Invalidate availability cache when config changes
+        self.availability_cache.invalidate_all().await;
+
         Ok(())
     }
 }

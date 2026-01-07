@@ -1727,7 +1727,6 @@ pub struct ForecastHoursInfo {
 pub struct ParameterSummary {
     pub name: String,
     pub description: String,
-    pub style: String,
     pub units: String,
     pub level_count: usize,
 }
@@ -1875,11 +1874,6 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let style = param
-                        .get("style")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default")
-                        .to_string();
                     let units = param
                         .get("units")
                         .and_then(|v| v.as_str())
@@ -1908,7 +1902,6 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
                     Some(ParameterSummary {
                         name,
                         description,
-                        style,
                         units,
                         level_count,
                     })

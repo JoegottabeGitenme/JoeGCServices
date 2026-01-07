@@ -1,0 +1,73 @@
+# NDFD EDR Configuration
+# National Digital Forecast Database - Official NWS gridded forecasts
+#
+# Coverage: CONUS (-130 to -60 lon, 20 to 50 lat)
+# Resolution: ~2.5km
+# Update frequency: Continuous (no discrete model runs)
+#
+# Collections are organized by vertical level type, similar to HRRR/GFS:
+# - ndfd-surface: Surface-level parameters (sky cover, precipitation probability)
+# - ndfd-height-agl: Parameters at height above ground (temperature, humidity, wind)
+
+model: ndfd
+
+collections:
+  # ===========================================================================
+  # Surface-level parameters
+  # ===========================================================================
+
+  - id: ndfd-surface
+    title: "NDFD - Surface"
+    description: "Surface-level forecast parameters including sky cover and precipitation probability"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: SKY
+        levels: [surface]
+      - name: POP12
+        levels: [surface]
+      - name: GUST
+        levels: [surface]
+    run_mode: latest
+
+  # ===========================================================================
+  # Height above ground parameters (2m and 10m)
+  # ===========================================================================
+
+  - id: ndfd-height-agl
+    title: "NDFD - Height Above Ground"
+    description: "Forecast parameters at heights above ground (temperature, humidity, wind at 2m)"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+      - name: RH
+        levels: [2]
+      - name: WSPD
+        levels: [2, 10]
+      - name: WDIR
+        levels: [2, 10]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+
+# Response size limits
+# NDFD is ~2.5km resolution (~0.025°)
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 72              # Up to 3 days of hourly data
+  max_vertical_levels: 5
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100        # ~1000km x 1000km
+  max_radius_km: 500

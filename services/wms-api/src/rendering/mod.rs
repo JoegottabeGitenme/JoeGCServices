@@ -26,7 +26,8 @@ pub(crate) use colorscales::render_with_style_file_indexed;
 pub use isolines::render_isolines_tile_with_level;
 pub use sampling::query_point_value;
 pub use wind::{
-    render_wind_barbs_layer, render_wind_barbs_tile, render_wind_barbs_tile_with_level,
+    render_wind_barbs_from_speed_direction_tile, render_wind_barbs_layer, render_wind_barbs_tile,
+    render_wind_barbs_tile_with_level,
 };
 
 /// Render weather data with optional style configuration and level.

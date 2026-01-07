@@ -25,7 +25,7 @@ use zarrs_filesystem::FilesystemStore;
 
 use crate::config::{GridProcessorConfig, PyramidConfig};
 use crate::downsample::DownsampleMethod;
-use crate::types::BoundingBox;
+use crate::types::{BoundingBox, RowOrigin};
 use crate::writer::{ZarrMetadata, ZarrWriter};
 
 /// Create test grid data where value at (col, row) = col * 1000 + row.
@@ -167,6 +167,7 @@ pub fn write_multiscale_zarr(
         0,
         &pyramid_config,
         DownsampleMethod::Mean,
+        RowOrigin::North,
     )?;
 
     Ok(result.zarr_metadata)

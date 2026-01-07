@@ -805,6 +805,25 @@
                             <div class="example-desc">Multi-Radar Multi-Sensor - Reflectivity composite</div>
                         </div>
                     </a>
+
+                    <!-- NDFD Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ndfd_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-5">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ndfd_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="NDFD Temperature"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-5').style.display='none';"
+                                 onerror="document.getElementById('placeholder-5').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NDFD Temperature</div>
+                            <div class="example-desc">National Digital Forecast Database - 2.5km official NWS forecasts</div>
+                        </div>
+                    </a>
                 </div>
             </div>
         </section>
@@ -983,6 +1002,15 @@
                     </div>
                     <p class="card-description">
                         GOES West geostationary satellite imagery. Clean longwave infrared (10.3um) with 5-minute updates.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127777;</span>
+                        <span class="card-title">NDFD - Digital Forecasts</span>
+                    </div>
+                    <p class="card-description">
+                        National Digital Forecast Database with 2.5km resolution. Official NWS gridded forecasts for temperature, wind, precipitation probability, and more.
                     </p>
                 </div>
             </div>

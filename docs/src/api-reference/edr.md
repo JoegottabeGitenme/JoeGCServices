@@ -94,6 +94,17 @@ GET /edr/conformance
 
 ## Collections
 
+### Data Availability
+
+Collections are filtered based on actual data availability in the catalog:
+
+- **Collections** without data are not listed
+- **Parameters** without data are filtered from `parameter_names`
+- **Vertical levels** in `extent.vertical` only include levels with data
+- **Cube query** only appears for collections with multiple vertical levels
+
+This ensures that advertised resources can actually be queried without errors.
+
 ### List Collections
 
 Returns all available collections.
@@ -298,6 +309,18 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/position?coords=POINT
 | Simple | `-97.5,35.2` | Longitude,latitude |
 | MULTIPOINT | `MULTIPOINT((-97.5 35.2),(-98.0 36.0))` | Multiple points |
 
+### Longitude Normalization
+
+For point-based queries (Position, Radius), longitudes outside the standard [-180, 180] range are automatically normalized:
+
+| Input | Normalized |
+|-------|------------|
+| `POINT(200 40)` | `POINT(-160 40)` |
+| `POINT(-200 40)` | `POINT(160 40)` |
+| `POINT(180.5 40)` | `POINT(-179.5 40)` |
+
+This is useful for applications that use 0-360 longitude convention.
+
 ### Response (CoverageJSON)
 
 ```json
@@ -346,6 +369,16 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/area?coords=...
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
 | coords | Yes | WKT POLYGON or MULTIPOLYGON | `POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))` |
+
+### Antimeridian Crossing
+
+Polygons can cross the antimeridian (180° longitude) by using coordinates beyond the standard range:
+
+```http
+GET /edr/collections/gfs-isobaric/area?coords=POLYGON((179 -1,181 -1,181 1,179 1,179 -1))
+```
+
+For polygons, coordinates in the range [-360, 360] are accepted to preserve geometric relationships between vertices.
 
 ### Response
 
@@ -456,6 +489,8 @@ Returns a CoverageCollection with multiple Coverage objects representing cross-s
 ## Cube Query
 
 Retrieves a 3D data cube defined by bounding box and vertical levels.
+
+> **Note:** The cube query is only available for collections with multiple vertical levels. Single-level collections (like surface or radar data) will not advertise the cube query in their `data_queries`.
 
 ```http
 GET /edr/collections/{collectionId}/cube?bbox=-98,35,-97,36&z=850

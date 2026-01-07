@@ -143,6 +143,27 @@ impl LambertConformal {
         )
     }
 
+    /// Create projection parameters for NDFD CONUS 2.5km grid.
+    ///
+    /// NDFD uses Lambert Conformal with:
+    /// - First point: 20.191999°N, 238.445999°E (= -121.554001°W)
+    /// - LoV: 265.0°E (= -95.0°W)
+    /// - Standard parallels: 25.0°N (both - tangent cone)
+    /// - Grid: 2145 x 1377, 2539.703m spacing
+    pub fn ndfd() -> Self {
+        Self::from_grib2(
+            20.191999,   // lat1
+            -121.554001, // lon1 (238.445999 - 360)
+            -95.0,       // LoV (265.0 - 360)
+            25.0,        // latin1
+            25.0,        // latin2
+            2539.703,    // dx
+            2539.703,    // dy
+            2145,        // nx
+            1377,        // ny
+        )
+    }
+
     /// Convert geographic coordinates (lat/lon in degrees) to grid indices (i, j).
     ///
     /// Returns (i, j) where i is the column (x) and j is the row (y).
@@ -391,6 +412,378 @@ mod tests {
         assert!(
             j > 400.0 && j < 700.0,
             "KC should be in middle y, got {}",
+            j
+        );
+    }
+}
+
+#[test]
+fn test_ndfd_projection() {
+    let proj = LambertConformal::ndfd();
+
+    // First grid point should map to (0, 0)
+    let (i, j) = proj.geo_to_grid(20.191999, -121.554001);
+    println!("First point (20.19, -121.55): i={:.2}, j={:.2}", i, j);
+    assert!((i - 0.0).abs() < 0.5, "i should be ~0, got {}", i);
+    assert!((j - 0.0).abs() < 0.5, "j should be ~0, got {}", j);
+
+    // Test some known cities - Seattle should be in upper left area
+    let (i, j) = proj.geo_to_grid(47.6, -122.3);
+    println!("Seattle (47.6, -122.3): i={:.0}, j={:.0}", i, j);
+
+    // Seattle should have small i (west) and large j (north)
+    assert!(
+        i < 500.0,
+        "Seattle should be in western part of grid, i={}",
+        i
+    );
+    assert!(
+        j > 800.0,
+        "Seattle should be in northern part of grid, j={}",
+        j
+    );
+
+    // Miami should be in lower right area
+    let (i, j) = proj.geo_to_grid(25.8, -80.2);
+    println!("Miami (25.8, -80.2): i={:.0}, j={:.0}", i, j);
+
+    // Miami should have large i (east) and small j (south)
+    assert!(
+        i > 1500.0,
+        "Miami should be in eastern part of grid, i={}",
+        i
+    );
+    assert!(
+        j < 400.0,
+        "Miami should be in southern part of grid, j={}",
+        j
+    );
+
+    // Check corners
+    println!("\nGrid corners:");
+    let (lat, lon) = proj.grid_to_geo(0.0, 0.0);
+    println!("  SW (0,0): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(2144.0, 0.0);
+    println!("  SE (2144,0): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(0.0, 1376.0);
+    println!("  NW (0,1376): lat={:.2}, lon={:.2}", lat, lon);
+
+    let (lat, lon) = proj.grid_to_geo(2144.0, 1376.0);
+    println!("  NE (2144,1376): lat={:.2}, lon={:.2}", lat, lon);
+}
+
+#[test]
+fn test_ndfd_detailed_transform() {
+    let proj = LambertConformal::ndfd();
+
+    // Test Miami (25.8, -80.2) - should be in lower-right of grid
+    let (i, j) = proj.geo_to_grid(25.8, -80.2);
+    println!("Miami (25.8°N, 80.2°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+
+    // Verify roundtrip
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test Denver (39.7, -105.0) - should be center-west
+    let (i, j) = proj.geo_to_grid(39.7, -105.0);
+    println!("\nDenver (39.7°N, 105.0°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test a point in Kansas at center of grid
+    let (i, j) = proj.geo_to_grid(38.5, -98.0);
+    println!("\nKansas center (38.5°N, 98.0°W):");
+    println!("  Grid indices: i={:.2}, j={:.2}", i, j);
+    let (lat, lon) = proj.grid_to_geo(i, j);
+    println!("  Roundtrip: lat={:.6}°, lon={:.6}°", lat, lon);
+
+    // Test grid bounds
+    let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+    println!("\nGrid bounds:");
+    println!("  Lon: {:.2}° to {:.2}°", min_lon, max_lon);
+    println!("  Lat: {:.2}° to {:.2}°", min_lat, max_lat);
+
+    // Verify dimensions
+    let (nx, ny) = proj.dimensions();
+    println!("  Size: {} x {}", nx, ny);
+
+    // Check that grid indices for corners are correct
+    let (lat_sw, lon_sw) = proj.grid_to_geo(0.0, 0.0);
+    let (lat_ne, lon_ne) = proj.grid_to_geo((nx - 1) as f64, (ny - 1) as f64);
+    println!("\nGrid corner geographic coords:");
+    println!("  (0,0) -> ({:.4}°, {:.4}°)", lat_sw, lon_sw);
+    println!(
+        "  ({},{}) -> ({:.4}°, {:.4}°)",
+        nx - 1,
+        ny - 1,
+        lat_ne,
+        lon_ne
+    );
+
+    // Test that Miami is in valid range
+    assert!(i >= 0.0 && i < nx as f64, "Miami i out of range");
+    assert!(j >= 0.0 && j < ny as f64, "Miami j out of range");
+}
+
+#[test]
+fn test_ndfd_vs_hrrr_comparison() {
+    // Both NDFD and HRRR use Lambert Conformal
+    // Compare how they handle similar geographic points
+
+    let ndfd = LambertConformal::ndfd();
+    let hrrr = LambertConformal::hrrr();
+
+    // Test point in center of CONUS
+    let kansas = (38.5, -98.0);
+
+    let (ndfd_i, ndfd_j) = ndfd.geo_to_grid(kansas.0, kansas.1);
+    let (hrrr_i, hrrr_j) = hrrr.geo_to_grid(kansas.0, kansas.1);
+
+    println!("Kansas (38.5°N, 98°W):");
+    println!(
+        "  NDFD: i={:.1}, j={:.1} (grid: {} x {})",
+        ndfd_i, ndfd_j, ndfd.nx, ndfd.ny
+    );
+    println!(
+        "  HRRR: i={:.1}, j={:.1} (grid: {} x {})",
+        hrrr_i, hrrr_j, hrrr.nx, hrrr.ny
+    );
+
+    // Verify Kansas is within both grids
+    assert!(
+        ndfd_i >= 0.0 && ndfd_i < ndfd.nx as f64,
+        "Kansas should be in NDFD grid"
+    );
+    assert!(
+        ndfd_j >= 0.0 && ndfd_j < ndfd.ny as f64,
+        "Kansas should be in NDFD grid"
+    );
+    assert!(
+        hrrr_i >= 0.0 && hrrr_i < hrrr.nx as f64,
+        "Kansas should be in HRRR grid"
+    );
+    assert!(
+        hrrr_j >= 0.0 && hrrr_j < hrrr.ny as f64,
+        "Kansas should be in HRRR grid"
+    );
+
+    // Verify Kansas is roughly in the middle of both grids
+    let ndfd_i_ratio = ndfd_i / ndfd.nx as f64;
+    let ndfd_j_ratio = ndfd_j / ndfd.ny as f64;
+    let hrrr_i_ratio = hrrr_i / hrrr.nx as f64;
+    let hrrr_j_ratio = hrrr_j / hrrr.ny as f64;
+
+    println!(
+        "  NDFD ratios: i={:.2}, j={:.2}",
+        ndfd_i_ratio, ndfd_j_ratio
+    );
+    println!(
+        "  HRRR ratios: i={:.2}, j={:.2}",
+        hrrr_i_ratio, hrrr_j_ratio
+    );
+
+    // Both should have Kansas somewhere in the middle 30-70% range
+    assert!(
+        ndfd_i_ratio > 0.3 && ndfd_i_ratio < 0.7,
+        "Kansas i should be ~middle in NDFD"
+    );
+    assert!(
+        ndfd_j_ratio > 0.3 && ndfd_j_ratio < 0.7,
+        "Kansas j should be ~middle in NDFD"
+    );
+
+    // Verify roundtrip
+    let (lat, lon) = ndfd.grid_to_geo(ndfd_i, ndfd_j);
+    println!("  NDFD roundtrip: ({:.6}, {:.6})", lat, lon);
+    assert!((lat - kansas.0).abs() < 0.001, "Latitude roundtrip failed");
+    assert!((lon - kansas.1).abs() < 0.001, "Longitude roundtrip failed");
+}
+
+#[test]
+fn test_ndfd_east_west_coordinates() {
+    let proj = LambertConformal::ndfd();
+
+    // Western point: Los Angeles
+    let (la_i, la_j) = proj.geo_to_grid(34.0, -118.2);
+    println!(
+        "Los Angeles (34.0°N, 118.2°W): i={:.1}, j={:.1}",
+        la_i, la_j
+    );
+
+    // Eastern point: New York
+    let (ny_i, ny_j) = proj.geo_to_grid(40.7, -74.0);
+    println!("New York (40.7°N, 74.0°W): i={:.1}, j={:.1}", ny_i, ny_j);
+
+    // Los Angeles should have SMALLER i than New York (LA is west, NY is east)
+    // In grid coordinates: i increases from west to east
+    assert!(
+        la_i < ny_i,
+        "LA (west) should have smaller i than NY (east): LA i={}, NY i={}",
+        la_i,
+        ny_i
+    );
+
+    // Check that both are within grid bounds
+    assert!(la_i >= 0.0 && la_i < 2145.0, "LA i out of bounds: {}", la_i);
+    assert!(ny_i >= 0.0 && ny_i < 2145.0, "NY i out of bounds: {}", ny_i);
+
+    // Verify grid corners make sense
+    let (sw_lat, sw_lon) = proj.grid_to_geo(0.0, 0.0);
+    let (se_lat, se_lon) = proj.grid_to_geo(2144.0, 0.0);
+    println!("SW corner (i=0): lon={:.2}°", sw_lon);
+    println!("SE corner (i=2144): lon={:.2}°", se_lon);
+
+    // SW should be more westerly (more negative longitude) than SE
+    assert!(
+        sw_lon < se_lon,
+        "SW should be west of SE: SW lon={}, SE lon={}",
+        sw_lon,
+        se_lon
+    );
+}
+
+#[test]
+fn test_ndfd_central_meridian() {
+    // Test that points at same latitude but different sides of central meridian
+    // map to monotonically increasing grid indices (not mirrored)
+    let proj = LambertConformal::ndfd();
+
+    // Central meridian is -95°W (LoV)
+    let lat = 38.5;
+
+    println!(
+        "Testing points at lat={}° around central meridian (-95°W):",
+        lat
+    );
+    println!("Grid is 2145 wide, center would be at i=1072");
+
+    // Points from west to east
+    let (i_120, _) = proj.geo_to_grid(lat, -120.0); // West (California)
+    let (i_105, _) = proj.geo_to_grid(lat, -105.0); // West (Colorado)
+    let (i_95, _) = proj.geo_to_grid(lat, -95.0); // Center (Kansas)
+    let (i_85, _) = proj.geo_to_grid(lat, -85.0); // East (Illinois)
+    let (i_70, _) = proj.geo_to_grid(lat, -70.0); // East (Atlantic coast)
+
+    println!("  -120°W: i={:.1}", i_120);
+    println!("  -105°W: i={:.1}", i_105);
+    println!("   -95°W: i={:.1} (central meridian)", i_95);
+    println!("   -85°W: i={:.1}", i_85);
+    println!("   -70°W: i={:.1}", i_70);
+
+    // Verify monotonic increase from west to east
+    assert!(
+        i_120 < i_105,
+        "i should increase west to east: -120° ({:.1}) < -105° ({:.1})",
+        i_120,
+        i_105
+    );
+    assert!(
+        i_105 < i_95,
+        "i should increase west to east: -105° ({:.1}) < -95° ({:.1})",
+        i_105,
+        i_95
+    );
+    assert!(
+        i_95 < i_85,
+        "i should increase west to east: -95° ({:.1}) < -85° ({:.1})",
+        i_95,
+        i_85
+    );
+    assert!(
+        i_85 < i_70,
+        "i should increase west to east: -85° ({:.1}) < -70° ({:.1})",
+        i_85,
+        i_70
+    );
+}
+
+#[test]
+fn test_ndfd_grid_to_geo_quadrant() {
+    // Test that grid_to_geo returns correct quadrant for all grid positions
+    // This tests for the atan vs atan2 bug where negative y_diff gives wrong quadrant
+    let proj = LambertConformal::ndfd();
+
+    println!("Testing grid_to_geo roundtrip at various grid positions:");
+
+    // Test corners and middle
+    let test_points = [
+        (0.0, 0.0, "SW corner"),
+        (2144.0, 0.0, "SE corner"),
+        (0.0, 1376.0, "NW corner"),
+        (2144.0, 1376.0, "NE corner"),
+        (1072.0, 688.0, "Center"),
+        (239.0, 572.0, "LA position"),
+        (1810.0, 856.0, "NY position"),
+    ];
+
+    for (i, j, label) in test_points {
+        let (lat, lon) = proj.grid_to_geo(i, j);
+        let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+
+        let i_err = (i - i_back).abs();
+        let j_err = (j - j_back).abs();
+
+        println!("  {} (i={:.0}, j={:.0}): lat={:.2}°, lon={:.2}° -> i={:.1}, j={:.1} (err: {:.2}, {:.2})",
+                 label, i, j, lat, lon, i_back, j_back, i_err, j_err);
+
+        // Roundtrip should be accurate
+        assert!(
+            i_err < 0.1,
+            "{} i roundtrip error too large: {:.4}",
+            label,
+            i_err
+        );
+        assert!(
+            j_err < 0.1,
+            "{} j roundtrip error too large: {:.4}",
+            label,
+            j_err
+        );
+
+        // Check that longitude is in expected range (roughly -130 to -60 for CONUS)
+        assert!(
+            lon > -140.0 && lon < -50.0,
+            "{} longitude out of range: {:.2}",
+            label,
+            lon
+        );
+    }
+
+    // Specific check: LA (west) should have more negative longitude than NY (east)
+    let (_, la_lon) = proj.grid_to_geo(239.0, 572.0);
+    let (_, ny_lon) = proj.grid_to_geo(1810.0, 856.0);
+    println!("\nLA lon: {:.2}°, NY lon: {:.2}°", la_lon, ny_lon);
+    assert!(
+        la_lon < ny_lon,
+        "LA should be west of NY: LA lon={:.2}, NY lon={:.2}",
+        la_lon,
+        ny_lon
+    );
+
+    // Intensive test: verify longitude increases monotonically across rows
+    println!("\nChecking longitude monotonicity across rows:");
+    for j in [0, 688, 1376] {
+        let mut last_lon = f64::NEG_INFINITY;
+        let mut monotonic = true;
+        for i in (0..2145).step_by(100) {
+            let (_, lon) = proj.grid_to_geo(i as f64, j as f64);
+            if lon <= last_lon {
+                println!(
+                    "  MONOTONICITY VIOLATION at j={}: i={} lon={:.2} <= prev {:.2}",
+                    j, i, lon, last_lon
+                );
+                monotonic = false;
+            }
+            last_lon = lon;
+        }
+        println!("  j={}: monotonic={}", j, monotonic);
+        assert!(
+            monotonic,
+            "Longitude should increase monotonically from west to east at j={}",
             j
         );
     }

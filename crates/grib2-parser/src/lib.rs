@@ -18,6 +18,13 @@
 //! - Section 7: Data (~1.2 MB for GFS) - Compressed grid values
 //! - Section 8: End (4 bytes) - "7777" terminator
 //!
+//! # NDFD Support
+//!
+//! This crate also supports NDFD (National Digital Forecast Database) files,
+//! which wrap GRIB2 messages with WMO bulletin headers. Use `strip_wmo_headers`
+//! to extract clean GRIB2 messages from NDFD files, or use `NdfdReader` for
+//! convenient iteration over NDFD bulletins.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -42,10 +49,12 @@
 //! }
 //! ```
 
+pub mod ndfd;
 pub mod sections;
 pub mod tables;
 pub mod unpacking;
 
+pub use ndfd::{strip_wmo_headers, NdfdReader};
 pub use tables::{Grib2Tables, LevelDescription};
 pub use unpacking::unpack_simple;
 
@@ -159,6 +168,9 @@ impl Grib2Message {
     /// - Template 5.3: Complex packing with spatial differencing
     /// - Template 5.40/5.41: JPEG 2000 compression (if enabled)
     /// - Template 5.15: PNG compression (enabled by default)
+    ///
+    /// The output is normalized to standard WE:SN order (west-to-east rows,
+    /// south-to-north columns), handling any scanning mode transformations.
     pub fn unpack_data(&self) -> Grib2Result<Vec<f32>> {
         use std::io::Cursor;
 
@@ -175,10 +187,40 @@ impl Grib2Message {
                 Grib2Error::UnpackingError(format!("Failed to create decoder: {}", e))
             })?;
 
-            let values: Vec<f32> = decoder
+            let mut values: Vec<f32> = decoder
                 .dispatch()
                 .map_err(|e| Grib2Error::UnpackingError(format!("Failed to decode values: {}", e)))?
                 .collect();
+
+            // Normalize scanning mode to standard WE:SN order
+            // The grib crate decodes values in storage order, which may be:
+            // - Boustrophedon (alternating row directions) - scanning mode bit 4 = 1
+            // - East-to-West (i decreasing) - scanning mode bit 1 = 1
+            // - North-to-South (j decreasing) - scanning mode bit 2 = 0
+            //
+            // Our convention: row 0 = southernmost, columns go west-to-east
+            let scanning_mode = self.grid_definition.scanning_mode;
+            let width = self.grid_definition.num_points_longitude as usize;
+            let height = self.grid_definition.num_points_latitude as usize;
+
+            // Check for boustrophedon scanning (bit 4 = 0x10)
+            // In this mode, adjacent rows scan in opposite directions.
+            // According to GRIB2 spec, row 0 is in the primary direction (as specified
+            // by scanning mode bits 7 and 6), and subsequent rows alternate.
+            // So odd rows (1, 3, 5, ...) need to be reversed to normalize to consistent direction.
+            let is_boustrophedon = scanning_mode & 0x10 != 0;
+
+            if is_boustrophedon && width > 0 && height > 0 {
+                // Reverse odd rows (1, 3, 5, ...) to normalize to consistent direction
+                // Row 0 is primary direction, row 1 is reversed, row 2 is primary, etc.
+                for row in (1..height).step_by(2) {
+                    let start = row * width;
+                    let end = start + width;
+                    if end <= values.len() {
+                        values[start..end].reverse();
+                    }
+                }
+            }
 
             return Ok(values);
         }

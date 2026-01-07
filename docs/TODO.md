@@ -19,8 +19,6 @@
   the two outlined in the spec
 - add some sort of json schema for the various yaml files so that making new ones is less of a pain
 - web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
-    - this may have been due to the 10s of thousands of objects in minio
-    - see if this happens again after we fixed the orphaned files issue
     - it still happens and its still happening after claude 'fixed' the memory leaks
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - need to give the swagger docs a human pass to catch some of the errors
@@ -38,7 +36,6 @@
 - Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
 - System design high level architecture diagram isn't right anymore
 - Minio object storage section is wrong
-- download and ingest new data https://vlab.noaa.gov/web/mdl/ndfd-grid-data
 - also NBM https://vlab.noaa.gov/web/mdl/nbm-download
 - looping radar (only product that does this) absolutely eats up the chunk cache
 - let's try to get registered on the OGC implementation database
@@ -50,3 +47,7 @@
 - need to update prometheus and grafana and loki and stuff for the EDR api still
 - need to check units in WMS now that we fixed units being passed into zarr format during ingestion
 - let's remove the minikube stuff from the start.sh script
+- need to investigate 10m and 2m wind data between these different models
+- fix start script to skip over minikube stuff
+- consider removing k8s and minikube deployments
+- create robots.txt with goodies

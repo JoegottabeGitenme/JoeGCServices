@@ -14,6 +14,8 @@ pub enum FileType {
     Grib2,
     /// Gzip-compressed GRIB2
     Grib2Gz,
+    /// NDFD GRIB2 format (with WMO bulletin headers)
+    NdfdGrib2,
     /// NetCDF format (GOES satellite)
     NetCdf,
     /// Unknown format
@@ -45,6 +47,9 @@ pub fn detect_file_type(path: &str) -> FileType {
         FileType::Grib2
     } else if lower.ends_with(".nc") || lower.ends_with(".nc4") || lower.ends_with(".netcdf") {
         FileType::NetCdf
+    } else if lower.contains("ndfd") || (lower.starts_with("ds.") && lower.ends_with(".bin")) {
+        // NDFD files use ds.{element}.bin naming (e.g., ds.temp.bin, ds.wspd.bin)
+        FileType::NdfdGrib2
     } else {
         FileType::Unknown
     }
@@ -68,6 +73,9 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         Some("gfs".to_string())
     } else if lower.starts_with("mrms_") || lower.contains("mrms") {
         Some("mrms".to_string())
+    } else if lower.contains("ndfd") || lower.starts_with("ds.") {
+        // NDFD files use ds.{element}.bin naming (e.g., ds.temp.bin)
+        Some("ndfd".to_string())
     } else {
         None
     }
@@ -223,6 +231,11 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
         "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
         "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
+        // NDFD CONUS: Lambert Conformal projection covering continental US
+        // Actual geographic bounds from Lambert projection corners:
+        // SW (0,0): lat=20.19, lon=-121.55; NW (0,1376): lat=49.94, lon=-130.10
+        // SE (2144,0): lat=20.33, lon=-69.21; NE (2144,1376): lat=50.11, lon=-60.89
+        "ndfd" => BoundingBox::new(-130.1, 20.19, -60.89, 50.11),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
@@ -295,6 +308,22 @@ mod tests {
         assert_eq!(detect_file_type("test.json"), FileType::Unknown);
         assert_eq!(detect_file_type("test"), FileType::Unknown);
         assert_eq!(detect_file_type(""), FileType::Unknown);
+    }
+
+    #[test]
+    fn test_detect_file_type_ndfd() {
+        // NDFD ds.*.bin naming convention
+        assert_eq!(detect_file_type("ds.temp.bin"), FileType::NdfdGrib2);
+        assert_eq!(detect_file_type("ds.wspd.bin"), FileType::NdfdGrib2);
+        assert_eq!(detect_file_type("ds.maxt.bin"), FileType::NdfdGrib2);
+        assert_eq!(
+            detect_file_type("/data/ndfd/ds.qpf.bin"),
+            FileType::NdfdGrib2
+        );
+        // ndfd in filename with unknown extension
+        assert_eq!(detect_file_type("ndfd_conus_temp.bin"), FileType::NdfdGrib2);
+        // Note: files with .grib2 extension are detected as Grib2, not NdfdGrib2
+        // This is intentional - NDFD files from NWS use .bin extension
     }
 
     // ==================== Model Extraction ====================
@@ -384,6 +413,28 @@ mod tests {
         assert_eq!(extract_model_from_filename("unknown_data.grib2"), None);
         assert_eq!(extract_model_from_filename("random_file.nc"), None);
         assert_eq!(extract_model_from_filename(""), None);
+    }
+
+    #[test]
+    fn test_extract_model_ndfd() {
+        // NDFD ds.*.bin naming convention
+        assert_eq!(
+            extract_model_from_filename("ds.temp.bin"),
+            Some("ndfd".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("ds.wspd.bin"),
+            Some("ndfd".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("/data/ndfd/ds.maxt.bin"),
+            Some("ndfd".to_string())
+        );
+        // Also recognize by ndfd in path
+        assert_eq!(
+            extract_model_from_filename("ndfd_conus_temp.grib2"),
+            Some("ndfd".to_string())
+        );
     }
 
     // ==================== Forecast Hour Extraction ====================
@@ -608,6 +659,18 @@ mod tests {
         // Unknown models get global coverage
         assert_eq!(bbox.min_x, 0.0);
         assert_eq!(bbox.max_x, 360.0);
+    }
+
+    #[test]
+    fn test_get_model_bbox_ndfd() {
+        let bbox = get_model_bbox("ndfd");
+        // NDFD covers CONUS - Lambert Conformal projection with corners:
+        // SW: (20.19°, -121.55°), SE: (20.33°, -69.21°)
+        // NW: (49.94°, -130.10°), NE: (50.11°, -60.89°)
+        assert!(bbox.min_x < -120.0, "NDFD should extend west of -120°");
+        assert!(bbox.max_x > -70.0, "NDFD should extend east of -70°");
+        assert!(bbox.min_y >= 20.0, "NDFD should be at or north of 20°N");
+        assert!(bbox.max_y < 55.0, "NDFD should be south of 55°N");
     }
 
     // ==================== FileType Enum ====================

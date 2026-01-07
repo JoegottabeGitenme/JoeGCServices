@@ -175,8 +175,9 @@ impl PositionQuery {
                             let lat: f64 = parts[1].parse().map_err(|_| {
                                 CoordinateParseError::InvalidCoordinate(parts[1].to_string())
                             })?;
-                            Self::validate_coordinates(lon, lat)?;
-                            points.push((lon, lat));
+                            let (norm_lon, norm_lat) =
+                                Self::validate_and_normalize_coordinates(lon, lat)?;
+                            points.push((norm_lon, norm_lat));
                         }
                         current_point.clear();
                     } else {
@@ -237,10 +238,8 @@ impl PositionQuery {
             .parse()
             .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
 
-        // Validate ranges
-        Self::validate_coordinates(lon, lat)?;
-
-        Ok((lon, lat))
+        // Validate and normalize coordinates
+        Self::validate_and_normalize_coordinates(lon, lat)
     }
 
     fn parse_simple_coords(coords: &str) -> Result<(f64, f64), CoordinateParseError> {
@@ -262,11 +261,50 @@ impl PositionQuery {
             .parse()
             .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
 
-        Self::validate_coordinates(lon, lat)?;
-
-        Ok((lon, lat))
+        // Validate and normalize coordinates
+        Self::validate_and_normalize_coordinates(lon, lat)
     }
 
+    /// Normalize longitude to [-180, 180] range.
+    ///
+    /// This handles coordinates that wrap around the antimeridian,
+    /// e.g., 180.5 becomes -179.5, -181.0 becomes 179.0.
+    fn normalize_longitude(lon: f64) -> f64 {
+        let mut normalized = lon % 360.0;
+        if normalized > 180.0 {
+            normalized -= 360.0;
+        } else if normalized < -180.0 {
+            normalized += 360.0;
+        }
+        normalized
+    }
+
+    /// Validate and normalize coordinates.
+    ///
+    /// Longitude is normalized to [-180, 180] range (wrapping around).
+    /// Latitude must be in [-90, 90] range (no normalization possible).
+    ///
+    /// Returns the normalized (lon, lat) coordinates.
+    fn validate_and_normalize_coordinates(
+        lon: f64,
+        lat: f64,
+    ) -> Result<(f64, f64), CoordinateParseError> {
+        // Latitude cannot be normalized - must be in valid range
+        if !(-90.0..=90.0).contains(&lat) {
+            return Err(CoordinateParseError::OutOfRange(format!(
+                "Latitude {} is out of range [-90, 90]",
+                lat
+            )));
+        }
+
+        // Normalize longitude to [-180, 180]
+        let normalized_lon = Self::normalize_longitude(lon);
+
+        Ok((normalized_lon, lat))
+    }
+
+    /// Legacy validation function - validates without normalizing.
+    /// Used where we only need to check validity, not transform coordinates.
     fn validate_coordinates(lon: f64, lat: f64) -> Result<(), CoordinateParseError> {
         if !(-180.0..=180.0).contains(&lon) {
             return Err(CoordinateParseError::OutOfRange(format!(
@@ -283,6 +321,35 @@ impl PositionQuery {
         }
 
         Ok(())
+    }
+
+    /// Validate polygon coordinates with extended longitude range.
+    ///
+    /// For polygon vertices, we accept longitudes in [-360, 360] without normalization
+    /// to support antimeridian-crossing polygons. The extra range allows polygons to
+    /// be specified continuously across the antimeridian (e.g., 179 to 181 instead
+    /// of 179 to -179).
+    fn validate_polygon_coordinates(
+        lon: f64,
+        lat: f64,
+    ) -> Result<(f64, f64), CoordinateParseError> {
+        // Extended longitude range for polygon vertices
+        if !(-360.0..=360.0).contains(&lon) {
+            return Err(CoordinateParseError::OutOfRange(format!(
+                "Longitude {} is out of range [-360, 360]",
+                lon
+            )));
+        }
+
+        // Latitude must still be in valid range
+        if !(-90.0..=90.0).contains(&lat) {
+            return Err(CoordinateParseError::OutOfRange(format!(
+                "Latitude {} is out of range [-90, 90]",
+                lat
+            )));
+        }
+
+        Ok((lon, lat))
     }
 
     /// Parse vertical level parameter.
@@ -709,6 +776,10 @@ impl AreaQuery {
     }
 
     /// Parse a single polygon ring from coordinate string.
+    ///
+    /// For polygons, we use extended longitude validation to allow antimeridian-crossing
+    /// polygons. Coordinates in the range [-360, 360] are accepted without normalization
+    /// to preserve the geometric relationship between adjacent vertices.
     fn parse_ring(coords_str: &str) -> Result<Vec<(f64, f64)>, CoordinateParseError> {
         // Split by comma to get individual coordinate pairs
         let points: Result<Vec<(f64, f64)>, _> = coords_str
@@ -730,10 +801,9 @@ impl AreaQuery {
                     .parse()
                     .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
 
-                // Validate ranges
-                PositionQuery::validate_coordinates(lon, lat)?;
-
-                Ok((lon, lat))
+                // For polygons, allow extended longitude range for antimeridian crossing
+                // Accept [-360, 360] without normalization to preserve geometry
+                PositionQuery::validate_polygon_coordinates(lon, lat)
             })
             .collect();
 
@@ -1402,8 +1472,8 @@ impl TrajectoryQuery {
                     .parse()
                     .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[1].to_string()))?;
 
-                // Validate lon/lat ranges
-                PositionQuery::validate_coordinates(lon, lat)?;
+                // Validate and normalize coordinates
+                let (lon, lat) = PositionQuery::validate_and_normalize_coordinates(lon, lat)?;
 
                 let waypoint = match line_type {
                     LineStringType::LineString => TrajectoryWaypoint::new_2d(lon, lat),
@@ -1857,9 +1927,9 @@ impl BboxQuery {
             .parse()
             .map_err(|_| CoordinateParseError::InvalidCoordinate(parts[3].to_string()))?;
 
-        // Validate ranges
-        PositionQuery::validate_coordinates(west, south)?;
-        PositionQuery::validate_coordinates(east, north)?;
+        // Validate and normalize coordinates
+        let (west, south) = PositionQuery::validate_and_normalize_coordinates(west, south)?;
+        let (east, north) = PositionQuery::validate_and_normalize_coordinates(east, north)?;
 
         if south > north {
             return Err(CoordinateParseError::OutOfRange(
@@ -1867,6 +1937,7 @@ impl BboxQuery {
             ));
         }
 
+        // Note: west > east is valid and indicates antimeridian crossing
         Ok(BboxQuery {
             west,
             south,
@@ -1891,6 +1962,27 @@ impl BboxQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_longitude() {
+        // Values within range should be unchanged
+        assert_eq!(PositionQuery::normalize_longitude(0.0), 0.0);
+        assert_eq!(PositionQuery::normalize_longitude(180.0), 180.0);
+        assert_eq!(PositionQuery::normalize_longitude(-180.0), -180.0);
+        assert_eq!(PositionQuery::normalize_longitude(90.0), 90.0);
+        assert_eq!(PositionQuery::normalize_longitude(-90.0), -90.0);
+
+        // Values just outside range should wrap
+        assert!((PositionQuery::normalize_longitude(180.5) - (-179.5)).abs() < 0.001);
+        assert!((PositionQuery::normalize_longitude(-180.5) - 179.5).abs() < 0.001);
+        assert!((PositionQuery::normalize_longitude(200.0) - (-160.0)).abs() < 0.001);
+        assert!((PositionQuery::normalize_longitude(-200.0) - 160.0).abs() < 0.001);
+
+        // Large values should wrap correctly
+        assert!((PositionQuery::normalize_longitude(360.0) - 0.0).abs() < 0.001);
+        assert!((PositionQuery::normalize_longitude(-360.0) - 0.0).abs() < 0.001);
+        assert!((PositionQuery::normalize_longitude(540.0) - 180.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_parse_wkt_point() {
@@ -1928,13 +2020,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_coords_out_of_range_lon() {
-        let result = PositionQuery::parse_coords("POINT(-200 35.2)");
-        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+    fn test_parse_coords_normalize_lon() {
+        // Longitude outside [-180, 180] should be normalized, not rejected
+        let (lon, lat) = PositionQuery::parse_coords("POINT(-200 35.2)").unwrap();
+        assert!((lon - 160.0).abs() < 0.001); // -200 + 360 = 160
+        assert!((lat - 35.2).abs() < 0.001);
+
+        let (lon, lat) = PositionQuery::parse_coords("POINT(200 35.2)").unwrap();
+        assert!((lon - (-160.0)).abs() < 0.001); // 200 - 360 = -160
+        assert!((lat - 35.2).abs() < 0.001);
+
+        let (lon, lat) = PositionQuery::parse_coords("POINT(180.5 35.2)").unwrap();
+        assert!((lon - (-179.5)).abs() < 0.001); // 180.5 - 360 = -179.5
+        assert!((lat - 35.2).abs() < 0.001);
     }
 
     #[test]
     fn test_parse_coords_out_of_range_lat() {
+        // Latitude outside [-90, 90] should still be rejected (can't normalize)
         let result = PositionQuery::parse_coords("POINT(-97.5 100)");
         assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
     }
@@ -2571,12 +2674,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_linestring_out_of_range() {
-        // Longitude out of range
+    fn test_parse_linestring_normalize_lon() {
+        // Longitude outside [-180, 180] should be normalized, not rejected
         let result = TrajectoryQuery::parse_coords("LINESTRING(-200 50.72, -3.35 50.92)");
-        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+        assert!(result.is_ok());
+        let trajectory = result.unwrap();
+        // -200 should normalize to 160
+        assert!((trajectory.waypoints[0].lon - 160.0).abs() < 0.001);
+    }
 
-        // Latitude out of range
+    #[test]
+    fn test_parse_linestring_out_of_range_lat() {
+        // Latitude outside [-90, 90] should still be rejected (can't normalize)
         let result = TrajectoryQuery::parse_coords("LINESTRING(-3.53 100, -3.35 50.92)");
         assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
     }

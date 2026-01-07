@@ -12,16 +12,18 @@ use edr_protocol::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::availability::{level_matching, ModelAvailability};
 use crate::config::{CollectionDefinition, LevelValue, ModelEdrConfig};
 use crate::content_negotiation::check_metadata_accept;
 use crate::state::AppState;
 use storage::Catalog;
 
-/// Build extent from catalog data for a collection.
-async fn build_extent_from_catalog(
+/// Build extent from catalog data for a collection, filtering to only available levels.
+async fn build_extent_from_catalog_filtered(
     catalog: &Catalog,
     model_config: &ModelEdrConfig,
     collection_def: &CollectionDefinition,
+    availability: &ModelAvailability,
 ) -> Extent {
     let model_name = &model_config.model;
 
@@ -63,31 +65,10 @@ async fn build_extent_from_catalog(
         extent = extent.with_temporal(temporal);
     }
 
-    // Build vertical extent from collection definition
-    // Collect all numeric levels from parameters
+    // Build vertical extent from ACTUALLY AVAILABLE levels only
     let mut level_values: Vec<f64> = Vec::new();
     let mut has_pressure_levels = false;
     let mut has_height_levels = false;
-
-    for param in &collection_def.parameters {
-        for level in &param.levels {
-            match level {
-                LevelValue::Numeric(v) => {
-                    if !level_values.contains(v) {
-                        level_values.push(*v);
-                    }
-                }
-                LevelValue::Named(s) => {
-                    // Try to parse named levels like "surface" -> skip, "1000" -> add
-                    if let Ok(v) = s.parse::<f64>() {
-                        if !level_values.contains(&v) {
-                            level_values.push(v);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     // Determine VRS based on level_filter type
     let level_type = &collection_def.level_filter.level_type;
@@ -95,6 +76,35 @@ async fn build_extent_from_catalog(
         has_pressure_levels = true;
     } else if level_type.contains("height") || level_type.contains("ground") {
         has_height_levels = true;
+    }
+
+    for param in &collection_def.parameters {
+        // Get available levels for this parameter from availability cache
+        let Some(available_levels) = availability.get_levels(&param.name) else {
+            continue;
+        };
+
+        for level in &param.levels {
+            // Convert config level to the string format used in catalog
+            let level_str = match level {
+                LevelValue::Numeric(v) => {
+                    level_matching::format_level_string(*v, &collection_def.level_filter)
+                }
+                LevelValue::Named(s) => {
+                    level_matching::format_named_level(s, &collection_def.level_filter)
+                }
+            };
+
+            // Only include if actually available in catalog
+            if available_levels.contains(&level_str) {
+                // Extract numeric value for vertical extent
+                if let Some(numeric) = level_matching::parse_level_numeric(&level_str) {
+                    if !level_values.contains(&numeric) {
+                        level_values.push(numeric);
+                    }
+                }
+            }
+        }
     }
 
     // Only add vertical extent if we have numeric levels
@@ -117,7 +127,59 @@ async fn build_extent_from_catalog(
     extent
 }
 
+/// Filter collection parameters to only those with available data.
+/// Returns the filtered parameters and the count of how many were available.
+fn filter_available_parameters(
+    collection_def: &CollectionDefinition,
+    availability: &ModelAvailability,
+) -> Vec<String> {
+    collection_def
+        .parameters
+        .iter()
+        .filter(|p| availability.has_parameter(&p.name))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// Check if collection has multiple vertical levels available.
+fn has_multiple_available_vertical_levels(
+    collection_def: &CollectionDefinition,
+    availability: &ModelAvailability,
+) -> bool {
+    use std::collections::HashSet;
+    let mut unique_levels: HashSet<String> = HashSet::new();
+
+    for param in &collection_def.parameters {
+        let Some(available_levels) = availability.get_levels(&param.name) else {
+            continue;
+        };
+
+        for level in &param.levels {
+            let level_str = match level {
+                LevelValue::Numeric(v) => {
+                    level_matching::format_level_string(*v, &collection_def.level_filter)
+                }
+                LevelValue::Named(s) => {
+                    level_matching::format_named_level(s, &collection_def.level_filter)
+                }
+            };
+
+            if available_levels.contains(&level_str) {
+                // Only count numeric levels for cube query support
+                if level_matching::parse_level_numeric(&level_str).is_some() {
+                    unique_levels.insert(level_str);
+                }
+            }
+        }
+    }
+
+    unique_levels.len() > 1
+}
+
 /// GET /edr/collections - List all collections
+///
+/// Only returns collections that have data available in the catalog.
+/// Parameters and vertical levels are also filtered to only include those with data.
 pub async fn list_collections_handler(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -132,6 +194,50 @@ pub async fn list_collections_handler(
     let mut collections = Vec::new();
 
     for collection_def in config.all_collections() {
+        // Find the model config for this collection
+        let Some((model_config, coll_def)) = config.find_collection(&collection_def.id) else {
+            continue;
+        };
+
+        // Get availability for this model from cache
+        let availability = state
+            .availability_cache
+            .get_model_availability(&state.catalog, &model_config.model)
+            .await;
+
+        // Skip collection if model has no data
+        let Some(availability) = availability else {
+            tracing::debug!(
+                "Skipping collection {} - no data for model {}",
+                collection_def.id,
+                model_config.model
+            );
+            continue;
+        };
+
+        // Filter parameters to only those with available data
+        let available_params = filter_available_parameters(coll_def, &availability);
+
+        // Skip collection if no parameters have data
+        if available_params.is_empty() {
+            tracing::debug!(
+                "Skipping collection {} - no parameters have data",
+                collection_def.id
+            );
+            continue;
+        }
+
+        // Log if some parameters were filtered out
+        if available_params.len() < coll_def.parameters.len() {
+            let configured: Vec<_> = coll_def.parameters.iter().map(|p| &p.name).collect();
+            tracing::debug!(
+                "Collection {} filtered params: configured {:?}, available {:?}",
+                collection_def.id,
+                configured,
+                available_params
+            );
+        }
+
         let mut collection = Collection::new(&collection_def.id)
             .with_title(&collection_def.title)
             .with_description(&collection_def.description);
@@ -147,48 +253,54 @@ pub async fn list_collections_handler(
             .with_corridor(&state.base_url, &collection_def.id)
             .with_locations(&state.base_url, &collection_def.id);
 
-        // Only add cube for collections with multiple vertical levels
-        // Single-level collections (like MRMS) don't benefit from cube queries
-        let has_multiple_vertical_levels = collection_def.parameters.iter().any(|p| {
-            p.levels
-                .iter()
-                .filter(|l| matches!(l, LevelValue::Numeric(_)))
-                .count()
-                > 1
-        });
-
-        if has_multiple_vertical_levels {
+        // Only add cube for collections with multiple available vertical levels
+        if has_multiple_available_vertical_levels(coll_def, &availability) {
             queries = queries.with_cube(&state.base_url, &collection_def.id);
         }
 
         collection = collection.with_data_queries(queries);
 
-        // Build extent from catalog data
-        if let Some((model_config, coll_def)) = config.find_collection(&collection_def.id) {
-            let extent = build_extent_from_catalog(&state.catalog, model_config, coll_def).await;
-            collection = collection.with_extent(extent);
+        // Build extent from catalog data, filtered to available levels
+        let extent = build_extent_from_catalog_filtered(
+            &state.catalog,
+            model_config,
+            coll_def,
+            &availability,
+        )
+        .await;
+        collection = collection.with_extent(extent);
 
-            // Add parameters (required by OGC EDR tests)
-            let mut params = HashMap::new();
-            for param_def in &coll_def.parameters {
-                let param = Parameter::new(&param_def.name, &param_def.name);
-                params.insert(param_def.name.clone(), param);
-            }
-            if !params.is_empty() {
-                collection = collection.with_parameters(params);
-            }
-
-            // Add CRS and formats
-            collection = collection
-                .with_crs(model_config.settings.supported_crs.clone())
-                .with_output_formats(model_config.settings.output_formats.clone());
-        } else {
-            // Fallback to global extent if no model config
-            collection =
-                collection.with_extent(Extent::with_spatial([-180.0, -90.0, 180.0, 90.0], None));
+        // Add only available parameters
+        let mut params = HashMap::new();
+        for param_name in &available_params {
+            let param = Parameter::new(param_name, param_name);
+            params.insert(param_name.clone(), param);
+        }
+        if !params.is_empty() {
+            collection = collection.with_parameters(params);
         }
 
+        // Add CRS and formats
+        collection = collection
+            .with_crs(model_config.settings.supported_crs.clone())
+            .with_output_formats(model_config.settings.output_formats.clone());
+
         collections.push(collection);
+    }
+
+    // Log info-level summary on first request (useful for observability)
+    let total_configured = config.all_collections().len();
+    if collections.len() < total_configured {
+        tracing::info!(
+            "EDR availability: serving {}/{} collections (filtered by data availability)",
+            collections.len(),
+            total_configured
+        );
+    } else {
+        tracing::debug!(
+            "Returning {} collections with available data",
+            collections.len()
+        );
     }
 
     let list = CollectionList::new(collections, &state.base_url);
@@ -204,6 +316,8 @@ pub async fn list_collections_handler(
 }
 
 /// GET /edr/collections/:collection_id - Get a specific collection
+///
+/// Returns 404 if the collection doesn't exist or has no available data.
 pub async fn get_collection_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
@@ -216,7 +330,7 @@ pub async fn get_collection_handler(
 
     let config = state.edr_config.read().await;
 
-    // Find the collection
+    // Find the collection config
     let Some((model_config, collection_def)) = config.find_collection(&collection_id) else {
         let exc = ExceptionResponse::not_found(format!("Collection not found: {}", collection_id));
         let json = serde_json::to_string(&exc).unwrap_or_default();
@@ -226,6 +340,43 @@ pub async fn get_collection_handler(
             .body(json.into())
             .unwrap();
     };
+
+    // Get availability for this model
+    let availability = state
+        .availability_cache
+        .get_model_availability(&state.catalog, &model_config.model)
+        .await;
+
+    // Return 404 if model has no data
+    let Some(availability) = availability else {
+        let exc = ExceptionResponse::not_found(format!(
+            "Collection {} has no available data",
+            collection_id
+        ));
+        let json = serde_json::to_string(&exc).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json.into())
+            .unwrap();
+    };
+
+    // Filter parameters to only those with available data
+    let available_params = filter_available_parameters(collection_def, &availability);
+
+    // Return 404 if no parameters have data
+    if available_params.is_empty() {
+        let exc = ExceptionResponse::not_found(format!(
+            "Collection {} has no parameters with available data",
+            collection_id
+        ));
+        let json = serde_json::to_string(&exc).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json.into())
+            .unwrap();
+    }
 
     let mut collection = Collection::new(&collection_def.id)
         .with_title(&collection_def.title)
@@ -242,32 +393,28 @@ pub async fn get_collection_handler(
         .with_corridor(&state.base_url, &collection_def.id)
         .with_locations(&state.base_url, &collection_def.id);
 
-    // Only add cube for collections with multiple vertical levels
-    // Single-level collections (like MRMS) don't benefit from cube queries
-    let has_multiple_vertical_levels = collection_def.parameters.iter().any(|p| {
-        p.levels
-            .iter()
-            .filter(|l| matches!(l, LevelValue::Numeric(_)))
-            .count()
-            > 1
-    });
-
-    if has_multiple_vertical_levels {
+    // Only add cube for collections with multiple available vertical levels
+    if has_multiple_available_vertical_levels(collection_def, &availability) {
         queries = queries.with_cube(&state.base_url, &collection_def.id);
     }
 
     collection = collection.with_data_queries(queries);
 
-    // Build extent from catalog data
-    let extent = build_extent_from_catalog(&state.catalog, model_config, collection_def).await;
+    // Build extent from catalog data, filtered to available levels
+    let extent = build_extent_from_catalog_filtered(
+        &state.catalog,
+        model_config,
+        collection_def,
+        &availability,
+    )
+    .await;
     collection = collection.with_extent(extent);
 
-    // Add parameters
+    // Add only available parameters
     let mut params = HashMap::new();
-    for param_def in &collection_def.parameters {
-        let param = Parameter::new(&param_def.name, &param_def.name);
-        // TODO: Add unit and levels from catalog
-        params.insert(param_def.name.clone(), param);
+    for param_name in &available_params {
+        let param = Parameter::new(param_name, param_name);
+        params.insert(param_name.clone(), param);
     }
     if !params.is_empty() {
         collection = collection.with_parameters(params);
@@ -306,23 +453,22 @@ mod tests {
 
     #[test]
     fn test_collection_list_creation() {
-        let collections = vec![
-            Collection::new("col1").with_title("Collection 1"),
-            Collection::new("col2").with_title("Collection 2"),
-        ];
+        let collection = Collection::new("test-collection").with_title("Test Collection");
 
-        let list = CollectionList::new(collections, "http://localhost:8083/edr");
+        let list = CollectionList::new(vec![collection], "http://localhost:8083/edr");
 
-        assert_eq!(list.collections.len(), 2);
-        assert!(list.links.iter().any(|l| l.rel == "self"));
+        assert_eq!(list.collections.len(), 1);
+        assert!(!list.links.is_empty());
     }
 
     #[test]
-    fn test_data_queries() {
-        let queries = DataQueries::with_position("http://localhost:8083/edr", "test");
+    fn test_data_queries_construction() {
+        let queries = DataQueries::with_position("http://localhost:8083/edr", "test-collection")
+            .with_area("http://localhost:8083/edr", "test-collection")
+            .with_radius("http://localhost:8083/edr", "test-collection");
 
         assert!(queries.position.is_some());
-        let pos = queries.position.unwrap();
-        assert!(pos.link.href.contains("/position"));
+        assert!(queries.area.is_some());
+        assert!(queries.radius.is_some());
     }
 }

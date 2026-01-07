@@ -473,10 +473,14 @@ async fn area_query(
                     let lat =
                         param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
 
+                    // Normalize longitude to -180/180 range for polygon comparison
+                    // (grid may use 0-360 convention like GFS)
+                    let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
                     // Check if point is inside any polygon (union of all polygons for MULTIPOLYGON)
                     let inside_any = all_area_queries
                         .iter()
-                        .any(|aq| aq.contains_point(lon, lat));
+                        .any(|aq| aq.contains_point(lon_normalized, lat));
                     if inside_any {
                         if value.is_nan() {
                             values.push(None);

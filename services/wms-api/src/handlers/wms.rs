@@ -326,6 +326,8 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
 
     for model_id in layer_configs.models() {
         if let Some(model_config) = layer_configs.get_model(model_id) {
+            let mut has_wspd = false;
+
             for layer in &model_config.layers {
                 // Skip composite layers - they're handled separately
                 if layer.composite {
@@ -340,6 +342,26 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
                 {
                     let key = format!("{}_{}", model_id, layer.parameter);
                     param_availability.insert(key, availability);
+
+                    // Track if we have WSPD for this model
+                    if layer.parameter == "WSPD" {
+                        has_wspd = true;
+                    }
+                }
+            }
+
+            // For models with WSPD, also check for WDIR availability
+            // (WDIR may not have its own WMS layer but is needed for wind barbs)
+            if has_wspd {
+                let wdir_key = format!("{}_WDIR", model_id);
+                if !param_availability.contains_key(&wdir_key) {
+                    if let Ok(Some(wdir_avail)) = state
+                        .catalog
+                        .get_parameter_availability(model_id, "WDIR")
+                        .await
+                    {
+                        param_availability.insert(wdir_key, wdir_avail);
+                    }
                 }
             }
         }
@@ -390,6 +412,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let bbox = params.bbox.as_deref();
     let crs = params.crs.as_deref();
     let format = params.format.as_deref();
+    let version = params.version.as_deref();
 
     // Validate CRS
     if let Err(e) = validate_crs(crs) {
@@ -470,6 +493,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             height,
             bbox,
             crs,
+            version,
             &dimensions,
         )
         .await
@@ -483,6 +507,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
             height,
             bbox,
             crs,
+            version,
             &dimensions,
         )
         .await
@@ -830,6 +855,7 @@ async fn render_weather_data(
     height: u32,
     bbox: Option<&str>,
     crs: Option<&str>,
+    version: Option<&str>,
     dimensions: &DimensionParams,
 ) -> Result<Vec<u8>, WmsError> {
     // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
@@ -862,7 +888,7 @@ async fn render_weather_data(
 
     // Check if this is a wind barbs composite layer
     if parameter == "WIND_BARBS" {
-        let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
+        let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs, version));
 
         // Get wind barbs style file
         let wind_style_file = state
@@ -871,23 +897,46 @@ async fn render_weather_data(
             .await
             .get_style_file_for_parameter(model, "WIND_BARBS");
 
-        return crate::rendering::render_wind_barbs_layer(
-            &state.catalog,
-            &state.grid_processor_factory,
-            model,
-            width,
-            height,
-            parsed_bbox,
-            forecast_hour,
-            Some(&wind_style_file),
-            None, // Use default style
-        )
-        .await
-        .map_err(WmsError::from_rendering_error);
+        // Check if model uses speed/direction (WSPD/WDIR) or U/V components (UGRD/VGRD)
+        // NDFD uses speed/direction, most other models use U/V components
+        let uses_speed_direction = matches!(model, "ndfd");
+
+        if uses_speed_direction {
+            return crate::rendering::render_wind_barbs_from_speed_direction_tile(
+                &state.catalog,
+                &state.grid_processor_factory,
+                model,
+                None, // No tile coord for WMS
+                width,
+                height,
+                parsed_bbox.unwrap_or([-180.0, -90.0, 180.0, 90.0]),
+                observation_time,
+                forecast_hour,
+                level.as_deref(),
+                Some(&wind_style_file),
+                None, // Use default style
+            )
+            .await
+            .map_err(WmsError::from_rendering_error);
+        } else {
+            return crate::rendering::render_wind_barbs_layer(
+                &state.catalog,
+                &state.grid_processor_factory,
+                model,
+                width,
+                height,
+                parsed_bbox,
+                forecast_hour,
+                Some(&wind_style_file),
+                None, // Use default style
+            )
+            .await
+            .map_err(WmsError::from_rendering_error);
+        }
     }
 
     // Parse BBOX parameter
-    let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs));
+    let parsed_bbox = bbox.and_then(|b| parse_bbox(b, crs, version));
 
     info!(forecast_hour = ?forecast_hour, observation_time = ?observation_time, level = ?level, bbox = ?parsed_bbox, style = style, "Parsed WMS parameters");
 
@@ -896,9 +945,12 @@ async fn render_weather_data(
     let use_mercator = crs_str.contains("3857");
 
     if style == "isolines" {
-        if state.model_dimensions.is_observation(model) {
+        // Isolines are not supported for radar/satellite imagery, but ARE supported
+        // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
+        let is_imagery_model = matches!(model, "mrms" | "goes16" | "goes18");
+        if is_imagery_model {
             return Err(WmsError::StyleNotDefined(format!(
-                "Style 'isolines' is not supported for {} layers.",
+                "Style 'isolines' is not supported for radar/satellite imagery layers like {}.",
                 model.to_uppercase()
             )));
         }
@@ -921,6 +973,7 @@ async fn render_weather_data(
             &style_file,
             "isolines",
             forecast_hour,
+            observation_time,
             level.as_deref(),
             use_mercator,
         )
@@ -969,6 +1022,7 @@ async fn render_multi_layer(
     height: u32,
     bbox: Option<&str>,
     crs: Option<&str>,
+    version: Option<&str>,
     dimensions: &DimensionParams,
 ) -> Result<Vec<u8>, WmsError> {
     use image::{ImageBuffer, Rgba, RgbaImage};
@@ -991,7 +1045,7 @@ async fn render_multi_layer(
 
         // Render this layer
         match render_weather_data(
-            state, layer_name, style, width, height, bbox, crs, dimensions,
+            state, layer_name, style, width, height, bbox, crs, version, dimensions,
         )
         .await
         {
@@ -1071,7 +1125,16 @@ fn alpha_blend(dst: image::Rgba<u8>, src: image::Rgba<u8>) -> image::Rgba<u8> {
 
 //TODO do we need to parse bbox for any arbitrary CRS?
 /// Parse a BBOX string into [min_lon, min_lat, max_lon, max_lat]
-fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
+///
+/// WMS axis order depends on CRS and version:
+/// - WMS 1.1.x: Always X,Y (lon,lat for geographic CRS)
+/// - WMS 1.3.0 with EPSG:4326 (CRS:84 variant): X,Y (lon,lat)
+/// - WMS 1.3.0 with EPSG:4326 (standard): Y,X (lat,lon)
+/// - Web Mercator (EPSG:3857): Always X,Y
+///
+/// We use CRS:84 semantics (lon,lat) for EPSG:4326 to match common client behavior,
+/// since most clients (including Leaflet, OpenLayers) send lon,lat regardless of WMS version.
+fn parse_bbox(bbox_str: &str, crs: Option<&str>, version: Option<&str>) -> Option<[f32; 4]> {
     let coords: Vec<f64> = bbox_str
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
@@ -1080,12 +1143,24 @@ fn parse_bbox(bbox_str: &str, crs: Option<&str>) -> Option<[f32; 4]> {
     if coords.len() == 4 {
         let crs_str = crs.unwrap_or("EPSG:4326");
         let (min_lon, min_lat, max_lon, max_lat) = if crs_str.contains("3857") {
+            // Web Mercator: convert from meters to WGS84
             let (min_lon, min_lat) = mercator_to_wgs84(coords[0], coords[1]);
             let (max_lon, max_lat) = mercator_to_wgs84(coords[2], coords[3]);
             (min_lon, min_lat, max_lon, max_lat)
+        } else if let Some(v) = version {
+            // Version explicitly specified
+            if v.starts_with("1.3") && crs_str.contains("4326") && !crs_str.contains("CRS:84") {
+                // WMS 1.3.0 with EPSG:4326 (not CRS:84): axis order is lat,lon
+                // BBOX = minY,minX,maxY,maxX = minLat,minLon,maxLat,maxLon
+                (coords[1], coords[0], coords[3], coords[2])
+            } else {
+                // WMS 1.1.x or CRS:84: axis order is X,Y (lon,lat)
+                (coords[0], coords[1], coords[2], coords[3])
+            }
         } else {
-            // WMS 1.3.0 with EPSG:4326 uses axis order lat,lon
-            (coords[1], coords[0], coords[3], coords[2])
+            // No version specified: assume common client behavior (lon,lat order)
+            // Most mapping libraries (Leaflet, OpenLayers) send lon,lat regardless
+            (coords[0], coords[1], coords[2], coords[3])
         };
 
         Some([
@@ -1124,8 +1199,11 @@ fn build_wms_capabilities_xml_v2(
         let mut layer_xml_parts: Vec<String> = Vec::new();
 
         // Track availability for composite layer validation (e.g., WIND_BARBS)
+        // Some models use UGRD/VGRD (GFS, HRRR), others use WSPD/WDIR (NDFD)
         let mut ugrd_availability: Option<&ParameterAvailability> = None;
         let mut vgrd_availability: Option<&ParameterAvailability> = None;
+        let mut wspd_availability: Option<&ParameterAvailability> = None;
+        let mut wdir_availability: Option<&ParameterAvailability> = None;
 
         for layer in &model_config.layers {
             // Skip composite layers for now - handle them after regular layers
@@ -1139,11 +1217,13 @@ fn build_wms_capabilities_xml_v2(
                 continue;
             };
 
-            // Track UGRD/VGRD for wind barbs
-            if layer.parameter == "UGRD" {
-                ugrd_availability = Some(availability);
-            } else if layer.parameter == "VGRD" {
-                vgrd_availability = Some(availability);
+            // Track wind component availability for wind barbs
+            match layer.parameter.as_str() {
+                "UGRD" => ugrd_availability = Some(availability),
+                "VGRD" => vgrd_availability = Some(availability),
+                "WSPD" => wspd_availability = Some(availability),
+                "WDIR" => wdir_availability = Some(availability),
+                _ => {}
             }
 
             // Build dimensions for this specific layer
@@ -1177,28 +1257,44 @@ fn build_wms_capabilities_xml_v2(
         }
 
         // Handle WIND_BARBS composite layer
-        if let (Some(ugrd), Some(vgrd)) = (ugrd_availability, vgrd_availability) {
-            // Find common levels between UGRD and VGRD
-            let common_levels: Vec<String> = ugrd
+        // Check for either UGRD/VGRD (traditional models) or WSPD/WDIR (NDFD-style models)
+        // Note: WDIR may not have its own layer in the config (it's only useful combined with WSPD),
+        // so we also check param_availability directly
+        let wdir_key = format!("{}_WDIR", model_id);
+        let wdir_from_db = param_availability.get(&wdir_key);
+        let effective_wdir = wdir_availability.or(wdir_from_db);
+
+        let wind_components: Option<(&ParameterAvailability, &ParameterAvailability)> =
+            if let (Some(ugrd), Some(vgrd)) = (ugrd_availability, vgrd_availability) {
+                Some((ugrd, vgrd))
+            } else if let (Some(wspd), Some(wdir)) = (wspd_availability, effective_wdir) {
+                Some((wspd, wdir))
+            } else {
+                None
+            };
+
+        if let Some((wind1, wind2)) = wind_components {
+            // Find common levels between the two wind components
+            let common_levels: Vec<String> = wind1
                 .levels
                 .iter()
-                .filter(|l| vgrd.levels.contains(l))
+                .filter(|l| wind2.levels.contains(l))
                 .cloned()
                 .collect();
 
-            // Find common times between UGRD and VGRD
-            let common_times: Vec<String> = ugrd
+            // Find common times between the two wind components
+            let common_times: Vec<String> = wind1
                 .times
                 .iter()
-                .filter(|t| vgrd.times.contains(t))
+                .filter(|t| wind2.times.contains(t))
                 .cloned()
                 .collect();
 
             // Find common forecast hours
-            let common_forecast_hours: Vec<i32> = ugrd
+            let common_forecast_hours: Vec<i32> = wind1
                 .forecast_hours
                 .iter()
-                .filter(|h| vgrd.forecast_hours.contains(h))
+                .filter(|h| wind2.forecast_hours.contains(h))
                 .copied()
                 .collect();
 
@@ -1208,13 +1304,13 @@ fn build_wms_capabilities_xml_v2(
                     times: common_times,
                     forecast_hours: common_forecast_hours,
                     levels: common_levels,
-                    bbox: ugrd.bbox.clone(), // Use UGRD bbox (they should be the same)
+                    bbox: wind1.bbox.clone(),
                 };
 
                 let dimensions_xml =
                     build_layer_dimensions_xml(&wind_availability, is_observational);
 
-                let (west, east, south, north) = normalize_bbox(&ugrd.bbox);
+                let (west, east, south, north) = normalize_bbox(&wind1.bbox);
 
                 let wind_layer_xml = format!(
                     r#"<Layer queryable="1"><Name>{}_WIND_BARBS</Name><Title>{} - Wind Barbs</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS><EX_GeographicBoundingBox><westBoundLongitude>{}</westBoundLongitude><eastBoundLongitude>{}</eastBoundLongitude><southBoundLatitude>{}</southBoundLatitude><northBoundLatitude>{}</northBoundLatitude></EX_GeographicBoundingBox><BoundingBox CRS="EPSG:4326" minx="{}" miny="{}" maxx="{}" maxy="{}"/><Style><Name>default</Name><Title>Default Barbs</Title></Style>{}</Layer>"#,
@@ -1393,12 +1489,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_bbox_wgs84() {
+    fn test_parse_bbox_wgs84_v130() {
         // WMS 1.3.0 EPSG:4326 format: min_lat, min_lon, max_lat, max_lon
-        let bbox = parse_bbox("30.0,-120.0,50.0,-80.0", Some("EPSG:4326"));
+        let bbox = parse_bbox("30.0,-120.0,50.0,-80.0", Some("EPSG:4326"), Some("1.3.0"));
         assert!(bbox.is_some());
         let b = bbox.unwrap();
         // Should be converted to [min_lon, min_lat, max_lon, max_lat]
+        assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
+        assert!((b[1] - 30.0).abs() < 0.01); // min_lat
+        assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
+        assert!((b[3] - 50.0).abs() < 0.01); // max_lat
+    }
+
+    #[test]
+    fn test_parse_bbox_wgs84_v111() {
+        // WMS 1.1.1 EPSG:4326 format: min_lon, min_lat, max_lon, max_lat
+        let bbox = parse_bbox("-120.0,30.0,-80.0,50.0", Some("EPSG:4326"), Some("1.1.1"));
+        assert!(bbox.is_some());
+        let b = bbox.unwrap();
+        // Should stay as [min_lon, min_lat, max_lon, max_lat]
+        assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
+        assert!((b[1] - 30.0).abs() < 0.01); // min_lat
+        assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
+        assert!((b[3] - 50.0).abs() < 0.01); // max_lat
+    }
+
+    #[test]
+    fn test_parse_bbox_wgs84_no_version() {
+        // No version specified: uses lon,lat order (1.1.x style, common client behavior)
+        let bbox = parse_bbox("-120.0,30.0,-80.0,50.0", Some("EPSG:4326"), None);
+        assert!(bbox.is_some());
+        let b = bbox.unwrap();
+        // Should stay as [min_lon, min_lat, max_lon, max_lat]
         assert!((b[0] - (-120.0)).abs() < 0.01); // min_lon
         assert!((b[1] - 30.0).abs() < 0.01); // min_lat
         assert!((b[2] - (-80.0)).abs() < 0.01); // max_lon
@@ -1411,6 +1533,7 @@ mod tests {
         let bbox = parse_bbox(
             "-13358338.9,3503549.8,-8766409.9,6446275.8",
             Some("EPSG:3857"),
+            None,
         );
         assert!(bbox.is_some());
         let b = bbox.unwrap();
@@ -1423,10 +1546,10 @@ mod tests {
 
     #[test]
     fn test_parse_bbox_invalid() {
-        let bbox = parse_bbox("invalid", None);
+        let bbox = parse_bbox("invalid", None, None);
         assert!(bbox.is_none());
 
-        let bbox = parse_bbox("1,2,3", None);
+        let bbox = parse_bbox("1,2,3", None, None);
         assert!(bbox.is_none());
     }
 

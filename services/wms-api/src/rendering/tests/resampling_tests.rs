@@ -221,3 +221,332 @@ fn test_resample_for_mercator_high_latitude() {
         "Should have valid values at high latitudes"
     );
 }
+
+// ============================================================================
+// NDFD Lambert Conformal resampling tests
+// ============================================================================
+
+#[test]
+fn test_ndfd_lambert_resampling_geographic_coordinates() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+
+    // Create a synthetic NDFD grid with known values at specific locations
+    // NDFD: 2145 x 1377, grid indices:
+    // - LA (34°N, 118.2°W): i=239, j=572
+    // - NY (40.7°N, 74°W): i=1810, j=856
+    // - Miami (25.8°N, 80.2°W): i=1670, j=171
+    // - Kansas City (38.5°N, 98°W): i=982, j=702 (approx)
+
+    let ndfd_width = 2145;
+    let ndfd_height = 1377;
+    let mut ndfd_data = vec![f32::NAN; ndfd_width * ndfd_height];
+
+    // Set specific values at known grid locations
+    // Value = latitude * 10 (easy to verify)
+    // Fill a larger region (50x50) around each point to ensure bilinear interpolation works
+    let set_value = |data: &mut Vec<f32>, i: usize, j: usize, val: f32| {
+        let radius = 50i32;
+        for di in -radius..=radius {
+            for dj in -radius..=radius {
+                let ni = (i as i32 + di) as usize;
+                let nj = (j as i32 + dj) as usize;
+                if ni < ndfd_width && nj < ndfd_height {
+                    let nidx = nj * ndfd_width + ni;
+                    if nidx < data.len() {
+                        data[nidx] = val;
+                    }
+                }
+            }
+        }
+    };
+
+    // LA at (239, 572) - value 340 (34.0°N * 10)
+    set_value(&mut ndfd_data, 239, 572, 340.0);
+
+    // NY at (1810, 856) - value 407 (40.7°N * 10)
+    set_value(&mut ndfd_data, 1810, 856, 407.0);
+
+    // Miami at (1670, 171) - value 258 (25.8°N * 10)
+    set_value(&mut ndfd_data, 1670, 171, 258.0);
+
+    // Kansas at (982, 702) - value 385 (38.5°N * 10)
+    set_value(&mut ndfd_data, 982, 702, 385.0);
+
+    // Test resampling a small area around Los Angeles
+    // LA is at ~34°N, 118.2°W
+    let la_bbox = [-119.0f32, 33.0, -117.0, 35.0]; // 2° x 2° box around LA
+    let output_width = 10;
+    let output_height = 10;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &ndfd_data,
+        ndfd_width,
+        ndfd_height,
+        output_width,
+        output_height,
+        la_bbox,
+        la_bbox, // data_bounds (not used for Lambert)
+        false,   // use_mercator
+        "ndfd",
+        None,  // goes_projection
+        false, // grid_uses_360
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    // The center of the output should have a value close to LA's value (340)
+    let center_idx = (output_height / 2) * output_width + (output_width / 2);
+    let center_value = result[center_idx];
+
+    println!("LA bbox resampling result:");
+    println!("  Center value: {}", center_value);
+
+    // Debug: print all non-NaN values
+    let valid_values: Vec<_> = result
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| !v.is_nan())
+        .collect();
+    println!("  Valid values in LA result: {:?}", valid_values);
+
+    // Debug: Check what grid indices LA maps to
+    let proj = projection::LambertConformal::ndfd();
+    let (la_i, la_j) = proj.geo_to_grid(34.0, -118.2);
+    println!(
+        "  LA (34°N, 118.2°W) maps to grid: i={:.1}, j={:.1}",
+        la_i, la_j
+    );
+
+    // Debug: test several points in the LA bbox
+    for (lat, lon) in [(33.5, -118.5), (34.0, -118.0), (34.5, -117.5)] {
+        let (i, j) = proj.geo_to_grid(lat, lon);
+        println!("  ({:.1}°N, {:.1}°W) -> i={:.1}, j={:.1}", lat, -lon, i, j);
+        let in_bounds =
+            i >= 0.0 && i < (ndfd_width - 1) as f64 && j >= 0.0 && j < (ndfd_height - 1) as f64;
+        println!(
+            "    In bounds: {} (w={}, h={})",
+            in_bounds, ndfd_width, ndfd_height
+        );
+    }
+
+    // Check if we set the value at the right place
+    let la_idx = 572 * ndfd_width + 239;
+    println!(
+        "  Value at LA grid position (239, 572): {}",
+        ndfd_data[la_idx]
+    );
+
+    // Check if we got a valid value (not NaN)
+    assert!(
+        !center_value.is_nan() || !valid_values.is_empty(),
+        "LA bbox should have at least some valid values, got all NaN. LA maps to ({:.1}, {:.1})",
+        la_i,
+        la_j
+    );
+
+    // The value should be close to 340 (LA's latitude * 10)
+    // Allow some tolerance for interpolation
+    assert!(
+        (center_value - 340.0).abs() < 50.0,
+        "LA region should have value near 340, got {}",
+        center_value
+    );
+
+    // Test resampling around New York
+    let ny_bbox = [-75.0f32, 40.0, -73.0, 42.0];
+    let ny_result = resample_grid_for_bbox_with_proj(
+        &ndfd_data,
+        ndfd_width,
+        ndfd_height,
+        output_width,
+        output_height,
+        ny_bbox,
+        ny_bbox,
+        false,
+        "ndfd",
+        None,
+        false,
+    );
+
+    let ny_center_idx = (output_height / 2) * output_width + (output_width / 2);
+    let ny_center_value = ny_result[ny_center_idx];
+
+    println!("NY bbox resampling result:");
+    println!("  Center value: {}", ny_center_value);
+
+    assert!(
+        !ny_center_value.is_nan(),
+        "Center of NY bbox should have valid value, got NaN"
+    );
+
+    // NY value should be near 407, not 340 (which would indicate mirroring)
+    assert!(
+        (ny_center_value - 407.0).abs() < 50.0,
+        "NY region should have value near 407 (not 340 if mirrored), got {}",
+        ny_center_value
+    );
+
+    // CRITICAL: If the image is horizontally mirrored, NY would show LA's value (340)
+    // and LA would show NY's value (407). Let's verify this isn't happening.
+    assert!(
+        (center_value - 407.0).abs() > 30.0,
+        "LA region should NOT have NY's value (407), got {} - possible horizontal mirror!",
+        center_value
+    );
+}
+
+/// Test NDFD Lambert resampling with Mercator output
+#[test]
+fn test_ndfd_lambert_mercator_resampling() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+
+    // Create a synthetic NDFD grid with gradient values
+    // Value = column index / 10, so west has small values, east has large values
+    let ndfd_width = 2145;
+    let ndfd_height = 1377;
+    let mut ndfd_data = vec![f32::NAN; ndfd_width * ndfd_height];
+
+    // Fill the grid with a simple pattern:
+    // Values increase from west (small i) to east (large i)
+    // This makes it easy to detect horizontal mirroring
+    for j in 0..ndfd_height {
+        for i in 0..ndfd_width {
+            let idx = j * ndfd_width + i;
+            // Value = i / 10, so ranges from 0 (west) to 214.4 (east)
+            ndfd_data[idx] = i as f32 / 10.0;
+        }
+    }
+
+    // Test resampling the full CONUS view with Mercator
+    // This is what the web map would request
+    let conus_bbox = [-130.0f32, 20.0, -60.0, 55.0]; // Approximate CONUS bounds
+    let output_width = 100;
+    let output_height = 50;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &ndfd_data,
+        ndfd_width,
+        ndfd_height,
+        output_width,
+        output_height,
+        conus_bbox,
+        conus_bbox,
+        true, // use_mercator
+        "ndfd",
+        None,
+        false,
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    // Sample values at different longitudes
+    // West side (col 10, ~-124°) should have small values (i~200, val~20)
+    // Center (col 50, ~-95°) should have medium values (i~1080, val~108)
+    // East side (col 90, ~-67°) should have large values (i~1900, val~190)
+
+    let row = output_height / 2; // Middle row (around lat 37°N)
+
+    let west_val = result[row * output_width + 10];
+    let center_val = result[row * output_width + 50];
+    let east_val = result[row * output_width + 90];
+
+    println!("Mercator resampling gradient test (row {}):", row);
+    println!("  West (col 10): {:.1}", west_val);
+    println!("  Center (col 50): {:.1}", center_val);
+    println!("  East (col 90): {:.1}", east_val);
+
+    // Check that values increase from west to east
+    if !west_val.is_nan() && !center_val.is_nan() {
+        assert!(
+            west_val < center_val,
+            "West should have smaller value than center: {:.1} < {:.1}",
+            west_val,
+            center_val
+        );
+    }
+    if !center_val.is_nan() && !east_val.is_nan() {
+        assert!(
+            center_val < east_val,
+            "Center should have smaller value than east: {:.1} < {:.1}",
+            center_val,
+            east_val
+        );
+    }
+
+    // Print a row of values to visualize the pattern
+    println!("\n  Row {} values (every 10 columns):", row);
+    for col in (0..output_width).step_by(10) {
+        let val = result[row * output_width + col];
+        print!("{:6.1}", val);
+    }
+    println!();
+
+    // MIRRORING CHECK: If mirrored, west and east would have swapped values
+    // West should be ~20-50, East should be ~150-200
+    if !west_val.is_nan() {
+        assert!(
+            west_val < 100.0,
+            "West should have low values (<100), got {:.1} - possible mirror!",
+            west_val
+        );
+    }
+    if !east_val.is_nan() {
+        assert!(
+            east_val > 100.0,
+            "East should have high values (>100), got {:.1} - possible mirror!",
+            east_val
+        );
+    }
+}
+
+/// Test NDFD Lambert resampling returns correct grid indices
+/// This test checks that the projection maps coordinates correctly
+/// and that the western side of the grid is not mirrored.
+#[test]
+fn test_ndfd_lambert_grid_indices() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use projection::LambertConformal;
+
+    let proj = LambertConformal::ndfd();
+
+    // Test specific coordinates across the CONUS
+    let test_points = [
+        // (lat, lon, expected_i_approx, expected_j_approx, name)
+        (34.0, -118.2, 239.0, 572.0, "Los Angeles"), // West
+        (40.7, -74.0, 1810.0, 856.0, "New York"),    // East
+        (38.5, -95.0, 1088.0, 700.0, "Kansas (center)"), // Center
+        (47.6, -122.3, 216.0, 1210.0, "Seattle"),    // NW
+        (25.8, -80.2, 1670.0, 171.0, "Miami"),       // SE
+    ];
+
+    println!("\nTesting geo_to_grid for key locations:");
+    for (lat, lon, expected_i, expected_j, name) in test_points {
+        let (i, j) = proj.geo_to_grid(lat, lon);
+        let i_err = (i - expected_i).abs();
+        let j_err = (j - expected_j).abs();
+
+        println!(
+            "  {}: ({:.1}, {:.1}) -> i={:.1}, j={:.1} (expected i≈{:.0}, j≈{:.0})",
+            name, lat, lon, i, j, expected_i, expected_j
+        );
+
+        // Allow some tolerance (within 50 grid points)
+        assert!(i_err < 50.0, "{} i error too large: {:.1}", name, i_err);
+        assert!(j_err < 50.0, "{} j error too large: {:.1}", name, j_err);
+    }
+
+    // Critical test: ensure western coordinates don't mirror to eastern indices
+    // LA should have smaller i than NY
+    let (la_i, _) = proj.geo_to_grid(34.0, -118.2);
+    let (ny_i, _) = proj.geo_to_grid(40.7, -74.0);
+
+    println!("\nMirroring check:");
+    println!("  LA (west, -118.2°): i={:.1}", la_i);
+    println!("  NY (east, -74.0°): i={:.1}", ny_i);
+    assert!(
+        la_i < ny_i,
+        "LA (west) should have smaller i than NY (east)"
+    );
+    assert!(la_i < 500.0, "LA i should be in western half of grid");
+    assert!(ny_i > 1500.0, "NY i should be in eastern half of grid");
+}

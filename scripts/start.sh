@@ -1335,15 +1335,15 @@ stop_k8s() {
 
 clean_k8s() {
   log_warn "This will delete the entire minikube cluster!"
-  read -p "Are you sure? (y/N) " -n 1 -r
+#  read -p "Are you sure? (y/N) " -n 1 -r TODO remove the rest of the minikube stuff we don't care about right now
   echo
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    log_info "Deleting minikube cluster..."
-    minikube delete -p "$MINIKUBE_PROFILE" || true
-    log_success "Cluster deleted!"
-  else
-    log_info "Cancelled."
-  fi
+#  if [[ $REPLY =~ ^[Yy]$ ]]; then
+  log_info "Deleting minikube cluster..."
+  minikube delete -p "$MINIKUBE_PROFILE" || true
+  log_success "Cluster deleted!"
+#  else
+#    log_info "Cancelled."
+#  fi
 }
 
 #------------------------------------------------------------------------------

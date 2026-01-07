@@ -147,6 +147,7 @@ header .spec-ref a:hover {
 .stat.failed .count { color: var(--error-color); }
 .stat.warning .count { color: var(--warning-color); }
 .stat.pending .count { color: var(--pending-color); }
+.stat.skipped .count { color: #f97316; }
 
 .summary-actions {
     display: flex;
@@ -502,4 +503,140 @@ header .spec-ref a:hover {
 
 .modal-spec-link a:hover {
     text-decoration: underline;
+}
+
+/* Collection Config */
+.collection-config {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.collection-config label {
+    font-weight: 500;
+}
+
+.collection-config select {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    min-width: 250px;
+    font-family: inherit;
+}
+
+#collection-count {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+/* Progress Bar */
+.progress-container {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: var(--bg-color);
+    border-radius: 6px;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--primary-color);
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+/* Stop Button */
+#stop-btn {
+    background: var(--error-color);
+    color: white;
+}
+
+/* Skipped Status */
+.test-status.skipped {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+/* Per-Collection Results */
+.collection-results-wrapper {
+    margin-left: 1.5rem;
+    margin-top: 0.5rem;
+    border-left: 3px solid var(--border-color);
+    padding-left: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.collection-result-item {
+    padding: 0.25rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.collection-result-id {
+    font-family: monospace;
+    font-weight: 500;
+    min-width: 180px;
+}
+
+.collection-result-status {
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.collection-result-status.passed {
+    background: #dcfce7;
+    color: var(--success-color);
+}
+
+.collection-result-status.failed {
+    background: #fee2e2;
+    color: var(--error-color);
+}
+
+.collection-result-status.skipped {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+.collection-result-status.warning {
+    background: #fef3c7;
+    color: var(--warning-color);
+}
+
+.collection-result-reason {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.collection-results-toggle {
+    cursor: pointer;
+    color: var(--primary-color);
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+}
+
+.collection-results-toggle:hover {
+    text-decoration: underline;
+}
+
+.collection-result-hidden {
+    display: none;
 }

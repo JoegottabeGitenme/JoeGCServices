@@ -179,7 +179,6 @@ parameters:
       - type: isobaric
         values: [1000, 850, 500, 250]
         display_template: "{value} mb"
-    style: temperature            # Rendering style
     units: K                      # Native units
     display_units: "C"           # Display units
     conversion: K_to_C            # Unit conversion
@@ -198,26 +197,6 @@ parameters:
 - `depth_below_surface` - Soil depth
 - `boundary_layer` - Planetary boundary layer
 - `tropopause` - Tropopause level
-
-**Styles:**
-- `default` - Generic colormap
-- `temperature` - Temperature colormap
-- `wind` - Wind speed colormap
-- `precipitation` - Precipitation colormap
-- `humidity` - Humidity colormap
-- `atmospheric` - Pressure/height colormap
-- `cape` - CAPE/convective colormap
-- `cloud` - Cloud cover colormap
-- `visibility` - Visibility colormap
-- `reflectivity` - Radar reflectivity colormap
-- `precip_rate` - Precipitation rate colormap
-- `goes_visible` - GOES visible imagery
-- `goes_ir` - GOES infrared imagery
-- `wind_barbs` - Wind barb symbols
-- `helicity` - Storm helicity colormap
-- `lightning` - Lightning colormap
-- `smoke` - Smoke/aerosol colormap
-- `radar` - Generic radar colormap
 
 **Unit Conversions:**
 - `K_to_C` - Kelvin to Celsius
@@ -367,7 +346,6 @@ parameters:
     levels:
       - type: surface
         display: "surface"
-    style: temperature
     units: K
 ```
 
@@ -412,6 +390,5 @@ parameters:
     levels:
       - type: surface
         display: "composite"
-    style: reflectivity
     units: dBZ
 ```

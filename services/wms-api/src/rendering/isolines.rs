@@ -32,6 +32,7 @@ pub async fn render_isolines_tile_with_level(
     style_path: &str,
     style_name: &str,
     forecast_hour: Option<u32>,
+    observation_time: Option<chrono::DateTime<chrono::Utc>>,
     level: Option<&str>,
     use_mercator: bool,
 ) -> Result<Vec<u8>, String> {
@@ -46,8 +47,32 @@ pub async fn render_isolines_tile_with_level(
     })?;
 
     // Get dataset for this parameter, optionally at a specific level
-    let entry = match (forecast_hour, level) {
-        (Some(hour), Some(lev)) => catalog
+    // For observation-style models (like NDFD), use observation_time; for forecast models, use forecast_hour
+    let entry = match (observation_time, forecast_hour, level) {
+        // Observation time with level (e.g., NDFD with level)
+        (Some(obs_time), _, Some(lev)) => catalog
+            .find_by_time_and_level(model, parameter, obs_time, lev)
+            .await
+            .map_err(|e| format!("Catalog query failed: {}", e))?
+            .ok_or_else(|| {
+                format!(
+                    "No data found for {}/{} at time {} level {}",
+                    model, parameter, obs_time, lev
+                )
+            })?,
+        // Observation time without level (e.g., NDFD surface parameters)
+        (Some(obs_time), _, None) => catalog
+            .find_by_time(model, parameter, obs_time)
+            .await
+            .map_err(|e| format!("Catalog query failed: {}", e))?
+            .ok_or_else(|| {
+                format!(
+                    "No data found for {}/{} at time {}",
+                    model, parameter, obs_time
+                )
+            })?,
+        // Forecast hour with level
+        (None, Some(hour), Some(lev)) => catalog
             .find_by_forecast_hour_and_level(model, parameter, hour, lev)
             .await
             .map_err(|e| format!("Catalog query failed: {}", e))?
@@ -57,17 +82,20 @@ pub async fn render_isolines_tile_with_level(
                     model, parameter, hour, lev
                 )
             })?,
-        (Some(hour), None) => catalog
+        // Forecast hour without level
+        (None, Some(hour), None) => catalog
             .find_by_forecast_hour(model, parameter, hour)
             .await
             .map_err(|e| format!("Catalog query failed: {}", e))?
             .ok_or_else(|| format!("No data found for {}/{} at hour {}", model, parameter, hour))?,
-        (None, Some(lev)) => catalog
+        // No time specified, with level - get latest
+        (None, None, Some(lev)) => catalog
             .get_latest_run_earliest_forecast_at_level(model, parameter, lev)
             .await
             .map_err(|e| format!("Catalog query failed: {}", e))?
             .ok_or_else(|| format!("No data found for {}/{} at level {}", model, parameter, lev))?,
-        (None, None) => catalog
+        // No time specified, no level - get latest
+        (None, None, None) => catalog
             .get_latest_run_earliest_forecast(model, parameter)
             .await
             .map_err(|e| format!("Catalog query failed: {}", e))?

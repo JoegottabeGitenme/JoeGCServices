@@ -143,6 +143,50 @@ pub fn uv_to_speed_direction(u: f32, v: f32) -> (f64, f64) {
     (speed, direction)
 }
 
+/// Convert meteorological wind direction (degrees true) to radians
+///
+/// Meteorological convention:
+/// - 0° = wind FROM North
+/// - 90° = wind FROM East
+/// - 180° = wind FROM South
+/// - 270° = wind FROM West
+///
+/// Returns direction in radians in math convention (0 = East, π/2 = North)
+/// which is what the barb rendering expects.
+pub fn met_degrees_to_radians(degrees: f32) -> f64 {
+    // Convert from meteorological (0=N, clockwise) to math convention (0=E, counter-clockwise)
+    // Met: 0°=N, 90°=E, 180°=S, 270°=W
+    // Math: 0=E, π/2=N, π=W, 3π/2=S
+    //
+    // Conversion: math_angle = 90° - met_angle (then convert to radians)
+    // Or equivalently: math_rad = (90 - degrees) * PI / 180
+    //
+    // But we need to handle the direction FROM which wind blows.
+    // The barb rendering expects the direction FROM (same as met convention).
+    // So we just convert degrees to radians, accounting for the coordinate system difference.
+    //
+    // In met convention, 0° is North (up), increasing clockwise.
+    // In our rendering, 0 rad is East, increasing counter-clockwise.
+    // So met 0° (N) = math π/2 rad
+    //    met 90° (E) = math 0 rad
+    //    met 180° (S) = math 3π/2 rad (or -π/2)
+    //    met 270° (W) = math π rad
+    //
+    // Formula: math_rad = (90 - met_deg) * PI / 180, normalized to [0, 2π)
+    let math_deg = 90.0 - degrees as f64;
+    let mut rad = math_deg * PI / 180.0;
+
+    // Normalize to [0, 2π)
+    while rad < 0.0 {
+        rad += 2.0 * PI;
+    }
+    while rad >= 2.0 * PI {
+        rad -= 2.0 * PI;
+    }
+
+    rad
+}
+
 /// Select appropriate wind barb SVG based on wind speed in m/s
 fn select_barb_svg(speed_ms: f64) -> &'static str {
     for (min, max, knots) in SPEED_RANGES_MS {
@@ -238,6 +282,73 @@ pub fn calculate_barb_positions_geographic(
     }
 
     positions
+}
+
+/// Calculate positions for wind barbs for Web Mercator tiles
+/// Uses geographic spacing but accounts for Mercator's non-linear latitude
+///
+/// # Arguments
+/// * `width` - Tile width in pixels
+/// * `height` - Tile height in pixels
+/// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat] in WGS84
+/// * `spacing_degrees` - Spacing between barbs in degrees
+///
+/// # Returns
+/// Vector of (pixel_x, pixel_y) positions within the tile
+pub fn calculate_barb_positions_mercator(
+    width: usize,
+    height: usize,
+    bbox: [f32; 4],
+    spacing_degrees: f32,
+) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+
+    let [min_lon, min_lat, max_lon, max_lat] = bbox;
+    let lon_range = max_lon - min_lon;
+
+    // Convert lat bounds to Mercator Y coordinates
+    let min_merc_y = lat_to_mercator_y(min_lat as f64);
+    let max_merc_y = lat_to_mercator_y(max_lat as f64);
+    let merc_y_range = max_merc_y - min_merc_y;
+
+    // Calculate the first barb position that aligns to the global grid
+    // Round down to nearest multiple of spacing_degrees
+    let first_lon = (min_lon / spacing_degrees).floor() * spacing_degrees;
+    let first_lat = (min_lat / spacing_degrees).floor() * spacing_degrees;
+
+    // Iterate through global grid positions that fall within this tile
+    let mut lat = first_lat;
+    while lat < max_lat + spacing_degrees {
+        let mut lon = first_lon;
+        while lon < max_lon + spacing_degrees {
+            // Check if this position is within the tile bbox
+            if lon >= min_lon && lon < max_lon && lat >= min_lat && lat < max_lat {
+                // Convert longitude to pixel X (linear)
+                let x = ((lon - min_lon) / lon_range * width as f32) as usize;
+
+                // Convert latitude to pixel Y using Mercator projection
+                // In Mercator, pixel Y corresponds to Mercator Y, not latitude
+                let lat_merc_y = lat_to_mercator_y(lat as f64);
+                // max_merc_y is at top (y=0), min_merc_y is at bottom (y=height)
+                let y = ((max_merc_y - lat_merc_y) / merc_y_range * height as f64) as usize;
+
+                // Ensure within bounds
+                if x < width && y < height {
+                    positions.push((x, y));
+                }
+            }
+            lon += spacing_degrees;
+        }
+        lat += spacing_degrees;
+    }
+
+    positions
+}
+
+/// Convert latitude to Web Mercator Y coordinate
+fn lat_to_mercator_y(lat: f64) -> f64 {
+    let lat_rad = lat.to_radians();
+    lat_rad.tan().asinh()
 }
 
 /// Render wind barbs onto an RGBA image buffer
@@ -356,6 +467,218 @@ pub fn render_wind_barbs_aligned(
 
         // Convert U/V to speed and direction
         let (speed_ms, direction_rad) = uv_to_speed_direction(u, v);
+
+        // Get appropriate SVG for this wind speed
+        if let Some(svg_content) = get_barb_svg_content(speed_ms) {
+            // Render the SVG barb at this position with rotation
+            render_barb_at_position(
+                &mut canvas,
+                width,
+                height,
+                x,
+                y,
+                svg_content,
+                direction_rad,
+                config,
+            );
+        }
+    }
+
+    canvas
+}
+
+/// Render wind barbs from speed and direction data (e.g., NDFD WSPD/WDIR)
+///
+/// # Arguments
+/// * `speed_data` - Wind speed grid (m/s)
+/// * `direction_data` - Wind direction grid (degrees true, meteorological convention)
+/// * `width` - Output image width
+/// * `height` - Output image height
+/// * `config` - Barb rendering configuration
+///
+/// # Returns
+/// RGBA pixel buffer (4 bytes per pixel)
+pub fn render_wind_barbs_from_speed_direction(
+    speed_data: &[f32],
+    direction_data: &[f32],
+    width: usize,
+    height: usize,
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Create transparent RGBA canvas
+    let mut canvas = vec![0u8; width * height * 4];
+
+    // Calculate barb positions
+    let positions = calculate_barb_positions(width, height, config.spacing);
+
+    // Render barb at each position
+    for (x, y) in positions {
+        // Get index in the data grid
+        let idx = y * width + x;
+        if idx >= speed_data.len() || idx >= direction_data.len() {
+            continue;
+        }
+
+        let speed = speed_data[idx];
+        let direction_deg = direction_data[idx];
+
+        // Skip invalid data
+        if speed.is_nan() || direction_deg.is_nan() {
+            continue;
+        }
+
+        // Convert speed to f64 for barb selection
+        let speed_ms = speed as f64;
+
+        // Convert direction from meteorological degrees to radians
+        let direction_rad = met_degrees_to_radians(direction_deg);
+
+        // Get appropriate SVG for this wind speed
+        if let Some(svg_content) = get_barb_svg_content(speed_ms) {
+            // Render the SVG barb at this position with rotation
+            render_barb_at_position(
+                &mut canvas,
+                width,
+                height,
+                x,
+                y,
+                svg_content,
+                direction_rad,
+                config,
+            );
+        }
+    }
+
+    canvas
+}
+
+/// Render wind barbs from speed and direction data with geographic alignment
+///
+/// # Arguments
+/// * `speed_data` - Wind speed grid (m/s), resampled to tile dimensions
+/// * `direction_data` - Wind direction grid (degrees true), resampled to tile dimensions
+/// * `width` - Output image width
+/// * `height` - Output image height
+/// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat]
+/// * `config` - Barb rendering configuration
+///
+/// # Returns
+/// RGBA pixel buffer (4 bytes per pixel)
+pub fn render_wind_barbs_from_speed_direction_aligned(
+    speed_data: &[f32],
+    direction_data: &[f32],
+    width: usize,
+    height: usize,
+    bbox: [f32; 4],
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Create transparent RGBA canvas
+    let mut canvas = vec![0u8; width * height * 4];
+
+    // For geographic alignment, we want consistent spacing in degrees
+    let lon_range = bbox[2] - bbox[0];
+    let degrees_per_pixel = lon_range / width as f32;
+    let spacing_degrees = degrees_per_pixel * config.spacing as f32;
+
+    // Calculate barb positions using global geographic grid
+    let positions = calculate_barb_positions_geographic(width, height, bbox, spacing_degrees);
+
+    // Render barb at each position
+    for (x, y) in positions {
+        // Get index in the data grid
+        let idx = y * width + x;
+        if idx >= speed_data.len() || idx >= direction_data.len() {
+            continue;
+        }
+
+        let speed = speed_data[idx];
+        let direction_deg = direction_data[idx];
+
+        // Skip invalid data
+        if speed.is_nan() || direction_deg.is_nan() {
+            continue;
+        }
+
+        // Convert speed to f64 for barb selection
+        let speed_ms = speed as f64;
+
+        // Convert direction from meteorological degrees to radians
+        let direction_rad = met_degrees_to_radians(direction_deg);
+
+        // Get appropriate SVG for this wind speed
+        if let Some(svg_content) = get_barb_svg_content(speed_ms) {
+            // Render the SVG barb at this position with rotation
+            render_barb_at_position(
+                &mut canvas,
+                width,
+                height,
+                x,
+                y,
+                svg_content,
+                direction_rad,
+                config,
+            );
+        }
+    }
+
+    canvas
+}
+
+/// Render wind barbs from speed and direction data for Web Mercator tiles
+///
+/// This is similar to `render_wind_barbs_from_speed_direction_aligned` but accounts
+/// for Web Mercator projection's non-linear latitude spacing.
+///
+/// # Arguments
+/// * `speed_data` - Wind speed grid (m/s), resampled to Mercator
+/// * `direction_data` - Wind direction grid (meteorological degrees), resampled to Mercator
+/// * `width` - Output image width
+/// * `height` - Output image height
+/// * `bbox` - Bounding box [min_lon, min_lat, max_lon, max_lat] in WGS84
+/// * `config` - Barb rendering configuration
+///
+/// # Returns
+/// RGBA pixel buffer (4 bytes per pixel)
+pub fn render_wind_barbs_from_speed_direction_mercator(
+    speed_data: &[f32],
+    direction_data: &[f32],
+    width: usize,
+    height: usize,
+    bbox: [f32; 4],
+    config: &BarbConfig,
+) -> Vec<u8> {
+    // Create transparent RGBA canvas
+    let mut canvas = vec![0u8; width * height * 4];
+
+    // For Mercator alignment, we want consistent spacing in degrees
+    let lon_range = bbox[2] - bbox[0];
+    let degrees_per_pixel = lon_range / width as f32;
+    let spacing_degrees = degrees_per_pixel * config.spacing as f32;
+
+    // Calculate barb positions using Mercator-aware positioning
+    let positions = calculate_barb_positions_mercator(width, height, bbox, spacing_degrees);
+
+    // Render barb at each position
+    for (x, y) in positions {
+        // Get index in the data grid
+        let idx = y * width + x;
+        if idx >= speed_data.len() || idx >= direction_data.len() {
+            continue;
+        }
+
+        let speed = speed_data[idx];
+        let direction_deg = direction_data[idx];
+
+        // Skip invalid data
+        if speed.is_nan() || direction_deg.is_nan() {
+            continue;
+        }
+
+        // Convert speed to f64 for barb selection
+        let speed_ms = speed as f64;
+
+        // Convert direction from meteorological degrees to radians
+        let direction_rad = met_degrees_to_radians(direction_deg);
 
         // Get appropriate SVG for this wind speed
         if let Some(svg_content) = get_barb_svg_content(speed_ms) {
@@ -594,6 +917,48 @@ mod tests {
         let config = BarbConfig::default();
 
         let canvas = render_wind_barbs(&u_data, &v_data, 100, 100, &config);
+        assert_eq!(canvas.len(), 100 * 100 * 4, "Canvas should be correct size");
+    }
+
+    #[test]
+    fn test_met_degrees_to_radians() {
+        // North wind (0°) should convert to π/2 (pointing up in math convention)
+        let north = met_degrees_to_radians(0.0);
+        assert!(
+            (north - PI / 2.0).abs() < 0.01,
+            "0° should be π/2, got {}",
+            north
+        );
+
+        // East wind (90°) should convert to 0 (pointing right in math convention)
+        let east = met_degrees_to_radians(90.0);
+        assert!(
+            east.abs() < 0.01 || (east - 2.0 * PI).abs() < 0.01,
+            "90° should be 0, got {}",
+            east
+        );
+
+        // South wind (180°) should convert to 3π/2 (pointing down in math convention)
+        let south = met_degrees_to_radians(180.0);
+        assert!(
+            (south - 3.0 * PI / 2.0).abs() < 0.01,
+            "180° should be 3π/2, got {}",
+            south
+        );
+
+        // West wind (270°) should convert to π (pointing left in math convention)
+        let west = met_degrees_to_radians(270.0);
+        assert!((west - PI).abs() < 0.01, "270° should be π, got {}", west);
+    }
+
+    #[test]
+    fn test_render_wind_barbs_from_speed_direction_dimension_check() {
+        let speed_data = vec![5.0; 100 * 100];
+        let direction_data = vec![180.0; 100 * 100]; // South wind
+        let config = BarbConfig::default();
+
+        let canvas =
+            render_wind_barbs_from_speed_direction(&speed_data, &direction_data, 100, 100, &config);
         assert_eq!(canvas.len(), 100 * 100 * 4, "Canvas should be correct size");
     }
 }

@@ -74,7 +74,6 @@ parameters:
         level_code: 102
         value: 0
         display: "0 m above MSL"
-    style: reflectivity
     units: "dBZ"
     display_units: "dBZ"
     valid_range: [-30, 80]
@@ -94,7 +93,6 @@ parameters:
         level_code: 102
         value: 0
         display: "0 m above MSL"
-    style: precip_rate
     units: "mm/hr"
     display_units: "mm/hr"
     valid_range: [0, 100]
@@ -114,7 +112,6 @@ parameters:
         level_code: 102
         value: 0
         display: "0 m above MSL"
-    style: precipitation
     units: "mm"
     display_units: "mm"
     valid_range: [-10, 200]
@@ -134,7 +131,6 @@ parameters:
         level_code: 102
         value: 0
         display: "0 m above MSL"
-    style: precipitation
     units: "mm"
     display_units: "mm"
     valid_range: [-10, 500]

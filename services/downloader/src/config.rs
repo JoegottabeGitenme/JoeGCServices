@@ -50,7 +50,12 @@ fn default_enabled() -> bool {
 pub struct SourceConfig {
     #[serde(rename = "type")]
     pub source_type: String,
+    /// S3 bucket name (for aws_s3 types)
+    #[serde(default)]
     pub bucket: String,
+    /// Base URL for HTTP sources (e.g., `https://tgftp.nws.noaa.gov`)
+    #[serde(default)]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub prefix_template: String,
     #[serde(default)]
@@ -67,6 +72,9 @@ pub struct SourceConfig {
     /// GOES-specific: band numbers to download
     #[serde(default)]
     pub bands: Option<Vec<u32>>,
+    /// Data format hint (e.g., "ndfd_grib2" for NDFD files with WMO headers)
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 fn default_region() -> String {
@@ -189,11 +197,12 @@ pub struct ParameterConfig {
     #[serde(default)]
     pub levels: Vec<serde_yaml::Value>,
     #[serde(default)]
-    pub style: Option<String>,
-    #[serde(default)]
     pub units: Option<String>,
     #[serde(default)]
     pub product: Option<String>,
+    /// File identifier for HTTP sources (e.g., "temp" for ds.temp.bin in NDFD)
+    #[serde(default)]
+    pub file: Option<String>,
 }
 
 /// Composite layer configuration.
@@ -207,8 +216,6 @@ pub struct CompositeConfig {
     pub requires: Vec<String>,
     #[serde(default)]
     pub renderer: Option<String>,
-    #[serde(default)]
-    pub style: Option<String>,
 }
 
 impl ModelConfig {

@@ -9,7 +9,8 @@ use tracing::{debug, info, warn};
 use zarrs_filesystem::FilesystemStore;
 
 use grid_processor::{
-    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, PyramidConfig, ZarrWriter,
+    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, PyramidConfig, RowOrigin,
+    ZarrWriter,
 };
 use projection::LambertConformal;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
@@ -170,18 +171,66 @@ pub async fn ingest_grib2(
             continue;
         }
 
-        // Calculate bounding box
-        let gp_bbox = if model == "hrrr" {
+        // Handle scanning mode differences between GRIB sources and our storage convention.
+        //
+        // The `grib` crate automatically normalizes scanning modes when decoding values.
+        // NDFD uses scan mode 80 (0x50) in the raw file, but the decoded data is already
+        // in standard WE:SN order (j=0 at south, j increases going north).
+        //
+        // Our Lambert projection convention matches this:
+        // - i=0 is westernmost column, i increases going east
+        // - j=0 is southernmost row, j increases going north
+        // - Data index = j * width + i
+        //
+        // NO transformation is needed for NDFD data.
+
+        // Log diagnostic values to verify correct indexing
+        if model == "ndfd" {
+            // LA at (-118.2°, 34°N): grid i=239, j=572
+            // NY at (-74°, 41°N): grid i=1810, j=856
+            let la_idx = 572 * width + 239;
+            let ny_idx = 856 * width + 1810;
+            let la_val = grid_data.get(la_idx).copied().unwrap_or(f32::NAN);
+            let ny_val = grid_data.get(ny_idx).copied().unwrap_or(f32::NAN);
+            info!(
+                param = %param,
+                la_idx = la_idx,
+                la_val = la_val,
+                ny_idx = ny_idx,
+                ny_val = ny_val,
+                width = width,
+                height = height,
+                "NDFD diagnostic: values at known coordinates (LA should be ~68, NY should be ~85 for SKY)"
+            );
+        }
+
+        // Calculate bounding box and row origin
+        // HRRR and NDFD use Lambert Conformal projection where row 0 is at the south (min_lat)
+        // Standard geographic grids (GFS, MRMS) have row 0 at the north (max_lat)
+        let (gp_bbox, row_origin) = if model == "hrrr" {
             let proj = LambertConformal::hrrr();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
-            GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat)
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+            )
+        } else if model == "ndfd" {
+            let proj = LambertConformal::ndfd();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+            )
         } else {
             let grib_bbox = get_bbox_from_grid(&message.grid_definition);
-            GpBoundingBox::new(
-                grib_bbox.min_x,
-                grib_bbox.min_y,
-                grib_bbox.max_x,
-                grib_bbox.max_y,
+            (
+                GpBoundingBox::new(
+                    grib_bbox.min_x,
+                    grib_bbox.min_y,
+                    grib_bbox.max_x,
+                    grib_bbox.max_y,
+                ),
+                RowOrigin::North,
             )
         };
 
@@ -202,6 +251,7 @@ pub async fn ingest_grib2(
             reference_time,
             forecast_hour,
             &zarr_storage_path,
+            row_origin,
         )
         .await
         {
@@ -302,6 +352,7 @@ async fn write_and_upload_zarr(
     reference_time: DateTime<Utc>,
     forecast_hour: u32,
     storage_path: &str,
+    row_origin: RowOrigin,
 ) -> Result<(u64, serde_json::Value)> {
     // Create temporary directory for Zarr output
     let temp_dir = tempfile::tempdir()?;
@@ -338,6 +389,7 @@ async fn write_and_upload_zarr(
             forecast_hour,
             &pyramid_config,
             downsample_method,
+            row_origin,
         )
         .map_err(|e| IngestionError::ZarrWrite(format!("Failed to write Zarr: {}", e)))?;
 

@@ -157,7 +157,7 @@ pub use query::{DatasetQuery, PointValue, TimeSpecification};
 pub use service::GridDataService;
 pub use types::{
     AxisInfo, BoundingBox, CacheStats, GridMetadata, GridRegion, InterpolationMethod,
-    MultiscaleMetadata, PyramidLevel,
+    MultiscaleMetadata, PyramidLevel, RowOrigin,
 };
 pub use writer::{MultiscaleWriteResult, ZarrMetadata, ZarrWriteResult, ZarrWriter};
 

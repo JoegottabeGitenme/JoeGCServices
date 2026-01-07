@@ -412,9 +412,9 @@ pub fn sample_grid_value(
     lat: f64,
     model: &str,
 ) -> Result<f32, String> {
-    // Handle HRRR's Lambert Conformal projection
-    if model == "hrrr" {
-        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    // Handle Lambert Conformal projections (HRRR, NDFD)
+    if model == "hrrr" || model == "ndfd" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
     // Handle MRMS regional lat/lon grid
@@ -441,16 +441,21 @@ pub fn sample_grid_value(
     bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, true)
 }
 
-/// Sample a Lambert Conformal grid (HRRR) at a geographic point
+/// Sample a Lambert Conformal grid (HRRR, NDFD) at a geographic point
 pub fn sample_lambert_grid_value(
     grid_data: &[f32],
     grid_width: usize,
     grid_height: usize,
     lon: f64,
     lat: f64,
+    model: &str,
 ) -> Result<f32, String> {
-    // Create HRRR projection
-    let proj = LambertConformal::hrrr();
+    // Select appropriate Lambert projection based on model
+    let proj = if model == "ndfd" {
+        LambertConformal::ndfd()
+    } else {
+        LambertConformal::hrrr()
+    };
 
     // Convert geographic coordinates (lat, lon) to Lambert grid coordinates (i, j)
     let (grid_x, grid_y) = proj.geo_to_grid(lat, lon);
@@ -458,8 +463,12 @@ pub fn sample_lambert_grid_value(
     // Bounds check
     if grid_x < 0.0 || grid_y < 0.0 || grid_x >= grid_width as f64 || grid_y >= grid_height as f64 {
         return Err(format!(
-            "Point ({}, {}) outside HRRR grid bounds (grid coords: {}, {})",
-            lon, lat, grid_x, grid_y
+            "Point ({}, {}) outside {} grid bounds (grid coords: {}, {})",
+            lon,
+            lat,
+            model.to_uppercase(),
+            grid_x,
+            grid_y
         ));
     }
 
@@ -524,9 +533,9 @@ pub fn sample_grid_value_with_projection(
     goes_projection: Option<&GoesProjectionParams>,
     grid_bbox: Option<[f32; 4]>,
 ) -> Result<f32, String> {
-    // Handle HRRR's Lambert Conformal projection
-    if model == "hrrr" {
-        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat);
+    // Handle Lambert Conformal projections (HRRR, NDFD)
+    if model == "hrrr" || model == "ndfd" {
+        return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
     // Handle MRMS regional lat/lon grid
@@ -681,91 +690,5 @@ fn get_parameter_display_name(parameter: &str) -> String {
         "HCDC" => "High Cloud Cover".to_string(),
         "REFC" => "Composite Reflectivity".to_string(),
         _ => parameter.to_string(),
-    }
-}
-
-/// Convert parameter value to display format with appropriate units.
-///
-/// # Deprecated
-/// This function uses hardcoded conversions based on parameter name patterns.
-/// Prefer `convert_value_with_config()` which uses UnitConfig from Zarr metadata
-/// and layer config for accurate conversions.
-///
-/// # Arguments
-/// * `parameter` - Parameter name (e.g., "TMP", "PRES")
-/// * `value` - Raw value from data
-///
-/// # Returns
-/// Tuple of (converted_value, display_unit, native_unit, parameter_name)
-pub fn convert_parameter_value(parameter: &str, value: f32) -> (f64, String, String, String) {
-    if parameter.contains("TMP") || parameter.contains("TEMP") {
-        // Temperature: Kelvin to Celsius
-        let celsius = value - 273.15;
-        (
-            celsius as f64,
-            "°C".to_string(),
-            "K".to_string(),
-            "Temperature".to_string(),
-        )
-    } else if parameter.contains("PRES") || parameter.contains("PRMSL") {
-        // Pressure: Pa to hPa
-        let hpa = value / 100.0;
-        (
-            hpa as f64,
-            "hPa".to_string(),
-            "Pa".to_string(),
-            "Pressure".to_string(),
-        )
-    } else if parameter.contains("WIND")
-        || parameter.contains("GUST")
-        || parameter.contains("SPEED")
-    {
-        // Wind speed: m/s (no conversion)
-        (
-            value as f64,
-            "m/s".to_string(),
-            "m/s".to_string(),
-            "Wind Speed".to_string(),
-        )
-    } else if parameter.contains("RH") || parameter.contains("HUMID") {
-        // Relative humidity: % (no conversion)
-        (
-            value as f64,
-            "%".to_string(),
-            "%".to_string(),
-            "Relative Humidity".to_string(),
-        )
-    } else if parameter.contains("UGRD") {
-        (
-            value as f64,
-            "m/s".to_string(),
-            "m/s".to_string(),
-            "U Wind Component".to_string(),
-        )
-    } else if parameter.contains("VGRD") {
-        (
-            value as f64,
-            "m/s".to_string(),
-            "m/s".to_string(),
-            "V Wind Component".to_string(),
-        )
-    } else if parameter.contains("HGT") {
-        // Geopotential height: raw units to decameters (dkm)
-        // Data appears to be ~60x larger than expected, so divide by 60 (~0.0167)
-        let dkm = value * 0.0167;
-        (
-            dkm as f64,
-            "dkm".to_string(),
-            "gpm".to_string(),
-            "Geopotential Height".to_string(),
-        )
-    } else {
-        // Generic parameter
-        (
-            value as f64,
-            "".to_string(),
-            "".to_string(),
-            parameter.to_string(),
-        )
     }
 }

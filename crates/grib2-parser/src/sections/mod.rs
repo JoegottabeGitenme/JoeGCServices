@@ -298,6 +298,58 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             longitude_increment_millidegrees: dj / 1000,
             scanning_mode,
         })
+    } else if grid_template == 30 {
+        // Template 30: Lambert Conformal
+        // GRIB2 Code Table 3.1 - Template 3.30
+        //
+        // Byte 0: Shape of the Earth
+        // Bytes 16-19: Nx - number of points along X-axis
+        // Bytes 20-23: Ny - number of points along Y-axis
+        // Bytes 24-27: La1 - latitude of first grid point
+        // Bytes 28-31: Lo1 - longitude of first grid point
+        // Byte 32: Resolution and component flags
+        // Bytes 33-36: LaD - latitude where Dx and Dy are specified
+        // Bytes 37-40: LoV - longitude of meridian parallel to Y-axis
+        // Bytes 41-44: Dx - X-direction grid length
+        // Bytes 45-48: Dy - Y-direction grid length
+        // Byte 49: Projection centre flag
+        // Bytes 50-53: Latin1 - first standard parallel
+        // Bytes 54-57: Latin2 - second standard parallel
+        // Bytes 58-61: Latitude of southern pole
+        // Bytes 62-65: Longitude of southern pole (actually bytes 58-61 is lat, 62-65 is lon)
+        // Byte 64: Scanning mode (note: this is at a different position than template 0!)
+        //
+        // According to GRIB2 spec, for template 30, scanning mode is at octet 65 (byte 64, 0-indexed)
+
+        if gd.len() < 65 {
+            return Err(Grib2Error::InvalidSection {
+                section: 3,
+                reason: format!("Template 30 needs at least 65 bytes, got {}", gd.len()),
+            });
+        }
+
+        let grid_shape = gd[0];
+        let ni = u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]]);
+        let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
+        let la1 = decode_grib2_signed(&gd[24..28]);
+        let lo1 = decode_grib2_signed(&gd[28..32]);
+        // Scanning mode for Lambert is at octet 65 of section 3 (1-based) = byte 64 (0-based)
+        // Since gd starts at byte 14 of the section, scanning mode is at gd[50]
+        // Octet 65 = byte 64 from section start, byte 64 - 14 = byte 50 in gd
+        let scanning_mode = gd[50];
+
+        Ok(GridDefinition {
+            grid_shape,
+            num_points_longitude: ni,
+            num_points_latitude: nj,
+            first_latitude_millidegrees: la1 / 1000,
+            first_longitude_millidegrees: lo1 / 1000,
+            last_latitude_millidegrees: 0, // Not defined for Lambert
+            last_longitude_millidegrees: 0,
+            latitude_increment_millidegrees: 0, // Dx/Dy are in meters, not degrees
+            longitude_increment_millidegrees: 0,
+            scanning_mode,
+        })
     } else {
         // Fallback for other templates - just get dimensions
         // Try to extract Ni/Nj from common positions
@@ -312,6 +364,15 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             0
         };
 
+        // Try to get scanning mode from byte 64 (Lambert) or byte 57 (lat/lon)
+        let scanning_mode = if gd.len() >= 65 {
+            gd[64]
+        } else if gd.len() >= 58 {
+            gd[57]
+        } else {
+            0
+        };
+
         Ok(GridDefinition {
             grid_shape: gd.first().copied().unwrap_or(0),
             num_points_latitude: nj,
@@ -322,7 +383,7 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             last_longitude_millidegrees: 0,
             latitude_increment_millidegrees: 0,
             longitude_increment_millidegrees: 0,
-            scanning_mode: 0,
+            scanning_mode,
         })
     }
 }

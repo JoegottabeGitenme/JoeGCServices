@@ -16,10 +16,10 @@ model:
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
 dimensions:
-  type: forecast           # "forecast" = RUN+FORECAST dimensions, "observation" = TIME dimension
-  run: true                # RUN dimension - model initialization time (ISO8601)
-  forecast: true           # FORECAST dimension - hours ahead from run time
-  elevation: true          # ELEVATION dimension - vertical levels (from parameter definitions)
+  type: forecast # "forecast" = RUN+FORECAST dimensions, "observation" = TIME dimension
+  run: true # RUN dimension - model initialization time (ISO8601)
+  forecast: true # FORECAST dimension - hours ahead from run time
+  elevation: true # ELEVATION dimension - vertical levels (from parameter definitions)
 
 source:
   type: aws_s3
@@ -40,26 +40,26 @@ grid:
   lon_convention: 0_to_360
 
 schedule:
-  cycles: [ 0, 6, 12, 18 ]              # UTC hours (00z, 06z, 12z, 18z)
+  cycles: [0, 6, 12, 18] # UTC hours (00z, 06z, 12z, 18z)
   forecast_hours:
     start: 0
-    end: 24                          # ~24 hours of forecast
-    step: 1                           # Every 1 hour
-  poll_interval_secs: 3600            # Check for new data every hour
-  delay_hours: 4                      # Data typically available 4 hours after cycle time
+    end: 24 # ~24 hours of forecast
+    step: 1 # Every 1 hour
+  poll_interval_secs: 3600 # Check for new data every hour
+  delay_hours: 4 # Data typically available 4 hours after cycle time
 
 retention:
-  hours: 12                          # Keep data for 6 hours
-  keep_latest_runs: 2               # Always keep at least 1 complete run (safeguard)
+  hours: 12 # Keep data for 12 hours
+  keep_latest_runs: 2 # Always keep at least 1 complete run (safeguard)
 
 # Precaching configuration - disabled for now
 precaching:
   enabled: false
-  keep_recent_cycles: 1               # Only most recent model cycle
-  forecast_hours: [ 0, 3, 6, 9, 12 ]    # Key forecast hours
+  keep_recent_cycles: 1 # Only most recent model cycle
+  forecast_hours: [0, 3, 6, 9, 12] # Key forecast hours
   warm_on_ingest: false
   poll_interval_secs: 300
-  parameters: [ "TMP", "UGRD", "VGRD" ] # Most requested parameters
+  parameters: ["TMP", "UGRD", "VGRD"] # Most requested parameters
 
 # GRIB2 level type codes reference (Table 4.5):
 #   1 = surface
@@ -75,7 +75,7 @@ parameters:
   # ==========================================================================
   # Temperature Parameters
   # ==========================================================================
-  
+
   # Surface Temperature (2m)
   - name: TMP
     description: "Temperature"
@@ -89,11 +89,10 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
-    valid_range: [150, 350]  # ~-123°C to 77°C (covers all Earth temps including stratosphere)
+    valid_range: [150, 350] # ~-123°C to 77°C (covers all Earth temps including stratosphere)
 
   # Temperature at pressure levels
   - name: TMP
@@ -106,13 +105,31 @@ parameters:
     levels:
       - type: isobaric
         level_code: 100
-        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10 ]
+        values:
+          [
+            1000,
+            975,
+            950,
+            925,
+            900,
+            850,
+            700,
+            500,
+            300,
+            250,
+            200,
+            100,
+            70,
+            50,
+            30,
+            20,
+            10,
+          ]
         display_template: "{value} mb"
-    style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
-    valid_range: [150, 350]  # ~-123°C to 77°C
+    valid_range: [150, 350] # ~-123°C to 77°C
 
   # Dew Point Temperature (2m)
   - name: DPT
@@ -127,11 +144,10 @@ parameters:
         level_code: 103
         value: 2
         display: "2 m above ground"
-    style: temperature
     units: K
     display_units: °C
     conversion: K_to_C
-    valid_range: [150, 330]  # ~-123°C to 57°C (dew point typically lower than temp)
+    valid_range: [150, 330] # ~-123°C to 57°C (dew point typically lower than temp)
 
   # ==========================================================================
   # Wind Parameters
@@ -152,11 +168,10 @@ parameters:
         display: "10 m above ground"
       - type: isobaric
         level_code: 100
-        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 ]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
-    style: wind
     units: m/s
-    valid_range: [-200, 200]  # Wind components can be negative (directional)
+    valid_range: [-200, 200] # Wind components can be negative (directional)
 
   # V-component wind at 10m and pressure levels
   - name: VGRD
@@ -173,11 +188,10 @@ parameters:
         display: "10 m above ground"
       - type: isobaric
         level_code: 100
-        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 ]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
         display_template: "{value} mb"
-    style: wind
     units: m/s
-    valid_range: [-200, 200]  # Wind components can be negative (directional)
+    valid_range: [-200, 200] # Wind components can be negative (directional)
 
   # Surface wind gust
   - name: GUST
@@ -191,9 +205,8 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: wind
     units: m/s
-    valid_range: [0, 150]  # Gusts are always positive (magnitude)
+    valid_range: [0, 150] # Gusts are always positive (magnitude)
 
   # ==========================================================================
   # Pressure Parameters
@@ -211,11 +224,10 @@ parameters:
       - type: mean_sea_level
         level_code: 101
         display: "mean sea level"
-    style: atmospheric
     units: Pa
     display_units: hPa
     conversion: Pa_to_hPa
-    valid_range: [85000, 110000]  # 850-1100 hPa (extreme lows to highs)
+    valid_range: [85000, 110000] # 850-1100 hPa (extreme lows to highs)
 
   # Geopotential height
   - name: HGT
@@ -228,11 +240,11 @@ parameters:
     levels:
       - type: isobaric
         level_code: 100
-        values: [ 1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10 ]
+        values:
+          [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
         display_template: "{value} mb"
-    style: geopotential
     units: gpm
-    valid_range: [-500, 35000]  # From below sea level to stratosphere
+    valid_range: [-500, 35000] # From below sea level to stratosphere
 
   # ==========================================================================
   # Moisture Parameters
@@ -253,11 +265,10 @@ parameters:
         display: "2 m above ground"
       - type: isobaric
         level_code: 100
-        values: [ 1000, 975, 950, 925, 900, 850, 700, 500, 300 ]
+        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
         display_template: "{value} mb"
-    style: humidity
     units: "%"
-    valid_range: [0, 100]  # Percentage 0-100%
+    valid_range: [0, 100] # Percentage 0-100%
 
   # Precipitable Water (entire atmosphere column)
   - name: PWAT
@@ -271,15 +282,14 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: humidity
     units: kg/m^2
     display_units: mm
-    valid_range: [0, 100]  # 0-100 mm precipitable water
+    valid_range: [0, 100] # 0-100 mm precipitable water
 
   # ==========================================================================
   # Precipitation Parameters
   # ==========================================================================
-  
+
   # Total Precipitation (accumulated)
   - name: APCP
     description: "Total Precipitation"
@@ -292,11 +302,10 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: precipitation
     units: kg/m^2
     display_units: mm
     accumulation: true
-    valid_range: [0, 1000]  # 0-1000 mm accumulated precip
+    valid_range: [0, 1000] # 0-1000 mm accumulated precip
 
   # Composite Reflectivity
   - name: REFC
@@ -310,14 +319,13 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: reflectivity
     units: dBZ
-    valid_range: [-30, 80]  # dBZ range for radar reflectivity
+    valid_range: [-30, 80] # dBZ range for radar reflectivity
 
   # ==========================================================================
   # Convective/Stability Parameters
   # ==========================================================================
-  
+
   # Convective Available Potential Energy
   - name: CAPE
     description: "Convective Available Potential Energy"
@@ -330,9 +338,8 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: cape
     units: J/kg
-    valid_range: [0, 10000]  # 0-10000 J/kg (extreme CAPE > 5000)
+    valid_range: [0, 10000] # 0-10000 J/kg (extreme CAPE > 5000)
 
   # Convective Inhibition
   - name: CIN
@@ -346,14 +353,13 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: cape
     units: J/kg
-    valid_range: [-1000, 0]  # CIN is typically negative (inhibition)
+    valid_range: [-1000, 0] # CIN is typically negative (inhibition)
 
   # ==========================================================================
   # Cloud Parameters
   # ==========================================================================
-  
+
   # Total Cloud Cover
   - name: TCDC
     description: "Total Cloud Cover"
@@ -366,9 +372,8 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
-    style: cloud
     units: "%"
-    valid_range: [0, 100]  # Percentage 0-100%
+    valid_range: [0, 100] # Percentage 0-100%
 
   # Low Cloud Cover
   - name: LCDC
@@ -382,9 +387,8 @@ parameters:
       - type: cloud_layer
         level_code: 214
         display: "low cloud layer"
-    style: cloud
     units: "%"
-    valid_range: [0, 100]  # Percentage 0-100%
+    valid_range: [0, 100] # Percentage 0-100%
 
   # Middle Cloud Cover
   - name: MCDC
@@ -398,9 +402,8 @@ parameters:
       - type: cloud_layer
         level_code: 224
         display: "middle cloud layer"
-    style: cloud
     units: "%"
-    valid_range: [0, 100]  # Percentage 0-100%
+    valid_range: [0, 100] # Percentage 0-100%
 
   # High Cloud Cover
   - name: HCDC
@@ -414,14 +417,13 @@ parameters:
       - type: cloud_layer
         level_code: 234
         display: "high cloud layer"
-    style: cloud
     units: "%"
-    valid_range: [0, 100]  # Percentage 0-100%
+    valid_range: [0, 100] # Percentage 0-100%
 
   # ==========================================================================
   # Visibility
   # ==========================================================================
-  
+
   # Visibility
   - name: VIS
     description: "Visibility"
@@ -434,16 +436,14 @@ parameters:
       - type: surface
         level_code: 1
         display: "surface"
-    style: visibility
     units: m
     display_units: km
     conversion: m_to_km
-    valid_range: [0, 100000]  # 0-100 km visibility
+    valid_range: [0, 100000] # 0-100 km visibility
 
 # Composite layers (derived from multiple parameters)
 composites:
   - name: WIND_BARBS
     description: "Wind barbs visualization"
-    requires: [ UGRD, VGRD ]
+    requires: [UGRD, VGRD]
     renderer: wind_barbs
-    style: wind_barbs

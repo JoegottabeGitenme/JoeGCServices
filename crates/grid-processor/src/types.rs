@@ -3,6 +3,20 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Indicates which edge of the grid corresponds to row 0.
+///
+/// This is critical for correctly reading grid data:
+/// - `North`: Row 0 is at max_lat (top). Standard for most geographic grids (GFS, MRMS).
+/// - `South`: Row 0 is at min_lat (bottom). Used by Lambert Conformal grids (HRRR, NDFD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RowOrigin {
+    /// Row 0 is at the top (max_lat). Standard geographic convention.
+    #[default]
+    North,
+    /// Row 0 is at the bottom (min_lat). Lambert Conformal convention.
+    South,
+}
+
 /// A geographic bounding box in WGS84 coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BoundingBox {
@@ -219,6 +233,11 @@ pub struct GridMetadata {
     pub num_chunks: (usize, usize),
     /// Fill/missing value.
     pub fill_value: f32,
+    /// Which edge of the grid row 0 corresponds to.
+    /// - `North`: Row 0 at max_lat (standard geographic grids like GFS)
+    /// - `South`: Row 0 at min_lat (Lambert Conformal grids like HRRR, NDFD)
+    #[serde(default)]
+    pub row_origin: RowOrigin,
 }
 
 impl GridMetadata {
@@ -241,7 +260,10 @@ impl GridMetadata {
     pub fn cell_to_coords(&self, col: usize, row: usize) -> (f64, f64) {
         let (res_x, res_y) = self.resolution();
         let lon = self.bbox.min_lon + (col as f64 + 0.5) * res_x;
-        let lat = self.bbox.max_lat - (row as f64 + 0.5) * res_y;
+        let lat = match self.row_origin {
+            RowOrigin::North => self.bbox.max_lat - (row as f64 + 0.5) * res_y,
+            RowOrigin::South => self.bbox.min_lat + (row as f64 + 0.5) * res_y,
+        };
         (lon, lat)
     }
 
@@ -253,7 +275,10 @@ impl GridMetadata {
 
         let (res_x, res_y) = self.resolution();
         let col = ((lon - self.bbox.min_lon) / res_x).floor() as usize;
-        let row = ((self.bbox.max_lat - lat) / res_y).floor() as usize;
+        let row = match self.row_origin {
+            RowOrigin::North => ((self.bbox.max_lat - lat) / res_y).floor() as usize,
+            RowOrigin::South => ((lat - self.bbox.min_lat) / res_y).floor() as usize,
+        };
 
         if col < self.shape.0 && row < self.shape.1 {
             Some((col, row))
@@ -494,6 +519,11 @@ pub struct MultiscaleMetadata {
     pub native_resolution: (f64, f64),
     /// Full extent bounding box
     pub bbox: BoundingBox,
+    /// Which edge of the grid row 0 corresponds to.
+    /// - `North`: Row 0 at max_lat (standard geographic grids like GFS)
+    /// - `South`: Row 0 at min_lat (Lambert Conformal grids like HRRR, NDFD)
+    #[serde(default)]
+    pub row_origin: RowOrigin,
 }
 
 impl MultiscaleMetadata {

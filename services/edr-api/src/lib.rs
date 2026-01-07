@@ -3,6 +3,7 @@
 //! This crate provides the HTTP server implementation for the
 //! OGC API - Environmental Data Retrieval specification.
 
+pub mod availability;
 pub mod config;
 pub mod content_negotiation;
 pub mod handlers;

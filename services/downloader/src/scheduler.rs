@@ -367,7 +367,7 @@ impl Scheduler {
         Ok(files)
     }
 
-    /// Discover observation files available for download (MRMS, GOES, etc.).
+    /// Discover observation files available for download (MRMS, GOES, NDFD, etc.).
     async fn discover_observation_files(
         &self,
         model: &ModelConfig,
@@ -388,8 +388,10 @@ impl Scheduler {
             "Checking for available observation files"
         );
 
-        // MRMS uses S3 listing to discover recent files
-        if model.model.id == "mrms" {
+        // Route to appropriate discovery method based on source type or model ID
+        if model.source.source_type == "http" || model.model.id == "ndfd" {
+            files = self.discover_ndfd_files(model).await?;
+        } else if model.model.id == "mrms" {
             files = self
                 .discover_mrms_files(model, now, earliest_time, lookback)
                 .await?;
@@ -397,6 +399,85 @@ impl Scheduler {
             files = self
                 .discover_goes_files(model, now, earliest_time, lookback)
                 .await?;
+        }
+
+        Ok(files)
+    }
+
+    /// Discover NDFD files available for download from NWS Telecommunications Gateway.
+    /// NDFD provides continuously-updated forecast grids via HTTP.
+    async fn discover_ndfd_files(&self, model: &ModelConfig) -> Result<Vec<(String, String)>> {
+        let mut files = Vec::new();
+
+        let base_url = model
+            .source
+            .base_url
+            .as_deref()
+            .unwrap_or("https://tgftp.nws.noaa.gov");
+
+        let prefix = &model.source.prefix_template;
+
+        info!(
+            model = %model.model.id,
+            base_url = base_url,
+            prefix = prefix,
+            "Checking for available NDFD files"
+        );
+
+        // NDFD stores each parameter in a separate file
+        // We need to check for files based on the parameters configured
+        for param in &model.parameters {
+            // Get the file identifier from the parameter config
+            // In NDFD config, each parameter has a "file" field like "temp", "wspd", etc.
+            let file_id = param
+                .file
+                .clone()
+                .unwrap_or_else(|| param.name.to_lowercase());
+
+            // Construct the URL for this parameter's file
+            let url = format!("{}/{}/ds.{}.bin", base_url, prefix, file_id);
+
+            // Check if file exists and is accessible
+            match self.check_file_exists(&url).await {
+                Ok(true) => {
+                    let output_filename = format!("ndfd_{}.bin", file_id);
+                    debug!(
+                        model = %model.model.id,
+                        parameter = %param.name,
+                        url = %url,
+                        output = %output_filename,
+                        "Found NDFD file"
+                    );
+                    files.push((url, output_filename));
+                }
+                Ok(false) => {
+                    debug!(
+                        model = %model.model.id,
+                        parameter = %param.name,
+                        url = %url,
+                        "NDFD file not available"
+                    );
+                }
+                Err(e) => {
+                    debug!(
+                        model = %model.model.id,
+                        parameter = %param.name,
+                        url = %url,
+                        error = %e,
+                        "Error checking NDFD file"
+                    );
+                }
+            }
+        }
+
+        if files.is_empty() {
+            debug!(model = %model.model.id, "No NDFD files found");
+        } else {
+            info!(
+                model = %model.model.id,
+                count = files.len(),
+                "Found NDFD files to download"
+            );
         }
 
         Ok(files)

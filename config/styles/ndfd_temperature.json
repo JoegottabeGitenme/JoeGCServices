@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "NDFD Temperature Styles",
+    "description": "NOAA-style temperature visualization for NDFD data (Fahrenheit scale)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Temperature Gradient",
+      "description": "NOAA-style temperature scale from cold (purple/blue) to hot (red/brown)",
+      "type": "gradient",
+      "range": {
+        "min": 243.15,
+        "max": 311.15
+      },
+      "stops": [
+        { "value": 243.15, "color": "#91219E", "label": "-22°F" },
+        { "value": 250.37, "color": "#403DCD", "label": "-9°F" },
+        { "value": 255.37, "color": "#3D68CD", "label": "0°F" },
+        { "value": 260.93, "color": "#399ACE", "label": "10°F" },
+        { "value": 266.48, "color": "#35CDCE", "label": "20°F" },
+        { "value": 272.04, "color": "#36CE64", "label": "30°F" },
+        { "value": 277.59, "color": "#6ACE36", "label": "40°F" },
+        { "value": 283.15, "color": "#CECE37", "label": "50°F" },
+        { "value": 288.71, "color": "#FDFD3A", "label": "60°F" },
+        { "value": 294.26, "color": "#FDA43A", "label": "70°F" },
+        { "value": 299.82, "color": "#FD633A", "label": "80°F" },
+        { "value": 305.37, "color": "#CE3636", "label": "90°F" },
+        { "value": 311.15, "color": "#8B2323", "label": "100°F" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Temperature (°F)",
+        "labels": ["-20", "0", "20", "40", "60", "80", "100"]
+      }
+    },
+    "isolines": {
+      "name": "Temperature Isolines",
+      "description": "Temperature contour lines at 10°F intervals",
+      "type": "contour",
+      "transform": {
+        "type": "k_to_f"
+      },
+      "contour": {
+        "interval": 10.0,
+        "min_value": -20,
+        "max_value": 110,
+        "line_width": 1.5,
+        "line_color": "#333333",
+        "labels": true,
+        "label_font_size": 9.0,
+        "label_spacing": 180.0,
+        "smoothing_passes": 1,
+        "special_levels": [
+          {
+            "value": 32,
+            "line_color": "#0066FF",
+            "line_width": 2.5,
+            "label": "32°F"
+          }
+        ]
+      },
+      "legend": {
+        "title": "Temperature (°F)"
+      }
+    }
+  }
+}

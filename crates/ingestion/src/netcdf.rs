@@ -9,7 +9,7 @@ use zarrs_filesystem::FilesystemStore;
 
 use grid_processor::{
     reproject_geostationary_to_geographic, BoundingBox as GpBoundingBox, DownsampleMethod,
-    GridProcessorConfig, PyramidConfig, ZarrWriter,
+    GridProcessorConfig, PyramidConfig, RowOrigin, ZarrWriter,
 };
 use projection::Geostationary;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
@@ -288,6 +288,7 @@ async fn write_and_upload_zarr(
     let downsample_method = DownsampleMethod::Mean; // Mean for satellite data
 
     // Write Zarr with pyramid levels
+    // GOES data is reprojected to geographic coordinates with row 0 at the north
     let write_result = writer
         .write_multiscale(
             store,
@@ -304,6 +305,7 @@ async fn write_and_upload_zarr(
             0, // forecast_hour = 0 for observational data
             &pyramid_config,
             downsample_method,
+            RowOrigin::North,
         )
         .map_err(|e| IngestionError::ZarrWrite(format!("Failed to write Zarr: {}", e)))?;
 
