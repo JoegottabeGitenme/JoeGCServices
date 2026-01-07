@@ -20,7 +20,7 @@ collections:
         levels: [2]
       - name: DPT
         levels: [2]
-    run_mode: times           # TIME dimension only (no runs)
+    run_mode: latest          # TIME dimension only (no runs)
 
   # Wind collection (speed/direction at 10m)
   - id: ndfd-wind
@@ -34,7 +34,7 @@ collections:
         levels: [10]
       - name: WDIR
         levels: [10]
-    run_mode: times
+    run_mode: latest
 
   # Wind gusts (surface level)
   - id: ndfd-wind-gust
@@ -46,7 +46,7 @@ collections:
     parameters:
       - name: GUST
         levels: [surface]
-    run_mode: times
+    run_mode: latest
 
   # Humidity collection
   - id: ndfd-humidity
@@ -58,7 +58,7 @@ collections:
     parameters:
       - name: RH
         levels: [2]
-    run_mode: times
+    run_mode: latest
 
   # Sky cover collection
   - id: ndfd-sky
@@ -70,7 +70,7 @@ collections:
     parameters:
       - name: SKY
         levels: [surface]
-    run_mode: times
+    run_mode: latest
 
   # Precipitation probability collection
   - id: ndfd-precipitation
@@ -82,7 +82,7 @@ collections:
     parameters:
       - name: POP12
         levels: [surface]
-    run_mode: times
+    run_mode: latest
 
 settings:
   output_formats:
