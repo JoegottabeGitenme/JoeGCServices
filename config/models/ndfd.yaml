@@ -70,7 +70,7 @@ schedule:
 # Since NDFD is always the "current best forecast", we only need recent versions
 retention:
   hours: 24                         # Keep data for 24 hours (allows rollback)
-  keep_latest_updates: 2            # Keep at least 2 recent versions
+  keep_latest_updates: 6            # Keep at least 6 recent versions for looping
 
 # Precaching - disabled for now
 precaching:

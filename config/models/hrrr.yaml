@@ -72,7 +72,7 @@ schedule:
     ] # Hourly
   forecast_hours:
     start: 0
-    end: 3 # 48 hours
+    end: 48 # 48 hours
     step: 1 # Every hour
   poll_interval_secs: 3600 # Check every hour
   delay_hours: 1 # Data typically available 2 hours after cycle
