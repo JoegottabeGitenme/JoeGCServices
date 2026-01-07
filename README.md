@@ -6,7 +6,6 @@ A high-performance, OGC-compliant weather data service written in Rust. Provides
 [![OGC WMTS 1.0.0](https://img.shields.io/badge/OGC-WMTS%201.0.0-blue)](https://www.ogc.org/standard/wmts/)
 [![OGC EDR 1.0](https://img.shields.io/badge/OGC-EDR%201.0-blue)](https://www.ogc.org/standard/ogcapi-edr/)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
 
@@ -495,10 +494,6 @@ Contributions are welcome! Please:
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
