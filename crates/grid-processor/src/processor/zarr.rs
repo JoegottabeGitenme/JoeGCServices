@@ -310,12 +310,30 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / lon_per_cell)
             .ceil()
             .min(grid_width as f64) as usize;
-        let min_row = ((grid_bbox.max_lat - norm_bbox.max_lat) / lat_per_cell)
-            .floor()
-            .max(0.0) as usize;
-        let max_row = ((grid_bbox.max_lat - norm_bbox.min_lat) / lat_per_cell)
-            .ceil()
-            .min(grid_height as f64) as usize;
+
+        // Row calculation depends on row_origin
+        let (min_row, max_row) = match self.metadata.row_origin {
+            RowOrigin::North => {
+                // Row 0 is at max_lat (top), row increases going south
+                let min_r = ((grid_bbox.max_lat - norm_bbox.max_lat) / lat_per_cell)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((grid_bbox.max_lat - norm_bbox.min_lat) / lat_per_cell)
+                    .ceil()
+                    .min(grid_height as f64) as usize;
+                (min_r, max_r)
+            }
+            RowOrigin::South => {
+                // Row 0 is at min_lat (bottom), row increases going north
+                let min_r = ((norm_bbox.min_lat - grid_bbox.min_lat) / lat_per_cell)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((norm_bbox.max_lat - grid_bbox.min_lat) / lat_per_cell)
+                    .ceil()
+                    .min(grid_height as f64) as usize;
+                (min_r, max_r)
+            }
+        };
 
         // Convert grid indices to chunk indices
         let min_chunk_x = min_col / chunk_w;
@@ -324,9 +342,11 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let max_chunk_y = ((max_row + chunk_h - 1) / chunk_h).min(self.metadata.num_chunks.1);
 
         // Generate list of chunk coordinates
-        (min_chunk_y..max_chunk_y)
+        let chunks: Vec<(usize, usize)> = (min_chunk_y..max_chunk_y)
             .flat_map(|cy| (min_chunk_x..max_chunk_x).map(move |cx| (cx, cy)))
-            .collect()
+            .collect();
+
+        chunks
     }
 
     /// Read and decompress a single chunk (synchronous).

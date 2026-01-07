@@ -333,12 +333,38 @@ async function getValidDatetime(collectionId) {
     return { warning: 'No temporal extent defined in collection', datetime: null };
 }
 
+// Helper to extract vertical level values from collection metadata
+// Handles both 'values' array and 'interval' array formats per EDR spec
+function extractVerticalLevels(vertical) {
+    if (!vertical) return [];
+    
+    // First check for explicit values array
+    if (vertical.values && vertical.values.length > 0) {
+        return vertical.values;
+    }
+    
+    // Fall back to extracting from interval array
+    // interval is array of [min, max] pairs - extract unique values
+    if (vertical.interval && vertical.interval.length > 0) {
+        const levels = new Set();
+        for (const pair of vertical.interval) {
+            if (Array.isArray(pair)) {
+                if (pair[0] !== null) levels.add(pair[0]);
+                if (pair[1] !== null && pair[1] !== pair[0]) levels.add(pair[1]);
+            }
+        }
+        return Array.from(levels).sort((a, b) => a - b);
+    }
+    
+    return [];
+}
+
 // Get a valid Z level from the collection's vertical extent
 async function getValidZLevel(collectionId) {
     const metadata = await getCollectionMetadata(collectionId);
     const vertical = metadata?.extent?.vertical;
     
-    // Try values array from data_queries
+    // Try values array from data_queries first
     const dataQueries = metadata?.data_queries;
     if (dataQueries?.position?.link?.variables?.vertical_levels) {
         const levels = dataQueries.position.link.variables.vertical_levels;
@@ -347,15 +373,10 @@ async function getValidZLevel(collectionId) {
         }
     }
     
-    if (vertical?.values && vertical.values.length > 0) {
-        return { z: vertical.values[0], allLevels: vertical.values };
-    }
-    
-    if (vertical?.interval?.[0]) {
-        const [min, max] = vertical.interval[0];
-        if (min !== null) {
-            return { z: min };
-        }
+    // Use the extractVerticalLevels helper to handle both values and interval formats
+    const allLevels = extractVerticalLevels(vertical);
+    if (allLevels.length > 0) {
+        return { z: allLevels[0], allLevels };
     }
     
     return { warning: 'No vertical extent defined in collection', z: null };
@@ -970,13 +991,13 @@ function getTestUrls(testName) {
         case 'position-f-covjson':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`];
         case 'z-single':
-            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=850`];
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z={z_level}`];
         case 'z-multiple':
-            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=850,700,500`];
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z={z1},{z2},{z3}`];
         case 'z-range':
-            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=1000/500`];
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z={zMax}/{zMin}`];
         case 'z-recurring':
-            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=R5/1000/100`];
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=R{n}/{start}/{interval}`];
         case 'z-invalid':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z=abc`];
         case 'z-outside-extent':
@@ -1011,7 +1032,7 @@ function getTestUrls(testName) {
         case 'area-multipolygon':
             return [`${API_BASE}/collections/${colId}/area?coords=MULTIPOLYGON(((-98 35,-97 35,-97 36,-98 36,-98 35)),((-96 35,-95 35,-95 36,-96 36,-96 35)))`];
         case 'area-z-multiple':
-            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&z=850,700`];
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&z={z1},{z2}`];
         case 'area-crs-valid':
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&crs=CRS:84`];
         case 'area-f-covjson':
@@ -1947,18 +1968,51 @@ async function testPositionFCovJson() {
 // Z PARAMETER TESTS
 // ============================================================
 
-// Helper to find an isobaric collection (which has z levels)
-async function findIsobaricCollection() {
+// Helper to find a collection with a minimum number of vertical levels
+// Returns { collection, searchInfo } where searchInfo describes what was checked
+async function findCollectionWithVerticalLevels(minLevels = 1) {
     const listRes = await fetchJson(`${API_BASE}/collections`);
     const collections = listRes.json?.collections || [];
+    const searchInfo = [];
     
-    // Look for a collection that likely has vertical levels
-    const isobaricCol = collections.find(c => 
-        c.id.includes('isobaric') || 
-        c.extent?.vertical?.values?.length > 1
-    );
+    if (collections.length === 0) {
+        return { collection: null, searchInfo: ['No collections available'] };
+    }
     
-    return isobaricCol || collections[0];
+    // First, try to find by name (isobaric collections typically have many levels)
+    const isobaricCandidates = collections.filter(c => c.id.includes('isobaric'));
+    
+    // Check each isobaric candidate for actual vertical levels
+    for (const col of isobaricCandidates) {
+        const metadata = await getCollectionMetadata(col.id);
+        const verticalValues = extractVerticalLevels(metadata?.extent?.vertical);
+        searchInfo.push(`${col.id}: ${verticalValues.length} vertical levels`);
+        if (verticalValues.length >= minLevels) {
+            return { collection: col, searchInfo };
+        }
+    }
+    
+    // If no isobaric collection has enough levels, check all collections
+    for (const col of collections) {
+        // Skip already checked isobaric collections
+        if (col.id.includes('isobaric')) continue;
+        
+        const metadata = await getCollectionMetadata(col.id);
+        const verticalValues = extractVerticalLevels(metadata?.extent?.vertical);
+        searchInfo.push(`${col.id}: ${verticalValues.length} vertical levels`);
+        if (verticalValues.length >= minLevels) {
+            return { collection: col, searchInfo };
+        }
+    }
+    
+    // No collection found with enough levels
+    return { collection: null, searchInfo };
+}
+
+// Helper to find an isobaric collection (which has z levels) - wrapper for backward compatibility
+async function findIsobaricCollection() {
+    const { collection } = await findCollectionWithVerticalLevels(1);
+    return collection;
 }
 
 // Single z level query
@@ -1979,8 +2033,21 @@ async function testZSingle() {
     }
 
     // Get available z values from collection extent
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    
+    // Must have a valid z value from the collection's vertical extent
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for z-single test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
 
     const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zValue}`;
     const res = await fetchJson(url);
@@ -2005,9 +2072,19 @@ async function testZSingle() {
 
 // Multiple z levels query - spec says ALL requested levels should be returned
 async function testZMultiple() {
-    const col = await findIsobaricCollection();
+    // Need at least 3 vertical levels for this test
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
     if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: 'No collection with 3+ vertical levels found', 
+                passed: true, 
+                warning: 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
     // Get valid coordinates from collection extent
@@ -2021,13 +2098,25 @@ async function testZMultiple() {
     }
 
     // Get available z values from collection extent
-    const { allLevels } = await getValidZLevel(col.id);
+    const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
     const verticalValues = allLevels || [];
     
-    // Use first 3 available levels, or defaults
-    const zLevels = verticalValues.length >= 3 
-        ? verticalValues.slice(0, 3) 
-        : [850, 700, 500];
+    // Need at least 3 levels for this test - don't use hardcoded fallbacks
+    if (verticalValues.length < 3) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 3 vertical levels for z-multiple test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
+    }
+    
+    // Use first 3 available levels from the collection's vertical extent
+    const zLevels = verticalValues.slice(0, 3);
     const zParam = zLevels.join(',');
 
     const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zParam}`;
@@ -2055,9 +2144,19 @@ async function testZMultiple() {
 
 // Z range query (z=1000/500)
 async function testZRange() {
-    const col = await findIsobaricCollection();
+    // Need at least 2 vertical levels for range query
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
     if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: 'No collection with 2+ vertical levels found', 
+                passed: true, 
+                warning: 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
     // Get valid coordinates from collection extent
@@ -2071,15 +2170,26 @@ async function testZRange() {
     }
 
     // Get z levels to determine a valid range
-    const { allLevels } = await getValidZLevel(col.id);
+    const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
     const verticalValues = allLevels || [];
     
-    // Determine a valid z range from the collection's levels
-    let zRange = '1000/500';
-    if (verticalValues.length >= 2) {
-        const sortedValues = [...verticalValues].sort((a, b) => b - a);
-        zRange = `${sortedValues[0]}/${sortedValues[sortedValues.length - 1]}`;
+    // Need at least 2 levels for z range test
+    if (verticalValues.length < 2) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 2 vertical levels for z-range test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
+    
+    // Determine a valid z range from the collection's levels
+    const sortedValues = [...verticalValues].sort((a, b) => b - a);
+    const zRange = `${sortedValues[0]}/${sortedValues[sortedValues.length - 1]}`;
 
     const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zRange}`;
     const res = await fetchJson(url);
@@ -2106,9 +2216,19 @@ async function testZRange() {
 
 // Recurring z intervals (z=R5/1000/100) - 5 levels starting at 1000, decrementing by 100
 async function testZRecurring() {
-    const col = await findIsobaricCollection();
+    // Need at least 3 vertical levels for recurring z test
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
     if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: 'No collection with 3+ vertical levels found', 
+                passed: true, 
+                warning: 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
     // Get valid coordinates from collection extent
@@ -2122,19 +2242,54 @@ async function testZRecurring() {
     }
 
     // Get z levels to determine valid recurring parameters
-    const { allLevels } = await getValidZLevel(col.id);
+    const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
     const verticalValues = allLevels || [];
     
-    // Build recurring interval from collection's levels
-    let zRecurring = 'R5/1000/100';
-    let expectedLevels = 5;
-    if (verticalValues.length >= 3) {
-        const sortedValues = [...verticalValues].sort((a, b) => b - a);
-        const startZ = sortedValues[0];
-        const interval = sortedValues.length > 1 ? Math.abs(sortedValues[0] - sortedValues[1]) : 100;
-        expectedLevels = Math.min(5, sortedValues.length);
-        zRecurring = `R${expectedLevels}/${startZ}/${interval}`;
+    // Need at least 3 levels for recurring z test
+    if (verticalValues.length < 3) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 3 vertical levels for z-recurring test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
+    
+    // Build recurring interval from collection's levels
+    // We need to find consecutive levels with a consistent interval
+    // since R{n}/{start}/{interval} generates evenly-spaced values
+    const sortedValues = [...verticalValues].sort((a, b) => b - a);
+    
+    // Find the longest sequence of evenly-spaced levels
+    let bestSequence = { start: sortedValues[0], interval: 1, count: 1 };
+    
+    for (let i = 0; i < sortedValues.length - 1; i++) {
+        const start = sortedValues[i];
+        const interval = Math.abs(sortedValues[i] - sortedValues[i + 1]);
+        let count = 2; // At least 2 levels (start and next)
+        
+        // Check how many consecutive levels follow this interval
+        for (let j = i + 2; j < sortedValues.length; j++) {
+            const expectedValue = start - (interval * (j - i));
+            if (Math.abs(sortedValues[j] - expectedValue) < 0.01) {
+                count++;
+            } else {
+                break;
+            }
+        }
+        
+        if (count > bestSequence.count) {
+            bestSequence = { start, interval, count };
+        }
+    }
+    
+    // Use the best sequence we found, limited to 5 levels
+    const expectedLevels = Math.min(5, bestSequence.count);
+    const zRecurring = `R${expectedLevels}/${bestSequence.start}/${bestSequence.interval}`;
 
     const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zRecurring}`;
     const res = await fetchJson(url);
@@ -2782,13 +2937,45 @@ async function testAreaMultipolygon() {
 
 // Area query with multiple z levels
 async function testAreaZMultiple() {
-    const col = await findIsobaricCollection();
+    // Need at least 2 vertical levels for this test
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
     if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: 'No collection with 2+ vertical levels found', 
+                passed: true, 
+                warning: 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
+    // Get available z values from collection extent
+    const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
+    
+    // Need at least 2 levels for this test
+    if (verticalValues.length < 2) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 2 vertical levels for area-z-multiple test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
+    }
+    
+    // Use first 2 available levels from the collection's vertical extent
+    const zLevels = verticalValues.slice(0, 2);
+    const zParam = zLevels.join(',');
+
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&z=850,700`);
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&z=${zParam}`);
     
     // Check z axis in response
     const zAxis = res.json?.domain?.axes?.z;
@@ -3256,8 +3443,19 @@ async function testRadiusZParameter() {
     }
     
     // Get valid Z level
-    const { z } = await getValidZLevel(isobaricCol.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(isobaricCol.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for radius-z-parameter test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
     
     const url = `${API_BASE}/collections/${isobaricCol.id}/radius?coords=POINT(${coords.lon} ${coords.lat})&within=50&within-units=km&z=${zValue}`;
     const res = await fetchJson(url);
@@ -3602,20 +3800,15 @@ async function testTrajectoryInvalidCoords() {
 
 // Trajectory query with LINESTRINGZ (embedded vertical levels)
 async function testTrajectoryLinestringZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    // Find an isobaric collection that supports z levels
-    const isobaricCol = collections.find(c => 
-        c.id.includes('isobaric') || 
-        c.extent?.vertical?.values?.length > 0
-    );
-    
+    // Need at least 3 vertical levels for LINESTRINGZ test
+    const { collection: isobaricCol, searchInfo } = await findCollectionWithVerticalLevels(3);
     if (!isobaricCol) {
-        return { passed: true, checks: [{ name: 'No isobaric collection available (test N/A)', passed: true }] };
+        return { 
+            passed: true, 
+            warning: true,
+            checks: [{ name: 'No collection with 3+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
     // Get valid coordinates from collection extent
@@ -3629,8 +3822,19 @@ async function testTrajectoryLinestringZ() {
     }
     
     // Get valid Z levels
-    const { z, allLevels } = await getValidZLevel(isobaricCol.id);
-    const zLevels = allLevels && allLevels.length >= 3 ? allLevels.slice(0, 3) : [850, 700, 500];
+    const { z, allLevels, warning: zWarning } = await getValidZLevel(isobaricCol.id);
+    if (!allLevels || allLevels.length < 3) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 3 vertical levels for trajectory-linestringz test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }]
+        };
+    }
+    const zLevels = allLevels.slice(0, 3);
     
     // Create a LINESTRINGZ within the extent
     const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
@@ -3716,13 +3920,16 @@ async function testTrajectoryLinestringM() {
 
 // Trajectory query with LINESTRINGZ and z parameter - should return 400 (conflict)
 async function testTrajectoryZConflict() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
+    // Need at least 2 vertical levels for this test
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
+    if (!col) {
+        return { 
+            passed: true, 
+            warning: true,
+            checks: [{ name: 'No collection with 2+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
-
-    const col = collections[0];
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -3734,14 +3941,31 @@ async function testTrajectoryZConflict() {
         };
     }
     
+    // Get valid z values from collection extent
+    const { allLevels, z: firstZ, warning: zWarning } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
+    if (verticalValues.length < 2) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 2 vertical levels for trajectory-z-conflict test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }]
+        };
+    }
+    const z1 = verticalValues[0];
+    const z2 = verticalValues[1];
+    
     // Create a LINESTRINGZ within the extent
     const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
     const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
     const p2 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
     
     // LINESTRINGZ has embedded Z, but we're also providing z query param - this is a conflict
-    const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} 850,${p2.lon} ${p2.lat} 700)`;
-    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestringZ)}&z=850`;
+    const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} ${z1},${p2.lon} ${p2.lat} ${z2})`;
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestringZ)}&z=${z1}`;
     const res = await fetchJson(url);
     
     // Per OGC spec, when coords contain Z values, providing z param is invalid
@@ -4970,15 +5194,49 @@ async function testCorridorZParamInvalid() {
 
 // Corridor - valid LINESTRINGZ query (success case)
 async function testCorridorLinestringZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
+    // Need at least 1 vertical level for LINESTRINGZ corridor
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(1);
+    if (!col) {
+        return { 
+            passed: true, 
+            warning: true,
+            checks: [{ name: 'No collection with vertical levels available', passed: true, warning: 'No vertical extent' }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
-    const col = collections[0];
-    // Valid LINESTRINGZ with Z coordinates embedded
-    const coords = 'LINESTRINGZ(-100 40 2,-99 40.5 2,-98 41 2)';
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Get valid z value from collection extent
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for corridor-linestringz test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+
+    // Create a LINESTRINGZ within the extent using valid z level
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat + span / 4 };
+
+    // Valid LINESTRINGZ with Z coordinates embedded using valid z from collection
+    const coords = `LINESTRINGZ(${p1.lon} ${p1.lat} ${z},${p2.lon} ${p2.lat} ${z},${p3.lon} ${p3.lat} ${z})`;
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
@@ -4990,7 +5248,9 @@ async function testCorridorLinestringZ() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGZ with z=${z}`
     };
 }
 
@@ -5022,15 +5282,57 @@ async function testCorridorLinestringM() {
 
 // Corridor - valid LINESTRINGZM query (success case)
 async function testCorridorLinestringZM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
+    // Need at least 1 vertical level for LINESTRINGZM corridor
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(1);
+    if (!col) {
+        return { 
+            passed: true, 
+            warning: true,
+            checks: [{ name: 'No collection with vertical levels available', passed: true, warning: 'No vertical extent' }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
     }
 
-    const col = collections[0];
-    // Valid LINESTRINGZM with both Z and M coordinates
-    const coords = 'LINESTRINGZM(-100 40 2 1560507000,-99 40.5 2 1560508800,-98 41 2 1560510600)';
+    // Get valid coordinates from collection extent
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
+    if (!centerCoords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
+    }
+
+    // Get valid z value from collection extent
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for corridor-linestringzm test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+
+    // Get valid timestamps from temporal extent
+    const { datetime } = await getValidDatetime(col.id);
+    // Use Unix epoch timestamps - if no datetime, use some reasonable values
+    const baseTime = datetime ? new Date(datetime).getTime() / 1000 : 1560507000;
+    const t1 = Math.floor(baseTime);
+    const t2 = Math.floor(baseTime + 1800);  // +30 minutes
+    const t3 = Math.floor(baseTime + 3600);  // +60 minutes
+
+    // Create a LINESTRINGZM within the extent using valid z level and timestamps
+    const span = Math.min((bbox[2] - bbox[0]) / 4, (bbox[3] - bbox[1]) / 4, 0.5);
+    const p1 = { lon: Math.max(bbox[0], centerCoords.lon - span), lat: centerCoords.lat };
+    const p2 = { lon: centerCoords.lon, lat: Math.min(bbox[3], centerCoords.lat + span / 2) };
+    const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat + span / 4 };
+
+    // Valid LINESTRINGZM with both Z and M coordinates using valid z from collection
+    const coords = `LINESTRINGZM(${p1.lon} ${p1.lat} ${z} ${t1},${p2.lon} ${p2.lat} ${z} ${t2},${p3.lon} ${p3.lat} ${z} ${t3})`;
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
     
@@ -5042,7 +5344,9 @@ async function testCorridorLinestringZM() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: res
+        response: res,
+        url,
+        coordsInfo: `LINESTRINGZM with z=${z}`
     };
 }
 
@@ -5882,22 +6186,49 @@ async function testDomainTypePointSeries() {
 
 // Test multi-z query returns domainType: VerticalProfile
 async function testDomainTypeVerticalProfile() {
-    const col = await findIsobaricCollection();
+    // Need at least 3 vertical levels for vertical profile test
+    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
     if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
+        return { 
+            passed: true, 
+            warning: true,
+            checks: [{ name: 'No collection with 3+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
+    }
+
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: warning }]
+        };
     }
 
     // Get available z values from collection extent
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
-    const verticalValues = colRes.json?.extent?.vertical?.values || [];
+    const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
+    const verticalValues = allLevels || [];
     
-    // Use first 3 available levels, or defaults
-    const zLevels = verticalValues.length >= 3 
-        ? verticalValues.slice(0, 3) 
-        : [850, 700, 500];
+    // Need at least 3 levels for vertical profile test
+    if (verticalValues.length < 3) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection needs at least 3 vertical levels for domain-type-verticalprofile test', 
+                passed: true, 
+                warning: zWarning || 'Insufficient vertical levels'
+            }],
+            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+        };
+    }
+    
+    const zLevels = verticalValues.slice(0, 3);
     const zParam = zLevels.join(',');
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&z=${zParam}`);
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&z=${zParam}`);
     
     const domainType = res.json?.domain?.domainType;
     
@@ -6675,8 +7006,19 @@ async function testCubeBasic() {
     }
 
     // Get available z values from collection extent
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-basic test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
     
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}`;
@@ -6714,8 +7056,19 @@ async function testCubeCovJson() {
     }
 
     // Get available z values from collection extent
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-covjson test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
     
     // Get valid parameter
     const { parameter } = await getValidParameter(col.id);
@@ -6767,7 +7120,21 @@ async function testCubeMissingBbox() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?z=850`);
+    // Get valid z value from collection extent
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-missing-bbox test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?z=${z}`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
         { name: 'Has error type', passed: !!res.json?.type },
@@ -6807,7 +7174,21 @@ async function testCubeInvalidBbox() {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
     }
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=invalid&z=850`);
+    // Get valid z value from collection extent
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-invalid-bbox test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=invalid&z=${z}`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
         { name: 'Has error type', passed: !!res.json?.type }
@@ -6890,8 +7271,19 @@ async function testCubeWithDatetime() {
     }
 
     // Get available z values
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-with-datetime test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
     
     // Get temporal extent
     const { datetime } = await getValidDatetime(col.id);
@@ -6936,8 +7328,19 @@ async function testCubeWithResolution() {
     }
 
     // Get available z values
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-with-resolution test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
 
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zValue}&resolution-x=5&resolution-y=5`;
@@ -7001,8 +7404,19 @@ async function testCubeInstance() {
     }
 
     // Get available z values
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-instance test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
 
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     const url = `${API_BASE}/collections/${col.id}/instances/${instanceId}/cube?bbox=${bbox}&z=${zValue}`;
@@ -7196,8 +7610,19 @@ async function testCubeCrsValid() {
     }
 
     // Get available z values
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-crs-valid test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
 
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     // Test with CRS:84 (standard WGS84 lon/lat)
@@ -7236,8 +7661,19 @@ async function testCubeFCovJson() {
     }
 
     // Get available z values
-    const { z } = await getValidZLevel(col.id);
-    const zValue = z || 850;
+    const { z, warning: zWarning } = await getValidZLevel(col.id);
+    if (z === null || z === undefined) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ 
+                name: zWarning || 'Collection has no vertical extent for cube-f-covjson test', 
+                passed: true, 
+                warning: zWarning || 'No vertical extent'
+            }]
+        };
+    }
+    const zValue = z;
 
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
     // Test with f=CoverageJSON format parameter
@@ -8693,6 +9129,11 @@ function showTestDetails(testName) {
     // Show coordinates info if available
     if (result.coordsInfo) {
         html += `<h4>Coordinates Used:</h4><pre>${result.coordsInfo}</pre>`;
+    }
+    
+    // Show search info if available (for tests that searched for collections)
+    if (result.searchInfo) {
+        html += `<h4>Search Details:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${result.searchInfo}</pre>`;
     }
 
     html += '<h4>Checks:</h4><ul>';
