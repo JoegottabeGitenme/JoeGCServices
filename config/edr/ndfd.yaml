@@ -1,17 +1,43 @@
 # NDFD EDR Configuration
-# Defines collections grouped by parameter type for the OGC EDR API
+# National Digital Forecast Database - Official NWS gridded forecasts
 #
-# NDFD (National Digital Forecast Database) provides NWS official digital 
-# gridded forecasts. Uses TIME dimension only (observation-style) since
-# NDFD updates continuously without discrete run cycles.
+# Coverage: CONUS (-130 to -60 lon, 20 to 50 lat)
+# Resolution: ~2.5km
+# Update frequency: Continuous (no discrete model runs)
+#
+# Collections are organized by vertical level type, similar to HRRR/GFS:
+# - ndfd-surface: Surface-level parameters (sky cover, precipitation probability)
+# - ndfd-height-agl: Parameters at height above ground (temperature, humidity, wind)
 
 model: ndfd
 
 collections:
-  # Temperature collection
-  - id: ndfd-temperature
-    title: "NDFD - Temperature"
-    description: "Temperature and dew point forecasts at 2m above ground"
+  # ===========================================================================
+  # Surface-level parameters
+  # ===========================================================================
+
+  - id: ndfd-surface
+    title: "NDFD - Surface"
+    description: "Surface-level forecast parameters including sky cover and precipitation probability"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: SKY
+        levels: [surface]
+      - name: POP12
+        levels: [surface]
+      - name: GUST
+        levels: [surface]
+    run_mode: latest
+
+  # ===========================================================================
+  # Height above ground parameters (2m and 10m)
+  # ===========================================================================
+
+  - id: ndfd-height-agl
+    title: "NDFD - Height Above Ground"
+    description: "Forecast parameters at heights above ground (temperature, humidity, wind at 2m)"
     level_filter:
       level_type: height_above_ground
       level_code: 103
@@ -20,68 +46,12 @@ collections:
         levels: [2]
       - name: DPT
         levels: [2]
-    run_mode: latest          # TIME dimension only (no runs)
-
-  # Wind collection (speed/direction at 10m)
-  - id: ndfd-wind
-    title: "NDFD - Wind"
-    description: "Wind speed and direction at 10m above ground"
-    level_filter:
-      level_type: height_above_ground
-      level_code: 103
-    parameters:
-      - name: WSPD
-        levels: [10]
-      - name: WDIR
-        levels: [10]
-    run_mode: latest
-
-  # Wind gusts (surface level)
-  - id: ndfd-wind-gust
-    title: "NDFD - Wind Gusts"
-    description: "Surface wind gust forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: GUST
-        levels: [surface]
-    run_mode: latest
-
-  # Humidity collection
-  - id: ndfd-humidity
-    title: "NDFD - Humidity"
-    description: "Relative humidity forecasts at 2m above ground"
-    level_filter:
-      level_type: height_above_ground
-      level_code: 103
-    parameters:
       - name: RH
         levels: [2]
-    run_mode: latest
-
-  # Sky cover collection
-  - id: ndfd-sky
-    title: "NDFD - Sky Cover"
-    description: "Total cloud/sky cover forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: SKY
-        levels: [surface]
-    run_mode: latest
-
-  # Precipitation probability collection
-  - id: ndfd-precipitation
-    title: "NDFD - Precipitation Probability"
-    description: "12-hour probability of precipitation forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: POP12
-        levels: [surface]
+      - name: WSPD
+        levels: [2, 10]
+      - name: WDIR
+        levels: [2, 10]
     run_mode: latest
 
 settings:
@@ -92,8 +62,12 @@ settings:
   supported_crs:
     - "CRS:84"
 
+# Response size limits
+# NDFD is ~2.5km resolution (~0.025°)
 limits:
   max_parameters_per_request: 10
   max_time_steps: 72              # Up to 3 days of hourly data
   max_vertical_levels: 5
   max_response_size_mb: 50
+  max_area_sq_degrees: 100        # ~1000km x 1000km
+  max_radius_km: 500

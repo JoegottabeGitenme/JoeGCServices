@@ -151,6 +151,9 @@ S3_SECRET_KEY=minioadmin         # Secret key
 # Performance
 EDR_CHUNK_CACHE_MB=256           # Grid processor chunk cache
 
+# Availability Cache
+EDR_AVAILABILITY_CACHE_TTL_SECS=300  # Data availability cache TTL (default: 300)
+
 # Logging
 RUST_LOG=info                    # Log level
 ```
@@ -227,6 +230,48 @@ The EDR configuration can be reloaded without restarting the service by calling:
 curl -X POST http://localhost:8083/api/config/reload
 ```
 
+## Data Availability Filtering
+
+The EDR API only advertises collections, parameters, and vertical levels that have actual data available in the catalog. This prevents 404/500 errors when clients request advertised resources.
+
+### How It Works
+
+1. **Collection Filtering**: Collections are only listed if their underlying model has data in the catalog. Collections without any available data are hidden (not listed in `/edr/collections`).
+
+2. **Parameter Filtering**: Within each collection, only parameters that have data are advertised in `parameter_names`. Configured parameters without data are silently filtered out.
+
+3. **Vertical Level Filtering**: The `extent.vertical` field only includes levels that actually have data. If a collection is configured for levels 850, 700, 500 but only 850 and 700 have data, only those two will be advertised.
+
+4. **Cube Query Availability**: The `cube` query type is only advertised for collections that have **multiple unique vertical levels** with data. Single-level collections (like MRMS radar) will not show the cube query option.
+
+### Availability Cache
+
+Data availability is cached to avoid repeated database queries:
+
+```bash
+# Default cache TTL is 5 minutes
+EDR_AVAILABILITY_CACHE_TTL_SECS=300
+```
+
+The cache is automatically invalidated when configuration is reloaded.
+
+### Observability
+
+When availability filtering is active, the service logs:
+
+```
+INFO Model hrrr availability: 16 params [TMP(8), RH(8), UGRD(8), ...]
+INFO EDR availability: serving 26/28 collections (filtered by data availability)
+```
+
+The number in parentheses indicates how many vertical levels each parameter has.
+
+### Implications
+
+- **Dynamic Collections**: The collections list may change as data is ingested or expires
+- **No Empty Results**: Queries for advertised parameters will always return data (assuming temporal coverage)
+- **Configuration vs Reality**: What's configured may differ from what's advertised based on actual data availability
+
 ## Code Structure
 
 ```
@@ -235,6 +280,7 @@ services/edr-api/src/
 ├── lib.rs                  # Module exports
 ├── state.rs                # Application state (catalog, grid-processor)
 ├── config.rs               # EDR config loading
+├── availability.rs         # Data availability cache and level matching
 ├── limits.rs               # Response size estimation
 ├── content_negotiation.rs  # Accept header and f parameter handling
 ├── location_cache.rs       # In-memory cache for location queries

@@ -303,6 +303,47 @@ curl -X POST http://localhost:8083/api/config/reload
 
 This reloads all YAML files in `config/edr/`.
 
+## Data Availability Filtering
+
+The EDR API automatically filters collections, parameters, and vertical levels based on actual data availability in the catalog. This means:
+
+1. **Collections** are only listed if they have data available
+2. **Parameters** are only advertised if they have data
+3. **Vertical levels** in `extent.vertical` only include levels with data
+4. **Cube query** is only advertised for collections with multiple vertical levels
+
+### Availability Cache
+
+Data availability is cached to reduce database load:
+
+```bash
+# Configure cache TTL (default: 300 seconds / 5 minutes)
+EDR_AVAILABILITY_CACHE_TTL_SECS=300
+```
+
+The cache is invalidated automatically when configuration is reloaded via:
+
+```bash
+curl -X POST http://localhost:8083/api/config/reload
+```
+
+### Configuration vs Advertised
+
+What you configure may differ from what the API advertises:
+
+| Configured | Advertised | Reason |
+|------------|------------|--------|
+| 6 NDFD collections | 2 collections | Collections consolidated by available data |
+| TMP, UGRD, VGRD params | TMP only | UGRD, VGRD have no data |
+| Cube query | Not shown | Only single vertical level available |
+
+Check the logs for availability information:
+
+```
+INFO Model hrrr availability: 16 params [TMP(8), RH(8), UGRD(8), ...]
+INFO EDR availability: serving 26/28 collections (filtered by data availability)
+```
+
 ## Validation
 
 ### Verify Collections
