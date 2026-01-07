@@ -30,7 +30,7 @@
 - downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
   eachother
 - ingester should be able to handle multiple downloads at once, currently it does 1 at a time
-- README needs some screenshots and to be more accurate
+- ~~README needs some screenshots and to be more accurate~~ DONE: Created comprehensive README.md with EDR, deployment info, architecture diagram (screenshots pending)
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
 - Most chunks decompressed are 1 MB, figure out how much storage to cache common products
