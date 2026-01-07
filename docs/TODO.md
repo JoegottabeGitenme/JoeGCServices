@@ -23,7 +23,7 @@
     - see if this happens again after we fixed the orphaned files issue
     - it still happens and its still happening after claude 'fixed' the memory leaks
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
-- need to give the swagger docs a human pass to catch some of the errors
+- ~~need to give the swagger docs a human pass to catch some of the errors~~ DONE: Added missing endpoints, fixed parameter types, added webp format
 - why are we getting orphaned files constantly?
 - evicting things from chunk cache seems to bring things to a crawl, need to explain how evictions work and how we're
   getting chunk cache entry count

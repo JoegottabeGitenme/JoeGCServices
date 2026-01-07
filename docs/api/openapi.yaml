@@ -125,7 +125,7 @@ paths:
           description: |
             Response varies by REQUEST type:
             - GetCapabilities: XML capabilities document
-            - GetMap: Map image (PNG/JPEG)
+            - GetMap: Map image (PNG/JPEG/WebP)
             - GetFeatureInfo: Feature data (JSON/HTML/XML)
           content:
             application/xml:
@@ -139,6 +139,10 @@ paths:
                 type: string
                 format: binary
             image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
               schema:
                 type: string
                 format: binary
@@ -208,7 +212,7 @@ paths:
           description: |
             Response varies by REQUEST type:
             - GetCapabilities: XML capabilities document
-            - GetTile: Tile image (PNG/JPEG)
+            - GetTile: Tile image (PNG/JPEG/WebP)
             - GetFeatureInfo: Feature data (JSON/HTML/XML)
           content:
             application/xml:
@@ -222,6 +226,10 @@ paths:
                 type: string
                 format: binary
             image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
               schema:
                 type: string
                 format: binary
@@ -577,7 +585,7 @@ components:
       description: Output image format
       schema:
         type: string
-        enum: ['image/png', 'image/jpeg', 'image/gif']
+        enum: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
         default: 'image/png'
       example: 'image/png'
 
@@ -771,7 +779,7 @@ components:
       description: Tile format
       schema:
         type: string
-        enum: ['image/png', 'image/jpeg']
+        enum: ['image/png', 'image/jpeg', 'image/webp']
         default: 'image/png'
       example: 'image/png'
 
