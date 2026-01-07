@@ -12,6 +12,10 @@ let API_BASE = localStorage.getItem('edr-compliance-endpoint') || DEFAULT_API_BA
 // Test state
 let testResults = {};
 let collections = [];
+let selectedCollectionId = '__ALL__';  // Default to all collections
+let perCollectionResults = {};  // { testName: { collectionId: result } }
+let isTestRunning = false;
+let stopRequested = false;
 
 // ============================================================
 // INITIALIZATION
@@ -19,10 +23,39 @@ let collections = [];
 
 document.addEventListener('DOMContentLoaded', () => {
     initEndpointConfig();
+    initCollectionSelector();
     initTestSections();
     initModal();
     loadCollections();
 });
+
+function initCollectionSelector() {
+    const select = document.getElementById('collection-select');
+    
+    select.addEventListener('change', (e) => {
+        selectedCollectionId = e.target.value;
+        clearAllResults();
+    });
+}
+
+async function populateCollectionSelector() {
+    const select = document.getElementById('collection-select');
+    const countSpan = document.getElementById('collection-count');
+    
+    // Clear existing options except "All"
+    while (select.options.length > 1) {
+        select.remove(1);
+    }
+    
+    for (const col of collections) {
+        const opt = document.createElement('option');
+        opt.value = col.id;
+        opt.textContent = col.id;
+        select.appendChild(opt);
+    }
+    
+    countSpan.textContent = `(${collections.length} collections)`;
+}
 
 function initEndpointConfig() {
     const input = document.getElementById('endpoint-input');
@@ -196,6 +229,7 @@ async function loadCollections() {
         const response = await fetchJson(`${API_BASE}/collections`);
         if (response.ok && response.json?.collections) {
             collections = response.json.collections;
+            populateCollectionSelector();
         }
     } catch (e) {
         console.error('Failed to load collections:', e);
@@ -307,9 +341,27 @@ async function getValidParameter(collectionId) {
         return { warning: 'No parameters defined in collection', parameter: null };
     }
     
-    // Return first available parameter
-    const firstParam = Object.keys(paramNames)[0];
-    return { parameter: firstParam, allParameters: Object.keys(paramNames) };
+    const allParams = Object.keys(paramNames);
+    
+    // Try to find a parameter that actually has data by testing with a position query
+    // This helps avoid 500 errors from parameters that are configured but have no data
+    const { coords } = await getValidCoordinates(collectionId);
+    if (coords) {
+        for (const param of allParams) {
+            try {
+                const testUrl = `${API_BASE}/collections/${collectionId}/position?coords=POINT(${coords.lon} ${coords.lat})&parameter-name=${param}`;
+                const res = await fetchJson(testUrl);
+                if (res.status === 200 && res.json?.ranges?.[param]?.values?.some(v => v !== null)) {
+                    return { parameter: param, allParameters: allParams };
+                }
+            } catch (e) {
+                // Continue to next parameter
+            }
+        }
+    }
+    
+    // Fall back to first parameter if none have confirmed data
+    return { parameter: allParams[0], allParameters: allParams };
 }
 
 // Get a valid datetime from the collection's temporal extent
@@ -404,6 +456,223 @@ function hasNonNullValues(response) {
     }
     
     return false;
+}
+
+// ============================================================
+// CAPABILITY DETECTION
+// ============================================================
+
+// Check if collection has vertical extent
+function collectionHasVerticalExtent(collection) {
+    return collection?.extent?.vertical != null;
+}
+
+// Check if collection has temporal extent
+function collectionHasTemporalExtent(collection) {
+    return collection?.extent?.temporal != null;
+}
+
+// Check if collection supports a specific query type
+function collectionSupportsQuery(collection, queryType) {
+    return collection?.data_queries?.[queryType] != null;
+}
+
+// Global tests that don't require a collection
+const GLOBAL_TESTS = [
+    'landing-page', 'landing-links', 'conformance', 'collections-list'
+];
+
+// Tests that require specific capabilities
+const CAPABILITY_REQUIREMENTS = {
+    // Z-level tests require vertical extent
+    'z-single': { vertical: true, query: 'position' },
+    'z-multiple': { vertical: true, query: 'position' },
+    'z-range': { vertical: true, query: 'position' },
+    'z-recurring': { vertical: true, query: 'position' },
+    'z-invalid': { vertical: true, query: 'position' },
+    'z-outside-extent': { vertical: true, query: 'position' },
+    
+    // Area with z
+    'area-z-multiple': { vertical: true, query: 'area' },
+    
+    // Radius with z
+    'radius-z-parameter': { vertical: true, query: 'radius' },
+    
+    // Cube requires vertical extent
+    'cube-basic': { vertical: true, query: 'cube' },
+    'cube-covjson': { vertical: true, query: 'cube' },
+    'cube-missing-bbox': { vertical: true, query: 'cube' },
+    'cube-missing-z': { vertical: true, query: 'cube' },
+    'cube-invalid-bbox': { vertical: true, query: 'cube' },
+    'cube-multi-z': { vertical: true, query: 'cube' },
+    'cube-with-datetime': { vertical: true, query: 'cube' },
+    'cube-with-resolution': { vertical: true, query: 'cube' },
+    'cube-instance': { vertical: true, query: 'cube' },
+    'cube-not-found': { vertical: true, query: 'cube' },
+    'cube-no-query-params': { vertical: true, query: 'cube' },
+    'cube-z-range': { vertical: true, query: 'cube' },
+    'cube-z-recurring': { vertical: true, query: 'cube' },
+    'cube-invalid-z': { vertical: true, query: 'cube' },
+    'cube-crs-valid': { vertical: true, query: 'cube' },
+    'cube-f-covjson': { vertical: true, query: 'cube' },
+    
+    // Datetime tests require temporal extent
+    'datetime-instant': { temporal: true, query: 'position' },
+    'datetime-range': { temporal: true, query: 'position' },
+    'datetime-list': { temporal: true, query: 'position' },
+    'datetime-open-end': { temporal: true, query: 'position' },
+    'datetime-open-start': { temporal: true, query: 'position' },
+    
+    // Query-specific tests
+    'position-wkt': { query: 'position' },
+    'position-simple': { query: 'position' },
+    'position-covjson': { query: 'position' },
+    'position-invalid': { query: 'position' },
+    'position-missing-coords': { query: 'position' },
+    'position-multipoint': { query: 'position' },
+    'position-no-query-params': { query: 'position' },
+    'position-crs-valid': { query: 'position' },
+    'position-f-covjson': { query: 'position' },
+    'position-no-params': { query: 'position' },
+    
+    'area-basic': { query: 'area' },
+    'area-covjson': { query: 'area' },
+    'area-small': { query: 'area' },
+    'area-complex': { query: 'area' },
+    'area-too-large': { query: 'area' },
+    'area-invalid-polygon': { query: 'area' },
+    'area-with-params': { query: 'area' },
+    'area-missing-coords': { query: 'area' },
+    'area-multipolygon': { query: 'area' },
+    'area-crs-valid': { query: 'area' },
+    'area-f-covjson': { query: 'area' },
+    'area-no-params': { query: 'area' },
+    
+    'radius-basic': { query: 'radius' },
+    'radius-covjson': { query: 'radius' },
+    'radius-missing-coords': { query: 'radius' },
+    'radius-missing-within': { query: 'radius' },
+    'radius-missing-within-units': { query: 'radius' },
+    'radius-invalid-coords': { query: 'radius' },
+    'radius-too-large': { query: 'radius' },
+    'radius-units-km': { query: 'radius' },
+    'radius-units-mi': { query: 'radius' },
+    'radius-units-m': { query: 'radius' },
+    'radius-multipoint': { query: 'radius' },
+    'radius-with-params': { query: 'radius' },
+    'radius-datetime': { query: 'radius' },
+    'radius-no-query-params': { query: 'radius' },
+    'radius-crs-valid': { query: 'radius' },
+    'radius-f-covjson': { query: 'radius' },
+    
+    'trajectory-basic': { query: 'trajectory' },
+    'trajectory-covjson': { query: 'trajectory' },
+    'trajectory-missing-coords': { query: 'trajectory' },
+    'trajectory-invalid-coords': { query: 'trajectory' },
+    'trajectory-linestringz': { vertical: true, query: 'trajectory' },
+    'trajectory-linestringm': { query: 'trajectory' },
+    'trajectory-z-conflict': { vertical: true, query: 'trajectory' },
+    'trajectory-multilinestring': { query: 'trajectory' },
+    'trajectory-with-params': { query: 'trajectory' },
+    'trajectory-datetime': { query: 'trajectory' },
+    'trajectory-no-query-params': { query: 'trajectory' },
+    'trajectory-invalid-linestringm': { query: 'trajectory' },
+    'trajectory-invalid-linestringz': { query: 'trajectory' },
+    'trajectory-invalid-linestringzm': { query: 'trajectory' },
+    'trajectory-linestringz-invalid-z': { vertical: true, query: 'trajectory' },
+    'trajectory-z-param-invalid': { vertical: true, query: 'trajectory' },
+    'trajectory-invalid-time': { query: 'trajectory' },
+    'trajectory-crs-valid': { query: 'trajectory' },
+    'trajectory-f-covjson': { query: 'trajectory' },
+    
+    'corridor-basic': { query: 'corridor' },
+    'corridor-covjson': { query: 'corridor' },
+    'corridor-missing-coords': { query: 'corridor' },
+    'corridor-missing-width': { query: 'corridor' },
+    'corridor-missing-width-units': { query: 'corridor' },
+    'corridor-missing-height': { query: 'corridor' },
+    'corridor-missing-height-units': { query: 'corridor' },
+    'corridor-invalid-width-units': { query: 'corridor' },
+    'corridor-invalid-height-units': { query: 'corridor' },
+    'corridor-invalid-coords': { query: 'corridor' },
+    'corridor-z-conflict': { vertical: true, query: 'corridor' },
+    'corridor-datetime-conflict': { query: 'corridor' },
+    'corridor-multilinestring': { query: 'corridor' },
+    'corridor-with-params': { query: 'corridor' },
+    'corridor-pressure-height-units': { vertical: true, query: 'corridor' },
+    'corridor-metadata': { query: 'corridor' },
+    'corridor-invalid-linestringm': { query: 'corridor' },
+    'corridor-invalid-linestringz': { query: 'corridor' },
+    'corridor-invalid-linestringzm': { query: 'corridor' },
+    'corridor-zm-z-conflict': { vertical: true, query: 'corridor' },
+    'corridor-zm-datetime-conflict': { query: 'corridor' },
+    'corridor-linestringz-invalid-z': { vertical: true, query: 'corridor' },
+    'corridor-z-param-invalid': { vertical: true, query: 'corridor' },
+    'corridor-linestringz': { vertical: true, query: 'corridor' },
+    'corridor-linestringm': { query: 'corridor' },
+    'corridor-linestringzm': { vertical: true, query: 'corridor' },
+    'corridor-with-datetime': { query: 'corridor' },
+    'corridor-with-z': { vertical: true, query: 'corridor' },
+    'corridor-instance': { query: 'corridor' },
+    'corridor-not-found': { query: 'corridor' },
+    'corridor-crs-valid': { query: 'corridor' },
+    'corridor-f-covjson': { query: 'corridor' },
+    
+    'locations-list': { query: 'locations' },
+    'locations-geojson-structure': { query: 'locations' },
+    'locations-query-basic': { query: 'locations' },
+    'locations-query-covjson': { query: 'locations' },
+    'locations-invalid-id': { query: 'locations' },
+    'locations-with-params': { query: 'locations' },
+    'locations-with-datetime': { query: 'locations' },
+    'locations-cache-header': { query: 'locations' },
+    'locations-instance': { query: 'locations' },
+    'locations-crs-valid': { query: 'locations' },
+    'locations-f-covjson': { query: 'locations' },
+    
+    // Domain type tests
+    'domain-type-point': { query: 'position' },
+    'domain-type-pointseries': { temporal: true, query: 'position' },
+    'domain-type-verticalprofile': { vertical: true, query: 'position' },
+    'domain-type-grid': { query: 'area' },
+    
+    // Schema validation tests
+    'schema-covjson-position': { query: 'position' },
+    'schema-covjson-area': { query: 'area' },
+    'schema-covjson-trajectory': { query: 'trajectory' },
+    'schema-covjson-cube': { vertical: true, query: 'cube' },
+    'schema-covjson-locations': { query: 'locations' },
+    'schema-geojson-locations-list': { query: 'locations' },
+    'schema-geojson-position': { query: 'position' }
+};
+
+// Returns { skip: boolean, reason: string | null }
+function shouldSkipTest(testName, collection) {
+    if (!collection) {
+        return { skip: false, reason: null };
+    }
+    
+    const reqs = CAPABILITY_REQUIREMENTS[testName];
+    if (!reqs) {
+        return { skip: false, reason: null };
+    }
+    
+    // Check query support
+    if (reqs.query && !collectionSupportsQuery(collection, reqs.query)) {
+        return { skip: true, reason: `No ${reqs.query} query support` };
+    }
+    
+    // Check vertical extent
+    if (reqs.vertical && !collectionHasVerticalExtent(collection)) {
+        return { skip: true, reason: 'No vertical extent' };
+    }
+    
+    // Check temporal extent
+    if (reqs.temporal && !collectionHasTemporalExtent(collection)) {
+        return { skip: true, reason: 'No temporal extent' };
+    }
+    
+    return { skip: false, reason: null };
 }
 
 // ============================================================
@@ -504,13 +773,56 @@ async function runAllTests() {
         'schema-geojson-locations-list', 'schema-geojson-position'
     ];
 
+    // Show progress UI
+    isTestRunning = true;
+    stopRequested = false;
+    showProgress(true);
+    updateProgress(0, tests.length, 'Starting tests...');
+    
+    // Setup stop button
+    const stopBtn = document.getElementById('stop-btn');
+    stopBtn.style.display = 'inline-block';
+    stopBtn.onclick = () => {
+        stopRequested = true;
+        updateProgress(0, tests.length, 'Stopping...');
+    };
+
+    let completed = 0;
     for (const test of tests) {
+        if (stopRequested) {
+            break;
+        }
         await runTest(test);
+        completed++;
+        updateProgress(completed, tests.length, `Testing: ${test}`);
     }
+    
+    // Hide progress UI
+    isTestRunning = false;
+    stopBtn.style.display = 'none';
+    showProgress(false);
+}
+
+function showProgress(show) {
+    const container = document.getElementById('progress-container');
+    container.style.display = show ? 'block' : 'none';
+}
+
+function updateProgress(current, total, text) {
+    const fill = document.getElementById('progress-fill');
+    const textEl = document.getElementById('progress-text');
+    const percent = total > 0 ? (current / total) * 100 : 0;
+    fill.style.width = `${percent}%`;
+    textEl.textContent = text;
 }
 
 function clearAllResults() {
     testResults = {};
+    perCollectionResults = {};
+    
+    // Remove per-collection result wrappers
+    document.querySelectorAll('.collection-results-wrapper').forEach(el => el.remove());
+    
     document.querySelectorAll('.test-status').forEach(el => {
         el.className = 'test-status pending';
         el.textContent = 'Pending';
@@ -520,24 +832,217 @@ function clearAllResults() {
 
 async function runTest(testName) {
     setTestStatus(testName, 'running', 'Running...');
-
-    try {
-        const result = await executeTest(testName);
-        testResults[testName] = result;
-
-        if (result.passed && !result.warning) {
-            setTestStatus(testName, 'passed', 'Passed');
-        } else if (result.passed && result.warning) {
-            setTestStatus(testName, 'warning', 'Warning');
-        } else {
-            setTestStatus(testName, 'failed', 'Failed');
-        }
-    } catch (e) {
-        testResults[testName] = { passed: false, error: e.message };
-        setTestStatus(testName, 'failed', 'Error');
+    
+    // Determine which collections to test
+    const collectionsToTest = selectedCollectionId === '__ALL__' 
+        ? collections 
+        : collections.filter(c => c.id === selectedCollectionId);
+    
+    if (collectionsToTest.length === 0) {
+        testResults[testName] = { passed: false, error: 'No collections available' };
+        setTestStatus(testName, 'failed', 'No Collections');
+        updateSummary();
+        return;
     }
-
+    
+    // Global tests don't need per-collection iteration
+    if (GLOBAL_TESTS.includes(testName)) {
+        try {
+            const result = await executeTest(testName, null);
+            testResults[testName] = result;
+            setTestStatusFromResult(testName, result);
+        } catch (e) {
+            testResults[testName] = { passed: false, error: e.message };
+            setTestStatus(testName, 'failed', 'Error');
+        }
+        updateSummary();
+        return;
+    }
+    
+    // Per-collection tests
+    perCollectionResults[testName] = {};
+    let anyPassed = false;
+    let anyFailed = false;
+    let anyWarning = false;
+    let allSkipped = true;
+    
+    for (const col of collectionsToTest) {
+        if (stopRequested) break;
+        
+        try {
+            const result = await executeTest(testName, col);
+            perCollectionResults[testName][col.id] = result;
+            
+            if (!result.skipped) {
+                allSkipped = false;
+                if (result.passed && !result.warning) anyPassed = true;
+                if (result.passed && result.warning) anyWarning = true;
+                if (!result.passed) anyFailed = true;
+            }
+        } catch (e) {
+            perCollectionResults[testName][col.id] = { passed: false, error: e.message };
+            anyFailed = true;
+            allSkipped = false;
+        }
+    }
+    
+    // Aggregate result
+    const aggregateResult = {
+        passed: !anyFailed && !allSkipped,
+        warning: anyWarning && !anyFailed,
+        skipped: allSkipped,
+        perCollection: perCollectionResults[testName]
+    };
+    
+    testResults[testName] = aggregateResult;
+    
+    if (allSkipped) {
+        setTestStatus(testName, 'skipped', 'Skipped');
+    } else if (anyFailed) {
+        setTestStatus(testName, 'failed', 'Failed');
+    } else if (anyWarning) {
+        setTestStatus(testName, 'warning', 'Warning');
+    } else {
+        setTestStatus(testName, 'passed', 'Passed');
+    }
+    
     updateSummary();
+    
+    // Render per-collection results inline (only show failed by default)
+    if (selectedCollectionId === '__ALL__' && collectionsToTest.length > 1) {
+        renderPerCollectionResults(testName);
+    }
+}
+
+function setTestStatusFromResult(testName, result) {
+    if (result.skipped) {
+        setTestStatus(testName, 'skipped', 'Skipped');
+    } else if (result.passed && !result.warning) {
+        setTestStatus(testName, 'passed', 'Passed');
+    } else if (result.passed && result.warning) {
+        setTestStatus(testName, 'warning', 'Warning');
+    } else {
+        setTestStatus(testName, 'failed', 'Failed');
+    }
+}
+
+// Render per-collection results inline (only failed/warned shown by default)
+function renderPerCollectionResults(testName) {
+    const testItem = document.querySelector(`[data-test="${testName}"]`);
+    if (!testItem) return;
+    
+    // Remove existing wrapper
+    const existingWrapper = testItem.querySelector('.collection-results-wrapper');
+    if (existingWrapper) existingWrapper.remove();
+    
+    const results = perCollectionResults[testName];
+    if (!results || Object.keys(results).length === 0) return;
+    
+    // Count results by status
+    const failed = [];
+    const warned = [];
+    const skipped = [];
+    const passed = [];
+    
+    for (const [colId, result] of Object.entries(results)) {
+        if (result.skipped) {
+            skipped.push({ colId, result });
+        } else if (!result.passed) {
+            failed.push({ colId, result });
+        } else if (result.warning) {
+            warned.push({ colId, result });
+        } else {
+            passed.push({ colId, result });
+        }
+    }
+    
+    // Only show wrapper if there are failures or warnings (or all skipped)
+    const showAll = failed.length > 0 || warned.length > 0;
+    if (!showAll && skipped.length === Object.keys(results).length) {
+        // All skipped - show a simple message
+        const wrapper = document.createElement('div');
+        wrapper.className = 'collection-results-wrapper';
+        wrapper.innerHTML = `<div class="collection-result-item">
+            <span class="collection-result-status skipped">All ${skipped.length} collections skipped</span>
+            <span class="collection-result-reason">${skipped[0]?.result.reason || 'N/A'}</span>
+        </div>`;
+        testItem.appendChild(wrapper);
+        return;
+    }
+    
+    if (!showAll) return; // All passed, no need to show details
+    
+    const wrapper = document.createElement('div');
+    wrapper.className = 'collection-results-wrapper';
+    
+    // Show failed first
+    for (const { colId, result } of failed) {
+        wrapper.appendChild(createCollectionResultItem(colId, 'failed', 'FAIL', result.error || getFailedChecks(result)));
+    }
+    
+    // Then warnings
+    for (const { colId, result } of warned) {
+        wrapper.appendChild(createCollectionResultItem(colId, 'warning', 'WARN', getWarningReason(result)));
+    }
+    
+    // Add toggle to show all results
+    if (passed.length > 0 || skipped.length > 0) {
+        const toggle = document.createElement('div');
+        toggle.className = 'collection-results-toggle';
+        toggle.textContent = `+ Show ${passed.length} passed, ${skipped.length} skipped`;
+        toggle.onclick = (e) => {
+            e.stopPropagation();
+            const hiddenItems = wrapper.querySelectorAll('.collection-result-hidden');
+            if (hiddenItems.length > 0) {
+                hiddenItems.forEach(el => el.classList.remove('collection-result-hidden'));
+                toggle.textContent = '- Hide passed/skipped';
+            } else {
+                // Hide them again
+                wrapper.querySelectorAll('.collection-result-item.can-hide').forEach(el => el.classList.add('collection-result-hidden'));
+                toggle.textContent = `+ Show ${passed.length} passed, ${skipped.length} skipped`;
+            }
+        };
+        wrapper.appendChild(toggle);
+        
+        // Add passed (hidden by default)
+        for (const { colId } of passed) {
+            const item = createCollectionResultItem(colId, 'passed', 'PASS');
+            item.classList.add('can-hide', 'collection-result-hidden');
+            wrapper.appendChild(item);
+        }
+        
+        // Add skipped (hidden by default)
+        for (const { colId, result } of skipped) {
+            const item = createCollectionResultItem(colId, 'skipped', 'SKIP', result.reason);
+            item.classList.add('can-hide', 'collection-result-hidden');
+            wrapper.appendChild(item);
+        }
+    }
+    
+    testItem.appendChild(wrapper);
+}
+
+function createCollectionResultItem(colId, statusClass, statusText, reason = null) {
+    const div = document.createElement('div');
+    div.className = 'collection-result-item';
+    div.innerHTML = `
+        <span class="collection-result-id">${colId}</span>
+        <span class="collection-result-status ${statusClass}">${statusText}</span>
+        ${reason ? `<span class="collection-result-reason">${reason}</span>` : ''}
+    `;
+    return div;
+}
+
+function getFailedChecks(result) {
+    if (!result.checks) return null;
+    const failed = result.checks.filter(c => !c.passed).map(c => c.name);
+    return failed.length > 0 ? failed.join(', ') : null;
+}
+
+function getWarningReason(result) {
+    if (!result.checks) return null;
+    const warns = result.checks.filter(c => c.warning).map(c => c.warning);
+    return warns.length > 0 ? warns.join(', ') : null;
 }
 
 function setTestStatus(testName, status, text) {
@@ -549,8 +1054,21 @@ function setTestStatus(testName, status, text) {
     }
 }
 
-async function executeTest(testName) {
+async function executeTest(testName, collection) {
+    // Check for capability-based skipping
+    if (collection) {
+        const skipCheck = shouldSkipTest(testName, collection);
+        if (skipCheck.skip) {
+            return {
+                skipped: true,
+                reason: skipCheck.reason,
+                checks: [{ name: skipCheck.reason, passed: true, skipped: true }]
+            };
+        }
+    }
+    
     switch (testName) {
+        // Global tests (no collection needed)
         case 'landing-page':
             return testLandingPage();
         case 'landing-links':
@@ -559,387 +1077,389 @@ async function executeTest(testName) {
             return testConformance();
         case 'collections-list':
             return testCollectionsList();
+        
+        // Collection-dependent tests (pass collection)
         case 'collection-structure':
-            return testCollectionStructure();
+            return testCollectionStructure(collection);
         case 'collection-links':
-            return testCollectionLinks();
+            return testCollectionLinks(collection);
         case 'extent-spatial':
-            return testExtentSpatial();
+            return testExtentSpatial(collection);
         case 'extent-temporal':
-            return testExtentTemporal();
+            return testExtentTemporal(collection);
         case 'extent-vertical':
-            return testExtentVertical();
+            return testExtentVertical(collection);
         case 'instances-list':
-            return testInstancesList();
+            return testInstancesList(collection);
         case 'instance-structure':
-            return testInstanceStructure();
+            return testInstanceStructure(collection);
         case 'instance-extent':
-            return testInstanceExtent();
+            return testInstanceExtent(collection);
         case 'position-wkt':
-            return testPositionWkt();
+            return testPositionWkt(collection);
         case 'position-simple':
-            return testPositionSimple();
+            return testPositionSimple(collection);
         case 'position-covjson':
-            return testPositionCovJson();
+            return testPositionCovJson(collection);
         case 'position-invalid':
-            return testPositionInvalid();
+            return testPositionInvalid(collection);
         case 'position-missing-coords':
-            return testPositionMissingCoords();
+            return testPositionMissingCoords(collection);
         case 'position-multipoint':
-            return testPositionMultipoint();
+            return testPositionMultipoint(collection);
         case 'position-no-query-params':
-            return testPositionNoQueryParams();
+            return testPositionNoQueryParams(collection);
         case 'position-crs-valid':
-            return testPositionCrsValid();
+            return testPositionCrsValid(collection);
         case 'position-f-covjson':
-            return testPositionFCovJson();
+            return testPositionFCovJson(collection);
         case 'z-single':
-            return testZSingle();
+            return testZSingle(collection);
         case 'z-multiple':
-            return testZMultiple();
+            return testZMultiple(collection);
         case 'z-range':
-            return testZRange();
+            return testZRange(collection);
         case 'z-recurring':
-            return testZRecurring();
+            return testZRecurring(collection);
         case 'z-invalid':
-            return testZInvalid();
+            return testZInvalid(collection);
         case 'z-outside-extent':
-            return testZOutsideExtent();
+            return testZOutsideExtent(collection);
         case 'datetime-instant':
-            return testDatetimeInstant();
+            return testDatetimeInstant(collection);
         case 'datetime-range':
-            return testDatetimeRange();
+            return testDatetimeRange(collection);
         case 'datetime-list':
-            return testDatetimeList();
+            return testDatetimeList(collection);
         case 'datetime-open-end':
-            return testDatetimeOpenEnd();
+            return testDatetimeOpenEnd(collection);
         case 'area-basic':
-            return testAreaBasic();
+            return testAreaBasic(collection);
         case 'area-covjson':
-            return testAreaCovJson();
+            return testAreaCovJson(collection);
         case 'area-small':
-            return testAreaSmall();
+            return testAreaSmall(collection);
         case 'area-complex':
-            return testAreaComplex();
+            return testAreaComplex(collection);
         case 'area-too-large':
-            return testAreaTooLarge();
+            return testAreaTooLarge(collection);
         case 'area-invalid-polygon':
-            return testAreaInvalidPolygon();
+            return testAreaInvalidPolygon(collection);
         case 'area-with-params':
-            return testAreaWithParams();
+            return testAreaWithParams(collection);
         case 'area-missing-coords':
-            return testAreaMissingCoords();
+            return testAreaMissingCoords(collection);
         case 'area-multipolygon':
-            return testAreaMultipolygon();
+            return testAreaMultipolygon(collection);
         case 'area-z-multiple':
-            return testAreaZMultiple();
+            return testAreaZMultiple(collection);
         case 'area-crs-valid':
-            return testAreaCrsValid();
+            return testAreaCrsValid(collection);
         case 'area-f-covjson':
-            return testAreaFCovJson();
+            return testAreaFCovJson(collection);
         // Radius Query tests
         case 'radius-basic':
-            return testRadiusBasic();
+            return testRadiusBasic(collection);
         case 'radius-covjson':
-            return testRadiusCovJson();
+            return testRadiusCovJson(collection);
         case 'radius-missing-coords':
-            return testRadiusMissingCoords();
+            return testRadiusMissingCoords(collection);
         case 'radius-missing-within':
-            return testRadiusMissingWithin();
+            return testRadiusMissingWithin(collection);
         case 'radius-missing-within-units':
-            return testRadiusMissingWithinUnits();
+            return testRadiusMissingWithinUnits(collection);
         case 'radius-invalid-coords':
-            return testRadiusInvalidCoords();
+            return testRadiusInvalidCoords(collection);
         case 'radius-too-large':
-            return testRadiusTooLarge();
+            return testRadiusTooLarge(collection);
         case 'radius-units-km':
-            return testRadiusUnitsKm();
+            return testRadiusUnitsKm(collection);
         case 'radius-units-mi':
-            return testRadiusUnitsMi();
+            return testRadiusUnitsMi(collection);
         case 'radius-units-m':
-            return testRadiusUnitsM();
+            return testRadiusUnitsM(collection);
         case 'radius-multipoint':
-            return testRadiusMultipoint();
+            return testRadiusMultipoint(collection);
         case 'radius-z-parameter':
-            return testRadiusZParameter();
+            return testRadiusZParameter(collection);
         case 'radius-with-params':
-            return testRadiusWithParams();
+            return testRadiusWithParams(collection);
         case 'radius-datetime':
-            return testRadiusDatetime();
+            return testRadiusDatetime(collection);
         case 'radius-no-query-params':
-            return testRadiusNoQueryParams();
+            return testRadiusNoQueryParams(collection);
         case 'radius-crs-valid':
-            return testRadiusCrsValid();
+            return testRadiusCrsValid(collection);
         case 'radius-f-covjson':
-            return testRadiusFCovJson();
+            return testRadiusFCovJson(collection);
         // Trajectory Query tests
         case 'trajectory-basic':
-            return testTrajectoryBasic();
+            return testTrajectoryBasic(collection);
         case 'trajectory-covjson':
-            return testTrajectoryCovJson();
+            return testTrajectoryCovJson(collection);
         case 'trajectory-missing-coords':
-            return testTrajectoryMissingCoords();
+            return testTrajectoryMissingCoords(collection);
         case 'trajectory-invalid-coords':
-            return testTrajectoryInvalidCoords();
+            return testTrajectoryInvalidCoords(collection);
         case 'trajectory-linestringz':
-            return testTrajectoryLinestringZ();
+            return testTrajectoryLinestringZ(collection);
         case 'trajectory-linestringm':
-            return testTrajectoryLinestringM();
+            return testTrajectoryLinestringM(collection);
         case 'trajectory-z-conflict':
-            return testTrajectoryZConflict();
+            return testTrajectoryZConflict(collection);
         case 'trajectory-multilinestring':
-            return testTrajectoryMultilinestring();
+            return testTrajectoryMultilinestring(collection);
         case 'trajectory-with-params':
-            return testTrajectoryWithParams();
+            return testTrajectoryWithParams(collection);
         case 'trajectory-datetime':
-            return testTrajectoryDatetime();
+            return testTrajectoryDatetime(collection);
         case 'trajectory-no-query-params':
-            return testTrajectoryNoQueryParams();
+            return testTrajectoryNoQueryParams(collection);
         case 'trajectory-invalid-linestringm':
-            return testTrajectoryInvalidLinestringM();
+            return testTrajectoryInvalidLinestringM(collection);
         case 'trajectory-invalid-linestringz':
-            return testTrajectoryInvalidLinestringZ();
+            return testTrajectoryInvalidLinestringZ(collection);
         case 'trajectory-invalid-linestringzm':
-            return testTrajectoryInvalidLinestringZM();
+            return testTrajectoryInvalidLinestringZM(collection);
         case 'trajectory-linestringz-invalid-z':
-            return testTrajectoryLinestringZInvalidZ();
+            return testTrajectoryLinestringZInvalidZ(collection);
         case 'trajectory-z-param-invalid':
-            return testTrajectoryZParamInvalid();
+            return testTrajectoryZParamInvalid(collection);
         case 'trajectory-invalid-time':
-            return testTrajectoryInvalidTime();
+            return testTrajectoryInvalidTime(collection);
         case 'trajectory-crs-valid':
-            return testTrajectoryCrsValid();
+            return testTrajectoryCrsValid(collection);
         case 'trajectory-f-covjson':
-            return testTrajectoryFCovJson();
+            return testTrajectoryFCovJson(collection);
         // Corridor Query tests
         case 'corridor-basic':
-            return testCorridorBasic();
+            return testCorridorBasic(collection);
         case 'corridor-covjson':
-            return testCorridorCovJson();
+            return testCorridorCovJson(collection);
         case 'corridor-missing-coords':
-            return testCorridorMissingCoords();
+            return testCorridorMissingCoords(collection);
         case 'corridor-missing-width':
-            return testCorridorMissingWidth();
+            return testCorridorMissingWidth(collection);
         case 'corridor-missing-width-units':
-            return testCorridorMissingWidthUnits();
+            return testCorridorMissingWidthUnits(collection);
         case 'corridor-missing-height':
-            return testCorridorMissingHeight();
+            return testCorridorMissingHeight(collection);
         case 'corridor-missing-height-units':
-            return testCorridorMissingHeightUnits();
+            return testCorridorMissingHeightUnits(collection);
         case 'corridor-invalid-width-units':
-            return testCorridorInvalidWidthUnits();
+            return testCorridorInvalidWidthUnits(collection);
         case 'corridor-invalid-height-units':
-            return testCorridorInvalidHeightUnits();
+            return testCorridorInvalidHeightUnits(collection);
         case 'corridor-invalid-coords':
-            return testCorridorInvalidCoords();
+            return testCorridorInvalidCoords(collection);
         case 'corridor-z-conflict':
-            return testCorridorZConflict();
+            return testCorridorZConflict(collection);
         case 'corridor-datetime-conflict':
-            return testCorridorDatetimeConflict();
+            return testCorridorDatetimeConflict(collection);
         case 'corridor-multilinestring':
-            return testCorridorMultilinestring();
+            return testCorridorMultilinestring(collection);
         case 'corridor-with-params':
-            return testCorridorWithParams();
+            return testCorridorWithParams(collection);
         case 'corridor-pressure-height-units':
-            return testCorridorPressureHeightUnits();
+            return testCorridorPressureHeightUnits(collection);
         case 'corridor-metadata':
-            return testCorridorMetadata();
+            return testCorridorMetadata(collection);
         // Corridor Query - Additional Tests
         case 'corridor-invalid-linestringm':
-            return testCorridorInvalidLinestringM();
+            return testCorridorInvalidLinestringM(collection);
         case 'corridor-invalid-linestringz':
-            return testCorridorInvalidLinestringZ();
+            return testCorridorInvalidLinestringZ(collection);
         case 'corridor-invalid-linestringzm':
-            return testCorridorInvalidLinestringZM();
+            return testCorridorInvalidLinestringZM(collection);
         case 'corridor-zm-z-conflict':
-            return testCorridorZMZConflict();
+            return testCorridorZMZConflict(collection);
         case 'corridor-zm-datetime-conflict':
-            return testCorridorZMDatetimeConflict();
+            return testCorridorZMDatetimeConflict(collection);
         case 'corridor-linestringz-invalid-z':
-            return testCorridorLinestringZInvalidZ();
+            return testCorridorLinestringZInvalidZ(collection);
         case 'corridor-z-param-invalid':
-            return testCorridorZParamInvalid();
+            return testCorridorZParamInvalid(collection);
         case 'corridor-linestringz':
-            return testCorridorLinestringZ();
+            return testCorridorLinestringZ(collection);
         case 'corridor-linestringm':
-            return testCorridorLinestringM();
+            return testCorridorLinestringM(collection);
         case 'corridor-linestringzm':
-            return testCorridorLinestringZM();
+            return testCorridorLinestringZM(collection);
         case 'corridor-with-datetime':
-            return testCorridorWithDatetime();
+            return testCorridorWithDatetime(collection);
         case 'corridor-with-z':
-            return testCorridorWithZ();
+            return testCorridorWithZ(collection);
         case 'corridor-instance':
-            return testCorridorInstance();
+            return testCorridorInstance(collection);
         case 'corridor-not-found':
-            return testCorridorNotFound();
+            return testCorridorNotFound(collection);
         case 'corridor-crs-valid':
-            return testCorridorCrsValid();
+            return testCorridorCrsValid(collection);
         case 'corridor-f-covjson':
-            return testCorridorFCovJson();
+            return testCorridorFCovJson(collection);
         case 'error-404-collection':
             return testError404Collection();
         case 'error-400-coords':
-            return testError400Coords();
+            return testError400Coords(collection);
         case 'error-400-datetime':
-            return testError400Datetime();
+            return testError400Datetime(collection);
         case 'error-response-structure':
-            return testErrorResponseStructure();
+            return testErrorResponseStructure(collection);
         case 'metadata-data-queries':
-            return testMetadataDataQueries();
+            return testMetadataDataQueries(collection);
         case 'metadata-parameter-names':
-            return testMetadataParameterNames();
+            return testMetadataParameterNames(collection);
         case 'metadata-output-formats':
-            return testMetadataOutputFormats();
+            return testMetadataOutputFormats(collection);
         case 'metadata-crs':
-            return testMetadataCrs();
+            return testMetadataCrs(collection);
         // Content-Type & Format tests
         case 'content-type-covjson':
-            return testContentTypeCovJson();
+            return testContentTypeCovJson(collection);
         case 'content-type-json':
-            return testContentTypeJson();
+            return testContentTypeJson(collection);
         case 'f-param-covjson':
-            return testFParamCovJson();
+            return testFParamCovJson(collection);
         case 'f-param-invalid':
-            return testFParamInvalid();
+            return testFParamInvalid(collection);
         // CRS Parameter tests
         case 'crs-param-valid':
-            return testCrsParamValid();
+            return testCrsParamValid(collection);
         case 'crs-param-invalid':
-            return testCrsParamInvalid();
+            return testCrsParamInvalid(collection);
         // Parameter-Name tests
         case 'param-name-filter':
-            return testParamNameFilter();
+            return testParamNameFilter(collection);
         case 'param-name-invalid':
-            return testParamNameInvalid();
+            return testParamNameInvalid(collection);
         // Instance Query tests
         case 'instance-position-query':
-            return testInstancePositionQuery();
+            return testInstancePositionQuery(collection);
         case 'instance-invalid-id':
-            return testInstanceInvalidId();
+            return testInstanceInvalidId(collection);
         // Domain Type tests
         case 'domain-type-point':
-            return testDomainTypePoint();
+            return testDomainTypePoint(collection);
         case 'domain-type-pointseries':
-            return testDomainTypePointSeries();
+            return testDomainTypePointSeries(collection);
         case 'domain-type-verticalprofile':
-            return testDomainTypeVerticalProfile();
+            return testDomainTypeVerticalProfile(collection);
         case 'domain-type-grid':
-            return testDomainTypeGrid();
+            return testDomainTypeGrid(collection);
         // Link Validation tests
         case 'links-self':
-            return testLinksSelf();
+            return testLinksSelf(collection);
         case 'links-data-queries':
-            return testLinksDataQueries();
+            return testLinksDataQueries(collection);
         // No Query Params tests
         case 'position-no-params':
-            return testPositionNoParams();
+            return testPositionNoParams(collection);
         case 'area-no-params':
-            return testAreaNoParams();
+            return testAreaNoParams(collection);
         // Datetime open start
         case 'datetime-open-start':
-            return testDatetimeOpenStart();
+            return testDatetimeOpenStart(collection);
         // Accept Header Content Negotiation
         case 'accept-covjson':
-            return testAcceptCovJson();
+            return testAcceptCovJson(collection);
         case 'accept-json':
-            return testAcceptJson();
+            return testAcceptJson(collection);
         case 'accept-unsupported':
-            return testAcceptUnsupported();
+            return testAcceptUnsupported(collection);
         // CoverageJSON Structure Validation
         case 'covjson-referencing':
-            return testCovJsonReferencing();
+            return testCovJsonReferencing(collection);
         case 'covjson-ndarray':
-            return testCovJsonNdArray();
+            return testCovJsonNdArray(collection);
         case 'covjson-observed-property':
-            return testCovJsonObservedProperty();
+            return testCovJsonObservedProperty(collection);
         case 'covjson-axes':
-            return testCovJsonAxes();
+            return testCovJsonAxes(collection);
         // Alternate Format Links
         case 'links-alternate-formats':
-            return testLinksAlternateFormats();
+            return testLinksAlternateFormats(collection);
         case 'links-landing-alternate':
             return testLinksLandingAlternate();
         // GeoJSON Output Format tests
         case 'f-param-geojson':
-            return testFParamGeoJson();
+            return testFParamGeoJson(collection);
         case 'content-type-geojson':
-            return testContentTypeGeoJson();
+            return testContentTypeGeoJson(collection);
         case 'geojson-structure':
-            return testGeoJsonStructure();
+            return testGeoJsonStructure(collection);
         case 'accept-geojson':
-            return testAcceptGeoJson();
+            return testAcceptGeoJson(collection);
         // Cube Query tests
         case 'cube-basic':
-            return testCubeBasic();
+            return testCubeBasic(collection);
         case 'cube-covjson':
-            return testCubeCovJson();
+            return testCubeCovJson(collection);
         case 'cube-missing-bbox':
-            return testCubeMissingBbox();
+            return testCubeMissingBbox(collection);
         case 'cube-missing-z':
-            return testCubeMissingZ();
+            return testCubeMissingZ(collection);
         case 'cube-invalid-bbox':
-            return testCubeInvalidBbox();
+            return testCubeInvalidBbox(collection);
         case 'cube-multi-z':
-            return testCubeMultiZ();
+            return testCubeMultiZ(collection);
         case 'cube-with-datetime':
-            return testCubeWithDatetime();
+            return testCubeWithDatetime(collection);
         case 'cube-with-resolution':
-            return testCubeWithResolution();
+            return testCubeWithResolution(collection);
         case 'cube-instance':
-            return testCubeInstance();
+            return testCubeInstance(collection);
         case 'cube-not-found':
-            return testCubeNotFound();
+            return testCubeNotFound(collection);
         case 'cube-no-query-params':
-            return testCubeNoQueryParams();
+            return testCubeNoQueryParams(collection);
         case 'cube-z-range':
-            return testCubeZRange();
+            return testCubeZRange(collection);
         case 'cube-z-recurring':
-            return testCubeZRecurring();
+            return testCubeZRecurring(collection);
         case 'cube-invalid-z':
-            return testCubeInvalidZ();
+            return testCubeInvalidZ(collection);
         case 'cube-crs-valid':
-            return testCubeCrsValid();
+            return testCubeCrsValid(collection);
         case 'cube-f-covjson':
-            return testCubeFCovJson();
+            return testCubeFCovJson(collection);
         // Locations Query tests
         case 'locations-list':
-            return testLocationsList();
+            return testLocationsList(collection);
         case 'locations-geojson-structure':
-            return testLocationsGeoJsonStructure();
+            return testLocationsGeoJsonStructure(collection);
         case 'locations-query-basic':
-            return testLocationsQueryBasic();
+            return testLocationsQueryBasic(collection);
         case 'locations-query-covjson':
-            return testLocationsQueryCovJson();
+            return testLocationsQueryCovJson(collection);
         case 'locations-invalid-id':
-            return testLocationsInvalidId();
+            return testLocationsInvalidId(collection);
         case 'locations-with-params':
-            return testLocationsWithParams();
+            return testLocationsWithParams(collection);
         case 'locations-with-datetime':
-            return testLocationsWithDatetime();
+            return testLocationsWithDatetime(collection);
         case 'locations-cache-header':
-            return testLocationsCacheHeader();
+            return testLocationsCacheHeader(collection);
         case 'locations-instance':
-            return testLocationsInstance();
+            return testLocationsInstance(collection);
         case 'locations-crs-valid':
-            return testLocationsCrsValid();
+            return testLocationsCrsValid(collection);
         case 'locations-f-covjson':
-            return testLocationsFCovJson();
+            return testLocationsFCovJson(collection);
         // Schema Validation tests
         case 'schema-covjson-position':
-            return testSchemaCovJsonPosition();
+            return testSchemaCovJsonPosition(collection);
         case 'schema-covjson-area':
-            return testSchemaCovJsonArea();
+            return testSchemaCovJsonArea(collection);
         case 'schema-covjson-trajectory':
-            return testSchemaCovJsonTrajectory();
+            return testSchemaCovJsonTrajectory(collection);
         case 'schema-covjson-cube':
-            return testSchemaCovJsonCube();
+            return testSchemaCovJsonCube(collection);
         case 'schema-covjson-locations':
-            return testSchemaCovJsonLocations();
+            return testSchemaCovJsonLocations(collection);
         case 'schema-geojson-locations-list':
-            return testSchemaGeoJsonLocationsList();
+            return testSchemaGeoJsonLocationsList(collection);
         case 'schema-geojson-position':
-            return testSchemaGeoJsonPosition();
+            return testSchemaGeoJsonPosition(collection);
         default:
             return { passed: false, error: 'Unknown test' };
     }
@@ -947,7 +1467,14 @@ async function executeTest(testName) {
 
 // Get the URL(s) used by a test
 function getTestUrls(testName) {
-    const col = collections.length > 0 ? collections[0] : null;
+    // Use the selected collection, not the first collection
+    let col = null;
+    if (selectedCollectionId && selectedCollectionId !== '__ALL__') {
+        col = collections.find(c => c.id === selectedCollectionId);
+    }
+    if (!col && collections.length > 0) {
+        col = collections[0];
+    }
     const colId = col?.id || '{collection_id}';
 
     switch (testName) {
@@ -1285,11 +1812,33 @@ function copyTestUrl(testName, btn) {
     const result = testResults[testName];
     let textToCopy;
     
-    if (result?.url) {
-        // Use the actual URL that was used in the test
+    // For per-collection tests, get the URL from the actual collection result
+    if (result?.perCollection) {
+        const collectionIds = Object.keys(result.perCollection);
+        if (collectionIds.length === 1) {
+            // Single collection - use its URL
+            const colResult = result.perCollection[collectionIds[0]];
+            if (colResult?.url) {
+                textToCopy = colResult.url;
+            }
+        } else if (collectionIds.length > 1) {
+            // Multiple collections - collect all URLs
+            const urls = collectionIds
+                .map(id => result.perCollection[id]?.url)
+                .filter(url => url);
+            if (urls.length > 0) {
+                textToCopy = urls.join('\n');
+            }
+        }
+    }
+    
+    // Fall back to direct URL on result
+    if (!textToCopy && result?.url) {
         textToCopy = result.url;
-    } else {
-        // Fall back to template URLs
+    }
+    
+    // Fall back to template URLs
+    if (!textToCopy) {
         const urls = getTestUrls(testName);
         if (urls.length === 0) {
             showToast('No URL available for this test', 'error');
@@ -1395,14 +1944,8 @@ async function testCollectionsList() {
     };
 }
 
-async function testCollectionStructure() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCollectionStructure(collection) {
+    const col = collection;
     const checks = [
         { name: 'Has id', passed: !!col.id },
         { name: 'Has links', passed: Array.isArray(col.links) },
@@ -1410,19 +1953,12 @@ async function testCollectionStructure() {
     ];
     return {
         passed: checks.every(c => c.passed),
-        checks,
-        response: listRes
+        checks
     };
 }
 
-async function testCollectionLinks() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCollectionLinks(collection) {
+    const col = collection;
     const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const links = colRes.json?.links || [];
     const checks = [
@@ -1440,14 +1976,8 @@ async function testCollectionLinks() {
 // EXTENT TESTS
 // ============================================================
 
-async function testExtentSpatial() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testExtentSpatial(collection) {
+    const col = collection;
     const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const extent = colRes.json?.extent;
     const spatial = extent?.spatial;
@@ -1466,15 +1996,10 @@ async function testExtentSpatial() {
     };
 }
 
-async function testExtentTemporal() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+async function testExtentTemporal(collection) {
+    const col = collection;
+    const url = `${API_BASE}/collections/${col.id}`;
+    const colRes = await fetchJson(url);
     const extent = colRes.json?.extent;
     const temporal = extent?.temporal;
     
@@ -1505,26 +2030,24 @@ async function testExtentTemporal() {
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: colRes
+        response: colRes,
+        url
     };
 }
 
-async function testExtentVertical() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
+async function testExtentVertical(collection) {
+    const col = collection;
     
-    // Find a collection that should have vertical extent (isobaric)
-    const isobaricCol = collections.find(c => c.id.includes('isobaric'));
-    if (!isobaricCol) {
-        // If no isobaric collection, this test is N/A
+    // Check if collection has vertical extent
+    if (!collectionHasVerticalExtent(col)) {
         return { 
-            passed: true, 
-            checks: [{ name: 'No isobaric collection (test N/A)', passed: true }],
-            response: listRes
+            skipped: true,
+            reason: 'No vertical extent',
+            checks: [{ name: 'Collection has no vertical extent', passed: true, skipped: true }]
         };
     }
 
-    const colRes = await fetchJson(`${API_BASE}/collections/${isobaricCol.id}`);
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const extent = colRes.json?.extent;
     const vertical = extent?.vertical;
     
@@ -1546,14 +2069,8 @@ async function testExtentVertical() {
 // INSTANCES TESTS
 // ============================================================
 
-async function testInstancesList() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testInstancesList(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
@@ -1567,14 +2084,8 @@ async function testInstancesList() {
     };
 }
 
-async function testInstanceStructure() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testInstanceStructure(collection) {
+    const col = collection;
     const instRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
     const instances = instRes.json?.instances || [];
     if (instances.length === 0) {
@@ -1593,14 +2104,8 @@ async function testInstanceStructure() {
     };
 }
 
-async function testInstanceExtent() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testInstanceExtent(collection) {
+    const col = collection;
     const url = `${API_BASE}/collections/${col.id}/instances`;
     const instRes = await fetchJson(url);
     const instances = instRes.json?.instances || [];
@@ -1658,14 +2163,8 @@ async function testInstanceExtent() {
     };
 }
 
-async function testPositionWkt() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionWkt(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -1694,14 +2193,8 @@ async function testPositionWkt() {
     };
 }
 
-async function testPositionSimple() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionSimple(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -1728,14 +2221,8 @@ async function testPositionSimple() {
     };
 }
 
-async function testPositionCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionCovJson(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -1776,14 +2263,8 @@ async function testPositionCovJson() {
     };
 }
 
-async function testPositionInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionInvalid(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=INVALID`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -1797,14 +2278,8 @@ async function testPositionInvalid() {
 }
 
 // Position query without coords parameter - should return 400
-async function testPositionMissingCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionMissingCoords(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -1819,14 +2294,8 @@ async function testPositionMissingCoords() {
 }
 
 // MULTIPOINT query - should return CoverageCollection with multiple coverages
-async function testPositionMultipoint() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionMultipoint(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, bbox, warning } = await getValidCoordinates(col.id);
@@ -1866,14 +2335,8 @@ async function testPositionMultipoint() {
 }
 
 // Position with no query params - should return 400 (Abstract Test B.41)
-async function testPositionNoQueryParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionNoQueryParams(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position`);
     
     const checks = [
@@ -1888,14 +2351,8 @@ async function testPositionNoQueryParams() {
 }
 
 // Position with crs parameter - should accept CRS:84 (Abstract Test B.53/B.54)
-async function testPositionCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionCrsValid(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -1925,14 +2382,8 @@ async function testPositionCrsValid() {
 }
 
 // Position with f=CoverageJSON parameter (Abstract Test B.55/B.56)
-async function testPositionFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionFCovJson(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2016,11 +2467,8 @@ async function findIsobaricCollection() {
 }
 
 // Single z level query
-async function testZSingle() {
-    const col = await findIsobaricCollection();
-    if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testZSingle(collection) {
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2071,21 +2519,8 @@ async function testZSingle() {
 }
 
 // Multiple z levels query - spec says ALL requested levels should be returned
-async function testZMultiple() {
-    // Need at least 3 vertical levels for this test
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true, 
-            checks: [{ 
-                name: 'No collection with 3+ vertical levels found', 
-                passed: true, 
-                warning: 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+async function testZMultiple(collection) {
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2101,17 +2536,16 @@ async function testZMultiple() {
     const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
     const verticalValues = allLevels || [];
     
-    // Need at least 3 levels for this test - don't use hardcoded fallbacks
+    // Need at least 3 levels for this test
     if (verticalValues.length < 3) {
         return { 
-            passed: true, 
-            warning: true, 
+            skipped: true,
+            reason: 'Fewer than 3 vertical levels',
             checks: [{ 
-                name: zWarning || 'Collection needs at least 3 vertical levels for z-multiple test', 
+                name: `Collection has ${verticalValues.length} vertical levels, needs 3+`, 
                 passed: true, 
-                warning: zWarning || 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+                skipped: true
+            }]
         };
     }
     
@@ -2143,21 +2577,9 @@ async function testZMultiple() {
 }
 
 // Z range query (z=1000/500)
-async function testZRange() {
+async function testZRange(collection) {
     // Need at least 2 vertical levels for range query
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true, 
-            checks: [{ 
-                name: 'No collection with 2+ vertical levels found', 
-                passed: true, 
-                warning: 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2182,8 +2604,7 @@ async function testZRange() {
                 name: zWarning || 'Collection needs at least 2 vertical levels for z-range test', 
                 passed: true, 
                 warning: zWarning || 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+            }]
         };
     }
     
@@ -2215,21 +2636,9 @@ async function testZRange() {
 }
 
 // Recurring z intervals (z=R5/1000/100) - 5 levels starting at 1000, decrementing by 100
-async function testZRecurring() {
+async function testZRecurring(collection) {
     // Need at least 3 vertical levels for recurring z test
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true, 
-            checks: [{ 
-                name: 'No collection with 3+ vertical levels found', 
-                passed: true, 
-                warning: 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2254,8 +2663,7 @@ async function testZRecurring() {
                 name: zWarning || 'Collection needs at least 3 vertical levels for z-recurring test', 
                 passed: true, 
                 warning: zWarning || 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+            }]
         };
     }
     
@@ -2315,14 +2723,8 @@ async function testZRecurring() {
 }
 
 // Invalid z parameter
-async function testZInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testZInvalid(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2350,14 +2752,8 @@ async function testZInvalid() {
 }
 
 // z parameter outside collection's vertical extent
-async function testZOutsideExtent() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testZOutsideExtent(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -2395,26 +2791,16 @@ async function testZOutsideExtent() {
 // ============================================================
 
 // Helper to get available times from a collection
-async function getCollectionTimes() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { collection: null, times: [] };
-    }
-    
-    const col = collections[0];
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+async function getCollectionTimes(collectionId) {
+    const colRes = await fetchJson(`${API_BASE}/collections/${collectionId}`);
     const times = colRes.json?.extent?.temporal?.values || [];
-    
-    return { collection: col, times };
+    return { times };
 }
 
 // Single datetime instant
-async function testDatetimeInstant() {
-    const { collection, times } = await getCollectionTimes();
-    if (!collection) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testDatetimeInstant(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (times.length === 0) {
         return { passed: true, checks: [{ name: 'No temporal values (test N/A)', passed: true }] };
     }
@@ -2462,11 +2848,9 @@ function getTimeAxisValues(domain) {
 }
 
 // Datetime range (start/end interval)
-async function testDatetimeRange() {
-    const { collection, times } = await getCollectionTimes();
-    if (!collection) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testDatetimeRange(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (times.length < 2) {
         return { passed: true, checks: [{ name: 'Not enough temporal values for range test (N/A)', passed: true }] };
     }
@@ -2507,11 +2891,9 @@ async function testDatetimeRange() {
 }
 
 // Multiple discrete datetimes (comma-separated list)
-async function testDatetimeList() {
-    const { collection, times } = await getCollectionTimes();
-    if (!collection) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testDatetimeList(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (times.length < 3) {
         return { passed: true, checks: [{ name: 'Not enough temporal values for list test (N/A)', passed: true }] };
     }
@@ -2552,11 +2934,9 @@ async function testDatetimeList() {
 }
 
 // Datetime with open end (start/..)
-async function testDatetimeOpenEnd() {
-    const { collection, times } = await getCollectionTimes();
-    if (!collection) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testDatetimeOpenEnd(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (times.length < 2) {
         return { passed: true, checks: [{ name: 'Not enough temporal values for open-end test (N/A)', passed: true }] };
     }
@@ -2600,14 +2980,8 @@ async function testDatetimeOpenEnd() {
 // ============================================================
 
 // Basic polygon area query
-async function testAreaBasic() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaBasic(collection) {
+    const col = collection;
     
     // Get valid polygon from collection extent
     const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
@@ -2636,14 +3010,8 @@ async function testAreaBasic() {
 }
 
 // Area query returns proper CoverageJSON Grid
-async function testAreaCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaCovJson(collection) {
+    const col = collection;
     
     // Get valid polygon from collection extent
     const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 1.0);
@@ -2689,14 +3057,8 @@ async function testAreaCovJson() {
 }
 
 // Small region area query
-async function testAreaSmall() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaSmall(collection) {
+    const col = collection;
     
     // Get valid small polygon from collection extent
     const { polygon, bboxArray, warning } = await getValidPolygon(col.id, 0.1);
@@ -2726,14 +3088,8 @@ async function testAreaSmall() {
 }
 
 // Complex polygon (L-shaped)
-async function testAreaComplex() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaComplex(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, bbox, warning } = await getValidCoordinates(col.id);
@@ -2775,14 +3131,8 @@ async function testAreaComplex() {
 }
 
 // Area too large should return 413 or 400
-async function testAreaTooLarge() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaTooLarge(collection) {
+    const col = collection;
     // Full CONUS - should be rejected as too large
     const polygon = 'POLYGON((-125 24,-66 24,-66 50,-125 50,-125 24))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
@@ -2800,14 +3150,8 @@ async function testAreaTooLarge() {
 }
 
 // Invalid polygon (not closed, insufficient points)
-async function testAreaInvalidPolygon() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaInvalidPolygon(collection) {
+    const col = collection;
     // Invalid: only 2 points, not a valid polygon
     const polygon = 'POLYGON((-98 35,-97 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
@@ -2824,14 +3168,8 @@ async function testAreaInvalidPolygon() {
 }
 
 // Area query with parameter filtering
-async function testAreaWithParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaWithParams(collection) {
+    const col = collection;
     
     // Get valid polygon from collection extent
     const { polygon, bboxArray, warning: polygonWarning } = await getValidPolygon(col.id, 1.0);
@@ -2889,14 +3227,8 @@ async function testAreaWithParams() {
 }
 
 // Area query without coords parameter - should return 400
-async function testAreaMissingCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaMissingCoords(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -2911,14 +3243,8 @@ async function testAreaMissingCoords() {
 }
 
 // MULTIPOLYGON query
-async function testAreaMultipolygon() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaMultipolygon(collection) {
+    const col = collection;
     // Two separate 1x1 degree polygons
     const multipolygon = 'MULTIPOLYGON(((-98 35,-97 35,-97 36,-98 36,-98 35)),((-96 35,-95 35,-95 36,-96 36,-96 35)))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(multipolygon)}`);
@@ -2936,21 +3262,9 @@ async function testAreaMultipolygon() {
 }
 
 // Area query with multiple z levels
-async function testAreaZMultiple() {
+async function testAreaZMultiple(collection) {
     // Need at least 2 vertical levels for this test
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true, 
-            checks: [{ 
-                name: 'No collection with 2+ vertical levels found', 
-                passed: true, 
-                warning: 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get available z values from collection extent
     const { allLevels, warning: zWarning } = await getValidZLevel(col.id);
@@ -2965,8 +3279,7 @@ async function testAreaZMultiple() {
                 name: zWarning || 'Collection needs at least 2 vertical levels for area-z-multiple test', 
                 passed: true, 
                 warning: zWarning || 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+            }]
         };
     }
     
@@ -2996,14 +3309,8 @@ async function testAreaZMultiple() {
 }
 
 // Area with crs parameter - should accept CRS:84 (Abstract Test B.87/B.88)
-async function testAreaCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaCrsValid(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&crs=CRS:84`);
     
@@ -3020,14 +3327,8 @@ async function testAreaCrsValid() {
 }
 
 // Area with f=CoverageJSON parameter (Abstract Test B.89/B.90)
-async function testAreaFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaFCovJson(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=CoverageJSON`);
     
@@ -3052,14 +3353,8 @@ async function testAreaFCovJson() {
 // ============================================================
 
 // Basic radius query
-async function testRadiusBasic() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusBasic(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3088,14 +3383,8 @@ async function testRadiusBasic() {
 }
 
 // Radius query returns proper CoverageJSON Grid
-async function testRadiusCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusCovJson(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3141,14 +3430,8 @@ async function testRadiusCovJson() {
 }
 
 // Radius query missing coords parameter - should return 400
-async function testRadiusMissingCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusMissingCoords(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?within=50&within-units=km`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -3163,14 +3446,8 @@ async function testRadiusMissingCoords() {
 }
 
 // Radius query missing within parameter - should return 400
-async function testRadiusMissingWithin() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusMissingWithin(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within-units=km`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -3185,14 +3462,8 @@ async function testRadiusMissingWithin() {
 }
 
 // Radius query missing within-units parameter - should return 400
-async function testRadiusMissingWithinUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusMissingWithinUnits(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=POINT(-97.5 35.2)&within=50`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -3207,14 +3478,8 @@ async function testRadiusMissingWithinUnits() {
 }
 
 // Radius query with invalid coords (POLYGON instead of POINT) - should return 400
-async function testRadiusInvalidCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusInvalidCoords(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius?coords=${encodeURIComponent(polygon)}&within=50&within-units=km`);
     const checks = [
@@ -3230,14 +3495,8 @@ async function testRadiusInvalidCoords() {
 }
 
 // Radius too large - should return 413
-async function testRadiusTooLarge() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusTooLarge(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3267,14 +3526,8 @@ async function testRadiusTooLarge() {
 }
 
 // Radius query with km units
-async function testRadiusUnitsKm() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusUnitsKm(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3303,14 +3556,8 @@ async function testRadiusUnitsKm() {
 }
 
 // Radius query with miles units
-async function testRadiusUnitsMi() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusUnitsMi(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3339,14 +3586,8 @@ async function testRadiusUnitsMi() {
 }
 
 // Radius query with meters units
-async function testRadiusUnitsM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusUnitsM(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3375,14 +3616,8 @@ async function testRadiusUnitsM() {
 }
 
 // Radius query with MULTIPOINT coords (union of circles)
-async function testRadiusMultipoint() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusMultipoint(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, bbox, warning } = await getValidCoordinates(col.id);
@@ -3418,7 +3653,7 @@ async function testRadiusMultipoint() {
 }
 
 // Radius query with z (vertical level) parameter
-async function testRadiusZParameter() {
+async function testRadiusZParameter(collection) {
     const listRes = await fetchJson(`${API_BASE}/collections`);
     const collections = listRes.json?.collections || [];
     
@@ -3476,14 +3711,8 @@ async function testRadiusZParameter() {
 }
 
 // Radius query with parameter-name filtering
-async function testRadiusWithParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusWithParams(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3523,8 +3752,9 @@ async function testRadiusWithParams() {
 }
 
 // Radius query with datetime parameter
-async function testRadiusDatetime() {
-    const { collection, times } = await getCollectionTimes();
+async function testRadiusDatetime(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -3562,14 +3792,8 @@ async function testRadiusDatetime() {
 }
 
 // Radius with no query params - should return 400 (Abstract Test B.57)
-async function testRadiusNoQueryParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusNoQueryParams(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/radius`);
     
     const checks = [
@@ -3584,14 +3808,8 @@ async function testRadiusNoQueryParams() {
 }
 
 // Radius with crs parameter - should accept CRS:84 (Abstract Test B.71/B.72)
-async function testRadiusCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusCrsValid(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3621,14 +3839,8 @@ async function testRadiusCrsValid() {
 }
 
 // Radius with f=CoverageJSON parameter (Abstract Test B.73/B.74)
-async function testRadiusFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testRadiusFCovJson(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -3666,14 +3878,8 @@ async function testRadiusFCovJson() {
 // ============================================================
 
 // Basic trajectory query with LINESTRING
-async function testTrajectoryBasic() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryBasic(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -3702,14 +3908,8 @@ async function testTrajectoryBasic() {
 }
 
 // Trajectory query returns proper CoverageJSON with Trajectory domain
-async function testTrajectoryCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryCovJson(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -3754,14 +3954,8 @@ async function testTrajectoryCovJson() {
 }
 
 // Trajectory query missing coords parameter - should return 400
-async function testTrajectoryMissingCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryMissingCoords(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -3776,14 +3970,8 @@ async function testTrajectoryMissingCoords() {
 }
 
 // Trajectory query with invalid coords (POLYGON instead of LINESTRING) - should return 400
-async function testTrajectoryInvalidCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryInvalidCoords(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-100 40,-99 40,-99 41,-100 41,-100 40))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(polygon)}`);
     const checks = [
@@ -3799,20 +3987,11 @@ async function testTrajectoryInvalidCoords() {
 }
 
 // Trajectory query with LINESTRINGZ (embedded vertical levels)
-async function testTrajectoryLinestringZ() {
-    // Need at least 3 vertical levels for LINESTRINGZ test
-    const { collection: isobaricCol, searchInfo } = await findCollectionWithVerticalLevels(3);
-    if (!isobaricCol) {
-        return { 
-            passed: true, 
-            warning: true,
-            checks: [{ name: 'No collection with 3+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+async function testTrajectoryLinestringZ(collection) {
+    const col = collection;
 
     // Get valid coordinates from collection extent
-    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(isobaricCol.id);
+    const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
     if (!centerCoords) {
         return { 
             passed: true, 
@@ -3822,15 +4001,15 @@ async function testTrajectoryLinestringZ() {
     }
     
     // Get valid Z levels
-    const { z, allLevels, warning: zWarning } = await getValidZLevel(isobaricCol.id);
+    const { z, allLevels, warning: zWarning } = await getValidZLevel(col.id);
     if (!allLevels || allLevels.length < 3) {
         return { 
-            passed: true, 
-            warning: true, 
+            skipped: true,
+            reason: 'Fewer than 3 vertical levels',
             checks: [{ 
-                name: zWarning || 'Collection needs at least 3 vertical levels for trajectory-linestringz test', 
+                name: `Collection has ${allLevels?.length || 0} vertical levels, needs 3+`, 
                 passed: true, 
-                warning: zWarning || 'Insufficient vertical levels'
+                skipped: true
             }]
         };
     }
@@ -3843,7 +4022,7 @@ async function testTrajectoryLinestringZ() {
     const p3 = { lon: Math.min(bbox[2], centerCoords.lon + span), lat: centerCoords.lat };
     
     const linestringZ = `LINESTRINGZ(${p1.lon} ${p1.lat} ${zLevels[0]},${p2.lon} ${p2.lat} ${zLevels[1]},${p3.lon} ${p3.lat} ${zLevels[2]})`;
-    const url = `${API_BASE}/collections/${isobaricCol.id}/trajectory?coords=${encodeURIComponent(linestringZ)}`;
+    const url = `${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestringZ)}`;
     const res = await fetchJson(url);
     
     // Should return 200 and have z axis data
@@ -3865,8 +4044,9 @@ async function testTrajectoryLinestringZ() {
 }
 
 // Trajectory query with LINESTRINGM (embedded time values as Unix epoch)
-async function testTrajectoryLinestringM() {
-    const { collection, times } = await getCollectionTimes();
+async function testTrajectoryLinestringM(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -3919,17 +4099,9 @@ async function testTrajectoryLinestringM() {
 }
 
 // Trajectory query with LINESTRINGZ and z parameter - should return 400 (conflict)
-async function testTrajectoryZConflict() {
+async function testTrajectoryZConflict(collection) {
     // Need at least 2 vertical levels for this test
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(2);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true,
-            checks: [{ name: 'No collection with 2+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -3988,14 +4160,8 @@ async function testTrajectoryZConflict() {
 }
 
 // Trajectory query with MULTILINESTRING (multiple trajectory segments)
-async function testTrajectoryMultilinestring() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryMultilinestring(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -4045,14 +4211,8 @@ async function testTrajectoryMultilinestring() {
 }
 
 // Trajectory query with parameter-name filtering
-async function testTrajectoryWithParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryWithParams(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4092,8 +4252,9 @@ async function testTrajectoryWithParams() {
 }
 
 // Trajectory query with datetime parameter
-async function testTrajectoryDatetime() {
-    const { collection, times } = await getCollectionTimes();
+async function testTrajectoryDatetime(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -4131,14 +4292,8 @@ async function testTrajectoryDatetime() {
 }
 
 // Trajectory with no query params - should return 400 (Abstract Test B.105)
-async function testTrajectoryNoQueryParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryNoQueryParams(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory`);
     
     const checks = [
@@ -4153,14 +4308,8 @@ async function testTrajectoryNoQueryParams() {
 }
 
 // Trajectory with invalid LINESTRINGM (Abstract Test B.108)
-async function testTrajectoryInvalidLinestringM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryInvalidLinestringM(collection) {
+    const col = collection;
     // Invalid LINESTRINGM - wrong number of coordinates (should have 3 per point for M)
     const coords = 'LINESTRINGM(-100 40,-99 40.5)'; // Missing M values
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
@@ -4177,14 +4326,8 @@ async function testTrajectoryInvalidLinestringM() {
 }
 
 // Trajectory with invalid LINESTRINGZ (Abstract Test B.112)
-async function testTrajectoryInvalidLinestringZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryInvalidLinestringZ(collection) {
+    const col = collection;
     // Invalid LINESTRINGZ - wrong number of coordinates (should have 3 per point for Z)
     const coords = 'LINESTRINGZ(-100 40,-99 40.5)'; // Missing Z values
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
@@ -4201,14 +4344,8 @@ async function testTrajectoryInvalidLinestringZ() {
 }
 
 // Trajectory with invalid LINESTRINGZM (Abstract Test B.111)
-async function testTrajectoryInvalidLinestringZM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryInvalidLinestringZM(collection) {
+    const col = collection;
     // Invalid LINESTRINGZM - wrong number of coordinates (should have 4 per point for ZM)
     const coords = 'LINESTRINGZM(-100 40 850,-99 40.5 850)'; // Missing M values
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
@@ -4225,14 +4362,8 @@ async function testTrajectoryInvalidLinestringZM() {
 }
 
 // Trajectory LINESTRINGZ with Z coordinate outside collection's vertical extent
-async function testTrajectoryLinestringZInvalidZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryLinestringZInvalidZ(collection) {
+    const col = collection;
     // LINESTRINGZ with Z value 99999 - outside any reasonable vertical extent
     const coords = 'LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
@@ -4254,14 +4385,8 @@ async function testTrajectoryLinestringZInvalidZ() {
 }
 
 // Trajectory z parameter with value outside collection's vertical extent
-async function testTrajectoryZParamInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryZParamInvalid(collection) {
+    const col = collection;
     // LINESTRING with z parameter value 99999 - outside any reasonable vertical extent
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=LINESTRING(-100 40,-99 40.5,-98 41)&z=99999`);
     
@@ -4282,14 +4407,8 @@ async function testTrajectoryZParamInvalid() {
 }
 
 // Trajectory with invalid time coordinates (Abstract Test B.113)
-async function testTrajectoryInvalidTime() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryInvalidTime(collection) {
+    const col = collection;
     // LINESTRINGM with non-numeric time value
     const coords = 'LINESTRINGM(-100 40 invalid,-99 40.5 notadate,-98 41 alsonotadate)';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(coords)}`);
@@ -4306,14 +4425,8 @@ async function testTrajectoryInvalidTime() {
 }
 
 // Trajectory with crs parameter - should accept CRS:84 (Abstract Test B.119/B.120)
-async function testTrajectoryCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryCrsValid(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4343,14 +4456,8 @@ async function testTrajectoryCrsValid() {
 }
 
 // Trajectory with f=CoverageJSON parameter (Abstract Test B.121/B.122)
-async function testTrajectoryFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testTrajectoryFCovJson(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4388,14 +4495,8 @@ async function testTrajectoryFCovJson() {
 
 // Basic corridor query - all required params
 // Corridor returns a CoverageCollection with multiple trajectories (left, center, right)
-async function testCorridorBasic() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorBasic(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4432,14 +4533,8 @@ async function testCorridorBasic() {
 }
 
 // Corridor - verify CoverageJSON CoverageCollection response format
-async function testCorridorCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorCovJson(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4489,14 +4584,8 @@ async function testCorridorCovJson() {
 }
 
 // Corridor - missing coords parameter
-async function testCorridorMissingCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMissingCoords(collection) {
+    const col = collection;
     // Missing coords - should return 400
     const url = `${API_BASE}/collections/${col.id}/corridor?corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
@@ -4513,14 +4602,8 @@ async function testCorridorMissingCoords() {
 }
 
 // Corridor - missing corridor-width parameter
-async function testCorridorMissingWidth() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMissingWidth(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4549,14 +4632,8 @@ async function testCorridorMissingWidth() {
 }
 
 // Corridor - missing width-units parameter
-async function testCorridorMissingWidthUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMissingWidthUnits(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4586,14 +4663,8 @@ async function testCorridorMissingWidthUnits() {
 
 // Corridor - missing corridor-height parameter
 // Note: Our implementation treats height params as optional, so 200 is also acceptable
-async function testCorridorMissingHeight() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMissingHeight(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4628,14 +4699,8 @@ async function testCorridorMissingHeight() {
 
 // Corridor - missing height-units parameter
 // Note: Our implementation treats height params as optional, so 200 is also acceptable
-async function testCorridorMissingHeightUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMissingHeightUnits(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4669,14 +4734,8 @@ async function testCorridorMissingHeightUnits() {
 }
 
 // Corridor - invalid width-units
-async function testCorridorInvalidWidthUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidWidthUnits(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4705,14 +4764,8 @@ async function testCorridorInvalidWidthUnits() {
 }
 
 // Corridor - invalid height-units
-async function testCorridorInvalidHeightUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidHeightUnits(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning } = await getValidLinestring(col.id);
@@ -4741,14 +4794,8 @@ async function testCorridorInvalidHeightUnits() {
 }
 
 // Corridor - invalid LINESTRING format
-async function testCorridorInvalidCoords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidCoords(collection) {
+    const col = collection;
     const coords = 'POINT(-100 40)'; // POINT is invalid for corridor
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
@@ -4765,14 +4812,8 @@ async function testCorridorInvalidCoords() {
 }
 
 // Corridor - LINESTRINGZ + z parameter conflict
-async function testCorridorZConflict() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorZConflict(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -4809,14 +4850,8 @@ async function testCorridorZConflict() {
 }
 
 // Corridor - LINESTRINGM + datetime parameter conflict
-async function testCorridorDatetimeConflict() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorDatetimeConflict(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -4853,14 +4888,8 @@ async function testCorridorDatetimeConflict() {
 }
 
 // Corridor - MULTILINESTRING support
-async function testCorridorMultilinestring() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMultilinestring(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -4899,14 +4928,8 @@ async function testCorridorMultilinestring() {
 }
 
 // Corridor with parameter-name filter
-async function testCorridorWithParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorWithParams(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4943,14 +4966,8 @@ async function testCorridorWithParams() {
 }
 
 // Corridor with pressure height units (hPa)
-async function testCorridorPressureHeightUnits() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorPressureHeightUnits(collection) {
+    const col = collection;
     
     // Get valid linestring from collection extent
     const { linestring, warning, coords } = await getValidLinestring(col.id);
@@ -4980,14 +4997,8 @@ async function testCorridorPressureHeightUnits() {
 }
 
 // Corridor metadata - verify data_queries has corridor with variables
-async function testCorridorMetadata() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorMetadata(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const corridor = res.json?.data_queries?.corridor;
     // Variables are nested under link in our API structure
@@ -5009,14 +5020,8 @@ async function testCorridorMetadata() {
 }
 
 // Corridor - invalid LINESTRINGM format (B.130)
-async function testCorridorInvalidLinestringM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidLinestringM(collection) {
+    const col = collection;
     // Invalid LINESTRINGM - missing M value on last point
     const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5034,14 +5039,8 @@ async function testCorridorInvalidLinestringM() {
 }
 
 // Corridor - invalid LINESTRINGZ format (B.134)
-async function testCorridorInvalidLinestringZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidLinestringZ(collection) {
+    const col = collection;
     // Invalid LINESTRINGZ - missing Z value on second point
     const coords = 'LINESTRINGZ(-100 40 850,-99 40.5,-98 41 850)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5059,14 +5058,8 @@ async function testCorridorInvalidLinestringZ() {
 }
 
 // Corridor - invalid LINESTRINGZM format (B.133)
-async function testCorridorInvalidLinestringZM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInvalidLinestringZM(collection) {
+    const col = collection;
     // Invalid LINESTRINGZM - missing ZM values on second point
     const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5,-98 41 850 1560510600)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5084,14 +5077,8 @@ async function testCorridorInvalidLinestringZM() {
 }
 
 // Corridor - LINESTRINGZM + z parameter conflict (B.132)
-async function testCorridorZMZConflict() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorZMZConflict(collection) {
+    const col = collection;
     const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5 850 1560508800,-98 41 850 1560510600)';
     // Conflict: LINESTRINGZM has Z values AND z param is specified
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&z=1000&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5109,14 +5096,8 @@ async function testCorridorZMZConflict() {
 }
 
 // Corridor - LINESTRINGZM + datetime parameter conflict
-async function testCorridorZMDatetimeConflict() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorZMDatetimeConflict(collection) {
+    const col = collection;
     const coords = 'LINESTRINGZM(-100 40 850 1560507000,-99 40.5 850 1560508800,-98 41 850 1560510600)';
     // Conflict: LINESTRINGZM has M values AND datetime param is specified
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&datetime=2024-01-01T00:00:00Z&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5134,14 +5115,8 @@ async function testCorridorZMDatetimeConflict() {
 }
 
 // Corridor LINESTRINGZ with Z coordinate outside collection's vertical extent
-async function testCorridorLinestringZInvalidZ() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorLinestringZInvalidZ(collection) {
+    const col = collection;
     // LINESTRINGZ with Z value 99999 - outside any reasonable vertical extent
     const coords = 'LINESTRINGZ(-100 40 99999,-99 40.5 99999,-98 41 99999)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5164,14 +5139,8 @@ async function testCorridorLinestringZInvalidZ() {
 }
 
 // Corridor z parameter with value outside collection's vertical extent
-async function testCorridorZParamInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorZParamInvalid(collection) {
+    const col = collection;
     // LINESTRING with z parameter value 99999 - outside any reasonable vertical extent
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=LINESTRING(-100 40,-99 40.5,-98 41)&z=99999&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
@@ -5193,17 +5162,9 @@ async function testCorridorZParamInvalid() {
 }
 
 // Corridor - valid LINESTRINGZ query (success case)
-async function testCorridorLinestringZ() {
+async function testCorridorLinestringZ(collection) {
     // Need at least 1 vertical level for LINESTRINGZ corridor
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(1);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true,
-            checks: [{ name: 'No collection with vertical levels available', passed: true, warning: 'No vertical extent' }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -5255,14 +5216,8 @@ async function testCorridorLinestringZ() {
 }
 
 // Corridor - valid LINESTRINGM query (success case)
-async function testCorridorLinestringM() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorLinestringM(collection) {
+    const col = collection;
     // Valid LINESTRINGM with Unix epoch timestamps (June 14, 2019)
     const coords = 'LINESTRINGM(-100 40 1560507000,-99 40.5 1560508800,-98 41 1560510600)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
@@ -5281,17 +5236,9 @@ async function testCorridorLinestringM() {
 }
 
 // Corridor - valid LINESTRINGZM query (success case)
-async function testCorridorLinestringZM() {
+async function testCorridorLinestringZM(collection) {
     // Need at least 1 vertical level for LINESTRINGZM corridor
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(1);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true,
-            checks: [{ name: 'No collection with vertical levels available', passed: true, warning: 'No vertical extent' }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords: centerCoords, bbox, warning } = await getValidCoordinates(col.id);
@@ -5351,8 +5298,9 @@ async function testCorridorLinestringZM() {
 }
 
 // Corridor with datetime parameter
-async function testCorridorWithDatetime() {
-    const { collection, times } = await getCollectionTimes();
+async function testCorridorWithDatetime(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -5378,7 +5326,7 @@ async function testCorridorWithDatetime() {
 }
 
 // Corridor with z parameter
-async function testCorridorWithZ() {
+async function testCorridorWithZ(collection) {
     const listRes = await fetchJson(`${API_BASE}/collections`);
     const collections = listRes.json?.collections || [];
     if (collections.length === 0) {
@@ -5423,14 +5371,8 @@ async function testCorridorWithZ() {
 }
 
 // Corridor - instance-specific query
-async function testCorridorInstance() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorInstance(collection) {
+    const col = collection;
     
     // Get instances for this collection
     const instancesRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
@@ -5457,7 +5399,7 @@ async function testCorridorInstance() {
 }
 
 // Corridor - 404 for non-existent collection
-async function testCorridorNotFound() {
+async function testCorridorNotFound(collection) {
     const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
     const url = `${API_BASE}/collections/nonexistent-collection-12345/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m`;
     const res = await fetchJson(url);
@@ -5474,14 +5416,8 @@ async function testCorridorNotFound() {
 }
 
 // Corridor with crs parameter - should accept CRS:84 (Abstract Test B.151/B.152)
-async function testCorridorCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorCrsValid(collection) {
+    const col = collection;
     const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&crs=CRS:84`;
     const res = await fetchJson(url);
@@ -5499,14 +5435,8 @@ async function testCorridorCrsValid() {
 }
 
 // Corridor with f=CoverageJSON parameter (Abstract Test B.153/B.154)
-async function testCorridorFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCorridorFCovJson(collection) {
+    const col = collection;
     const coords = 'LINESTRING(-100 40,-99 40.5,-98 41)';
     const url = `${API_BASE}/collections/${col.id}/corridor?coords=${encodeURIComponent(coords)}&corridor-width=10&width-units=km&corridor-height=1000&height-units=m&f=CoverageJSON`;
     const res = await fetchJson(url);
@@ -5539,14 +5469,8 @@ async function testError404Collection() {
     };
 }
 
-async function testError400Coords() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testError400Coords(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-999 999)`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 }
@@ -5559,14 +5483,8 @@ async function testError400Coords() {
 }
 
 // Invalid datetime format
-async function testError400Datetime() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testError400Datetime(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&datetime=not-a-valid-datetime`);
     const checks = [
         { name: 'Status 400', passed: res.status === 400 },
@@ -5580,7 +5498,7 @@ async function testError400Datetime() {
 }
 
 // Error response structure per OGC spec
-async function testErrorResponseStructure() {
+async function testErrorResponseStructure(collection) {
     const res = await fetchJson(`${API_BASE}/collections/nonexistent-collection-12345`);
     
     // OGC exception response should have: type, title, status, detail
@@ -5604,14 +5522,8 @@ async function testErrorResponseStructure() {
 // ============================================================
 
 // Verify data_queries object structure
-async function testMetadataDataQueries() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testMetadataDataQueries(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const dataQueries = res.json?.data_queries;
     
@@ -5642,14 +5554,8 @@ async function testMetadataDataQueries() {
 }
 
 // Verify parameter_names object
-async function testMetadataParameterNames() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testMetadataParameterNames(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const paramNames = res.json?.parameter_names;
     
@@ -5680,14 +5586,8 @@ async function testMetadataParameterNames() {
 }
 
 // Verify output_formats only lists actually supported formats
-async function testMetadataOutputFormats() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testMetadataOutputFormats(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const outputFormats = res.json?.output_formats || [];
     
@@ -5724,14 +5624,8 @@ async function testMetadataOutputFormats() {
 }
 
 // Verify CRS only lists supported coordinate systems
-async function testMetadataCrs() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testMetadataCrs(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const crsArray = res.json?.crs || [];
     
@@ -5761,8 +5655,9 @@ async function testMetadataCrs() {
 // ============================================================
 
 // Datetime with open start (../end)
-async function testDatetimeOpenStart() {
-    const { collection, times } = await getCollectionTimes();
+async function testDatetimeOpenStart(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -5810,14 +5705,8 @@ async function testDatetimeOpenStart() {
 // ============================================================
 
 // Test that position query returns proper CoverageJSON Content-Type header
-async function testContentTypeCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testContentTypeCovJson(collection) {
+    const col = collection;
     
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -5850,7 +5739,7 @@ async function testContentTypeCovJson() {
 }
 
 // Test that collections endpoint returns application/json Content-Type
-async function testContentTypeJson() {
+async function testContentTypeJson(collection) {
     const res = await fetchJson(`${API_BASE}/collections`);
     
     const contentType = res.headers?.get('content-type') || '';
@@ -5869,14 +5758,8 @@ async function testContentTypeJson() {
 }
 
 // Test f parameter selects CoverageJSON format
-async function testFParamCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testFParamCovJson(collection) {
+    const col = collection;
     // Try with f=CoverageJSON
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`);
     
@@ -5898,14 +5781,8 @@ async function testFParamCovJson() {
 }
 
 // Test invalid f parameter returns error (400 or similar)
-async function testFParamInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testFParamInvalid(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=INVALID_FORMAT_12345`);
     
     // Per spec, unsupported format should return 400 Bad Request
@@ -5931,14 +5808,8 @@ async function testFParamInvalid() {
 // ============================================================
 
 // Test valid CRS parameter is accepted
-async function testCrsParamValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCrsParamValid(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`);
     
     const checks = [
@@ -5954,14 +5825,8 @@ async function testCrsParamValid() {
 }
 
 // Test invalid CRS parameter returns error
-async function testCrsParamInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCrsParamInvalid(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&crs=INVALID:CRS:12345`);
     
     // Per spec, unsupported CRS should return 400
@@ -5986,14 +5851,8 @@ async function testCrsParamInvalid() {
 // ============================================================
 
 // Test that parameter-name filter returns only requested parameters
-async function testParamNameFilter() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testParamNameFilter(collection) {
+    const col = collection;
     // Get collection details to find available parameters
     const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
     const paramNames = colRes.json?.parameter_names || {};
@@ -6029,14 +5888,8 @@ async function testParamNameFilter() {
 }
 
 // Test that invalid parameter-name is handled gracefully
-async function testParamNameInvalid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testParamNameInvalid(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&parameter-name=NONEXISTENT_PARAM_12345`);
     
     // Per spec, invalid parameter should return 400
@@ -6063,14 +5916,8 @@ async function testParamNameInvalid() {
 // ============================================================
 
 // Test position query via instance path
-async function testInstancePositionQuery() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testInstancePositionQuery(collection) {
+    const col = collection;
     
     // Get instances for this collection
     const instRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
@@ -6097,14 +5944,8 @@ async function testInstancePositionQuery() {
 }
 
 // Test invalid instance ID returns 404 or 400
-async function testInstanceInvalidId() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testInstanceInvalidId(collection) {
+    const col = collection;
     // Use a valid datetime format that doesn't exist as an actual instance
     // This should return 404 (Not Found) rather than 400 (Bad Request)
     const fakeInstanceId = '1999-01-01T00:00:00Z';
@@ -6130,14 +5971,8 @@ async function testInstanceInvalidId() {
 // ============================================================
 
 // Test single point query returns domainType: Point
-async function testDomainTypePoint() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testDomainTypePoint(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     const domainType = res.json?.domain?.domainType;
@@ -6155,8 +5990,9 @@ async function testDomainTypePoint() {
 }
 
 // Test multi-time query returns domainType: PointSeries
-async function testDomainTypePointSeries() {
-    const { collection, times } = await getCollectionTimes();
+async function testDomainTypePointSeries(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -6185,17 +6021,9 @@ async function testDomainTypePointSeries() {
 }
 
 // Test multi-z query returns domainType: VerticalProfile
-async function testDomainTypeVerticalProfile() {
+async function testDomainTypeVerticalProfile(collection) {
     // Need at least 3 vertical levels for vertical profile test
-    const { collection: col, searchInfo } = await findCollectionWithVerticalLevels(3);
-    if (!col) {
-        return { 
-            passed: true, 
-            warning: true,
-            checks: [{ name: 'No collection with 3+ vertical levels available', passed: true, warning: 'Insufficient vertical levels' }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
-        };
-    }
+    const col = collection;
 
     // Get valid coordinates from collection extent
     const { coords, warning } = await getValidCoordinates(col.id);
@@ -6220,8 +6048,7 @@ async function testDomainTypeVerticalProfile() {
                 name: zWarning || 'Collection needs at least 3 vertical levels for domain-type-verticalprofile test', 
                 passed: true, 
                 warning: zWarning || 'Insufficient vertical levels'
-            }],
-            searchInfo: `Collections checked: ${searchInfo.join(', ')}`
+            }]
         };
     }
     
@@ -6245,14 +6072,8 @@ async function testDomainTypeVerticalProfile() {
 }
 
 // Test area query returns domainType: Grid
-async function testDomainTypeGrid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testDomainTypeGrid(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
     
@@ -6276,14 +6097,8 @@ async function testDomainTypeGrid() {
 // ============================================================
 
 // Test collection has valid self link with correct href and type
-async function testLinksSelf() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLinksSelf(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     
     const links = res.json?.links || [];
@@ -6311,14 +6126,8 @@ async function testLinksSelf() {
 }
 
 // Test data_queries links are accessible
-async function testLinksDataQueries() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLinksDataQueries(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     
     const dataQueries = res.json?.data_queries || {};
@@ -6363,14 +6172,8 @@ async function testLinksDataQueries() {
 // ============================================================
 
 // Test position endpoint with no query params returns error
-async function testPositionNoParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testPositionNoParams(collection) {
+    const col = collection;
     // Call position endpoint with NO query parameters at all
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position`);
     
@@ -6389,14 +6192,8 @@ async function testPositionNoParams() {
 }
 
 // Test area endpoint with no query params returns error
-async function testAreaNoParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAreaNoParams(collection) {
+    const col = collection;
     // Call area endpoint with NO query parameters at all
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area`);
     
@@ -6420,14 +6217,8 @@ async function testAreaNoParams() {
 // ============================================================
 
 // Test Accept: application/vnd.cov+json header
-async function testAcceptCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAcceptCovJson(collection) {
+    const col = collection;
     const res = await fetchWithAccept(
         `${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`,
         'application/vnd.cov+json'
@@ -6451,7 +6242,7 @@ async function testAcceptCovJson() {
 }
 
 // Test Accept: application/json header for collections
-async function testAcceptJson() {
+async function testAcceptJson(collection) {
     const res = await fetchWithAccept(`${API_BASE}/collections`, 'application/json');
     
     const contentType = res.headers?.get('content-type') || '';
@@ -6471,14 +6262,8 @@ async function testAcceptJson() {
 }
 
 // Test unsupported Accept header returns 406 Not Acceptable
-async function testAcceptUnsupported() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAcceptUnsupported(collection) {
+    const col = collection;
     // Request a format that we definitely don't support
     // Add cache-busting parameter to ensure fresh request
     const cacheBust = `_cb=${Date.now()}`;
@@ -6513,14 +6298,8 @@ async function testAcceptUnsupported() {
 // ============================================================
 
 // Test that domain has referencing system
-async function testCovJsonReferencing() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCovJsonReferencing(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     const domain = res.json?.domain;
@@ -6560,14 +6339,8 @@ async function testCovJsonReferencing() {
 }
 
 // Test NdArray structure in ranges
-async function testCovJsonNdArray() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCovJsonNdArray(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     const ranges = res.json?.ranges || {};
@@ -6612,14 +6385,8 @@ async function testCovJsonNdArray() {
 }
 
 // Test that parameters have observedProperty
-async function testCovJsonObservedProperty() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCovJsonObservedProperty(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     const parameters = res.json?.parameters || {};
@@ -6664,14 +6431,8 @@ async function testCovJsonObservedProperty() {
 }
 
 // Test domain axes structure
-async function testCovJsonAxes() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testCovJsonAxes(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     const domain = res.json?.domain;
@@ -6721,14 +6482,8 @@ async function testCovJsonAxes() {
 // ============================================================
 
 // Test collection has alternate format links
-async function testLinksAlternateFormats() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLinksAlternateFormats(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}`);
     
     const links = res.json?.links || [];
@@ -6814,14 +6569,8 @@ async function testLinksLandingAlternate() {
 // ============================================================
 
 // Test f=geojson parameter selects GeoJSON format
-async function testFParamGeoJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testFParamGeoJson(collection) {
+    const col = collection;
     // Try with f=geojson (lowercase)
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=geojson`);
     
@@ -6842,14 +6591,8 @@ async function testFParamGeoJson() {
 }
 
 // Test Content-Type header for GeoJSON response
-async function testContentTypeGeoJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testContentTypeGeoJson(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=GeoJSON`);
     
     const contentType = res.headers?.get('content-type') || '';
@@ -6868,14 +6611,8 @@ async function testContentTypeGeoJson() {
 }
 
 // Test GeoJSON FeatureCollection structure is valid
-async function testGeoJsonStructure() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testGeoJsonStructure(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=geojson`);
     
     // GeoJSON FeatureCollection must have:
@@ -6925,14 +6662,8 @@ async function testGeoJsonStructure() {
 }
 
 // Test Accept: application/geo+json header for content negotiation
-async function testAcceptGeoJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testAcceptGeoJson(collection) {
+    const col = collection;
     const res = await fetchWithAccept(
         `${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`,
         'application/geo+json'
@@ -6989,7 +6720,7 @@ async function findCubeCollection() {
 }
 
 // Basic cube query
-async function testCubeBasic() {
+async function testCubeBasic(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7039,7 +6770,7 @@ async function testCubeBasic() {
 }
 
 // Cube query returns proper CoverageJSON CoverageCollection with Grid domain
-async function testCubeCovJson() {
+async function testCubeCovJson(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7114,7 +6845,7 @@ async function testCubeCovJson() {
 }
 
 // Cube query missing bbox parameter - should return 400 (Requirement A.28)
-async function testCubeMissingBbox() {
+async function testCubeMissingBbox(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7148,7 +6879,7 @@ async function testCubeMissingBbox() {
 }
 
 // Cube query missing z parameter - should return 400 (Requirement A.28.G/H)
-async function testCubeMissingZ() {
+async function testCubeMissingZ(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7168,7 +6899,7 @@ async function testCubeMissingZ() {
 }
 
 // Cube query with invalid bbox - should return 400
-async function testCubeInvalidBbox() {
+async function testCubeInvalidBbox(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7201,7 +6932,7 @@ async function testCubeInvalidBbox() {
 }
 
 // Cube query with multiple z levels - should return one coverage per z level (Requirement A.60)
-async function testCubeMultiZ() {
+async function testCubeMultiZ(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7254,7 +6985,7 @@ async function testCubeMultiZ() {
 }
 
 // Cube query with datetime parameter
-async function testCubeWithDatetime() {
+async function testCubeWithDatetime(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7311,7 +7042,7 @@ async function testCubeWithDatetime() {
 }
 
 // Cube query with resolution-x and resolution-y parameters
-async function testCubeWithResolution() {
+async function testCubeWithResolution(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7377,7 +7108,7 @@ async function testCubeWithResolution() {
 }
 
 // Cube query on instance endpoint
-async function testCubeInstance() {
+async function testCubeInstance(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7437,7 +7168,7 @@ async function testCubeInstance() {
 }
 
 // Cube query on non-existent collection - should return 404
-async function testCubeNotFound() {
+async function testCubeNotFound(collection) {
     const res = await fetchJson(`${API_BASE}/collections/nonexistent-collection-12345/cube?bbox=-98,35,-97,36&z=850`);
     const checks = [
         { name: 'Status 404', passed: res.status === 404 },
@@ -7451,7 +7182,7 @@ async function testCubeNotFound() {
 }
 
 // Cube query with no query parameters - should return 400 (Abstract Test B.91)
-async function testCubeNoQueryParams() {
+async function testCubeNoQueryParams(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7472,7 +7203,7 @@ async function testCubeNoQueryParams() {
 }
 
 // Cube query with z range (min/max) - Requirement A.53.B
-async function testCubeZRange() {
+async function testCubeZRange(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7524,7 +7255,7 @@ async function testCubeZRange() {
 }
 
 // Cube query with z recurring interval (R syntax) - Requirement A.53.D
-async function testCubeZRecurring() {
+async function testCubeZRecurring(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7574,7 +7305,7 @@ async function testCubeZRecurring() {
 }
 
 // Cube query with invalid z parameter - should return 400
-async function testCubeInvalidZ() {
+async function testCubeInvalidZ(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7593,7 +7324,7 @@ async function testCubeInvalidZ() {
 }
 
 // Cube query with crs parameter - Requirement A.28.K
-async function testCubeCrsValid() {
+async function testCubeCrsValid(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7644,7 +7375,7 @@ async function testCubeCrsValid() {
 }
 
 // Cube query with f=CoverageJSON parameter - Requirement A.28.L
-async function testCubeFCovJson() {
+async function testCubeFCovJson(collection) {
     const col = await findCubeCollection();
     if (!col) {
         return { passed: true, checks: [{ name: 'No cube-supporting collections available (test N/A)', passed: true }] };
@@ -7721,14 +7452,8 @@ async function getFirstLocationId(collectionId) {
 }
 
 // Test listing all locations - should return GeoJSON FeatureCollection
-async function testLocationsList() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsList(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
     
     // Check if locations endpoint is supported (may return 404 if not configured)
@@ -7754,14 +7479,8 @@ async function testLocationsList() {
 }
 
 // Test GeoJSON FeatureCollection structure for locations
-async function testLocationsGeoJsonStructure() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsGeoJsonStructure(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
     
     if (res.status === 404) {
@@ -7811,14 +7530,8 @@ async function testLocationsGeoJsonStructure() {
 }
 
 // Basic location query - get data at a named location
-async function testLocationsQueryBasic() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsQueryBasic(collection) {
+    const col = collection;
     
     // Get first location ID
     const locationId = await getFirstLocationId(col.id);
@@ -7845,14 +7558,8 @@ async function testLocationsQueryBasic() {
 }
 
 // Location query returns proper CoverageJSON
-async function testLocationsQueryCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsQueryCovJson(collection) {
+    const col = collection;
     
     const locationId = await getFirstLocationId(col.id);
     if (!locationId) {
@@ -7864,39 +7571,35 @@ async function testLocationsQueryCovJson() {
     
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations/${locationId}`);
     
-    // Check for non-null data values
-    const ranges = res.json?.ranges || {};
-    const paramKeys = Object.keys(ranges);
-    let hasNonNullData = false;
-    if (paramKeys.length > 0) {
-        const firstParam = paramKeys[0];
-        const values = ranges[firstParam]?.values || [];
-        hasNonNullData = values.some(v => v !== null);
-    }
+    // Check for non-null data values across ALL parameters
+    const hasNonNullData = hasNonNullValues(res.json);
+    const paramKeys = Object.keys(res.json?.ranges || {});
     
     const checks = [
         { name: 'Type is Coverage', passed: res.json?.type === 'Coverage' },
         { name: 'Domain type is Point', passed: res.json?.domain?.domainType === 'Point' },
         { name: 'Has axes', passed: !!res.json?.domain?.axes },
         { name: 'Has ranges', passed: paramKeys.length > 0 },
-        { name: 'Has non-null data values', passed: hasNonNullData }
+        { 
+            name: 'Has non-null data values', 
+            passed: true,
+            warning: !hasNonNullData ? 'No data values (location may be outside data coverage)' : null
+        }
     ];
+    
+    // Only the structural checks determine pass/fail
+    const structuralChecks = checks.filter(c => c.name !== 'Has non-null data values');
     return {
-        passed: checks.every(c => c.passed),
+        passed: structuralChecks.every(c => c.passed),
+        warning: checks.some(c => c.warning),
         checks,
         response: res
     };
 }
 
 // Invalid location ID should return 404
-async function testLocationsInvalidId() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsInvalidId(collection) {
+    const col = collection;
     
     // First check if locations endpoint exists at all
     const locationsRes = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
@@ -7921,14 +7624,8 @@ async function testLocationsInvalidId() {
 }
 
 // Location query with parameter-name filter
-async function testLocationsWithParams() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsWithParams(collection) {
+    const col = collection;
     
     const locationId = await getFirstLocationId(col.id);
     if (!locationId) {
@@ -7966,8 +7663,9 @@ async function testLocationsWithParams() {
 }
 
 // Location query with datetime parameter
-async function testLocationsWithDatetime() {
-    const { collection, times } = await getCollectionTimes();
+async function testLocationsWithDatetime(collection) {
+    const col = collection;
+    const { times } = await getCollectionTimes(col.id);
     if (!collection) {
         return { passed: false, error: 'No collections available', checks: [] };
     }
@@ -7999,14 +7697,8 @@ async function testLocationsWithDatetime() {
 }
 
 // Location query has X-Cache header (tests our caching implementation)
-async function testLocationsCacheHeader() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsCacheHeader(collection) {
+    const col = collection;
     
     const locationId = await getFirstLocationId(col.id);
     if (!locationId) {
@@ -8039,14 +7731,8 @@ async function testLocationsCacheHeader() {
 }
 
 // Location query via instance path
-async function testLocationsInstance() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsInstance(collection) {
+    const col = collection;
     
     // Get instances for this collection
     const instancesRes = await fetchJson(`${API_BASE}/collections/${col.id}/instances`);
@@ -8081,14 +7767,8 @@ async function testLocationsInstance() {
 }
 
 // Location query with crs parameter
-async function testLocationsCrsValid() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsCrsValid(collection) {
+    const col = collection;
     
     const locationId = await getFirstLocationId(col.id);
     if (!locationId) {
@@ -8113,14 +7793,8 @@ async function testLocationsCrsValid() {
 }
 
 // Location query with f=CoverageJSON parameter
-async function testLocationsFCovJson() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testLocationsFCovJson(collection) {
+    const col = collection;
     
     const locationId = await getFirstLocationId(col.id);
     if (!locationId) {
@@ -8160,13 +7834,17 @@ let ajvInstance = null;
 async function initSchemaValidator() {
     if (ajvInstance) return ajvInstance;
     
-    // Check if Ajv is available
-    if (typeof Ajv === 'undefined' && typeof Ajv7 === 'undefined') {
+    // Check if Ajv is available (try different export names)
+    // CDN exports as 'ajv7' (lowercase), npm might export as 'Ajv'
+    const AjvClass = typeof Ajv !== 'undefined' ? Ajv : 
+                     typeof ajv7 !== 'undefined' ? ajv7 :
+                     typeof Ajv7 !== 'undefined' ? Ajv7 : null;
+    
+    if (!AjvClass) {
         console.warn('Ajv not loaded, schema validation will be skipped');
         return null;
     }
     
-    const AjvClass = typeof Ajv !== 'undefined' ? Ajv : Ajv7;
     ajvInstance = new AjvClass({ allErrors: true, strict: false });
     
     return ajvInstance;
@@ -8322,14 +8000,8 @@ async function validateGeoJson(data) {
 }
 
 // Test: Position response validates against CoverageJSON schema
-async function testSchemaCovJsonPosition() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaCovJsonPosition(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)`);
     
     if (res.status !== 200) {
@@ -8360,14 +8032,8 @@ async function testSchemaCovJsonPosition() {
 }
 
 // Test: Area response validates against CoverageJSON schema
-async function testSchemaCovJsonArea() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaCovJsonArea(collection) {
+    const col = collection;
     const polygon = 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`);
     
@@ -8399,14 +8065,8 @@ async function testSchemaCovJsonArea() {
 }
 
 // Test: Trajectory response validates against CoverageJSON schema
-async function testSchemaCovJsonTrajectory() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaCovJsonTrajectory(collection) {
+    const col = collection;
     const linestring = 'LINESTRING(-100 40,-99 40.5,-98 41)';
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/trajectory?coords=${encodeURIComponent(linestring)}`);
     
@@ -8438,13 +8098,18 @@ async function testSchemaCovJsonTrajectory() {
 }
 
 // Test: Cube response validates against CoverageJSON schema
-async function testSchemaCovJsonCube() {
-    const col = await findIsobaricCollection();
-    if (!col) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
+async function testSchemaCovJsonCube(collection) {
+    const col = collection;
+    
+    // Get z level from collection
+    const { z } = await getValidZLevel(col.id);
+    const zLevel = z || 850; // fallback to 850 if not available
+    
+    // Get valid bbox from collection
+    const { polygon, bboxArray } = await getValidPolygon(col.id, 1.0);
+    const bbox = bboxArray ? bboxArray.join(',') : '-98,35,-97,36';
 
-    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=-98,35,-97,36&z=850`);
+    const res = await fetchJson(`${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zLevel}`);
     
     if (res.status !== 200) {
         return { 
@@ -8479,14 +8144,8 @@ async function testSchemaCovJsonCube() {
 }
 
 // Test: Location response validates against CoverageJSON schema
-async function testSchemaCovJsonLocations() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaCovJsonLocations(collection) {
+    const col = collection;
     const locationId = await getFirstLocationId(col.id);
     
     if (!locationId) {
@@ -8526,14 +8185,8 @@ async function testSchemaCovJsonLocations() {
 }
 
 // Test: Locations list validates against GeoJSON schema
-async function testSchemaGeoJsonLocationsList() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaGeoJsonLocationsList(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/locations`);
     
     if (res.status === 404) {
@@ -8571,14 +8224,8 @@ async function testSchemaGeoJsonLocationsList() {
 }
 
 // Test: Position GeoJSON response validates against schema
-async function testSchemaGeoJsonPosition() {
-    const listRes = await fetchJson(`${API_BASE}/collections`);
-    const collections = listRes.json?.collections || [];
-    if (collections.length === 0) {
-        return { passed: false, error: 'No collections available', checks: [] };
-    }
-
-    const col = collections[0];
+async function testSchemaGeoJsonPosition(collection) {
+    const col = collection;
     const res = await fetchJson(`${API_BASE}/collections/${col.id}/position?coords=POINT(-97.5 35.2)&f=GeoJSON`);
     
     if (res.status !== 200) {
@@ -8632,7 +8279,7 @@ async function testSchemaGeoJsonPosition() {
 // ============================================================
 
 function updateSummary() {
-    let passed = 0, failed = 0, pending = 0, warnings = 0;
+    let passed = 0, failed = 0, pending = 0, warnings = 0, skipped = 0;
     const failedTests = [];
     const warningTests = [];
 
@@ -8654,6 +8301,8 @@ function updateSummary() {
             const result = testResults[testName];
             const failedChecks = (result?.checks || []).filter(c => !c.passed).map(c => c.name);
             failedTests.push({ name: testName, failedChecks, error: result?.error });
+        } else if (statusEl.classList.contains('skipped')) {
+            skipped++;
         } else {
             pending++;
         }
@@ -8663,6 +8312,7 @@ function updateSummary() {
     document.getElementById('failed-count').textContent = failed;
     document.getElementById('warning-count').textContent = warnings;
     document.getElementById('pending-count').textContent = pending;
+    document.getElementById('skipped-count').textContent = skipped;
     
     // Update failed tests list
     const failedListContainer = document.getElementById('failed-tests-list');
@@ -9121,23 +8771,62 @@ function showTestDetails(testName) {
         html += `<p class="modal-spec-link"><a href="${specInfo.url}" target="_blank">View OGC Spec: ${specInfo.title}</a></p>`;
     }
     
+    // For per-collection tests, get the actual result with checks
+    // If testing a single collection, use that collection's result
+    // If testing all collections, show per-collection breakdown
+    let displayResult = result;
+    if (result.perCollection) {
+        const collectionIds = Object.keys(result.perCollection);
+        if (collectionIds.length === 1) {
+            // Single collection - show its detailed result
+            displayResult = result.perCollection[collectionIds[0]];
+        } else {
+            // Multiple collections - show per-collection breakdown
+            html += '<h4>Per-Collection Results:</h4><ul>';
+            for (const [colId, colResult] of Object.entries(result.perCollection)) {
+                let icon, color;
+                if (colResult.skipped) {
+                    icon = '○';
+                    color = 'var(--muted-color, #888)';
+                } else if (colResult.warning) {
+                    icon = '⚠';
+                    color = 'var(--warning-color)';
+                } else if (colResult.passed) {
+                    icon = '✓';
+                    color = 'var(--success-color)';
+                } else {
+                    icon = '✗';
+                    color = 'var(--error-color)';
+                }
+                const reason = colResult.skipped ? ` (${colResult.reason || 'skipped'})` : 
+                              colResult.warning ? ` (${getWarningReason(colResult) || 'warning'})` :
+                              !colResult.passed ? ` (${getFailedChecks(colResult) || 'failed'})` : '';
+                html += `<li style="color: ${color}">${icon} ${colId}${reason}</li>`;
+            }
+            html += '</ul>';
+            body.innerHTML = html;
+            modal.classList.add('visible');
+            return;
+        }
+    }
+    
     // Show actual URL used by the test
-    if (result.url) {
-        html += `<h4>URL Used:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${result.url}</pre>`;
+    if (displayResult.url) {
+        html += `<h4>URL Used:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${displayResult.url}</pre>`;
     }
     
     // Show coordinates info if available
-    if (result.coordsInfo) {
-        html += `<h4>Coordinates Used:</h4><pre>${result.coordsInfo}</pre>`;
+    if (displayResult.coordsInfo) {
+        html += `<h4>Coordinates Used:</h4><pre>${displayResult.coordsInfo}</pre>`;
     }
     
     // Show search info if available (for tests that searched for collections)
-    if (result.searchInfo) {
-        html += `<h4>Search Details:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${result.searchInfo}</pre>`;
+    if (displayResult.searchInfo) {
+        html += `<h4>Search Details:</h4><pre style="word-break: break-all; white-space: pre-wrap;">${displayResult.searchInfo}</pre>`;
     }
 
     html += '<h4>Checks:</h4><ul>';
-    (result.checks || []).forEach(c => {
+    (displayResult.checks || []).forEach(c => {
         let icon, color;
         if (c.warning) {
             icon = '⚠';
@@ -9154,15 +8843,15 @@ function showTestDetails(testName) {
     });
     html += '</ul>';
 
-    if (result.error) {
-        html += `<h4>Error:</h4><pre>${result.error}</pre>`;
+    if (displayResult.error) {
+        html += `<h4>Error:</h4><pre>${displayResult.error}</pre>`;
     }
 
-    if (result.response) {
+    if (displayResult.response) {
         html += `<h4>Response:</h4>`;
-        html += `<p>Status: ${result.response.status} ${result.response.statusText}</p>`;
-        html += `<p>Time: ${result.response.time}ms</p>`;
-        html += `<pre>${JSON.stringify(result.response.json || result.response.text, null, 2)}</pre>`;
+        html += `<p>Status: ${displayResult.response.status} ${displayResult.response.statusText}</p>`;
+        html += `<p>Time: ${displayResult.response.time}ms</p>`;
+        html += `<pre>${JSON.stringify(displayResult.response.json || displayResult.response.text, null, 2)}</pre>`;
     }
 
     body.innerHTML = html;

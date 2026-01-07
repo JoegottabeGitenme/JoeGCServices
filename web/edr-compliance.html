@@ -28,6 +28,13 @@
             <button id="endpoint-apply-btn">Apply</button>
             <button id="endpoint-reset-btn">Reset</button>
         </div>
+        <div class="collection-config">
+            <label for="collection-select">Test Collection:</label>
+            <select id="collection-select">
+                <option value="__ALL__" selected>All Collections (Fuzz Test)</option>
+            </select>
+            <span id="collection-count">(loading...)</span>
+        </div>
     </section>
 
     <!-- Test Summary -->
@@ -50,10 +57,21 @@
                 <span class="count" id="pending-count">0</span>
                 <span class="label">Pending</span>
             </div>
+            <div class="stat skipped">
+                <span class="count" id="skipped-count">0</span>
+                <span class="label">Skipped</span>
+            </div>
         </div>
         <div class="summary-actions">
             <button id="run-all-btn">Run All Tests</button>
+            <button id="stop-btn" style="display: none;">Stop</button>
             <button id="clear-results-btn">Clear Results</button>
+        </div>
+        <div class="progress-container" id="progress-container" style="display: none;">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <span class="progress-text" id="progress-text">Testing...</span>
         </div>
         <div class="failed-tests-list" id="failed-tests-list" style="display: none;">
             <h3>Failed Tests:</h3>
