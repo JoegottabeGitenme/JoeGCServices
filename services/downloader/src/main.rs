@@ -9,8 +9,10 @@
 //! - HTTP status API for monitoring
 
 mod cleanup;
+mod concurrency;
 mod config;
 mod download;
+mod model_runner;
 mod scheduler;
 mod server;
 mod state;
@@ -55,9 +57,11 @@ struct Args {
     #[arg(long, default_value = "/data/downloads")]
     output_dir: PathBuf,
 
-    /// Maximum concurrent downloads
-    #[arg(long, default_value = "4")]
-    max_concurrent: usize,
+    /// Total maximum concurrent downloads across all models.
+    /// Each model gets at least 1 guaranteed slot, with remaining slots
+    /// available as a shared pool for additional concurrency.
+    #[arg(long, default_value = "10")]
+    total_max_concurrent: usize,
 
     /// Maximum retry attempts
     #[arg(long, default_value = "5")]
@@ -200,7 +204,7 @@ async fn main() -> Result<()> {
     let scheduler = Scheduler::new(
         download_manager.clone(),
         state.clone(),
-        args.max_concurrent,
+        args.total_max_concurrent,
         args.ingester_url.clone(),
         args.config_dir.clone(),
         args.output_dir.clone(),

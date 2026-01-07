@@ -303,26 +303,6 @@ impl PositionQuery {
         Ok((normalized_lon, lat))
     }
 
-    /// Legacy validation function - validates without normalizing.
-    /// Used where we only need to check validity, not transform coordinates.
-    fn validate_coordinates(lon: f64, lat: f64) -> Result<(), CoordinateParseError> {
-        if !(-180.0..=180.0).contains(&lon) {
-            return Err(CoordinateParseError::OutOfRange(format!(
-                "Longitude {} is out of range [-180, 180]",
-                lon
-            )));
-        }
-
-        if !(-90.0..=90.0).contains(&lat) {
-            return Err(CoordinateParseError::OutOfRange(format!(
-                "Latitude {} is out of range [-90, 90]",
-                lat
-            )));
-        }
-
-        Ok(())
-    }
-
     /// Validate polygon coordinates with extended longitude range.
     ///
     /// For polygon vertices, we accept longitudes in [-360, 360] without normalization

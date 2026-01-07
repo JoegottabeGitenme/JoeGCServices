@@ -29,8 +29,8 @@ spec:
           image: "{{ .Values.downloader.image.repository }}:{{ .Values.downloader.image.tag }}"
           imagePullPolicy: {{ .Values.downloader.image.pullPolicy }}
           args:
-            - "--max-concurrent"
-            - {{ .Values.downloader.env.MAX_CONCURRENT | quote }}
+            - "--total-max-concurrent"
+            - {{ .Values.downloader.env.TOTAL_MAX_CONCURRENT | default "10" | quote }}
             - "--max-retries"
             - {{ .Values.downloader.env.MAX_RETRIES | quote }}
             - "--state-dir"
@@ -138,8 +138,8 @@ spec:
               imagePullPolicy: {{ .Values.downloader.image.pullPolicy }}
               args:
                 - "--once"
-                - "--max-concurrent"
-                - {{ .Values.downloader.env.MAX_CONCURRENT | quote }}
+                - "--total-max-concurrent"
+                - {{ .Values.downloader.env.TOTAL_MAX_CONCURRENT | default "10" | quote }}
                 - "--max-retries"
                 - {{ .Values.downloader.env.MAX_RETRIES | quote }}
                 - "--state-dir"

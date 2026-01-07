@@ -1,21 +1,22 @@
 //! Download scheduler with per-model polling and ingestion triggers.
+//!
+//! The scheduler coordinates multiple model download runners, each operating
+//! independently with their own polling schedule and guaranteed download slots.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc};
-use futures::stream::{self, StreamExt};
+use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, warn};
 
-use crate::cleanup::delete_ingested_file;
+use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
 use crate::download::DownloadManager;
+use crate::model_runner::ModelRunner;
 use crate::state::DownloadState;
 
 /// Model schedule info for API display.
@@ -40,6 +41,8 @@ pub struct ModelSchedule {
     pub forecast_hours: Vec<u32>,
     /// Whether this is observation data (vs forecast)
     pub is_observation: bool,
+    /// Maximum concurrent downloads for this model
+    pub max_concurrent: usize,
 }
 
 impl From<&ModelConfig> for ModelSchedule {
@@ -56,16 +59,21 @@ impl From<&ModelConfig> for ModelSchedule {
             file_pattern: config.source.file_pattern.clone(),
             forecast_hours: config.forecast_hours(),
             is_observation: config.is_observation(),
+            max_concurrent: config.schedule.max_concurrent,
         }
     }
 }
 
 /// Download scheduler coordinating multiple models.
+///
+/// The scheduler manages per-model download runners that operate independently,
+/// each with their own polling schedule and guaranteed download slots.
 #[allow(dead_code)]
 pub struct Scheduler {
     download_manager: Arc<DownloadManager>,
     state: Arc<DownloadState>,
-    max_concurrent: usize,
+    /// Total maximum concurrent downloads across all models
+    total_max_concurrent: usize,
     ingester_url: Option<String>,
     client: Client,
     config_dir: PathBuf,
@@ -78,10 +86,19 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    /// Create a new scheduler.
+    ///
+    /// # Arguments
+    /// * `download_manager` - Shared download manager
+    /// * `state` - Shared download state database
+    /// * `total_max_concurrent` - Total maximum concurrent downloads across all models
+    /// * `ingester_url` - Optional URL for triggering ingestion
+    /// * `config_dir` - Directory containing model configuration files
+    /// * `output_dir` - Directory for completed downloads
     pub async fn new(
         download_manager: Arc<DownloadManager>,
         state: Arc<DownloadState>,
-        max_concurrent: usize,
+        total_max_concurrent: usize,
         ingester_url: Option<String>,
         config_dir: PathBuf,
         output_dir: PathBuf,
@@ -107,10 +124,21 @@ impl Scheduler {
             .await;
         let s3_client = Some(aws_sdk_s3::Client::new(&aws_config));
 
+        // Log concurrency configuration
+        let enabled_models = model_configs.iter().filter(|m| m.model.enabled).count();
+        let shared_pool_size = total_max_concurrent.saturating_sub(enabled_models);
+        info!(
+            total_max_concurrent = total_max_concurrent,
+            enabled_models = enabled_models,
+            guaranteed_slots = enabled_models,
+            shared_pool_size = shared_pool_size,
+            "Scheduler concurrency configuration"
+        );
+
         Self {
             download_manager,
             state,
-            max_concurrent,
+            total_max_concurrent,
             ingester_url,
             client,
             config_dir,
@@ -125,903 +153,162 @@ impl Scheduler {
         self.model_configs.iter().map(ModelSchedule::from).collect()
     }
 
-    /// Run a single download cycle for all models.
+    /// Get the total maximum concurrent downloads
+    #[allow(dead_code)]
+    pub fn total_max_concurrent(&self) -> usize {
+        self.total_max_concurrent
+    }
+
+    /// Run a single download cycle for all models sequentially.
+    ///
+    /// This is used for `--once` mode. For continuous operation, use `run_forever()`
+    /// which runs models in parallel with proper concurrency control.
     pub async fn run_all(&self) -> Result<()> {
-        for model in &self.model_configs {
-            if model.model.enabled {
-                if let Err(e) = self.run_model(&model.model.id).await {
-                    error!(model = %model.model.id, error = %e, "Model download failed");
-                }
-            }
+        // For single-run mode, create a temporary concurrency manager
+        let enabled_models: Vec<_> = self
+            .model_configs
+            .iter()
+            .filter(|m| m.model.enabled)
+            .collect();
+
+        if enabled_models.is_empty() {
+            warn!("No enabled models to download");
+            return Ok(());
         }
 
-        // Trigger ingestion for completed downloads
-        self.trigger_ingestion().await?;
+        let concurrency_manager =
+            ConcurrencyManager::new(self.total_max_concurrent, enabled_models.len());
+
+        for model in enabled_models {
+            let permit = ModelDownloadPermit::new(
+                model.model.id.clone(),
+                concurrency_manager.shared_pool(),
+                model.schedule.max_concurrent,
+                concurrency_manager.active_downloads_counter(),
+            );
+
+            let runner = ModelRunner::new(
+                model.clone(),
+                self.download_manager.clone(),
+                self.state.clone(),
+                permit,
+                self.ingester_url.clone(),
+                self.client.clone(),
+                self.s3_client.clone(),
+                self.output_dir.clone(),
+            );
+
+            if let Err(e) = runner.run_cycle().await {
+                error!(model = %model.model.id, error = %e, "Model download failed");
+            }
+        }
 
         Ok(())
     }
 
     /// Run a single download cycle for a specific model.
-    #[instrument(skip(self))]
     pub async fn run_model(&self, model_id: &str) -> Result<()> {
         let model = self
             .model_configs
             .iter()
             .find(|m| m.model.id == model_id)
-            .context("Model not found")?;
+            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
 
         if !model.model.enabled {
             info!(model = %model_id, "Model is disabled, skipping");
             return Ok(());
         }
 
-        info!(model = %model_id, "Starting download cycle");
+        // Create a single-model concurrency manager
+        let concurrency_manager = ConcurrencyManager::new(self.total_max_concurrent, 1);
 
-        // Discover available files based on model type
-        let files = if model.is_observation() {
-            self.discover_observation_files(model).await?
-        } else {
-            self.discover_forecast_files(model).await?
-        };
-
-        if files.is_empty() {
-            info!(model = %model_id, "No new files to download");
-            return Ok(());
-        }
-
-        info!(model = %model_id, count = files.len(), "Found files to download");
-
-        // Queue downloads
-        for (url, filename) in &files {
-            // Skip if already downloaded
-            if self.state.is_already_downloaded(url).await? {
-                debug!(url = %url, "Already downloaded, skipping");
-                continue;
-            }
-
-            self.state.queue_download(url, filename, model_id).await?;
-        }
-
-        // Process download queue with concurrency limit
-        // Each download triggers ingestion immediately upon completion
-        let pending = self.state.get_in_progress().await?;
-        let ingester_url = self.ingester_url.clone();
-        let client = self.client.clone();
-
-        let results = stream::iter(pending)
-            .map(|record| {
-                let manager = self.download_manager.clone();
-                let state = self.state.clone();
-                let ingester_url = ingester_url.clone();
-                let client = client.clone();
-                async move {
-                    match manager.download(&record.url, &record.filename, &state).await {
-                        Ok(path) => {
-                            info!(url = %record.url, path = %path.display(), "Download complete");
-
-                            // Trigger ingestion immediately for this file
-                            if let Some(ref url) = ingester_url {
-                                let file_path = format!("/data/downloads/{}", record.filename);
-                                match client
-                                    .post(url)
-                                    .json(&serde_json::json!({
-                                        "file_path": file_path,
-                                        "source_url": record.url
-                                    }))
-                                    .send()
-                                    .await
-                                {
-                                    Ok(response) if response.status().is_success() => {
-                                        info!(file = %record.filename, "Ingestion triggered successfully");
-                                        let _ = state.mark_ingested(&record.url).await;
-                                        // Delete source file after successful ingestion
-                                        if let Some(parent) = path.parent() {
-                                            delete_ingested_file(parent, &record.filename).await;
-                                        } else {
-                                            warn!(
-                                                path = %path.display(),
-                                                "Cannot determine parent directory for cleanup"
-                                            );
-                                        }
-                                    }
-                                    Ok(response) => {
-                                        warn!(
-                                            file = %record.filename,
-                                            status = %response.status(),
-                                            "Ingestion request failed"
-                                        );
-                                    }
-                                    Err(e) => {
-                                        warn!(file = %record.filename, error = %e, "Failed to trigger ingestion");
-                                    }
-                                }
-                            }
-
-                            Ok(path)
-                        }
-                        Err(e) => {
-                            error!(url = %record.url, error = %e, "Download failed");
-                            Err(e)
-                        }
-                    }
-                }
-            })
-            .buffer_unordered(self.max_concurrent)
-            .collect::<Vec<_>>()
-            .await;
-
-        let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
-
-        info!(
-            model = %model_id,
-            success = successes.len(),
-            failed = failures.len(),
-            "Download cycle complete"
+        let permit = ModelDownloadPermit::new(
+            model.model.id.clone(),
+            concurrency_manager.shared_pool(),
+            model.schedule.max_concurrent,
+            concurrency_manager.active_downloads_counter(),
         );
 
-        Ok(())
-    }
-
-    /// Run continuously, polling for new data.
-    pub async fn run_forever(&self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
-        // Track last poll time per model
-        let mut last_poll: HashMap<String, std::time::Instant> = HashMap::new();
-
-        loop {
-            for model in &self.model_configs {
-                if !model.model.enabled {
-                    continue;
-                }
-
-                let interval = Duration::from_secs(model.schedule.poll_interval_secs);
-                let last = last_poll.get(&model.model.id).copied();
-
-                let should_poll = match last {
-                    None => true,
-                    Some(t) => t.elapsed() >= interval,
-                };
-
-                if should_poll {
-                    info!(model = %model.model.id, "Running scheduled download");
-
-                    if let Err(e) = self.run_model(&model.model.id).await {
-                        error!(model = %model.model.id, error = %e, "Scheduled download failed");
-                    }
-
-                    last_poll.insert(model.model.id.clone(), std::time::Instant::now());
-                }
-            }
-
-            // Trigger ingestion for any completed downloads
-            if let Err(e) = self.trigger_ingestion().await {
-                warn!(error = %e, "Failed to trigger ingestion");
-            }
-
-            // Check for shutdown
-            tokio::select! {
-                _ = shutdown.recv() => {
-                    info!("Shutting down scheduler");
-                    break;
-                }
-                _ = tokio::time::sleep(Duration::from_secs(60)) => {
-                    // Continue polling
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Discover forecast files available for download (GFS, HRRR, etc.).
-    async fn discover_forecast_files(&self, model: &ModelConfig) -> Result<Vec<(String, String)>> {
-        let mut files = Vec::new();
-
-        // Get the most recent available cycle
-        let (date, cycle) =
-            self.latest_available_cycle(&model.schedule.cycles, model.schedule.delay_hours);
-
-        info!(
-            model = %model.model.id,
-            date = %date,
-            cycle = cycle,
-            "Checking for available forecast files"
+        let runner = ModelRunner::new(
+            model.clone(),
+            self.download_manager.clone(),
+            self.state.clone(),
+            permit,
+            self.ingester_url.clone(),
+            self.client.clone(),
+            self.s3_client.clone(),
+            self.output_dir.clone(),
         );
 
-        for forecast_hour in model.forecast_hours() {
-            let filename = model
-                .source
-                .file_pattern
-                .replace("{cycle:02}", &format!("{:02}", cycle))
-                .replace("{forecast:03}", &format!("{:03}", forecast_hour))
-                .replace("{forecast:02}", &format!("{:02}", forecast_hour));
-
-            let prefix = model
-                .source
-                .prefix_template
-                .replace("{date}", &date)
-                .replace("{cycle:02}", &format!("{:02}", cycle));
-
-            let url = format!(
-                "https://{}.s3.amazonaws.com/{}/{}",
-                model.source.bucket, prefix, filename
-            );
-
-            // Check if file exists (HEAD request)
-            match self.check_file_exists(&url).await {
-                Ok(true) => {
-                    let output_filename = format!(
-                        "{}_{}_{:02}z_f{:03}.grib2",
-                        model.model.id, date, cycle, forecast_hour
-                    );
-                    files.push((url, output_filename));
-                }
-                Ok(false) => {
-                    debug!(url = %url, "File not yet available");
-                }
-                Err(e) => {
-                    debug!(url = %url, error = %e, "Error checking file");
-                }
-            }
-        }
-
-        Ok(files)
+        runner.run_cycle().await
     }
 
-    /// Discover observation files available for download (MRMS, GOES, NDFD, etc.).
-    async fn discover_observation_files(
-        &self,
-        model: &ModelConfig,
-    ) -> Result<Vec<(String, String)>> {
-        let mut files = Vec::new();
-
-        // For observation data, use retention hours as the lookback period
-        // This ensures we download historical data up to the retention limit on startup
-        let lookback = model.lookback_minutes();
-        let now = Utc::now();
-        let earliest_time = now - ChronoDuration::minutes(lookback as i64);
-
-        info!(
-            model = %model.model.id,
-            lookback_minutes = lookback,
-            retention_hours = model.retention.hours,
-            earliest_time = %earliest_time,
-            "Checking for available observation files"
-        );
-
-        // Route to appropriate discovery method based on source type or model ID
-        if model.source.source_type == "http" || model.model.id == "ndfd" {
-            files = self.discover_ndfd_files(model).await?;
-        } else if model.model.id == "mrms" {
-            files = self
-                .discover_mrms_files(model, now, earliest_time, lookback)
-                .await?;
-        } else if model.model.id.starts_with("goes") {
-            files = self
-                .discover_goes_files(model, now, earliest_time, lookback)
-                .await?;
-        }
-
-        Ok(files)
-    }
-
-    /// Discover NDFD files available for download from NWS Telecommunications Gateway.
-    /// NDFD provides continuously-updated forecast grids via HTTP.
-    async fn discover_ndfd_files(&self, model: &ModelConfig) -> Result<Vec<(String, String)>> {
-        let mut files = Vec::new();
-
-        let base_url = model
-            .source
-            .base_url
-            .as_deref()
-            .unwrap_or("https://tgftp.nws.noaa.gov");
-
-        let prefix = &model.source.prefix_template;
-
-        info!(
-            model = %model.model.id,
-            base_url = base_url,
-            prefix = prefix,
-            "Checking for available NDFD files"
-        );
-
-        // NDFD stores each parameter in a separate file
-        // We need to check for files based on the parameters configured
-        for param in &model.parameters {
-            // Get the file identifier from the parameter config
-            // In NDFD config, each parameter has a "file" field like "temp", "wspd", etc.
-            let file_id = param
-                .file
-                .clone()
-                .unwrap_or_else(|| param.name.to_lowercase());
-
-            // Construct the URL for this parameter's file
-            let url = format!("{}/{}/ds.{}.bin", base_url, prefix, file_id);
-
-            // Check if file exists and is accessible
-            match self.check_file_exists(&url).await {
-                Ok(true) => {
-                    let output_filename = format!("ndfd_{}.bin", file_id);
-                    debug!(
-                        model = %model.model.id,
-                        parameter = %param.name,
-                        url = %url,
-                        output = %output_filename,
-                        "Found NDFD file"
-                    );
-                    files.push((url, output_filename));
-                }
-                Ok(false) => {
-                    debug!(
-                        model = %model.model.id,
-                        parameter = %param.name,
-                        url = %url,
-                        "NDFD file not available"
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        model = %model.model.id,
-                        parameter = %param.name,
-                        url = %url,
-                        error = %e,
-                        "Error checking NDFD file"
-                    );
-                }
-            }
-        }
-
-        if files.is_empty() {
-            debug!(model = %model.model.id, "No NDFD files found");
-        } else {
-            info!(
-                model = %model.model.id,
-                count = files.len(),
-                "Found NDFD files to download"
-            );
-        }
-
-        Ok(files)
-    }
-
-    /// Discover MRMS files within the lookback period.
-    /// Handles date boundary by checking multiple date folders if needed.
-    async fn discover_mrms_files(
-        &self,
-        model: &ModelConfig,
-        now: DateTime<Utc>,
-        earliest_time: DateTime<Utc>,
-        lookback: u32,
-    ) -> Result<Vec<(String, String)>> {
-        let mut files = Vec::new();
-
-        // MRMS files are organized by date: CONUS/{product}/{YYYYMMDD}/MRMS_{product}_{timestamp}.grib2.gz
-        // Files are available every 2 minutes
-
-        // Determine which dates we need to check (handles date boundary)
-        let mut dates_to_check = Vec::new();
-        let today = now.format("%Y%m%d").to_string();
-        dates_to_check.push(today.clone());
-
-        // If earliest_time is on a different day, also check that day
-        let earliest_date = earliest_time.format("%Y%m%d").to_string();
-        if earliest_date != today {
-            dates_to_check.push(earliest_date.clone());
-        }
-
-        info!(
-            model = %model.model.id,
-            dates = ?dates_to_check,
-            "Checking MRMS date folders"
-        );
-
-        // Check each MRMS product
-        for param in &model.parameters {
-            if let Some(product) = param.product.as_ref() {
-                for date_str in &dates_to_check {
-                    let prefix = format!("CONUS/{}/{}/", product, date_str);
-
-                    // Calculate start_after to skip to files within lookback period
-                    // For the earliest date, start from the earliest_time
-                    // For today, we can start from beginning of day or earliest_time, whichever is later
-                    let start_time = if date_str == &earliest_date {
-                        earliest_time
-                    } else {
-                        // For today's folder, start from beginning of day
-                        now.date_naive()
-                            .and_hms_opt(0, 0, 0)
-                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                            .unwrap_or(earliest_time)
-                    };
-
-                    // MRMS filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
-                    let start_after_key = format!(
-                        "CONUS/{}/{}/MRMS_{}_{}",
-                        product,
-                        date_str,
-                        product,
-                        start_time.format("%Y%m%d-%H%M00")
-                    );
-
-                    debug!(
-                        model = %model.model.id,
-                        prefix = %prefix,
-                        product = product,
-                        date = date_str,
-                        start_after = %start_after_key,
-                        "Listing MRMS files from S3"
-                    );
-
-                    // Calculate max results based on lookback period
-                    // MRMS updates every 2 minutes, so ~30 files per hour per product
-                    let max_results = ((lookback / 2) as usize + 10).max(50);
-
-                    // List recent files from S3 using start_after to skip older files
-                    match self
-                        .list_s3_files(
-                            &model.source.bucket,
-                            &prefix,
-                            max_results,
-                            Some(&start_after_key),
-                        )
-                        .await
-                    {
-                        Ok(keys) => {
-                            info!(
-                                model = %model.model.id,
-                                prefix = %prefix,
-                                count = keys.len(),
-                                "Listed files from S3"
-                            );
-
-                            for key in keys {
-                                if key.ends_with(".grib2.gz") && key.contains(product) {
-                                    // Extract timestamp from filename
-                                    // Example: CONUS/MergedReflectivityQC_00.50/20251202/MRMS_MergedReflectivityQC_00.50_20251202-005440.grib2.gz
-                                    if let Some(file_time) = self.parse_mrms_timestamp(&key) {
-                                        // Only include files within lookback period
-                                        if file_time >= earliest_time && file_time <= now {
-                                            let url = format!(
-                                                "https://{}.s3.amazonaws.com/{}",
-                                                model.source.bucket, key
-                                            );
-
-                                            let filename =
-                                                key.split('/').next_back().unwrap_or(&key);
-                                            let output_filename = format!("mrms_{}", filename);
-
-                                            debug!(
-                                                model = %model.model.id,
-                                                url = %url,
-                                                output = %output_filename,
-                                                timestamp = %file_time,
-                                                "Found MRMS file"
-                                            );
-
-                                            files.push((url, output_filename));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                model = %model.model.id,
-                                prefix = %prefix,
-                                error = %e,
-                                "Failed to list MRMS files from S3"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        if files.is_empty() {
-            debug!(
-                model = %model.model.id,
-                lookback_minutes = lookback,
-                "No new MRMS files found"
-            );
-        } else {
-            info!(
-                model = %model.model.id,
-                count = files.len(),
-                "Found MRMS files to download"
-            );
-        }
-
-        Ok(files)
-    }
-
-    /// Parse timestamp from MRMS filename.
-    /// Filename format: MRMS_{product}_{YYYYMMDD-HHMMSS}.grib2.gz
-    fn parse_mrms_timestamp(&self, key: &str) -> Option<DateTime<Utc>> {
-        let filename = key.split('/').next_back()?;
-        let timestamp_part = filename.split('_').next_back()?;
-        let timestamp_str = timestamp_part.replace(".grib2.gz", "");
-        // Format: 20251202-175037 (YYYYMMDD-HHMMSS)
-        let timestamp_clean = timestamp_str.replace("-", "");
-        // Now format is: 20251202175037 (14 chars)
-        if timestamp_clean.len() >= 14 {
-            let year: i32 = timestamp_clean[0..4].parse().ok()?;
-            let month: u32 = timestamp_clean[4..6].parse().ok()?;
-            let day: u32 = timestamp_clean[6..8].parse().ok()?;
-            let hour: u32 = timestamp_clean[8..10].parse().ok()?;
-            let minute: u32 = timestamp_clean[10..12].parse().ok()?;
-            let second: u32 = timestamp_clean[12..14].parse().ok()?;
-
-            let naive_dt = chrono::NaiveDate::from_ymd_opt(year, month, day)?
-                .and_hms_opt(hour, minute, second)?;
-            Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc))
-        } else {
-            None
-        }
-    }
-
-    /// Discover GOES files within the lookback period.
-    /// Handles date/hour boundaries by iterating through all hours in the lookback window.
-    async fn discover_goes_files(
-        &self,
-        model: &ModelConfig,
-        now: DateTime<Utc>,
-        earliest_time: DateTime<Utc>,
-        lookback: u32,
-    ) -> Result<Vec<(String, String)>> {
-        let mut files = Vec::new();
-
-        // GOES-16 and GOES-18 satellite imagery
-        // Files are available every 5-10 minutes
-        // Format: OR_ABI-L2-CMIPC-M{mode}C{band:02}_G{satellite}_s{start}_e{end}_c{created}.nc
-
-        let satellite_num = if model.model.id == "goes16" {
-            "16"
-        } else {
-            "18"
-        };
-
-        // Calculate hours to check - need to cover entire lookback period
-        // Add 1 to ensure we include the current partial hour
-        let hours_to_check = (lookback / 60) + 1;
-
-        // Calculate max_results based on lookback period
-        // GOES files are available every 5 minutes, so ~12 files per hour per band
-        let files_per_hour = 12; // ~5 minute intervals
-        let max_results = (files_per_hour * 2).max(24); // Check 2 hours worth per query
-
-        // Get configured bands from source
-        let bands = model.source.bands.clone().unwrap_or_else(|| vec![2, 8, 13]); // Default: Red, WV, IR
-
-        info!(
-            model = %model.model.id,
-            hours_to_check = hours_to_check,
-            bands = ?bands,
-            earliest_time = %earliest_time,
-            "Checking GOES hour folders"
-        );
-
-        // Iterate through each hour in the lookback window
-        for hours_ago in 0..hours_to_check {
-            let check_time = now - ChronoDuration::hours(hours_ago as i64);
-            let hour = check_time.hour();
-            let check_doy = check_time.ordinal();
-            let check_year = check_time.year();
-
-            for band in &bands {
-                // S3 path pattern: ABI-L2-CMIPC/{year}/{day_of_year:03}/{hour:02}/
-                let product = model.source.product.as_deref().unwrap_or("ABI-L2-CMIPC");
-
-                let prefix = format!("{}/{}/{:03}/{:02}/", product, check_year, check_doy, hour);
-
-                // Use start_after to efficiently skip to files matching this band and satellite
-                // GOES filenames are lexicographically sorted by band (C01, C02, ..., C13, C14, C15, C16)
-                // and then by satellite (G16, G18) and timestamp
-                // Example: OR_ABI-L2-CMIPC-M6C13_G18_s20253570101170...
-                // We want to start just before our target band+satellite combo
-                let start_after_key = format!(
-                    "{}OR_{}-M6C{:02}_G{}_",
-                    prefix, product, band, satellite_num
-                );
-
-                debug!(
-                    model = %model.model.id,
-                    prefix = %prefix,
-                    band = band,
-                    satellite = satellite_num,
-                    year = check_year,
-                    doy = check_doy,
-                    hour = hour,
-                    start_after = %start_after_key,
-                    max_results = max_results,
-                    "Listing GOES files from S3 with start_after"
-                );
-
-                // List files from S3 using start_after to skip directly to target band
-                match self
-                    .list_s3_files(
-                        &model.source.bucket,
-                        &prefix,
-                        max_results,
-                        Some(&start_after_key),
-                    )
-                    .await
-                {
-                    Ok(keys) => {
-                        // Filter for the specific band we want (start_after gets us close but we still need to verify)
-                        // Filename format: OR_ABI-L2-CMIPC-M6C{band:02}_G{sat}_s{start}_e{end}_c{created}.nc
-                        let band_str = format!("C{:02}", band);
-                        let sat_str = format!("_G{}_", satellite_num);
-
-                        let mut found_count = 0;
-                        for key in keys {
-                            if key.contains(&band_str)
-                                && key.contains(&sat_str)
-                                && key.ends_with(".nc")
-                            {
-                                // Parse timestamp from filename to verify it's within the lookback window
-                                if let Some(file_time) = self.parse_goes_timestamp(&key) {
-                                    if file_time >= earliest_time && file_time <= now {
-                                        // Construct the full S3 URL
-                                        let url = format!(
-                                            "https://{}.s3.amazonaws.com/{}",
-                                            model.source.bucket, key
-                                        );
-
-                                        // Extract filename for output
-                                        let filename = key.split('/').next_back().unwrap_or(&key);
-                                        let output_filename =
-                                            format!("goes{}_{}", satellite_num, filename);
-
-                                        debug!(
-                                            model = %model.model.id,
-                                            url = %url,
-                                            output = %output_filename,
-                                            timestamp = %file_time,
-                                            "Found GOES file"
-                                        );
-
-                                        files.push((url, output_filename));
-                                        found_count += 1;
-                                    }
-                                } else {
-                                    // If we can't parse timestamp, include the file anyway
-                                    // (the file is in the right hour folder)
-                                    let url = format!(
-                                        "https://{}.s3.amazonaws.com/{}",
-                                        model.source.bucket, key
-                                    );
-
-                                    let filename = key.split('/').next_back().unwrap_or(&key);
-                                    let output_filename =
-                                        format!("goes{}_{}", satellite_num, filename);
-
-                                    debug!(
-                                        model = %model.model.id,
-                                        url = %url,
-                                        output = %output_filename,
-                                        "Found GOES file (no timestamp parsed)"
-                                    );
-
-                                    files.push((url, output_filename));
-                                    found_count += 1;
-                                }
-                            }
-                        }
-
-                        if found_count > 0 {
-                            info!(
-                                model = %model.model.id,
-                                band = band,
-                                year = check_year,
-                                doy = check_doy,
-                                hour = hour,
-                                found = found_count,
-                                "GOES files found for band/hour"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            model = %model.model.id,
-                            prefix = %prefix,
-                            error = %e,
-                            "Failed to list GOES files from S3"
-                        );
-                    }
-                }
-            }
-        }
-
-        if files.is_empty() {
-            debug!(
-                model = %model.model.id,
-                lookback_minutes = lookback,
-                "No new GOES files found"
-            );
-        } else {
-            info!(
-                model = %model.model.id,
-                count = files.len(),
-                "Found GOES files to download"
-            );
-        }
-
-        Ok(files)
-    }
-
-    /// Parse timestamp from GOES filename.
-    /// Filename format: OR_ABI-L2-CMIPC-M6C{band}_G{sat}_s{start}_e{end}_c{created}.nc
-    /// Start timestamp format: s{YYYYDDDHHMMSS}0 (year, day-of-year, hour, min, sec, tenths)
-    fn parse_goes_timestamp(&self, key: &str) -> Option<DateTime<Utc>> {
-        let filename = key.split('/').next_back()?;
-        // Find the start timestamp (s{timestamp})
-        let s_idx = filename.find("_s")?;
-        let timestamp_start = s_idx + 2;
-        // Timestamp is 14 chars: YYYYDDDHHMMSS (year, doy, hour, min, sec) + 1 for tenths
-        if filename.len() < timestamp_start + 14 {
-            return None;
-        }
-        let timestamp_str = &filename[timestamp_start..timestamp_start + 13];
-
-        let year: i32 = timestamp_str[0..4].parse().ok()?;
-        let doy: u32 = timestamp_str[4..7].parse().ok()?;
-        let hour: u32 = timestamp_str[7..9].parse().ok()?;
-        let minute: u32 = timestamp_str[9..11].parse().ok()?;
-        let second: u32 = timestamp_str[11..13].parse().ok()?;
-
-        // Convert day-of-year to month/day
-        let naive_date = chrono::NaiveDate::from_yo_opt(year, doy)?;
-        let naive_dt = naive_date.and_hms_opt(hour, minute, second)?;
-        Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc))
-    }
-
-    /// Check if a file exists via HEAD request.
-    async fn check_file_exists(&self, url: &str) -> Result<bool> {
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .context("HEAD request failed")?;
-
-        Ok(response.status().is_success())
-    }
-
-    /// List files from S3 bucket matching a prefix.
-    /// Optionally uses start_after to efficiently skip to a specific lexicographic position.
-    async fn list_s3_files(
-        &self,
-        bucket: &str,
-        prefix: &str,
-        max_results: usize,
-        start_after: Option<&str>,
-    ) -> Result<Vec<String>> {
-        let s3_client = match &self.s3_client {
-            Some(client) => client,
-            None => {
-                debug!("S3 client not initialized, skipping S3 listing");
-                return Ok(Vec::new());
-            }
-        };
-
-        let mut files = Vec::new();
-        let mut continuation_token: Option<String> = None;
-
-        loop {
-            let mut request = s3_client
-                .list_objects_v2()
-                .bucket(bucket)
-                .prefix(prefix)
-                .max_keys(100);
-
-            if let Some(ref token) = continuation_token {
-                request = request.continuation_token(token.clone());
-            }
-
-            if let Some(start) = start_after {
-                if continuation_token.is_none() {
-                    // Only use start_after on the first request
-                    request = request.start_after(start);
-                }
-            }
-
-            let response = request.send().await.context("S3 list_objects_v2 failed")?;
-
-            for object in response.contents() {
-                if let Some(key) = object.key() {
-                    files.push(key.to_string());
-                    if files.len() >= max_results {
-                        return Ok(files);
-                    }
-                }
-            }
-
-            if response.is_truncated() == Some(true) {
-                continuation_token = response.next_continuation_token().map(|s| s.to_string());
-            } else {
-                break;
-            }
-        }
-
-        Ok(files)
-    }
-
-    /// Calculate the most recent available model cycle.
-    fn latest_available_cycle(&self, cycles: &[u32], delay_hours: u32) -> (String, u32) {
-        let now = Utc::now() - ChronoDuration::hours(delay_hours as i64);
-        let date = now.format("%Y%m%d").to_string();
-        let current_hour = now.hour();
-
-        // Find the most recent cycle that's available
-        let cycle = cycles
+    /// Run continuously with parallel per-model download runners.
+    ///
+    /// Each model gets its own independent download loop with:
+    /// - Guaranteed access to at least 1 download slot
+    /// - Access to shared pool slots for additional concurrency
+    /// - Its own polling schedule based on `poll_interval_secs`
+    pub async fn run_forever(&self, shutdown: broadcast::Receiver<()>) -> Result<()> {
+        let enabled_models: Vec<_> = self
+            .model_configs
             .iter()
-            .filter(|&&c| c <= current_hour)
-            .max()
-            .copied()
-            .unwrap_or_else(|| {
-                // Use previous day's last cycle
-                *cycles.last().unwrap_or(&0)
-            });
+            .filter(|m| m.model.enabled)
+            .cloned()
+            .collect();
 
-        (date, cycle)
-    }
-
-    /// Trigger ingestion for completed downloads.
-    async fn trigger_ingestion(&self) -> Result<()> {
-        let pending = self.state.get_pending_ingestion().await?;
-
-        if pending.is_empty() {
+        if enabled_models.is_empty() {
+            warn!("No enabled models to download");
             return Ok(());
         }
 
-        let ingester_url = match &self.ingester_url {
-            Some(url) => url,
-            None => {
-                // No ingester URL configured, mark as ingested anyway
-                for (url, _) in &pending {
-                    self.state.mark_ingested(url).await?;
-                }
-                return Ok(());
-            }
-        };
+        // Create concurrency manager
+        let concurrency_manager =
+            ConcurrencyManager::new(self.total_max_concurrent, enabled_models.len());
 
         info!(
-            count = pending.len(),
-            "Triggering ingestion for completed downloads"
+            total_max = self.total_max_concurrent,
+            num_models = enabled_models.len(),
+            shared_pool = concurrency_manager.shared_pool_size(),
+            "Starting parallel model runners"
         );
 
-        for (url, filename) in pending {
-            // Call ingester API (INGESTER_URL should be the full endpoint, e.g., http://wms-api:8080/admin/ingest)
-            let file_path = format!("/data/downloads/{}", filename);
+        let mut handles = Vec::new();
 
-            match self
-                .client
-                .post(ingester_url)
-                .json(&serde_json::json!({
-                    "file_path": file_path,
-                    "source_url": url
-                }))
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    info!(file = %filename, "Ingestion triggered successfully");
-                    self.state.mark_ingested(&url).await?;
-                    // Delete source file after successful ingestion
-                    delete_ingested_file(&self.output_dir, &filename).await;
+        // Spawn independent runner for each model
+        for model in enabled_models {
+            let permit = ModelDownloadPermit::new(
+                model.model.id.clone(),
+                concurrency_manager.shared_pool(),
+                model.schedule.max_concurrent,
+                concurrency_manager.active_downloads_counter(),
+            );
+
+            let runner = ModelRunner::new(
+                model.clone(),
+                self.download_manager.clone(),
+                self.state.clone(),
+                permit,
+                self.ingester_url.clone(),
+                self.client.clone(),
+                self.s3_client.clone(),
+                self.output_dir.clone(),
+            );
+
+            let shutdown_rx = shutdown.resubscribe();
+            let model_id = model.model.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(model = %model_id, error = %e, "Model runner failed");
                 }
-                Ok(response) => {
-                    warn!(
-                        file = %filename,
-                        status = %response.status(),
-                        "Ingestion failed"
-                    );
-                }
-                Err(e) => {
-                    error!(file = %filename, error = %e, "Failed to call ingester");
-                }
-            }
+            }));
         }
 
+        // Wait for all runners to complete (usually via shutdown signal)
+        futures::future::join_all(handles).await;
+
+        info!("All model runners stopped");
         Ok(())
     }
 

@@ -65,6 +65,7 @@ schedule:
   type: observation        # Treat like observation data (continuous updates)
   poll_interval_secs: 3600 # Check for updates every hour
   lookback_minutes: 180    # Look back 3 hours for recent data
+  max_concurrent: 2        # Allow up to 2 concurrent downloads for this model
 
 # Retention - Keep minimal data to save disk space
 # Since NDFD is always the "current best forecast", we only need recent versions

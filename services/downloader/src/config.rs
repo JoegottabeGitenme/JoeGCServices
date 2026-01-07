@@ -148,6 +148,15 @@ pub struct ScheduleConfig {
     /// For observation data: how far back to look (minutes)
     #[serde(default)]
     pub lookback_minutes: u32,
+    /// Maximum concurrent downloads for this model.
+    /// Each model always gets at least 1 guaranteed slot.
+    /// Additional slots (up to this limit) come from a shared pool.
+    #[serde(default = "default_model_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+fn default_model_max_concurrent() -> usize {
+    2
 }
 
 fn default_schedule_type() -> String {
@@ -224,8 +233,17 @@ impl ModelConfig {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let config: ModelConfig = serde_yaml::from_str(&content)
+        let mut config: ModelConfig = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+
+        // Validate and fix max_concurrent - must be at least 1 to avoid deadlock
+        if config.schedule.max_concurrent == 0 {
+            warn!(
+                model = %config.model.id,
+                "max_concurrent cannot be 0, setting to 1"
+            );
+            config.schedule.max_concurrent = 1;
+        }
 
         debug!(model = %config.model.id, path = %path.display(), "Loaded model config");
         Ok(config)

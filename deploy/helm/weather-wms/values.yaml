@@ -137,7 +137,7 @@ downloader:
 
   env:
     LOG_LEVEL: info
-    MAX_CONCURRENT: "4"
+    TOTAL_MAX_CONCURRENT: "10"
     MAX_RETRIES: "5"
 
 # Redis configuration
