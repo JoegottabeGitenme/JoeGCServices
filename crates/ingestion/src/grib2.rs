@@ -414,7 +414,16 @@ async fn write_and_upload_zarr(
         "Stored Zarr grid with pyramid levels"
     );
 
-    Ok((zarr_file_size, write_result.zarr_metadata.to_json()))
+    // Build metadata with multiscale info for pyramid level selection during rendering
+    let mut zarr_json = write_result.zarr_metadata.to_json();
+    if let serde_json::Value::Object(ref mut map) = zarr_json {
+        map.insert(
+            "multiscale".to_string(),
+            serde_json::to_value(&write_result.multiscale_metadata).unwrap_or_default(),
+        );
+    }
+
+    Ok((zarr_file_size, zarr_json))
 }
 
 /// Decompress gzip-compressed GRIB2 data.
@@ -565,5 +574,176 @@ mod tests {
         assert_eq!(result.datasets_registered, 0);
         assert_eq!(result.bytes_written, 0);
         assert!(result.parameters.is_empty());
+    }
+
+    #[test]
+    fn test_zarr_json_includes_multiscale_metadata() {
+        // This test verifies the JSON-building logic that adds multiscale metadata
+        // to the zarr_json for catalog storage. This is critical for pyramid level
+        // selection during rendering.
+        use grid_processor::types::{BoundingBox, MultiscaleMetadata, PyramidLevel, RowOrigin};
+        use grid_processor::writer::ZarrMetadata;
+
+        // Create mock ZarrMetadata (basic metadata without multiscale)
+        let zarr_metadata = ZarrMetadata {
+            model: "mrms".to_string(),
+            parameter: "REFL".to_string(),
+            level: "surface".to_string(),
+            units: "dBZ".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 12, 17, 14, 32, 0).unwrap(),
+            forecast_hour: 0,
+            bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+            shape: (7000, 3500),
+            chunk_shape: (512, 512),
+            num_chunks: (14, 7),
+            fill_value: f32::NAN,
+            dtype: "float32".to_string(),
+            compression: "blosc".to_string(),
+            row_origin: RowOrigin::North,
+        };
+
+        // Create mock MultiscaleMetadata (pyramid levels)
+        let multiscale_metadata = MultiscaleMetadata {
+            name: "mrms_REFL".to_string(),
+            axes: vec![],
+            levels: vec![
+                PyramidLevel {
+                    level: 0,
+                    path: "0".to_string(),
+                    shape: (7000, 3500),
+                    chunk_shape: (512, 512),
+                    scale: 1.0,
+                },
+                PyramidLevel {
+                    level: 1,
+                    path: "1".to_string(),
+                    shape: (3500, 1750),
+                    chunk_shape: (512, 512),
+                    scale: 2.0,
+                },
+                PyramidLevel {
+                    level: 2,
+                    path: "2".to_string(),
+                    shape: (1750, 875),
+                    chunk_shape: (512, 512),
+                    scale: 4.0,
+                },
+            ],
+            downsample_method: "max".to_string(),
+            native_resolution: (0.01, 0.01),
+            bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+            row_origin: RowOrigin::North,
+        };
+
+        // Simulate the JSON-building logic from write_and_upload_zarr
+        let mut zarr_json = zarr_metadata.to_json();
+        if let serde_json::Value::Object(ref mut map) = zarr_json {
+            map.insert(
+                "multiscale".to_string(),
+                serde_json::to_value(&multiscale_metadata).unwrap_or_default(),
+            );
+        }
+
+        // Verify the zarr_json contains the multiscale key
+        assert!(
+            zarr_json.get("multiscale").is_some(),
+            "zarr_json should contain 'multiscale' key"
+        );
+
+        // Verify the multiscale metadata can be parsed back
+        let parsed_multiscale: MultiscaleMetadata =
+            serde_json::from_value(zarr_json.get("multiscale").unwrap().clone())
+                .expect("Should parse multiscale metadata");
+
+        assert_eq!(parsed_multiscale.levels.len(), 3);
+        assert_eq!(parsed_multiscale.levels[0].level, 0);
+        assert_eq!(parsed_multiscale.levels[0].shape, (7000, 3500));
+        assert_eq!(parsed_multiscale.levels[1].level, 1);
+        assert_eq!(parsed_multiscale.levels[1].scale, 2.0);
+        assert_eq!(parsed_multiscale.levels[2].level, 2);
+        assert_eq!(parsed_multiscale.levels[2].scale, 4.0);
+
+        // Verify the basic zarr_metadata fields are still present
+        assert_eq!(
+            zarr_json.get("model").and_then(|v| v.as_str()),
+            Some("mrms")
+        );
+        assert_eq!(
+            zarr_json.get("parameter").and_then(|v| v.as_str()),
+            Some("REFL")
+        );
+    }
+
+    #[test]
+    fn test_zarr_json_multiscale_used_by_parse_multiscale_metadata() {
+        // This test verifies that the multiscale metadata we add to zarr_json
+        // can be correctly parsed by the rendering code's parse_multiscale_metadata
+        use grid_processor::parse_multiscale_metadata;
+        use grid_processor::types::{BoundingBox, MultiscaleMetadata, PyramidLevel, RowOrigin};
+        use grid_processor::writer::ZarrMetadata;
+
+        // Create mock metadata
+        let zarr_metadata = ZarrMetadata {
+            model: "mrms".to_string(),
+            parameter: "REFL".to_string(),
+            level: "surface".to_string(),
+            units: "dBZ".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 12, 17, 14, 32, 0).unwrap(),
+            forecast_hour: 0,
+            bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+            shape: (7000, 3500),
+            chunk_shape: (512, 512),
+            num_chunks: (14, 7),
+            fill_value: f32::NAN,
+            dtype: "float32".to_string(),
+            compression: "blosc".to_string(),
+            row_origin: RowOrigin::North,
+        };
+
+        let multiscale_metadata = MultiscaleMetadata {
+            name: "mrms_REFL".to_string(),
+            axes: vec![],
+            levels: vec![
+                PyramidLevel {
+                    level: 0,
+                    path: "0".to_string(),
+                    shape: (7000, 3500),
+                    chunk_shape: (512, 512),
+                    scale: 1.0,
+                },
+                PyramidLevel {
+                    level: 1,
+                    path: "1".to_string(),
+                    shape: (3500, 1750),
+                    chunk_shape: (512, 512),
+                    scale: 2.0,
+                },
+            ],
+            downsample_method: "max".to_string(),
+            native_resolution: (0.01, 0.01),
+            bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+            row_origin: RowOrigin::North,
+        };
+
+        // Build zarr_json with multiscale (same as write_and_upload_zarr)
+        let mut zarr_json = zarr_metadata.to_json();
+        if let serde_json::Value::Object(ref mut map) = zarr_json {
+            map.insert(
+                "multiscale".to_string(),
+                serde_json::to_value(&multiscale_metadata).unwrap_or_default(),
+            );
+        }
+
+        // Use the same function that rendering uses to parse multiscale metadata
+        let parsed = parse_multiscale_metadata(&zarr_json);
+
+        assert!(
+            parsed.is_some(),
+            "parse_multiscale_metadata should successfully parse the metadata"
+        );
+
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.num_levels(), 2);
+        assert_eq!(parsed.native_resolution, (0.01, 0.01));
     }
 }
