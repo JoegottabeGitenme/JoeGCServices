@@ -34,6 +34,11 @@ fn resample_nearest(
     dst_width: usize,
     dst_height: usize,
 ) -> Vec<Option<f32>> {
+    // Handle edge cases: empty source data or zero dimensions
+    if data.is_empty() || src_width == 0 || src_height == 0 {
+        return vec![None; dst_width * dst_height];
+    }
+
     let mut result = Vec::with_capacity(dst_width * dst_height);
 
     for dst_y in 0..dst_height {

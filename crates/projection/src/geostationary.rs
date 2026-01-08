@@ -120,6 +120,50 @@ impl Geostationary {
         )
     }
 
+    /// Create projection for GOES-19 (GOES-East at 75.2°W) Full Disk sector.
+    ///
+    /// Full disk parameters from AWS GOES-19 ABI-L2-CMIPF data:
+    /// - X: from -0.151844 to 0.151844 radians (full hemisphere)
+    /// - Y: from 0.151844 to -0.151844 radians (north to south)
+    /// - Resolution: 0.000056 rad per pixel (2km at nadir)
+    /// - Grid: 5424 x 5424 pixels
+    pub fn goes19_fulldisk() -> Self {
+        Self::from_goes(
+            35786023.0,    // perspective_point_height
+            6378137.0,     // semi_major_axis (GRS80)
+            6356752.31414, // semi_minor_axis
+            -75.2,         // longitude_origin (GOES-19 position)
+            -0.151844,     // x_origin (west edge, radians)
+            0.151844,      // y_origin (north edge, radians)
+            0.000056,      // dx (radians per pixel)
+            -0.000056,     // dy (radians per pixel, negative = south)
+            5424,          // nx
+            5424,          // ny
+        )
+    }
+
+    /// Create projection for GOES-18 (GOES-West at 137.2°W) Full Disk sector.
+    ///
+    /// Full disk parameters from AWS GOES-18 ABI-L2-CMIPF data:
+    /// - X: from -0.151844 to 0.151844 radians (full hemisphere)
+    /// - Y: from 0.151844 to -0.151844 radians (north to south)
+    /// - Resolution: 0.000056 rad per pixel (2km at nadir)
+    /// - Grid: 5424 x 5424 pixels
+    pub fn goes18_fulldisk() -> Self {
+        Self::from_goes(
+            35786023.0,    // perspective_point_height
+            6378137.0,     // semi_major_axis (GRS80)
+            6356752.31414, // semi_minor_axis
+            -137.2,        // longitude_origin (GOES-18 position)
+            -0.151844,     // x_origin (west edge, radians)
+            0.151844,      // y_origin (north edge, radians)
+            0.000056,      // dx (radians per pixel)
+            -0.000056,     // dy (radians per pixel, negative = south)
+            5424,          // nx
+            5424,          // ny
+        )
+    }
+
     /// Convert grid indices (i, j) to scan angles (x, y) in radians.
     #[inline]
     pub fn grid_to_scan(&self, i: f64, j: f64) -> (f64, f64) {
@@ -234,20 +278,25 @@ impl Geostationary {
     /// Get the geographic bounding box of the grid.
     ///
     /// Returns (min_lon, min_lat, max_lon, max_lat) in degrees.
-    /// Samples grid edges to find approximate bounds since the
+    /// Samples grid points to find approximate bounds since the
     /// geostationary projection creates curved edges.
+    ///
+    /// For Full Disk imagery, grid edges may be in space (not on Earth),
+    /// so we use binary search to find the edges of the visible Earth disk.
     pub fn geographic_bounds(&self) -> (f64, f64, f64, f64) {
         let mut min_lat = f64::MAX;
         let mut max_lat = f64::MIN;
         let mut min_lon = f64::MAX;
         let mut max_lon = f64::MIN;
 
-        // Sample along all edges
-        let samples = 50;
+        let samples = 100; // More samples for better accuracy
+        let center_i = (self.nx as f64 - 1.0) / 2.0;
+        let center_j = (self.ny as f64 - 1.0) / 2.0;
+
+        // Sample along all edges (works well for CONUS/MESO sectors)
         for t in 0..=samples {
             let frac = t as f64 / samples as f64;
 
-            // Sample each edge
             let edges = [
                 (frac * (self.nx as f64 - 1.0), 0.0),                  // Top
                 (frac * (self.nx as f64 - 1.0), self.ny as f64 - 1.0), // Bottom
@@ -265,7 +314,137 @@ impl Geostationary {
             }
         }
 
+        // For Full Disk imagery, the grid edges may be in space.
+        // Find the exact edges of Earth's visible disk using binary search.
+
+        // Find north edge: search from top to center on the center column
+        let north_edge_j = self.find_edge_binary(center_i, 0.0, center_j, false);
+        if let Some((lat, lon)) = self.grid_to_geo(center_i, north_edge_j) {
+            max_lat = max_lat.max(lat);
+            min_lon = min_lon.min(lon);
+            max_lon = max_lon.max(lon);
+        }
+
+        // Find south edge: search from bottom to center on the center column
+        let south_edge_j = self.find_edge_binary(center_i, self.ny as f64 - 1.0, center_j, true);
+        if let Some((lat, lon)) = self.grid_to_geo(center_i, south_edge_j) {
+            min_lat = min_lat.min(lat);
+            min_lon = min_lon.min(lon);
+            max_lon = max_lon.max(lon);
+        }
+
+        // Find west edge: search from left to center on the center row
+        let west_edge_i = self.find_edge_binary_h(0.0, center_i, center_j, false);
+        if let Some((lat, lon)) = self.grid_to_geo(west_edge_i, center_j) {
+            min_lon = min_lon.min(lon);
+            min_lat = min_lat.min(lat);
+            max_lat = max_lat.max(lat);
+        }
+
+        // Find east edge: search from right to center on the center row
+        let east_edge_i = self.find_edge_binary_h(self.nx as f64 - 1.0, center_i, center_j, true);
+        if let Some((lat, lon)) = self.grid_to_geo(east_edge_i, center_j) {
+            max_lon = max_lon.max(lon);
+            min_lat = min_lat.min(lat);
+            max_lat = max_lat.max(lat);
+        }
+
+        // Also sample along lines to catch any extremes we might have missed
+        for t in 0..=samples {
+            let frac = t as f64 / samples as f64;
+            let i = frac * (self.nx as f64 - 1.0);
+            let j = frac * (self.ny as f64 - 1.0);
+
+            // Horizontal line through center (finds east-west extent)
+            if let Some((lat, lon)) = self.grid_to_geo(i, center_j) {
+                min_lat = min_lat.min(lat);
+                max_lat = max_lat.max(lat);
+                min_lon = min_lon.min(lon);
+                max_lon = max_lon.max(lon);
+            }
+
+            // Vertical line through center (finds north-south extent)
+            if let Some((lat, lon)) = self.grid_to_geo(center_i, j) {
+                min_lat = min_lat.min(lat);
+                max_lat = max_lat.max(lat);
+                min_lon = min_lon.min(lon);
+                max_lon = max_lon.max(lon);
+            }
+        }
+
         (min_lon, min_lat, max_lon, max_lat)
+    }
+
+    /// Binary search to find the edge of Earth's visible disk along a vertical line.
+    /// Returns the j coordinate of the first/last valid point.
+    fn find_edge_binary(&self, i: f64, start_j: f64, end_j: f64, reverse: bool) -> f64 {
+        let mut lo = start_j.min(end_j);
+        let mut hi = start_j.max(end_j);
+
+        // Binary search to find the edge
+        while hi - lo > 1.0 {
+            let mid = (lo + hi) / 2.0;
+            let is_valid = self.grid_to_geo(i, mid).is_some();
+
+            if reverse {
+                // Looking for last valid point (from high to low)
+                if is_valid {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            } else {
+                // Looking for first valid point (from low to high)
+                if is_valid {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+        }
+
+        // Return the edge that has valid data
+        if self.grid_to_geo(i, lo).is_some() {
+            lo
+        } else {
+            hi
+        }
+    }
+
+    /// Binary search to find the edge of Earth's visible disk along a horizontal line.
+    /// Returns the i coordinate of the first/last valid point.
+    fn find_edge_binary_h(&self, start_i: f64, end_i: f64, j: f64, reverse: bool) -> f64 {
+        let mut lo = start_i.min(end_i);
+        let mut hi = start_i.max(end_i);
+
+        // Binary search to find the edge
+        while hi - lo > 1.0 {
+            let mid = (lo + hi) / 2.0;
+            let is_valid = self.grid_to_geo(mid, j).is_some();
+
+            if reverse {
+                // Looking for last valid point (from high to low)
+                if is_valid {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            } else {
+                // Looking for first valid point (from low to high)
+                if is_valid {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+        }
+
+        // Return the edge that has valid data
+        if self.grid_to_geo(lo, j).is_some() {
+            lo
+        } else {
+            hi
+        }
     }
 
     /// Check if a geographic point is within the grid and visible.

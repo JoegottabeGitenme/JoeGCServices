@@ -81,8 +81,8 @@ pub enum GoesSatellite {
 impl GoesSatellite {
     pub fn from_model(model: &str) -> Option<Self> {
         match model.to_lowercase().as_str() {
-            "goes18" => Some(GoesSatellite::Goes18),
-            "goes19" => Some(GoesSatellite::Goes19),
+            "goes18" | "goes18-fulldisk" => Some(GoesSatellite::Goes18),
+            "goes19" | "goes19-fulldisk" => Some(GoesSatellite::Goes19),
             _ => None,
         }
     }
@@ -137,7 +137,9 @@ impl DataSourceType {
             "gfs" => DataSourceType::Grib2Gfs,
             "hrrr" => DataSourceType::Grib2Hrrr,
             "mrms" => DataSourceType::Grib2Mrms,
-            "goes18" | "goes19" | "goes" => DataSourceType::NetcdfGoes,
+            "goes18" | "goes19" | "goes18-fulldisk" | "goes19-fulldisk" | "goes" => {
+                DataSourceType::NetcdfGoes
+            }
             other => DataSourceType::Other(other.to_string()),
         }
     }

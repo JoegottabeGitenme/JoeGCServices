@@ -769,22 +769,79 @@
                         </div>
                     </a>
 
-                    <!-- GOES-18 Infrared -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-180,54,-90&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
+                    <!-- GOES-18 CONUS Infrared -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-175,55,-100&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
                         <div class="example-img-container">
                             <div class="example-placeholder" id="placeholder-3">
                                 <div class="spinner"></div>
                                 <span>Loading...</span>
                             </div>
                             <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-180,54,-90&WIDTH=400&HEIGHT=218&FORMAT=image/png"
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-175,55,-100&WIDTH=400&HEIGHT=218&FORMAT=image/png"
                                  alt="GOES-18 Infrared"
                                  onload="this.classList.add('loaded'); document.getElementById('placeholder-3').style.display='none';"
                                  onerror="document.getElementById('placeholder-3').innerHTML='<span>Data unavailable</span>';">
                         </div>
                         <div class="example-info">
-                            <div class="example-title">GOES-18 Infrared</div>
-                            <div class="example-desc">GOES West - Clean Longwave IR (10.3um)</div>
+                            <div class="example-title">GOES-18 CONUS IR</div>
+                            <div class="example-desc">GOES West - Clean Longwave IR (10.3um) - Western US/Pacific</div>
+                        </div>
+                    </a>
+
+                    <!-- GOES-19 CONUS Infrared -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-105,55,-50&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-3b">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-105,55,-50&WIDTH=400&HEIGHT=218&FORMAT=image/png"
+                                 alt="GOES-19 Infrared"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3b').style.display='none';"
+                                 onerror="document.getElementById('placeholder-3b').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GOES-19 CONUS IR</div>
+                            <div class="example-desc">GOES East - Clean Longwave IR (10.3um) - Eastern US/Atlantic</div>
+                        </div>
+                    </a>
+
+                    <!-- GOES-19 Full Disk -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19-fulldisk_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=-70,-150,70,0&WIDTH=800&HEIGHT=750&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-3c">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19-fulldisk_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=-70,-150,70,0&WIDTH=300&HEIGHT=280&FORMAT=image/png"
+                                 alt="GOES-19 Full Disk"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3c').style.display='none';"
+                                 onerror="document.getElementById('placeholder-3c').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GOES-19 Full Disk</div>
+                            <div class="example-desc">GOES East - Full Earth disk view - Americas & Atlantic</div>
+                        </div>
+                    </a>
+
+                    <!-- GOES-18 Full Disk -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18-fulldisk_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=-70,-180,70,-60&WIDTH=800&HEIGHT=750&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-3d">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18-fulldisk_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=-70,-180,70,-60&WIDTH=300&HEIGHT=280&FORMAT=image/png"
+                                 alt="GOES-18 Full Disk"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3d').style.display='none';"
+                                 onerror="document.getElementById('placeholder-3d').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GOES-18 Full Disk</div>
+                            <div class="example-desc">GOES West - Full Earth disk view - Pacific & Americas</div>
                         </div>
                     </a>
 
@@ -1097,7 +1154,16 @@
                         <span class="card-title">GOES-18 Satellite</span>
                     </div>
                     <p class="card-description">
-                        GOES West geostationary satellite imagery. Clean longwave infrared (10.3um) with 5-minute updates.
+                        GOES West geostationary satellite. CONUS (5-min) and Full Disk (10-min) imagery. Visible, water vapor, and infrared bands.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127774;</span>
+                        <span class="card-title">GOES-19 Satellite</span>
+                    </div>
+                    <p class="card-description">
+                        GOES East geostationary satellite. CONUS (5-min) and Full Disk (10-min) imagery covering Americas and Atlantic Ocean.
                     </p>
                 </div>
                 <div class="card">
@@ -1119,15 +1185,6 @@
                 Coming Soon
             </h2>
             <div class="cards-grid">
-                <div class="card" style="opacity: 0.7;">
-                    <div class="card-header">
-                        <span class="card-icon">&#127774;</span>
-                        <span class="card-title">GOES-16 East</span>
-                    </div>
-                    <p class="card-description">
-                        GOES East satellite imagery covering the eastern US, Atlantic, and Gulf of Mexico.
-                    </p>
-                </div>
                 <div class="card" style="opacity: 0.7;">
                     <div class="card-header">
                         <span class="card-icon">&#127754;</span>

@@ -650,7 +650,10 @@ async fn wmts_get_tile(
     } else if style == "isolines" {
         // Isolines are not supported for radar/satellite imagery, but ARE supported
         // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
-        let is_imagery_model = matches!(model, "mrms" | "goes18" | "goes19");
+        let is_imagery_model = matches!(
+            model,
+            "mrms" | "goes18" | "goes19" | "goes18-fulldisk" | "goes19-fulldisk"
+        );
         if is_imagery_model {
             return wmts_exception(
                 "StyleNotDefined",
