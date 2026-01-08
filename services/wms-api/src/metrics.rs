@@ -74,23 +74,23 @@ pub enum DataSourceType {
 /// GOES satellite identifier for per-satellite metrics
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GoesSatellite {
-    Goes16,
     Goes18,
+    Goes19,
 }
 
 impl GoesSatellite {
     pub fn from_model(model: &str) -> Option<Self> {
         match model.to_lowercase().as_str() {
-            "goes16" => Some(GoesSatellite::Goes16),
             "goes18" => Some(GoesSatellite::Goes18),
+            "goes19" => Some(GoesSatellite::Goes19),
             _ => None,
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            GoesSatellite::Goes16 => "goes16",
             GoesSatellite::Goes18 => "goes18",
+            GoesSatellite::Goes19 => "goes19",
         }
     }
 }
@@ -137,7 +137,7 @@ impl DataSourceType {
             "gfs" => DataSourceType::Grib2Gfs,
             "hrrr" => DataSourceType::Grib2Hrrr,
             "mrms" => DataSourceType::Grib2Mrms,
-            "goes16" | "goes18" | "goes" => DataSourceType::NetcdfGoes,
+            "goes18" | "goes19" | "goes" => DataSourceType::NetcdfGoes,
             other => DataSourceType::Other(other.to_string()),
         }
     }

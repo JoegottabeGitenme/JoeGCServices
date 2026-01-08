@@ -546,7 +546,7 @@ pub fn sample_grid_value_with_projection(
     // Handle GOES geostationary projection
     // Only use geostationary projection if we have projection params
     // If goes_projection is None, the data is already reprojected to geographic coordinates
-    if model == "goes16" || model == "goes18" || model == "goes" {
+    if model == "goes18" || model == "goes19" || model == "goes" {
         if let Some(params) = goes_projection {
             let proj = Geostationary::from_goes(
                 params.perspective_point_height,

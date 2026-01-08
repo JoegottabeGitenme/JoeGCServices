@@ -43,3 +43,4 @@
 - create robots.txt with goodies
 - I think it's worth downsampling MRMS data to a more reasonable resolution even after the pyramid fixes
 - need deploy script to restart nginx towards the end of the script
+- need to see if precaching and cache warming is actually doing anything

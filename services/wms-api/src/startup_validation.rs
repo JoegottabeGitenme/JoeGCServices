@@ -182,7 +182,7 @@ impl StartupValidator {
             .filter(|r| !r.success && r.error.is_none())
             .count();
 
-        let all_known_models = ["gfs", "hrrr", "goes16", "goes18", "mrms"];
+        let all_known_models = ["gfs", "hrrr", "goes18", "goes19", "mrms"];
         let models_missing: Vec<String> = all_known_models
             .iter()
             .filter(|m| !available_models.contains(&m.to_string()))
@@ -237,7 +237,7 @@ impl StartupValidator {
             Err(e) => {
                 warn!(error = %e, "Failed to query catalog for available models");
                 // Fall back to checking known models individually
-                for model in &["gfs", "hrrr", "goes16", "goes18", "mrms"] {
+                for model in &["gfs", "hrrr", "goes18", "goes19", "mrms"] {
                     if self.check_model_has_data(model).await {
                         models.push(model.to_string());
                     }
@@ -310,7 +310,7 @@ impl StartupValidator {
                         description: "HRRR Wind Barbs".to_string(),
                     });
                 }
-                "goes16" | "goes18" => {
+                "goes18" | "goes19" => {
                     // GOES: Satellite imagery
                     let goes_model = model.clone();
                     targets.push(ValidationTarget {

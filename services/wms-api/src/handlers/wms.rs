@@ -947,7 +947,7 @@ async fn render_weather_data(
     if style == "isolines" {
         // Isolines are not supported for radar/satellite imagery, but ARE supported
         // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
-        let is_imagery_model = matches!(model, "mrms" | "goes16" | "goes18");
+        let is_imagery_model = matches!(model, "mrms" | "goes18" | "goes19");
         if is_imagery_model {
             return Err(WmsError::StyleNotDefined(format!(
                 "Style 'isolines' is not supported for radar/satellite imagery layers like {}.",

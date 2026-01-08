@@ -606,10 +606,12 @@ impl ModelRunner {
         let mut files = Vec::new();
         let model = &self.model;
 
-        let satellite_num = if model.model.id == "goes16" {
-            "16"
-        } else {
+        let satellite_num = if model.model.id == "goes19" {
+            "19"
+        } else if model.model.id == "goes18" {
             "18"
+        } else {
+            "18" // Default to GOES-West
         };
 
         let hours_to_check = (lookback / 60) + 1;

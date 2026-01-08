@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn test_goes_projection_roundtrip() {
-        let proj = GoesProjection::goes16();
+        let proj = GoesProjection::goes19();
 
         // Test a point near the center of CONUS
         let (lon, lat) = (-95.0, 35.0);
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_goes_projection_off_earth() {
-        let proj = GoesProjection::goes16();
+        let proj = GoesProjection::goes19();
 
         // A point that should be off Earth (large scan angle)
         let result = proj.to_geographic(0.5, 0.5); // ~28 degrees

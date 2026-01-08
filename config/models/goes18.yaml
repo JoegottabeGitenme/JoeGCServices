@@ -20,7 +20,7 @@ source:
   product: "ABI-L2-CMIPC" # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [13] # Start with Clean IR only for testing
+  bands: [1, 2, 3, 8, 9, 10, 13, 14] # Visible, Water Vapor, IR bands
 
 grid:
   projection: geostationary
@@ -31,7 +31,7 @@ grid:
     max_lon: -100.0
     max_lat: 55.5
   projection_params:
-    satellite_longitude: -137.0 # GOES-West orbital position
+    satellite_longitude: -137.2 # GOES-West orbital position
     satellite_height: 35786023.0 # meters
     semi_major_axis: 6378137.0 # WGS84
     semi_minor_axis: 6356752.31414 # WGS84
@@ -48,16 +48,15 @@ retention:
   hours: 3 # Keep 3 hours of imagery
   keep_latest_observations: 24 # Always keep ~2 hours of observations (updates every ~5 min)
 
-# Precaching configuration - proactively warm GridDataCache
-# NOTE: GOES grids are large (~60-240MB each in memory), so keep_recent should be low
+# Precaching configuration - disabled for now
 precaching:
-  enabled: true
-  keep_recent: 3 # Keep 3 most recent observations (~15 min, ~1.5GB)
-  warm_on_ingest: true # Immediately warm when new data ingested
-  poll_interval_secs: 60 # Background poll every 60s for missed data
-  parameters: [CMI_C02, CMI_C13] # Only precache most-used bands (visible red, IR)
+  enabled: false
 
 parameters:
+  # ==========================================================================
+  # Visible Bands (daytime only)
+  # ==========================================================================
+
   # Blue Visible (0.47µm)
   - name: CMI_C01
     description: "Blue Visible (0.47µm)"
@@ -82,6 +81,22 @@ parameters:
     units: "reflectance"
     valid_range: [0, 1.5] # Reflectance factor
 
+  # Veggie Near-IR (0.86µm)
+  - name: CMI_C03
+    description: "Veggie Near-IR (0.86µm)"
+    downsample: mean
+    band: 3
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "veggie"
+    units: "reflectance"
+    valid_range: [0, 1.5] # Reflectance factor
+
+  # ==========================================================================
+  # Water Vapor Bands
+  # ==========================================================================
+
   # Upper-Level Water Vapor (6.2µm)
   - name: CMI_C08
     description: "Upper-Level Water Vapor (6.2µm)"
@@ -95,6 +110,36 @@ parameters:
     display_units: "K"
     valid_range: [180, 350] # Brightness temperature range
 
+  # Mid-Level Water Vapor (6.9µm)
+  - name: CMI_C09
+    description: "Mid-Level Water Vapor (6.9µm)"
+    downsample: mean
+    band: 9
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "mid_vapor"
+    units: "K"
+    display_units: "K"
+    valid_range: [180, 350] # Brightness temperature range
+
+  # Low-Level Water Vapor (7.3µm)
+  - name: CMI_C10
+    description: "Low-Level Water Vapor (7.3µm)"
+    downsample: mean
+    band: 10
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "low_vapor"
+    units: "K"
+    display_units: "K"
+    valid_range: [180, 350] # Brightness temperature range
+
+  # ==========================================================================
+  # Infrared Bands
+  # ==========================================================================
+
   # Clean IR (10.3µm)
   - name: CMI_C13
     description: "Clean Longwave IR (10.3µm)"
@@ -104,6 +149,19 @@ parameters:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
         display: "clean_ir"
+    units: "K"
+    display_units: "K"
+    valid_range: [180, 350] # Brightness temperature range
+
+  # Legacy IR (11.2µm)
+  - name: CMI_C14
+    description: "Longwave IR Window (11.2µm)"
+    downsample: mean
+    band: 14
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "ir_window"
     units: "K"
     display_units: "K"
     valid_range: [180, 350] # Brightness temperature range

@@ -8,7 +8,7 @@ info:
     This API provides access to weather data from multiple models including:
     - **GFS** - Global Forecast System (0.25° global coverage)
     - **HRRR** - High-Resolution Rapid Refresh (3km CONUS coverage)
-    - **GOES-16/18** - Geostationary satellite imagery
+    - **GOES-18/19** - Geostationary satellite imagery
     - **MRMS** - Multi-Radar Multi-Sensor precipitation
     
     ## Query Types

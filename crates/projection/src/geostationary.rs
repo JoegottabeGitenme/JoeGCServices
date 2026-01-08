@@ -82,19 +82,19 @@ impl Geostationary {
         }
     }
 
-    /// Create projection for GOES-16 (GOES-East at 75°W) CONUS sector.
+    /// Create projection for GOES-19 (GOES-East at 75.2°W) CONUS sector.
     ///
-    /// Uses actual CONUS parameters from AWS GOES-16 data:
+    /// Uses actual CONUS parameters from AWS GOES-19 data:
     /// - X: from -0.10136 to 0.03864 radians (west to east)
     /// - Y: from 0.12824 to 0.04424 radians (north to south)
     /// - Resolution: 0.000028 rad per pixel (1km at nadir)
     /// - Grid: 5000 x 3000 pixels
-    pub fn goes16_conus() -> Self {
+    pub fn goes19_conus() -> Self {
         Self::from_goes(
             35786023.0,    // perspective_point_height
             6378137.0,     // semi_major_axis (GRS80)
             6356752.31414, // semi_minor_axis
-            -75.0,         // longitude_origin (GOES-16 position)
+            -75.2,         // longitude_origin (GOES-19 position)
             -0.101360,     // x_origin (west edge, radians) - x[0] value
             0.128226,      // y_origin (north edge, radians) - y[0] value
             0.000028,      // dx (radians per pixel)
@@ -288,8 +288,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_goes16_conus_projection() {
-        let proj = Geostationary::goes16_conus();
+    fn test_goes19_conus_projection() {
+        let proj = Geostationary::goes19_conus();
 
         // Test a point near center of CONUS
         let (lat, lon) = (39.0, -95.0); // Kansas
@@ -333,12 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn test_goes16_bounds() {
-        let proj = Geostationary::goes16_conus();
+    fn test_goes19_bounds() {
+        let proj = Geostationary::goes19_conus();
         let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
 
         println!(
-            "GOES-16 CONUS bounds: lon {:.2} to {:.2}, lat {:.2} to {:.2}",
+            "GOES-19 CONUS bounds: lon {:.2} to {:.2}, lat {:.2} to {:.2}",
             min_lon, max_lon, min_lat, max_lat
         );
 
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_scan_roundtrip() {
-        let proj = Geostationary::goes16_conus();
+        let proj = Geostationary::goes19_conus();
 
         // Test scan to geo and back at satellite nadir (0, 0)
         let (x, y) = (0.0, 0.0);
@@ -369,8 +369,8 @@ mod tests {
             // At nadir, should be satellite longitude and equator
             println!("Nadir point: lon={}, lat={}", lon, lat);
             assert!(
-                (lon - (-75.0)).abs() < 0.1,
-                "Nadir longitude should be ~-75, got {}",
+                (lon - (-75.2)).abs() < 0.1,
+                "Nadir longitude should be ~-75.2, got {}",
                 lon
             );
             assert!(lat.abs() < 0.1, "Nadir latitude should be ~0, got {}", lat);
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_grid_corners() {
-        let proj = Geostationary::goes16_conus();
+        let proj = Geostationary::goes19_conus();
 
         // Test all four corners of the grid
         let corners = [(0.0, 0.0), (4999.0, 0.0), (0.0, 2999.0), (4999.0, 2999.0)];
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_off_earth() {
-        let proj = Geostationary::goes16_conus();
+        let proj = Geostationary::goes19_conus();
 
         // A scan angle pointing to space should return None
         let result = proj.scan_to_geo(0.5, 0.5); // Very large scan angle (~28 degrees)
@@ -422,14 +422,14 @@ mod tests {
 
     #[test]
     fn test_not_visible() {
-        let proj = Geostationary::goes16_conus();
+        let proj = Geostationary::goes19_conus();
 
         // A point far from satellite should not be visible (>81 degrees from nadir)
-        // For GOES-16 at -75°, a point at +180° longitude is on the opposite side
+        // For GOES-19 at -75.2°, a point at +180° longitude is on the opposite side
         let result = proj.geo_to_scan(180.0, 0.0); // Point on opposite side of Earth
         assert!(
             result.is_none(),
-            "Point at 180° should not be visible from GOES-16"
+            "Point at 180° should not be visible from GOES-19"
         );
     }
 }

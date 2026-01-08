@@ -455,7 +455,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 &proj,
             )
         }
-    } else if model == "goes16" || model == "goes18" || model == "goes" {
+    } else if model == "goes18" || model == "goes19" || model == "goes" {
         // GOES satellite data handling
         // If goes_projection is present, data is in native geostationary projection (raw NetCDF)
         // If goes_projection is None, data has been pre-projected to geographic (Zarr)
@@ -578,8 +578,8 @@ pub fn resample_for_model_geographic(
             output_height,
             output_bbox,
         )
-    } else if model == "goes16" || model == "goes18" || model == "goes" {
-        let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
+    } else if model == "goes18" || model == "goes19" || model == "goes" {
+        let satellite_lon = if model == "goes18" { -137.2 } else { -75.2 };
         resample_geostationary_to_geographic(
             data,
             data_width,
@@ -928,7 +928,7 @@ fn resample_geostationary_to_geographic(
     let proj = if satellite_lon < -100.0 {
         Geostationary::goes18_conus()
     } else {
-        Geostationary::goes16_conus()
+        Geostationary::goes19_conus()
     };
     resample_geostationary_to_geographic_with_proj(
         data,
