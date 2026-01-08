@@ -12,7 +12,7 @@ info:
     |-------|------|------------|----------|------------------|
     | **GFS** | Forecast | 0.25° | Global | Every 6 hours |
     | **HRRR** | Forecast | 3 km | CONUS | Hourly |
-    | **GOES-16/18** | Observation | 1-2 km | Western Hemisphere | Every 5-15 min |
+    | **GOES-18/19** | Observation | 1-2 km | Western Hemisphere | Every 5-15 min |
     | **MRMS** | Observation | 1 km | CONUS | Every 2 min |
 
     ## Layer Naming Convention
@@ -22,7 +22,7 @@ info:
     Examples:
     - `gfs_TMP` - GFS Temperature
     - `hrrr_WIND_SPEED` - HRRR Wind Speed
-    - `goes16_CMI_C13` - GOES-16 Band 13 (IR)
+    - `goes19_CMI_C13` - GOES-19 Band 13 (IR)
     - `mrms_REFC` - MRMS Composite Reflectivity
 
     ## Weather-Specific Dimensions
@@ -373,7 +373,7 @@ paths:
           description: |
             Layer identifier in format `{model}_{parameter}`
             
-            Examples: `gfs_TMP`, `hrrr_WIND_SPEED`, `goes16_CMI_C13`, `mrms_REFC`
+            Examples: `gfs_TMP`, `hrrr_WIND_SPEED`, `goes19_CMI_C13`, `mrms_REFC`
           schema:
             type: string
           example: gfs_TMP

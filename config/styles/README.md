@@ -223,7 +223,7 @@ Styles are referenced in WMS GetMap requests:
 **Observation data example (GOES, MRMS):**
 ```
 /wms?SERVICE=WMS&REQUEST=GetMap
-    &LAYERS=goes16_CMI_C13
+    &LAYERS=goes19_CMI_C13
     &STYLES=default
     &TIME=2024-01-15T18:00:00Z
     &CRS=EPSG:3857

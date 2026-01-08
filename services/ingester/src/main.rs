@@ -41,7 +41,7 @@ struct Args {
     #[arg(long)]
     test_file: Option<String>,
 
-    /// Model name for test file (e.g., "gfs", "hrrr", "goes16")
+    /// Model name for test file (e.g., "gfs", "hrrr", "goes19")
     #[arg(long)]
     test_model: Option<String>,
 

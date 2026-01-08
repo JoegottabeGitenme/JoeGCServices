@@ -30,7 +30,7 @@ storage:
   models:
     gfs: "gfs"
     hrrr: "hrrr"
-    goes16: "goes16"
+    goes19: "goes19"
     goes18: "goes18"
     mrms: "mrms"
 

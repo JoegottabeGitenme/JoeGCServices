@@ -36,12 +36,12 @@ pub struct GoesProjection {
 
 impl Default for GoesProjection {
     fn default() -> Self {
-        // Default values for GOES-16 (GOES-East)
+        // Default values for GOES-19 (GOES-East)
         Self {
             perspective_point_height: 35786023.0,
             semi_major_axis: 6378137.0,
             semi_minor_axis: 6356752.31414,
-            longitude_origin: -75.0, // GOES-16/East
+            longitude_origin: -75.2, // GOES-19/East
             latitude_origin: 0.0,
             sweep_angle_axis: "x".to_string(),
         }
@@ -49,8 +49,8 @@ impl Default for GoesProjection {
 }
 
 impl GoesProjection {
-    /// Create projection for GOES-16 (GOES-East at 75.2°W).
-    pub fn goes16() -> Self {
+    /// Create projection for GOES-19 (GOES-East at 75.2°W).
+    pub fn goes19() -> Self {
         Self {
             longitude_origin: -75.2,
             ..Default::default()
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_goes_projection_roundtrip() {
-        let proj = GoesProjection::goes16();
+        let proj = GoesProjection::goes19();
 
         // Test a point near the center of CONUS
         let (lon, lat) = (-95.0, 35.0);
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_goes_projection_off_earth() {
-        let proj = GoesProjection::goes16();
+        let proj = GoesProjection::goes19();
 
         // A point that should be off Earth (large scan angle)
         let result = proj.to_geographic(0.5, 0.5); // ~28 degrees
@@ -212,13 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn test_goes16_vs_goes18_longitude() {
-        let goes16 = GoesProjection::goes16();
+    fn test_goes19_vs_goes18_longitude() {
+        let goes19 = GoesProjection::goes19();
         let goes18 = GoesProjection::goes18();
 
         assert!(
-            (goes16.longitude_origin - (-75.2)).abs() < 0.1,
-            "GOES-16 should be at ~-75°W"
+            (goes19.longitude_origin - (-75.2)).abs() < 0.1,
+            "GOES-19 should be at ~-75°W"
         );
         assert!(
             (goes18.longitude_origin - (-137.2)).abs() < 0.1,

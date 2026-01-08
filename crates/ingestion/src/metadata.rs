@@ -25,7 +25,7 @@ pub enum FileType {
 /// Information extracted from a GOES filename.
 #[derive(Debug, Clone)]
 pub struct GoesFileInfo {
-    /// Satellite identifier (goes16, goes18)
+    /// Satellite identifier (goes18, goes19)
     pub satellite: String,
     /// Band number (1-16)
     pub band: u8,
@@ -57,16 +57,26 @@ pub fn detect_file_type(path: &str) -> FileType {
 
 /// Extract model name from filename.
 ///
-/// Supports: GFS, HRRR, MRMS, GOES-16, GOES-18
+/// Supports: GFS, HRRR, MRMS, GOES-18, GOES-19
 pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
     let filename = Path::new(file_path).file_name().and_then(|s| s.to_str())?;
 
     let lower = filename.to_lowercase();
 
-    if lower.contains("_g16_") || lower.contains("goes16") {
-        Some("goes16".to_string())
+    // GOES satellite detection - check for full disk (CMIPF) vs CONUS (CMIPC)
+    let is_fulldisk = lower.contains("cmipf");
+    if lower.contains("_g19_") || lower.contains("goes19") {
+        if is_fulldisk {
+            Some("goes19-fulldisk".to_string())
+        } else {
+            Some("goes19".to_string())
+        }
     } else if lower.contains("_g18_") || lower.contains("goes18") {
-        Some("goes18".to_string())
+        if is_fulldisk {
+            Some("goes18-fulldisk".to_string())
+        } else {
+            Some("goes18".to_string())
+        }
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
     } else if lower.starts_with("gfs") || lower.contains("gfs") {
@@ -148,13 +158,25 @@ pub fn extract_mrms_param(file_path: &str) -> Option<String> {
 
 /// Parse GOES filename to extract metadata.
 ///
-/// Example: `OR_ABI-L2-MCMIPC-M6C02_G18_s20241217180021_...`
+/// Example: `OR_ABI-L2-CMIPC-M6C02_G18_s20241217180021_...`
+/// Full disk: `OR_ABI-L2-CMIPF-M6C02_G19_s20241217180021_...`
 pub fn parse_goes_filename(filename: &str) -> Option<GoesFileInfo> {
-    // Extract satellite from _G16_ or _G18_
-    let satellite = if filename.contains("_G16_") {
-        "goes16"
+    let lower = filename.to_lowercase();
+    let is_fulldisk = lower.contains("cmipf");
+
+    // Extract satellite from _G18_ or _G19_, including full disk suffix
+    let satellite = if filename.contains("_G19_") {
+        if is_fulldisk {
+            "goes19-fulldisk"
+        } else {
+            "goes19"
+        }
     } else if filename.contains("_G18_") {
-        "goes18"
+        if is_fulldisk {
+            "goes18-fulldisk"
+        } else {
+            "goes18"
+        }
     } else {
         return None;
     };
@@ -229,8 +251,14 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "hrrr" => BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195),
         "mrms" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
-        "goes16" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
-        "goes18" => BoundingBox::new(-165.0, 14.5, -90.0, 55.5),
+        "goes19" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
+        "goes18" => BoundingBox::new(-175.0, 14.5, -100.0, 55.5),
+        // GOES Full Disk - hemisphere coverage
+        // GOES-19 (East at -75.2°): visible from ~-156° to ~+6° longitude
+        "goes19-fulldisk" => BoundingBox::new(-156.3, -81.3, 6.3, 81.3),
+        // GOES-18 (West at -137.2°): visible from ~-218° to ~-56° longitude
+        // Note: Uses wrapped longitude for web mapping compatibility
+        "goes18-fulldisk" => BoundingBox::new(-218.5, -81.3, -55.9, 81.3),
         // NDFD CONUS: Lambert Conformal projection covering continental US
         // Actual geographic bounds from Lambert projection corners:
         // SW (0,0): lat=20.19, lon=-121.55; NW (0,1376): lat=49.94, lon=-130.10
@@ -377,34 +405,62 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_model_goes16() {
+    fn test_extract_model_goes19() {
+        // CONUS files
         assert_eq!(
-            extract_model_from_filename("OR_ABI_G16_test.nc"),
-            Some("goes16".to_string())
+            extract_model_from_filename("OR_ABI_G19_test.nc"),
+            Some("goes19".to_string())
         );
         assert_eq!(
-            extract_model_from_filename("OR_ABI-L2-MCMIPC-M6C02_G16_s20241217180021.nc"),
-            Some("goes16".to_string())
+            extract_model_from_filename("OR_ABI-L2-CMIPC-M6C02_G19_s20241217180021.nc"),
+            Some("goes19".to_string())
         );
         assert_eq!(
-            extract_model_from_filename("goes16_conus.nc"),
-            Some("goes16".to_string())
+            extract_model_from_filename("goes19_conus.nc"),
+            Some("goes19".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_goes19_fulldisk() {
+        // Full disk files have CMIPF in the name
+        assert_eq!(
+            extract_model_from_filename("OR_ABI-L2-CMIPF-M6C02_G19_s20241217180021.nc"),
+            Some("goes19-fulldisk".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("OR_ABI-L2-CMIPF-M6C13_G19_s20241217180021.nc"),
+            Some("goes19-fulldisk".to_string())
         );
     }
 
     #[test]
     fn test_extract_model_goes18() {
+        // CONUS files
         assert_eq!(
             extract_model_from_filename("OR_ABI_G18_test.nc"),
             Some("goes18".to_string())
         );
         assert_eq!(
-            extract_model_from_filename("OR_ABI-L2-MCMIPC-M6C13_G18_s20241217180021.nc"),
+            extract_model_from_filename("OR_ABI-L2-CMIPC-M6C13_G18_s20241217180021.nc"),
             Some("goes18".to_string())
         );
         assert_eq!(
             extract_model_from_filename("goes18_west.nc"),
             Some("goes18".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_goes18_fulldisk() {
+        // Full disk files have CMIPF in the name
+        assert_eq!(
+            extract_model_from_filename("OR_ABI-L2-CMIPF-M6C02_G18_s20241217180021.nc"),
+            Some("goes18-fulldisk".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("OR_ABI-L2-CMIPF-M6C08_G18_s20241217180021.nc"),
+            Some("goes18-fulldisk".to_string())
         );
     }
 
@@ -472,7 +528,7 @@ mod tests {
     #[test]
     fn test_extract_forecast_hour_none() {
         assert_eq!(extract_forecast_hour("mrms_reflectivity.grib2"), None);
-        assert_eq!(extract_forecast_hour("goes16_data.nc"), None);
+        assert_eq!(extract_forecast_hour("goes19_data.nc"), None);
         assert_eq!(extract_forecast_hour("no_forecast_hour"), None);
     }
 
@@ -538,25 +594,39 @@ mod tests {
     // ==================== GOES Filename Parsing ====================
 
     #[test]
-    fn test_parse_goes_filename_goes16() {
+    fn test_parse_goes_filename_goes19_conus() {
         // GOES timestamp format: YYYYDDDHHMMSS where DDD is day of year
         // Day 352 of 2024 = December 17, 2024
+        // CMIPC = CONUS product
         let filename =
-            "OR_ABI-L2-MCMIPC-M6C02_G16_s20243521800210_e20243521800210_c20243521800210.nc";
+            "OR_ABI-L2-CMIPC-M6C02_G19_s20243521800210_e20243521800210_c20243521800210.nc";
         let info = parse_goes_filename(filename).expect("Should parse");
 
-        assert_eq!(info.satellite, "goes16");
+        assert_eq!(info.satellite, "goes19");
         assert_eq!(info.band, 2);
         assert_eq!(info.scan_mode, "M6");
-        assert_eq!(info.product, "MCMIPC");
+        assert_eq!(info.product, "CMIPC");
         assert_eq!(info.observation_time.year(), 2024);
     }
 
     #[test]
-    fn test_parse_goes_filename_goes18() {
+    fn test_parse_goes_filename_goes19_fulldisk() {
+        // CMIPF = Full Disk product
+        let filename =
+            "OR_ABI-L2-CMIPF-M6C02_G19_s20243521800210_e20243521800210_c20243521800210.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+
+        assert_eq!(info.satellite, "goes19-fulldisk");
+        assert_eq!(info.band, 2);
+        assert_eq!(info.scan_mode, "M6");
+        assert_eq!(info.product, "CMIPF");
+    }
+
+    #[test]
+    fn test_parse_goes_filename_goes18_conus() {
         // Day 352 of 2024 = December 17, 2024
         let filename =
-            "OR_ABI-L2-MCMIPC-M6C13_G18_s20243521800210_e20243521800210_c20243521800210.nc";
+            "OR_ABI-L2-CMIPC-M6C13_G18_s20243521800210_e20243521800210_c20243521800210.nc";
         let info = parse_goes_filename(filename).expect("Should parse");
 
         assert_eq!(info.satellite, "goes18");
@@ -565,9 +635,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_goes_filename_goes18_fulldisk() {
+        // CMIPF = Full Disk product
+        let filename =
+            "OR_ABI-L2-CMIPF-M6C08_G18_s20243521800210_e20243521800210_c20243521800210.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+
+        assert_eq!(info.satellite, "goes18-fulldisk");
+        assert_eq!(info.band, 8);
+        assert_eq!(info.scan_mode, "M6");
+        assert_eq!(info.product, "CMIPF");
+    }
+
+    #[test]
     fn test_parse_goes_filename_m3_scan_mode() {
         let filename =
-            "OR_ABI-L2-MCMIPC-M3C02_G16_s20243521800210_e20243521800210_c20243521800210.nc";
+            "OR_ABI-L2-CMIPC-M3C02_G19_s20243521800210_e20243521800210_c20243521800210.nc";
         let info = parse_goes_filename(filename).expect("Should parse");
 
         assert_eq!(info.scan_mode, "M3");
@@ -637,19 +720,57 @@ mod tests {
 
     #[test]
     fn test_get_model_bbox_goes() {
-        let bbox16 = get_model_bbox("goes16");
+        let bbox19 = get_model_bbox("goes19");
         let bbox18 = get_model_bbox("goes18");
 
-        // GOES-16 (East) should be more easterly
+        // GOES-19 (East) should be more easterly
         assert!(
-            bbox16.max_x > bbox18.max_x,
-            "GOES-16 should extend further east"
+            bbox19.max_x > bbox18.max_x,
+            "GOES-19 should extend further east"
         );
 
         // GOES-18 (West) should be more westerly
         assert!(
-            bbox18.min_x < bbox16.min_x,
+            bbox18.min_x < bbox19.min_x,
             "GOES-18 should extend further west"
+        );
+    }
+
+    #[test]
+    fn test_get_model_bbox_goes_fulldisk() {
+        let bbox19_fd = get_model_bbox("goes19-fulldisk");
+        let bbox18_fd = get_model_bbox("goes18-fulldisk");
+        let bbox19_conus = get_model_bbox("goes19");
+        let bbox18_conus = get_model_bbox("goes18");
+
+        // Full disk should have much larger coverage than CONUS
+        assert!(
+            bbox19_fd.min_y < bbox19_conus.min_y,
+            "GOES-19 Full Disk should extend further south"
+        );
+        assert!(
+            bbox19_fd.max_y > bbox19_conus.max_y,
+            "GOES-19 Full Disk should extend further north"
+        );
+
+        // Full disk covers hemisphere (~162 degrees of longitude)
+        let fd19_lon_range = bbox19_fd.max_x - bbox19_fd.min_x;
+        assert!(
+            fd19_lon_range > 150.0,
+            "GOES-19 Full Disk should span >150 degrees, got {}",
+            fd19_lon_range
+        );
+
+        // Full disk latitude should extend to ~81 degrees
+        assert!(
+            bbox19_fd.max_y > 80.0,
+            "GOES-19 Full Disk should reach >80°N, got {}",
+            bbox19_fd.max_y
+        );
+        assert!(
+            bbox18_fd.min_y < -80.0,
+            "GOES-18 Full Disk should reach <-80°S, got {}",
+            bbox18_fd.min_y
         );
     }
 

@@ -1,0 +1,66 @@
+# GOES-18 Full Disk (GOES West) Layer Configuration
+# Defines WMS/WMTS layers exposed for GOES-18 Full Disk satellite imagery
+# Hemisphere coverage
+
+model: goes18-fulldisk
+display_name: "GOES-18 Full Disk - GOES West"
+
+# GOES-18 (West) Full Disk sector coverage
+# Note: Uses wrapped longitude for consistency with web mapping libraries
+default_bbox:
+  west: -218.5
+  south: -81.3
+  east: -55.9
+  north: 81.3
+
+# GOES is observation data, not forecast
+dimension_type: observation
+
+layers:
+  # ==========================================================================
+  # Visible Band
+  # ==========================================================================
+  
+  - id: goes18fd_CMI_C02
+    parameter: CMI_C02
+    title: "Red Visible (0.64um) - Full Disk"
+    abstract: "GOES-18 ABI Band 2 Full Disk - Red visible for cloud/vegetation"
+    style_file: goes_visible.json
+    units:
+      native: reflectance
+      display: "%"
+    levels:
+      - value: "visible_red"
+        default: true
+
+  # ==========================================================================
+  # Water Vapor Band
+  # ==========================================================================
+  
+  - id: goes18fd_CMI_C08
+    parameter: CMI_C08
+    title: "Upper-Level Water Vapor (6.2um) - Full Disk"
+    abstract: "GOES-18 ABI Band 8 Full Disk - Upper tropospheric water vapor"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "upper_vapor"
+        default: true
+
+  # ==========================================================================
+  # Infrared Band
+  # ==========================================================================
+  
+  - id: goes18fd_CMI_C13
+    parameter: CMI_C13
+    title: "Clean Longwave IR (10.3um) - Full Disk"
+    abstract: "GOES-18 ABI Band 13 Full Disk - Clean window IR for cloud top temperature"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "clean_ir"
+        default: true

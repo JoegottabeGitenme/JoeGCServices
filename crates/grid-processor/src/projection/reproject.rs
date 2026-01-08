@@ -37,8 +37,8 @@ use crate::types::BoundingBox;
 /// use projection::Geostationary;
 /// use grid_processor::projection::reproject::reproject_geostationary_to_geographic;
 ///
-/// // Use GOES-16 CONUS projection with known valid parameters
-/// let proj = Geostationary::goes16_conus();
+/// // Use GOES-19 CONUS projection with known valid parameters
+/// let proj = Geostationary::goes19_conus();
 /// let width = proj.nx;
 /// let height = proj.ny;
 ///
@@ -107,8 +107,8 @@ mod tests {
 
     #[test]
     fn test_reproject_preserves_dimensions() {
-        // Use the standard GOES-16 CONUS projection which has known valid parameters
-        let proj = Geostationary::goes16_conus();
+        // Use the standard GOES-19 CONUS projection which has known valid parameters
+        let proj = Geostationary::goes19_conus();
         let width = proj.nx;
         let height = proj.ny;
 
@@ -140,8 +140,8 @@ mod tests {
 
     #[test]
     fn test_reproject_handles_nan_input() {
-        // Use the standard GOES-16 CONUS projection
-        let proj = Geostationary::goes16_conus();
+        // Use the standard GOES-19 CONUS projection
+        let proj = Geostationary::goes19_conus();
         let width = proj.nx;
         let height = proj.ny;
 

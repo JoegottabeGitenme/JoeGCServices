@@ -76,8 +76,8 @@ All styles defined in the file are automatically exposed in WMS/WMTS GetCapabili
 | `gfs.yaml` | GFS | Global | Forecast |
 | `hrrr.yaml` | HRRR | CONUS | Forecast |
 | `mrms.yaml` | MRMS | CONUS | Observation |
-| `goes16.yaml` | GOES-16 | East | Observation |
 | `goes18.yaml` | GOES-18 | West | Observation |
+| `goes19.yaml` | GOES-19 | East | Observation |
 
 ## Unit Conversions
 

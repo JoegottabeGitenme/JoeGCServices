@@ -358,7 +358,7 @@ fn generate_rgba_data(width: usize, height: usize) -> Vec<u8> {
 fn bench_geo_to_grid(c: &mut Criterion) {
     let mut group = c.benchmark_group("goes_projection");
 
-    let proj = Geostationary::goes16_conus();
+    let proj = Geostationary::goes19_conus();
 
     // Test different numbers of coordinate transforms
     let counts = [256 * 256, 512 * 512, 1024 * 1024];
@@ -398,7 +398,7 @@ fn bench_geo_to_grid(c: &mut Criterion) {
 fn bench_geo_to_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("goes_projection");
 
-    let proj = Geostationary::goes16_conus();
+    let proj = Geostationary::goes19_conus();
 
     // Test the lower-level geo_to_scan which has the heavy trig
     let count = 256 * 256;
@@ -562,7 +562,7 @@ fn bench_goes_resampling(c: &mut Criterion) {
     let goes_width = 2500;
     let goes_height = 1500;
     let goes_data = generate_goes_ir_data(goes_width, goes_height);
-    let proj = Geostationary::goes16_conus();
+    let proj = Geostationary::goes19_conus();
 
     // Common tile sizes and zoom scenarios
     let scenarios = [
@@ -740,7 +740,7 @@ fn bench_goes_full_pipeline(c: &mut Criterion) {
     let goes_height = 1500;
     let goes_ir_data = generate_goes_ir_data(goes_width, goes_height);
     let goes_vis_data = generate_goes_visible_data(goes_width, goes_height);
-    let proj = Geostationary::goes16_conus();
+    let proj = Geostationary::goes19_conus();
 
     let tile_width = 256;
     let tile_height = 256;

@@ -1,4 +1,4 @@
-# GOES-18 (GOES West) EDR Configuration
+# GOES-19 (GOES East) EDR Configuration
 # Observation data from geostationary satellite
 #
 # Key differences from NWP models:
@@ -7,9 +7,10 @@
 # - Instances represent observation timestamps, not model runs
 # - Updates every ~5 minutes
 #
-# Coverage: Western CONUS, Pacific (-175 to -100 lon, 14.5 to 55.5 lat)
+# Coverage: Eastern CONUS, Atlantic (-143 to -53 lon, 14.5 to 55.5 lat)
+# GOES-19 became operational GOES-East on April 4, 2025, replacing GOES-16
 
-model: goes18
+model: goes19
 
 collections:
   # ===========================================================================
@@ -17,8 +18,8 @@ collections:
   # ===========================================================================
   
   # Visible bands (bands 1, 2, 3) - daytime only
-  - id: goes18-visible
-    title: "GOES-18 Visible Imagery"
+  - id: goes19-visible
+    title: "GOES-19 Visible Imagery"
     description: "Visible reflectance bands (0.47-0.86µm). Best during daytime."
     level_filter:
       level_type: top_of_atmosphere
@@ -33,8 +34,8 @@ collections:
     run_mode: instances
 
   # Water vapor bands (bands 8, 9, 10)
-  - id: goes18-water-vapor
-    title: "GOES-18 Water Vapor"
+  - id: goes19-water-vapor
+    title: "GOES-19 Water Vapor"
     description: "Water vapor channel brightness temperatures (6.2-7.3µm). Available day and night."
     level_filter:
       level_type: top_of_atmosphere
@@ -49,8 +50,8 @@ collections:
     run_mode: instances
 
   # Infrared bands (bands 13, 14)
-  - id: goes18-infrared
-    title: "GOES-18 Infrared"
+  - id: goes19-infrared
+    title: "GOES-19 Infrared"
     description: "Longwave IR brightness temperature (10.3-11.2µm). Available day and night."
     level_filter:
       level_type: top_of_atmosphere
@@ -65,11 +66,11 @@ collections:
   # ===========================================================================
   # Latest-only collections (quick access to most recent data)
   # These use the non-instance endpoints for simpler access patterns:
-  #   GET /edr/collections/goes18-infrared-latest/position?coords=POINT(-120 35)
+  #   GET /edr/collections/goes19-infrared-latest/position?coords=POINT(-80 35)
   # ===========================================================================
   
-  - id: goes18-visible-latest
-    title: "GOES-18 Visible (Latest)"
+  - id: goes19-visible-latest
+    title: "GOES-19 Visible (Latest)"
     description: "Most recent visible imagery. Daytime only."
     level_filter:
       level_type: top_of_atmosphere
@@ -83,8 +84,8 @@ collections:
         levels: [veggie]
     run_mode: latest
 
-  - id: goes18-water-vapor-latest
-    title: "GOES-18 Water Vapor (Latest)"
+  - id: goes19-water-vapor-latest
+    title: "GOES-19 Water Vapor (Latest)"
     description: "Most recent water vapor imagery."
     level_filter:
       level_type: top_of_atmosphere
@@ -98,8 +99,8 @@ collections:
         levels: [low_vapor]
     run_mode: latest
 
-  - id: goes18-infrared-latest
-    title: "GOES-18 Infrared (Latest)"
+  - id: goes19-infrared-latest
+    title: "GOES-19 Infrared (Latest)"
     description: "Most recent IR imagery."
     level_filter:
       level_type: top_of_atmosphere

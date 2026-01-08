@@ -116,6 +116,10 @@ pub fn resample_from_geographic(
     // span > 180, but the underlying grid still uses 0-360 convention.
     let data_uses_360 = grid_uses_360;
 
+    // Check if data uses extended negative longitudes (crossing date line westward)
+    // e.g., GOES-18 full disk: -217.91 to -56.49
+    let data_uses_extended_negative = data_min_lon < -180.0;
+
     // Data grid resolution
     let data_lon_range = data_max_lon - data_min_lon;
     let data_lat_range = data_max_lat - data_min_lat;
@@ -135,10 +139,17 @@ pub fn resample_from_geographic(
             // Check if this is a global grid (covers nearly 360 degrees)
             let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
 
-            // Normalize longitude for data grids that use 0-360 convention
-            // For tiles that span negative longitudes, we need to add 360 to map them
-            // to the 0-360 grid.
-            let norm_lon = if data_uses_360 && lon < 0.0 {
+            // Normalize longitude to match data coordinate system
+            let norm_lon = if data_uses_extended_negative {
+                // Data uses extended negative longitudes (e.g., -217 to -56 for GOES-18)
+                // Convert positive longitudes (e.g., 150°E) to extended negative (e.g., -210)
+                if lon > 0.0 && lon < 180.0 && (lon - 360.0) >= data_min_lon {
+                    lon - 360.0
+                } else {
+                    lon
+                }
+            } else if data_uses_360 && lon < 0.0 {
+                // Data uses 0-360 convention, convert negative to positive
                 lon + 360.0
             } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
                 // Special case: data is from the "wrapped" region (e.g., 343-360)
@@ -252,6 +263,10 @@ pub fn resample_for_mercator(
     // span > 180, but the underlying grid still uses 0-360 convention.
     let data_uses_360 = grid_uses_360;
 
+    // Check if data uses extended negative longitudes (crossing date line westward)
+    // e.g., GOES-18 full disk: -217.91 to -56.49
+    let data_uses_extended_negative = data_min_lon < -180.0;
+
     // Convert lat bounds to Mercator Y coordinates
     let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
     let max_merc_y = lat_to_mercator_y(out_max_lat as f64);
@@ -279,10 +294,17 @@ pub fn resample_for_mercator(
             // Check if this is a global grid (covers nearly 360 degrees)
             let is_global_grid = data_uses_360 && (data_max_lon - data_min_lon) > 359.0;
 
-            // Normalize longitude for data grids that use 0-360 convention
-            // For tiles that span negative longitudes, we need to add 360 to map them
-            // to the 0-360 grid.
-            let norm_lon = if data_uses_360 && lon < 0.0 {
+            // Normalize longitude to match data coordinate system
+            let norm_lon = if data_uses_extended_negative {
+                // Data uses extended negative longitudes (e.g., -217 to -56 for GOES-18)
+                // Convert positive longitudes (e.g., 150°E) to extended negative (e.g., -210)
+                if lon > 0.0 && lon < 180.0 && (lon - 360.0) >= data_min_lon {
+                    lon - 360.0
+                } else {
+                    lon
+                }
+            } else if data_uses_360 && lon < 0.0 {
+                // Data uses 0-360 convention, convert negative to positive
                 lon + 360.0
             } else if data_uses_360 && lon >= 0.0 && lon < 1.0 && data_min_lon > 180.0 {
                 // Special case: data is from the "wrapped" region (e.g., 343-360)
@@ -455,7 +477,12 @@ pub fn resample_grid_for_bbox_with_proj(
                 &proj,
             )
         }
-    } else if model == "goes16" || model == "goes18" || model == "goes" {
+    } else if model == "goes18"
+        || model == "goes19"
+        || model == "goes18-fulldisk"
+        || model == "goes19-fulldisk"
+        || model == "goes"
+    {
         // GOES satellite data handling
         // If goes_projection is present, data is in native geostationary projection (raw NetCDF)
         // If goes_projection is None, data has been pre-projected to geographic (Zarr)
@@ -578,8 +605,17 @@ pub fn resample_for_model_geographic(
             output_height,
             output_bbox,
         )
-    } else if model == "goes16" || model == "goes18" || model == "goes" {
-        let satellite_lon = if model == "goes18" { -137.2 } else { -75.0 };
+    } else if model == "goes18"
+        || model == "goes19"
+        || model == "goes18-fulldisk"
+        || model == "goes19-fulldisk"
+        || model == "goes"
+    {
+        let satellite_lon = if model == "goes18" || model == "goes18-fulldisk" {
+            -137.2
+        } else {
+            -75.2
+        };
         resample_geostationary_to_geographic(
             data,
             data_width,
@@ -924,11 +960,19 @@ fn resample_geostationary_to_geographic(
     output_bbox: [f32; 4],
     satellite_lon: f64,
 ) -> Vec<f32> {
-    // Create GOES projection based on satellite position (fallback if no dynamic projection)
+    // Create GOES projection based on satellite position and grid size (fallback if no dynamic projection)
+    // Full disk grids are 5424x5424, CONUS grids are 5000x3000
+    let is_fulldisk = data_width == 5424 && data_height == 5424;
     let proj = if satellite_lon < -100.0 {
-        Geostationary::goes18_conus()
+        if is_fulldisk {
+            Geostationary::goes18_fulldisk()
+        } else {
+            Geostationary::goes18_conus()
+        }
+    } else if is_fulldisk {
+        Geostationary::goes19_fulldisk()
     } else {
-        Geostationary::goes16_conus()
+        Geostationary::goes19_conus()
     };
     resample_geostationary_to_geographic_with_proj(
         data,

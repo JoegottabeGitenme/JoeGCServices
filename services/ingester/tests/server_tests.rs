@@ -158,7 +158,7 @@ fn test_default_log_level() {
 
 #[test]
 fn test_valid_model_names() {
-    let valid_models = ["gfs", "hrrr", "goes16", "goes18", "mrms"];
+    let valid_models = ["gfs", "hrrr", "goes18", "goes19", "mrms"];
     for model in valid_models {
         assert!(!model.is_empty());
         assert!(model.chars().all(|c| c.is_alphanumeric()));

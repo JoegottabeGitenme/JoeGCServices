@@ -1,0 +1,98 @@
+# GOES-19 Full Disk - GOES East Satellite Configuration
+# Geostationary satellite imagery, Full Disk (hemisphere) coverage
+# GOES-19 became operational GOES-East on April 4, 2025, replacing GOES-16
+
+model:
+  id: goes19-fulldisk
+  name: "GOES-19 Full Disk - GOES East"
+  description: "GOES-19 (GOES East) satellite imagery, ABI Full Disk product"
+  enabled: true
+
+# WMS/WMTS dimension configuration
+dimensions:
+  type: observation        # "observation" = TIME dimension (ISO8601 timestamps)
+  time: true               # TIME dimension - observation timestamp
+  elevation: false         # No vertical levels for satellite imagery
+
+source:
+  type: aws_s3_goes
+  bucket: noaa-goes19
+  product: "ABI-L2-CMIPF"                # Full Disk Cloud and Moisture Imagery
+  file_pattern: "OR_ABI-L2-CMIPF-M{mode}C{band:02}_G19_s{start}_e{end}_c{created}.nc"
+  region: us-east-1
+  bands: [2, 8, 13]                      # Red Visible, Upper Water Vapor, Clean IR
+
+grid:
+  projection: geostationary
+  resolution: "2km"                      # Full disk is 2km resolution
+  bbox:
+    min_lon: -156.3
+    min_lat: -81.3
+    max_lon: 6.3
+    max_lat: 81.3
+  projection_params:
+    satellite_longitude: -75.2           # GOES-East orbital position
+    satellite_height: 35786023.0         # meters
+    semi_major_axis: 6378137.0           # WGS84
+    semi_minor_axis: 6356752.31414       # WGS84
+
+schedule:
+  type: observation                      # Observation data, not forecast
+  poll_interval_secs: 600                # Check every 10 minutes (full disk cadence)
+  max_concurrent: 2                      # Allow up to 2 concurrent downloads for this model
+
+retention:
+  hours: 2                               # Keep 2 hours of imagery
+  keep_latest_observations: 12           # Always keep ~2 hours of observations (updates every ~10 min)
+
+# Precaching configuration - disabled for full disk (large files)
+precaching:
+  enabled: false
+
+parameters:
+  # ==========================================================================
+  # Red Visible (primary visible band)
+  # ==========================================================================
+
+  - name: CMI_C02
+    description: "Red Visible (0.64um)"
+    downsample: mean
+    band: 2
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "visible_red"
+    units: "reflectance"
+    valid_range: [0, 1.5]  # Reflectance factor
+
+  # ==========================================================================
+  # Water Vapor
+  # ==========================================================================
+
+  - name: CMI_C08
+    description: "Upper-Level Water Vapor (6.2um)"
+    downsample: mean
+    band: 8
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "upper_vapor"
+    units: "K"
+    display_units: "K"
+    valid_range: [180, 350]  # Brightness temperature range
+
+  # ==========================================================================
+  # Infrared
+  # ==========================================================================
+
+  - name: CMI_C13
+    description: "Clean Longwave IR (10.3um)"
+    downsample: mean
+    band: 13
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8  # Nominal top of atmosphere (GRIB2 Table 4.5)
+        display: "clean_ir"
+    units: "K"
+    display_units: "K"
+    valid_range: [180, 350]  # Brightness temperature range

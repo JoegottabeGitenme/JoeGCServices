@@ -342,12 +342,12 @@ async fn write_and_upload_zarr(
 
 /// Extract satellite model from filename.
 fn extract_satellite_from_filename(filename: &str) -> String {
-    if filename.contains("_G16_") || filename.to_lowercase().contains("goes16") {
-        "goes16".to_string()
+    if filename.contains("_G19_") || filename.to_lowercase().contains("goes19") {
+        "goes19".to_string()
     } else if filename.contains("_G18_") || filename.to_lowercase().contains("goes18") {
         "goes18".to_string()
     } else {
-        "goes16".to_string() // Default
+        "goes18".to_string() // Default to GOES-West
     }
 }
 

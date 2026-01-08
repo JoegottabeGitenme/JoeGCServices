@@ -1,0 +1,109 @@
+# GOES-18 Full Disk (GOES West) EDR Configuration
+# Observation data from geostationary satellite - hemisphere coverage
+#
+# Key differences from CONUS:
+# - Full hemisphere coverage (Pacific-centered)
+# - Updates every ~10 minutes (vs 5 min for CONUS)
+# - Larger grid (5424 x 5424 vs 5000 x 3000)
+# - Subset of bands (2, 8, 13) to manage data volume
+#
+# Coverage: Full western Pacific hemisphere visible from GOES-West
+
+model: goes18-fulldisk
+
+collections:
+  # ===========================================================================
+  # Instance-based collections (access all available observation timestamps)
+  # ===========================================================================
+  
+  # Visible band (band 2) - daytime only
+  - id: goes18fd-visible
+    title: "GOES-18 Full Disk Visible Imagery"
+    description: "Red visible reflectance band (0.64um). Best during daytime. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C02
+        levels: [visible_red]
+    run_mode: instances
+
+  # Water vapor band (band 8)
+  - id: goes18fd-water-vapor
+    title: "GOES-18 Full Disk Water Vapor"
+    description: "Upper-level water vapor brightness temperature (6.2um). Available day and night. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C08
+        levels: [upper_vapor]
+    run_mode: instances
+
+  # Infrared band (band 13)
+  - id: goes18fd-infrared
+    title: "GOES-18 Full Disk Infrared"
+    description: "Clean longwave IR brightness temperature (10.3um). Available day and night. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+    run_mode: instances
+
+  # ===========================================================================
+  # Latest-only collections (quick access to most recent data)
+  # ===========================================================================
+  
+  - id: goes18fd-visible-latest
+    title: "GOES-18 Full Disk Visible (Latest)"
+    description: "Most recent visible imagery. Daytime only. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C02
+        levels: [visible_red]
+    run_mode: latest
+
+  - id: goes18fd-water-vapor-latest
+    title: "GOES-18 Full Disk Water Vapor (Latest)"
+    description: "Most recent water vapor imagery. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C08
+        levels: [upper_vapor]
+    run_mode: latest
+
+  - id: goes18fd-infrared-latest
+    title: "GOES-18 Full Disk Infrared (Latest)"
+    description: "Most recent IR imagery. Hemisphere coverage."
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: CMI_C13
+        levels: [clean_ir]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 600  # 10 minutes - Full disk updates every ~10 minutes
+
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 12           # ~2 hours at 10-min intervals
+  max_vertical_levels: 1       # No vertical dimension for satellite data
+  max_response_size_mb: 200    # Full disk grids are large (5424x5424)
+  max_area_sq_degrees: 100     # Larger limit for full disk coverage
+  max_radius_km: 500           # Larger radius for full disk queries
