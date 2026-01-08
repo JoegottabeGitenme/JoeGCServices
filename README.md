@@ -23,7 +23,7 @@ JoeGCServices automatically ingests weather data from NOAA sources and serves it
 - **Real-Time Data**: Automatic ingestion from NOAA (GFS, HRRR, GOES, MRMS)
 - **High Performance**: Written in Rust with two-tier caching (L1 in-memory, L2 Redis)
 - **Flexible Rendering**: Gradients, contours, wind barbs, and custom colormaps
-- **Cloud Native**: Docker Compose for development, Kubernetes/Helm for production
+- **Cloud Native**: Docker Compose for development and production
 - **Horizontally Scalable**: Stateless API services with shared storage
 
 ## Architecture
@@ -336,7 +336,6 @@ JoeGCServices/
 │   └── ingestion/              # File processing logic
 ├── config/                      # Configuration files
 ├── deploy/                      # Deployment configurations
-│   ├── helm/                   # Helm charts
 │   ├── production/             # Single-server production setup
 │   └── grafana/                # Grafana dashboards
 ├── schemas/                     # JSON schemas for config validation
@@ -378,24 +377,6 @@ Features:
 - Cloudflare Tunnel for TLS (works behind CGNAT/Starlink)
 - Auto-generated secure passwords
 - Persistent storage volumes
-
-### Kubernetes with Helm
-
-```bash
-# Add the chart
-helm repo add joegcservices ./deploy/helm
-
-# Install
-helm install weather joegcservices/weather-wms \
-  --namespace weather-wms \
-  --create-namespace \
-  -f values.yaml
-
-# Or use the start script
-./scripts/start.sh --kubernetes
-```
-
-See `deploy/helm/weather-wms/values.yaml` for configuration options.
 
 ## Monitoring
 

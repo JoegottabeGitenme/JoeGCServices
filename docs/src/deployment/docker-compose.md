@@ -183,7 +183,6 @@ See [Production Deployment](./production.md) for the complete production setup g
 Docker Compose is best for development and small deployments. For larger deployments:
 
 - **Single server production**: Use [Production Deployment](./production.md) with the deploy script
-- **Multi-node / HA**: Use [Kubernetes](./kubernetes.md) or [Helm](./helm.md)
 - **Managed services**: Consider AWS RDS, ElastiCache, and S3 instead of self-hosted
 
 ## Next Steps

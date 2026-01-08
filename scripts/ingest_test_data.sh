@@ -51,64 +51,23 @@ if [ -f .env ]; then
     set +a
 fi
 
-#------------------------------------------------------------------------------
-# Detect runtime environment (Docker Compose vs Kubernetes)
-#------------------------------------------------------------------------------
-
-RUNTIME_ENV="compose"  # default
-
-# Check if we're running in Kubernetes context
-if kubectl config current-context &>/dev/null; then
-    K8S_CONTEXT=$(kubectl config current-context 2>/dev/null)
-    if [ "$K8S_CONTEXT" = "weather-wms" ]; then
-        # Check if weather-wms namespace has pods
-        if kubectl get pods -n weather-wms --no-headers 2>/dev/null | grep -q "Running"; then
-            RUNTIME_ENV="kubernetes"
-            K8S_NAMESPACE="weather-wms"
-            log_info "Detected Kubernetes environment (context: $K8S_CONTEXT)"
-        fi
-    fi
-fi
-
-# Allow override via environment variable
-if [ -n "$FORCE_RUNTIME_ENV" ]; then
-    RUNTIME_ENV="$FORCE_RUNTIME_ENV"
-    log_info "Runtime environment forced to: $RUNTIME_ENV"
-fi
-
-# Helper functions for multi-environment support
+# Helper functions for Docker Compose environment
 pg_exec() {
     local sql="$1"
-    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
-        kubectl exec -n "$K8S_NAMESPACE" postgresql-0 -- bash -c "export PGPASSWORD=\$(cat /opt/bitnami/postgresql/secrets/password) && psql -U weatherwms -d weatherwms -t -c \"$sql\"" 2>/dev/null
-    else
-        docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c "$sql" 2>/dev/null
-    fi
+    docker-compose exec -T postgres psql -U weatherwms -d weatherwms -t -c "$sql" 2>/dev/null
 }
 
 pg_exec_batch() {
-    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
-        kubectl exec -n "$K8S_NAMESPACE" -i postgresql-0 -- bash -c 'export PGPASSWORD=$(cat /opt/bitnami/postgresql/secrets/password) && psql -U weatherwms -d weatherwms' 2>/dev/null
-    else
-        docker-compose exec -T postgres psql -U weatherwms -d weatherwms 2>/dev/null
-    fi
+    docker-compose exec -T postgres psql -U weatherwms -d weatherwms 2>/dev/null
 }
 
 pg_isready() {
-    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
-        kubectl exec -n "$K8S_NAMESPACE" postgresql-0 -- pg_isready -U weatherwms &>/dev/null
-    else
-        docker-compose exec -T postgres pg_isready -U weatherwms &>/dev/null
-    fi
+    docker-compose exec -T postgres pg_isready -U weatherwms &>/dev/null
 }
 
 redis_exec() {
     local cmd="$1"
-    if [ "$RUNTIME_ENV" = "kubernetes" ]; then
-        kubectl exec -n "$K8S_NAMESPACE" redis-master-0 -- redis-cli $cmd &>/dev/null
-    else
-        docker-compose exec -T redis redis-cli $cmd &>/dev/null
-    fi
+    docker-compose exec -T redis redis-cli $cmd &>/dev/null
 }
 
 # Parse command-line arguments
@@ -532,19 +491,10 @@ echo ""
 # Verify MinIO has the file
 log_info "Verifying storage in MinIO..."
 
-if [ "$RUNTIME_ENV" = "kubernetes" ]; then
-    # For K8s, try to check via mc in the minio pod
-    if kubectl exec -n "$K8S_NAMESPACE" deployment/minio -- mc ls --recursive local/weather-data 2>/dev/null | head -5 &>/dev/null; then
-        log_success "Data confirmed in MinIO"
-    else
-        log_warn "Could not verify MinIO storage (file may be present)"
-    fi
+if docker exec weather-wms-minio-1 bash -c 'export AWS_ACCESS_KEY_ID=minioadmin && export AWS_SECRET_ACCESS_KEY=minioadmin && /usr/bin/mc alias set local http://localhost:9000 minioadmin minioadmin 2>/dev/null && /usr/bin/mc ls --recursive local/weather-data | head -5' &>/dev/null; then
+    log_success "Data confirmed in MinIO"
 else
-    if docker exec weather-wms-minio-1 bash -c 'export AWS_ACCESS_KEY_ID=minioadmin && export AWS_SECRET_ACCESS_KEY=minioadmin && /usr/bin/mc alias set local http://localhost:9000 minioadmin minioadmin 2>/dev/null && /usr/bin/mc ls --recursive local/weather-data | head -5' &>/dev/null; then
-        log_success "Data confirmed in MinIO"
-    else
-        log_warn "Could not verify MinIO storage (file may be present)"
-    fi
+    log_warn "Could not verify MinIO storage (file may be present)"
 fi
 
 echo ""

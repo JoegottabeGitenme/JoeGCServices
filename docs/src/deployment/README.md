@@ -8,8 +8,6 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 |--------|----------|------------|-------------|
 | [Docker Compose](./docker-compose.md) | Development, testing | Low | Single node |
 | [Production (Single Server)](./production.md) | Small-medium production | Low | Single node |
-| [Kubernetes](./kubernetes.md) | Large production | Medium | Horizontal |
-| [Helm Chart](./helm.md) | Production (K8s) | Low | Horizontal |
 
 ## Quick Comparison
 
@@ -43,37 +41,7 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 
 **Use when**: Small-medium production deployments, home servers, single-node setups
 
----
-
-### Kubernetes (Raw Manifests)
-**Pros**:
-- Full control over configuration
-- Production-ready
-- Horizontal scaling
-
-**Cons**:
-- Complex setup
-- Requires K8s knowledge
-- More maintenance
-
-**Use when**: Custom production deployments, specific requirements
-
----
-
-### Helm Chart
-**Pros**:
-- One-command deployment
-- Configurable via values.yaml
-- Built-in best practices
-- Easy upgrades
-
-**Cons**:
-- Requires Kubernetes cluster
-- Less flexibility than raw manifests
-
-**Use when**: Standard production deployments
-
-## Architecture Comparison
+## Architecture
 
 ### Docker Compose
 ```
@@ -90,29 +58,6 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 │  │ (x1)   │  │   (single)   │  │
 │  └────────┘  └──────────────┘  │
 └─────────────────────────────────┘
-```
-
-### Kubernetes/Helm
-```
-┌─────────────────────────────────────────────┐
-│         Kubernetes Cluster (Multi-node)     │
-│                                             │
-│  ┌────────┐  ┌────────┐  ┌────────┐        │
-│  │WMS API │  │WMS API │  │WMS API │  (HPA) │
-│  │ Pod 1  │  │ Pod 2  │  │ Pod 3  │        │
-│  └────────┘  └────────┘  └────────┘        │
-│                                             │
-│  ┌──────────────────┐  ┌────────────────┐  │
-│  │   PostgreSQL     │  │     MinIO      │  │
-│  │ (StatefulSet)    │  │ (StatefulSet)  │  │
-│  │  with PVC        │  │   with PVC     │  │
-│  └──────────────────┘  └────────────────┘  │
-│                                             │
-│  ┌────────────┐  ┌────────────┐            │
-│  │  Ingester  │  │  Renderer  │  (Scaled)  │
-│  │    Pod     │  │   Workers  │            │
-│  └────────────┘  └────────────┘            │
-└─────────────────────────────────────────────┘
 ```
 
 ## Resource Requirements
@@ -134,7 +79,7 @@ Weather WMS can be deployed in multiple ways depending on your needs: local deve
 ### Pre-Deployment
 
 - [ ] Choose deployment method
-- [ ] Provision infrastructure (servers, cluster)
+- [ ] Provision infrastructure (servers)
 - [ ] Configure networking (ports, firewall)
 - [ ] Set up DNS (if needed)
 - [ ] Prepare TLS certificates (for HTTPS)
@@ -186,6 +131,4 @@ Choose your deployment method:
 
 - [Docker Compose](./docker-compose.md) - Local development
 - [Production (Single Server)](./production.md) - Single-server production with TLS
-- [Kubernetes](./kubernetes.md) - Production (raw manifests)
-- [Helm Chart](./helm.md) - Production (recommended for K8s)
 - [Monitoring](./monitoring.md) - Set up observability

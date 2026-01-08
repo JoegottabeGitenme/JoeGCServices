@@ -19,16 +19,6 @@ Before installing Weather WMS, ensure your system meets the following requiremen
 - **Cargo** (included with Rust)
   - Verify: `cargo --version`
 
-### For Kubernetes Deployment
-
-- **kubectl** 1.27+
-  - Installation: [kubectl docs](https://kubernetes.io/docs/tasks/tools/)
-  - Verify: `kubectl version --client`
-
-- **Helm** 3.12+
-  - Installation: [Helm docs](https://helm.sh/docs/intro/install/)
-  - Verify: `helm version`
-
 ## Optional Software
 
 ### Data Inspection Tools

@@ -2,7 +2,7 @@
 
 OGC API - Environmental Data Retrieval (EDR) implementation for accessing weather data.
 
-> **Note:** This implementation uses OGC API-EDR v1.0 conformance URIs. Work is ongoing to achieve full v1.1 conformance including the GeoJSON conformance class.
+> **Note:** This implementation uses OGC API-EDR v1.0 conformance URIs.
 
 ## Overview
 
@@ -31,7 +31,8 @@ This implementation supports the following conformance classes:
 | Locations | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/locations` | Supported |
 | Instances | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/instances` | Supported |
 | CoverageJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/covjson` | Supported |
-| GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson` | Pending |
+| GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson` | Supported |
+| EDR-GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/edr-geojson` | Supported |
 
 ## Landing Page
 
@@ -383,6 +384,8 @@ For polygons, coordinates in the range [-360, 360] are accepted to preserve geom
 ### Response
 
 Returns a Coverage with `domainType: "Grid"` containing data for all grid points within the polygon.
+
+For MULTIPOLYGON inputs, returns a CoverageCollection with one Coverage per polygon.
 
 ---
 

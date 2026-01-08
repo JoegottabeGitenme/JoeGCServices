@@ -13,7 +13,6 @@ This directory contains JSON schemas for validating YAML configuration files in 
 | `ingestion.schema.json` | Global ingestion settings | `config/ingestion.yaml` |
 | `load-test-scenario.schema.json` | WMS/WMTS load test scenarios | `validation/load-test/scenarios/*.yaml` |
 | `edr-load-test-scenario.schema.json` | EDR API load test scenarios | `validation/load-test/scenarios/*-edr.yaml` |
-| `helm-values.schema.json` | Helm chart values | `deploy/helm/weather-wms/values*.yaml` |
 
 ## Validation
 
@@ -58,10 +57,6 @@ The script requires Node.js and will automatically install required dependencies
     ],
     "./schemas/edr-load-test-scenario.schema.json": [
       "validation/load-test/scenarios/*-edr.yaml"
-    ],
-    "./schemas/helm-values.schema.json": [
-      "deploy/helm/weather-wms/values.yaml",
-      "deploy/helm/weather-wms/values-*.yaml"
     ]
   }
 }

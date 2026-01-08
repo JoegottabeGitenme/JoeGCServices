@@ -6,8 +6,6 @@
 
 - Rust 1.75+ (or `rustup update`)
 - Docker & Docker Compose (for local services)
-- kubectl & minikube (for Kubernetes deployment)
-- Helm (for Kubernetes package management)
 
 ### Build & Test
 
@@ -140,24 +138,6 @@ The `.env` file contains:
 - `REDIS_URL` - Redis connection
 - `S3_*` - MinIO credentials (minioadmin/minioadmin)
 - `RUST_LOG` - Logging level (set to `debug` for verbose output)
-
-### Kubernetes Deployment
-
-For full testing with Kubernetes (slower startup, more realistic):
-
-```bash
-# Start the complete stack with minikube
-./scripts/start.sh
-
-# View status
-./scripts/start.sh --status
-
-# Stop cluster
-./scripts/start.sh --stop
-
-# Clean up and restart
-./scripts/start.sh --clean
-```
 
 ## Common Development Tasks
 
@@ -483,44 +463,6 @@ docker pull debian:bookworm-slim
 
 # Or use a different registry mirror
 # Edit /etc/docker/daemon.json and add registry mirrors
-```
-
-### Minikube Issues
-
-```bash
-# Restart minikube
-minikube stop -p weather-wms
-minikube delete -p weather-wms
-minikube start -p weather-wms
-
-# Check cluster health
-kubectl cluster-info
-kubectl get nodes
-
-# View logs
-kubectl logs -n weather-wms <pod-name>
-```
-
-### Dashboard Not Accessible
-
-The Kubernetes dashboard addon may fail to start due to network issues. Use kubectl instead:
-
-```bash
-# List all resources
-kubectl get all -n weather-wms
-
-# Watch pods in real-time
-kubectl get pods -n weather-wms -w
-
-# Get detailed info about a pod
-kubectl describe pod -n weather-wms <pod-name>
-
-# View pod logs
-kubectl logs -n weather-wms <pod-name>
-kubectl logs -n weather-wms <pod-name> -f  # follow logs
-
-# Get pod events
-kubectl get events -n weather-wms
 ```
 
 ## Contributing
