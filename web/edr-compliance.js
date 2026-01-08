@@ -2047,21 +2047,86 @@ async function testExtentVertical(collection) {
         };
     }
 
-    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const url = `${API_BASE}/collections/${col.id}`;
+    const colRes = await fetchJson(url);
     const extent = colRes.json?.extent;
     const vertical = extent?.vertical;
     
     const checks = [
         { name: 'Has extent object', passed: !!extent },
         { name: 'Has vertical extent', passed: !!vertical },
-        { name: 'Has interval or values', passed: !!(vertical?.interval || vertical?.values) },
         { name: 'Has VRS (vertical ref system)', passed: !!vertical?.vrs }
     ];
+    
+    // Per OGC EDR Spec Table C.8:
+    // - interval: Array of [min, max] pairs (required)
+    // - values: Array of all supported values (required)
+    
+    // Check values array first (we need it to determine if single-level is valid)
+    const values = vertical?.values;
+    const hasValues = Array.isArray(values) && values.length > 0;
+    const isSingleLevel = hasValues && values.length === 1;
+    
+    checks.push({ name: 'Has values array (all levels)', passed: hasValues });
+    
+    if (hasValues) {
+        // Values should be a flat array of numbers/strings, not nested arrays
+        const isFlatArray = values.every(v => typeof v === 'number' || typeof v === 'string');
+        checks.push({ 
+            name: 'Values is flat array', 
+            passed: isFlatArray,
+            note: isFlatArray ? `${values.length} level${values.length > 1 ? 's' : ''}: ${values.slice(0, 5).join(', ')}${values.length > 5 ? '...' : ''}` : 'Contains nested arrays'
+        });
+    }
+    
+    // Check interval format
+    const interval = vertical?.interval;
+    const hasInterval = Array.isArray(interval) && interval.length > 0;
+    checks.push({ name: 'Has interval array', passed: hasInterval });
+    
+    if (hasInterval) {
+        // Each interval should be [min, max], not [level, level] for each level
+        const firstInterval = interval[0];
+        const isValidIntervalFormat = Array.isArray(firstInterval) && firstInterval.length === 2;
+        checks.push({ name: 'Interval is [min, max] pair', passed: isValidIntervalFormat });
+        
+        // Check that interval is a proper min/max range (not duplicate values per level)
+        // A proper interval should have just ONE [min, max] pair for the overall range
+        // Bad format: [[250,250], [300,300], [500,500], ...] (one per level)
+        // Good format: [[250, 1000]] (single overall range)
+        // Exception: [[850, 850]] is valid if there's only one level
+        const hasSingleIntervalRange = interval.length === 1;
+        const intervalNote = hasSingleIntervalRange 
+            ? 'Single [min, max] range (correct)'
+            : `${interval.length} intervals (should be single [[min, max]] for overall range)`;
+        checks.push({ 
+            name: 'Interval is single [min, max] range', 
+            passed: hasSingleIntervalRange,
+            note: intervalNote
+        });
+        
+        // Check that min != max (unless there's only one level)
+        if (isValidIntervalFormat && firstInterval[0] !== null && firstInterval[1] !== null) {
+            const min = firstInterval[0];
+            const max = firstInterval[1];
+            const hasRange = min !== max;
+            // If single level, min==max is expected and correct
+            const isValid = hasRange || isSingleLevel;
+            checks.push({
+                name: 'Interval min/max valid',
+                passed: isValid,
+                note: isSingleLevel 
+                    ? `Single level: ${min} (min==max is correct)` 
+                    : `Range: ${min} to ${max}`
+            });
+        }
+    }
     
     return {
         passed: checks.every(c => c.passed),
         checks,
-        response: colRes
+        response: colRes,
+        url
     };
 }
 
@@ -8429,7 +8494,7 @@ const SPEC_LINKS = {
     },
     'extent-vertical': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-extent',
-        title: 'Vertical Extent (Requirement A.22)'
+        title: 'Vertical Extent (Table C.8: interval [[min,max]], values array)'
     },
     'instances-list': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section',

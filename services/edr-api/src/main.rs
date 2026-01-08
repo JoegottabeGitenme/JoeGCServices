@@ -6,11 +6,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::http::header::HeaderName;
-use axum::{routing::get, Extension, Router};
+use axum::{routing::get, Extension, Router, ServiceExt};
 use clap::Parser;
+use tower::Layer;
 use tower_http::{
     compression::CompressionLayer,
     cors::{Any, CorsLayer},
+    normalize_path::NormalizePathLayer,
     trace::TraceLayer,
 };
 use tracing::info;
@@ -84,30 +86,21 @@ async fn run_server(args: Args) {
     };
 
     // Build router
+    // Note: NormalizePathLayer handles trailing slashes, so we only define canonical paths
     let app = Router::new()
         // Landing page
         .route("/edr", get(handlers::landing::landing_handler))
-        .route("/edr/", get(handlers::landing::landing_handler))
-        // API definition (OpenAPI) - with trailing slash support
+        // API definition (OpenAPI)
         .route("/edr/api", get(handlers::api::api_handler))
-        .route("/edr/api/", get(handlers::api::api_handler))
         .route("/edr/api.html", get(handlers::api::api_html_handler))
-        // Conformance (with and without trailing slash for OGC compliance)
+        // Conformance
         .route(
             "/edr/conformance",
             get(handlers::conformance::conformance_handler),
         )
-        .route(
-            "/edr/conformance/",
-            get(handlers::conformance::conformance_handler),
-        )
-        // Collections (with trailing slash support)
+        // Collections
         .route(
             "/edr/collections",
-            get(handlers::collections::list_collections_handler),
-        )
-        .route(
-            "/edr/collections/",
             get(handlers::collections::list_collections_handler),
         )
         .route(
@@ -229,6 +222,10 @@ async fn run_server(args: Args) {
                 ]),
         );
 
+    // Wrap with NormalizePath to handle trailing slashes
+    // This must be the outermost layer to normalize paths before routing
+    let app = NormalizePathLayer::trim_trailing_slash().layer(app);
+
     // Parse listen address
     let addr: SocketAddr = args.listen.parse().expect("Invalid listen address");
 
@@ -238,5 +235,10 @@ async fn run_server(args: Args) {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind");
-    axum::serve(listener, app).await.expect("Server failed");
+    axum::serve(
+        listener,
+        ServiceExt::<axum::http::Request<axum::body::Body>>::into_make_service(app),
+    )
+    .await
+    .expect("Server failed");
 }

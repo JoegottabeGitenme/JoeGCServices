@@ -206,10 +206,19 @@ impl TemporalExtent {
 }
 
 /// Vertical extent with level values.
+///
+/// Per OGC API-EDR spec Table C.8:
+/// - `interval`: Array containing [min, max] pairs representing the overall vertical range
+/// - `values`: Array of all supported vertical level values
+/// - `vrs`: Vertical reference system identifier
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerticalExtent {
-    /// Vertical level values.
+    /// Vertical interval as [[min, max]] representing the overall range.
     pub interval: Vec<Vec<Option<f64>>>,
+
+    /// All supported vertical level values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<f64>>,
 
     /// Vertical reference system.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,14 +230,33 @@ impl VerticalExtent {
     pub fn new(min: f64, max: f64) -> Self {
         Self {
             interval: vec![vec![Some(min), Some(max)]],
+            values: None,
             vrs: None,
         }
     }
 
     /// Create a vertical extent with specific level values.
-    pub fn with_levels(levels: Vec<f64>, vrs: Option<String>) -> Self {
+    ///
+    /// The interval will be set to [[min, max]] of the provided levels,
+    /// and all levels will be listed in the values array.
+    pub fn with_levels(mut levels: Vec<f64>, vrs: Option<String>) -> Self {
+        if levels.is_empty() {
+            return Self {
+                interval: vec![],
+                values: None,
+                vrs,
+            };
+        }
+
+        // Sort levels to find min/max (levels may not be in order)
+        levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let min = levels.first().copied().unwrap();
+        let max = levels.last().copied().unwrap();
+
         Self {
-            interval: levels.into_iter().map(|l| vec![Some(l), Some(l)]).collect(),
+            interval: vec![vec![Some(min), Some(max)]],
+            values: Some(levels),
             vrs,
         }
     }
@@ -355,8 +383,39 @@ mod tests {
             vec![1000.0, 850.0, 700.0, 500.0, 300.0, 250.0],
             Some("hPa".to_string()),
         );
-        assert_eq!(extent.interval.len(), 6);
+        // Should have single interval with [min, max]
+        assert_eq!(extent.interval.len(), 1);
+        assert_eq!(extent.interval[0][0], Some(250.0)); // min
+        assert_eq!(extent.interval[0][1], Some(1000.0)); // max
+                                                         // Should have all values listed
+        let values = extent.values.unwrap();
+        assert_eq!(values.len(), 6);
+        assert_eq!(values, vec![250.0, 300.0, 500.0, 700.0, 850.0, 1000.0]); // sorted
         assert_eq!(extent.vrs, Some("hPa".to_string()));
+    }
+
+    #[test]
+    fn test_vertical_extent_single_level() {
+        // When only one level is available, min == max is correct
+        let extent = VerticalExtent::with_levels(vec![850.0], Some("hPa".to_string()));
+
+        // Should have single interval with same min and max
+        assert_eq!(extent.interval.len(), 1);
+        assert_eq!(extent.interval[0][0], Some(850.0));
+        assert_eq!(extent.interval[0][1], Some(850.0));
+
+        // Should have single value
+        let values = extent.values.unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], 850.0);
+    }
+
+    #[test]
+    fn test_vertical_extent_empty() {
+        let extent = VerticalExtent::with_levels(vec![], None);
+
+        assert!(extent.interval.is_empty());
+        assert!(extent.values.is_none());
     }
 
     #[test]
