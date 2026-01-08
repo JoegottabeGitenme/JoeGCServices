@@ -140,7 +140,7 @@ impl DataPngEncoder {
     /// Encode grid data to a 16-bit PNG
     ///
     /// # Arguments
-    /// * `data` - Grid data as Option<f32>, None represents no-data/masked pixels
+    /// * `data` - Grid data as `Option<f32>`, None represents no-data/masked pixels
     /// * `width` - Grid width in pixels
     /// * `height` - Grid height in pixels
     ///
