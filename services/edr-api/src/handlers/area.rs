@@ -57,6 +57,42 @@ fn resample_nearest(
 /// Maximum allowed PNG dimension (width or height)
 const MAX_PNG_DIMENSION: usize = 4096;
 
+/// Resample data using nearest-neighbor interpolation.
+///
+/// This is fast and preserves discrete values well. For smoother results
+/// with continuous data like temperature, bilinear interpolation would be better.
+///
+/// TODO: Add bilinear interpolation option for parameters that benefit from smoothing.
+fn resample_nearest(
+    data: &[Option<f32>],
+    src_width: usize,
+    src_height: usize,
+    dst_width: usize,
+    dst_height: usize,
+) -> Vec<Option<f32>> {
+    let mut result = Vec::with_capacity(dst_width * dst_height);
+
+    for dst_y in 0..dst_height {
+        for dst_x in 0..dst_width {
+            // Map destination pixel to source pixel (nearest neighbor)
+            let src_x = (dst_x as f64 * src_width as f64 / dst_width as f64) as usize;
+            let src_y = (dst_y as f64 * src_height as f64 / dst_height as f64) as usize;
+
+            // Clamp to valid range
+            let src_x = src_x.min(src_width - 1);
+            let src_y = src_y.min(src_height - 1);
+
+            let src_idx = src_y * src_width + src_x;
+            result.push(data[src_idx]);
+        }
+    }
+
+    result
+}
+
+/// Maximum allowed PNG dimension (width or height)
+const MAX_PNG_DIMENSION: usize = 4096;
+
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
 pub struct AreaQueryParams {
