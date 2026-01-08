@@ -637,7 +637,15 @@ fn resample_lambert_to_geographic(
             let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
 
             // Convert geographic to Lambert grid indices
-            let (grid_i, grid_j) = proj.geo_to_grid(lat as f64, lon as f64);
+            // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
+            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
+            let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -714,7 +722,16 @@ fn resample_lambert_to_geographic_with_proj(
             let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
 
             // Convert geographic to Lambert grid indices
-            let (grid_i, grid_j) = proj.geo_to_grid(lat as f64, lon as f64);
+            // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
+            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
+            let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            // This handles pyramid levels where data_width < proj.nx and data_height < proj.ny
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             // Debug: log a few sample points and their values
             if debug_count < 10
@@ -836,7 +853,15 @@ fn resample_lambert_to_mercator_with_proj(
             let lat = mercator_y_to_lat(merc_y);
 
             // Convert geographic to Lambert grid indices
-            let (grid_i, grid_j) = proj.geo_to_grid(lat, lon as f64);
+            // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
+            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             // Check if within grid bounds
             if grid_i < 0.0

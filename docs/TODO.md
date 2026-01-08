@@ -41,3 +41,4 @@
 - need to update prometheus and grafana and loki and stuff for the EDR api still
 - need to check units in WMS now that we fixed units being passed into zarr format during ingestion
 - create robots.txt with goodies
+- I think it's worth downsampling MRMS data to a more reasonable resolution even after the pyramid fixes
