@@ -281,9 +281,11 @@ pub async fn list_collections_handler(
         }
 
         // Add CRS and formats
+        // Per OGC EDR spec, default_output_format specifies the format returned when no `f` is provided
         collection = collection
             .with_crs(model_config.settings.supported_crs.clone())
-            .with_output_formats(model_config.settings.output_formats.clone());
+            .with_output_formats(model_config.settings.output_formats.clone())
+            .with_default_output_format("CoverageJSON");
 
         collections.push(collection);
     }
@@ -421,9 +423,11 @@ pub async fn get_collection_handler(
     }
 
     // Add CRS and formats
+    // Per OGC EDR spec, default_output_format specifies the format returned when no `f` is provided
     collection = collection
         .with_crs(model_config.settings.supported_crs.clone())
-        .with_output_formats(model_config.settings.output_formats.clone());
+        .with_output_formats(model_config.settings.output_formats.clone())
+        .with_default_output_format("CoverageJSON");
 
     let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
 

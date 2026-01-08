@@ -68,6 +68,11 @@ pub struct Collection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_formats: Option<Vec<String>>,
 
+    /// Default output format for queries.
+    /// Per OGC EDR spec, this specifies the format returned when no `f` parameter is provided.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_output_format: Option<String>,
+
     /// Parameters available in this collection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameter_names: Option<HashMap<String, Parameter>>,
@@ -86,6 +91,7 @@ impl Collection {
             data_queries: None,
             crs: None,
             output_formats: None,
+            default_output_format: None,
             parameter_names: None,
         }
     }
@@ -129,6 +135,13 @@ impl Collection {
     /// Set output formats.
     pub fn with_output_formats(mut self, formats: Vec<String>) -> Self {
         self.output_formats = Some(formats);
+        self
+    }
+
+    /// Set default output format.
+    /// Per OGC EDR spec, this specifies the format returned when no `f` parameter is provided.
+    pub fn with_default_output_format(mut self, format: impl Into<String>) -> Self {
+        self.default_output_format = Some(format.into());
         self
     }
 
@@ -205,25 +218,16 @@ pub struct DataQueries {
 }
 
 /// Default output formats for EDR queries.
-/// Includes "GeoJSON" short form for OGC ETS test compatibility
-/// (the validateResponseForEDRGeoJSON test checks for equalsIgnoreCase("GeoJSON")).
+/// Per OGC EDR spec examples (Table C.3), output_formats uses short human-readable names,
+/// not MIME types. The MIME type goes in the link's `type` field.
 fn default_output_formats() -> Vec<String> {
-    vec![
-        "application/vnd.cov+json".to_string(),
-        "application/geo+json".to_string(),
-        "GeoJSON".to_string(),
-    ]
+    vec!["CoverageJSON".to_string(), "GeoJSON".to_string()]
 }
 
 /// Output formats for locations queries.
-/// Includes "GeoJSON" short form for OGC ETS test compatibility
-/// (the test checks for equalsIgnoreCase("GeoJSON")).
+/// Per OGC EDR spec examples, uses short human-readable names.
 fn locations_output_formats() -> Vec<String> {
-    vec![
-        "application/vnd.cov+json".to_string(),
-        "application/geo+json".to_string(),
-        "GeoJSON".to_string(),
-    ]
+    vec!["CoverageJSON".to_string(), "GeoJSON".to_string()]
 }
 
 impl DataQueries {

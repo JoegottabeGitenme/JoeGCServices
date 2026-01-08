@@ -255,11 +255,12 @@ fn default_png_max_age() -> u32 {
 
 fn default_output_formats() -> Vec<String> {
     // Supported output formats for EDR data queries
-    // Note: image/png is supported for area queries only (returns 16-bit encoded data for GPU shaders)
+    // Per OGC EDR spec examples (Table C.3), output_formats uses short human-readable names.
+    // Note: PNG is supported for area queries only (returns 16-bit encoded data for GPU shaders)
     vec![
-        "application/vnd.cov+json".to_string(),
-        "application/geo+json".to_string(),
-        "image/png".to_string(),
+        "CoverageJSON".to_string(),
+        "GeoJSON".to_string(),
+        "PNG".to_string(),
     ]
 }
 
