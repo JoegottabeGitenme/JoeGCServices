@@ -2,15 +2,51 @@
 # Test EDR PNG output functionality
 #
 # Usage:
-#   ./scripts/test_edr_png.sh [base_url]
+#   ./scripts/test_edr_png.sh [options] [base_url]
+#
+# Options:
+#   -c, --collection NAME   Use specific collection (e.g., hrrr-surface)
+#   -p, --parameter NAME    Use specific parameter (e.g., TMP)
+#   -h, --help              Show this help
 #
 # Examples:
-#   ./scripts/test_edr_png.sh                          # Uses localhost:8083
-#   ./scripts/test_edr_png.sh http://api.example.com   # Custom server
+#   ./scripts/test_edr_png.sh                              # Auto-select collection
+#   ./scripts/test_edr_png.sh -c hrrr-surface              # Use specific collection
+#   ./scripts/test_edr_png.sh -c gfs-surface -p TMP        # Collection + parameter
+#   ./scripts/test_edr_png.sh http://api.example.com       # Custom server
 
 set -e
 
-BASE_URL="${1:-http://localhost:8083}"
+# Parse arguments
+SPECIFIED_COLLECTION=""
+SPECIFIED_PARAM=""
+BASE_URL="http://localhost:8083"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -c|--collection)
+            SPECIFIED_COLLECTION="$2"
+            shift 2
+            ;;
+        -p|--parameter)
+            SPECIFIED_PARAM="$2"
+            shift 2
+            ;;
+        -h|--help)
+            head -17 "$0" | tail -15
+            exit 0
+            ;;
+        http://*|https://*)
+            BASE_URL="$1"
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 EDR_URL="${BASE_URL}/edr"
 OUTPUT_DIR="/tmp/edr-png-test"
 
@@ -50,24 +86,74 @@ echo "Available collections:"
 echo "$COLLECTIONS" | while read -r coll; do echo "  - $coll"; done
 echo ""
 
-# Pick first collection for testing
-TEST_COLLECTION=$(echo "$COLLECTIONS" | head -1)
+# Use specified collection or auto-select
+if [ -n "$SPECIFIED_COLLECTION" ]; then
+    if echo "$COLLECTIONS" | grep -q "^${SPECIFIED_COLLECTION}$"; then
+        TEST_COLLECTION="$SPECIFIED_COLLECTION"
+    else
+        echo -e "${RED}Collection '$SPECIFIED_COLLECTION' not found${NC}"
+        exit 1
+    fi
+else
+    # Preferred collection order (try these first as they're more likely to have data)
+    PREFERRED_COLLECTIONS="hrrr-surface gfs-surface hrrr-isobaric gfs-isobaric mrms-single-level"
+
+    # Find a working collection by trying preferred ones first
+    TEST_COLLECTION=""
+    for pref in $PREFERRED_COLLECTIONS; do
+        if echo "$COLLECTIONS" | grep -q "^${pref}$"; then
+            TEST_COLLECTION="$pref"
+            break
+        fi
+    done
+
+    # Fall back to first available if none of the preferred ones exist
+    if [ -z "$TEST_COLLECTION" ]; then
+        TEST_COLLECTION=$(echo "$COLLECTIONS" | head -1)
+    fi
+fi
+
 echo -e "${YELLOW}Testing with collection: ${TEST_COLLECTION}${NC}"
 
 # Get collection info to find a parameter
 COLLECTION_INFO=$(curl -sf "${EDR_URL}/collections/${TEST_COLLECTION}")
-FIRST_PARAM=$(echo "$COLLECTION_INFO" | jq -r '.parameter_names | keys[0]' 2>/dev/null || echo "TMP")
+
+# Get available parameters for this collection
+AVAILABLE_PARAMS=$(echo "$COLLECTION_INFO" | jq -r '.parameter_names | keys[]' 2>/dev/null || echo "")
+echo "Available parameters: $(echo $AVAILABLE_PARAMS | tr '\n' ' ')"
+
+# Use specified parameter or auto-select first available
+if [ -n "$SPECIFIED_PARAM" ]; then
+    if echo "$AVAILABLE_PARAMS" | grep -q "^${SPECIFIED_PARAM}$"; then
+        FIRST_PARAM="$SPECIFIED_PARAM"
+    else
+        echo -e "${YELLOW}Warning: Parameter '$SPECIFIED_PARAM' not in collection, using first available${NC}"
+        FIRST_PARAM=$(echo "$AVAILABLE_PARAMS" | head -1)
+    fi
+else
+    FIRST_PARAM=$(echo "$AVAILABLE_PARAMS" | head -1)
+fi
+
+if [ -z "$FIRST_PARAM" ]; then
+    echo -e "${RED}No parameters available in collection${NC}"
+    exit 1
+fi
 echo "Using parameter: $FIRST_PARAM"
 echo ""
 
-# Define test polygon (small area over CONUS for HRRR, or Pacific for GOES)
+# Define test polygon based on collection type
+# Note: Spaces are URL-encoded as %20
 if [[ "$TEST_COLLECTION" == *"goes"* ]]; then
     # GOES covers Pacific/Western US
-    TEST_POLYGON="POLYGON((-125 35,-120 35,-120 40,-125 40,-125 35))"
+    TEST_POLYGON="POLYGON((-125%2035,-120%2035,-120%2040,-125%2040,-125%2035))"
     BBOX_DESC="California coast"
+elif [[ "$TEST_COLLECTION" == *"gfs"* ]]; then
+    # GFS is global - use CONUS area
+    TEST_POLYGON="POLYGON((-100%2035,-98%2035,-98%2037,-100%2037,-100%2035))"
+    BBOX_DESC="Oklahoma/Kansas"
 else
-    # HRRR covers CONUS
-    TEST_POLYGON="POLYGON((-100 35,-98 35,-98 37,-100 37,-100 35))"
+    # HRRR/MRMS/NDFD cover CONUS
+    TEST_POLYGON="POLYGON((-100%2035,-98%2035,-98%2037,-100%2037,-100%2035))"
     BBOX_DESC="Oklahoma/Kansas"
 fi
 
@@ -76,9 +162,10 @@ echo "Area: $BBOX_DESC"
 PNG_FILE="${OUTPUT_DIR}/test1_basic.png"
 RESPONSE_HEADERS="${OUTPUT_DIR}/test1_headers.txt"
 
-HTTP_CODE=$(curl -sf -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
+# Don't use -f so we can capture error responses
+HTTP_CODE=$(curl -s -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
     "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png" \
-    2>/dev/null || echo "000")
+    2>/dev/null)
 
 if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}Success! HTTP $HTTP_CODE${NC}"
@@ -96,14 +183,14 @@ if [ "$HTTP_CODE" = "200" ]; then
         echo "  $line"
     done
     
-    # Parse header values for display
+    # Parse header values for display (use ^x-edr to avoid matching expose-headers line)
     echo ""
     echo "Decoded metadata:"
-    MIN=$(grep -i "x-edr-min" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    MAX=$(grep -i "x-edr-max" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    WIDTH=$(grep -i "x-edr-width" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    HEIGHT=$(grep -i "x-edr-height" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    UNITS=$(grep -i "x-edr-units" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    MIN=$(grep -i "^x-edr-min:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    MAX=$(grep -i "^x-edr-max:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    WIDTH=$(grep -i "^x-edr-width:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    HEIGHT=$(grep -i "^x-edr-height:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    UNITS=$(grep -i "^x-edr-units:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
     echo "  Value range: $MIN to $MAX $UNITS"
     echo "  Dimensions: ${WIDTH}x${HEIGHT}"
 else
@@ -116,15 +203,15 @@ echo -e "${BLUE}--- Test 2: Resized PNG (256x256) ---${NC}"
 PNG_FILE="${OUTPUT_DIR}/test2_resized.png"
 RESPONSE_HEADERS="${OUTPUT_DIR}/test2_headers.txt"
 
-HTTP_CODE=$(curl -sf -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
+HTTP_CODE=$(curl -s -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
     "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&width=256&height=256" \
-    2>/dev/null || echo "000")
+    2>/dev/null)
 
 if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}Success! HTTP $HTTP_CODE${NC}"
     echo "File size: $(ls -lh "$PNG_FILE" | awk '{print $5}')"
-    WIDTH=$(grep -i "x-edr-width" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    HEIGHT=$(grep -i "x-edr-height" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    WIDTH=$(grep -i "^x-edr-width:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    HEIGHT=$(grep -i "^x-edr-height:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
     echo "Dimensions: ${WIDTH}x${HEIGHT}"
 else
     echo -e "${RED}Failed! HTTP $HTTP_CODE${NC}"
@@ -136,15 +223,15 @@ echo -e "${BLUE}--- Test 3: Large Resize (1024x1024) ---${NC}"
 PNG_FILE="${OUTPUT_DIR}/test3_large.png"
 RESPONSE_HEADERS="${OUTPUT_DIR}/test3_headers.txt"
 
-HTTP_CODE=$(curl -sf -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
+HTTP_CODE=$(curl -s -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
     "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&width=1024&height=1024" \
-    2>/dev/null || echo "000")
+    2>/dev/null)
 
 if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}Success! HTTP $HTTP_CODE${NC}"
     echo "File size: $(ls -lh "$PNG_FILE" | awk '{print $5}')"
-    WIDTH=$(grep -i "x-edr-width" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
-    HEIGHT=$(grep -i "x-edr-height" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    WIDTH=$(grep -i "^x-edr-width:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    HEIGHT=$(grep -i "^x-edr-height:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
     echo "Dimensions: ${WIDTH}x${HEIGHT}"
 else
     echo -e "${RED}Failed! HTTP $HTTP_CODE${NC}"
@@ -174,9 +261,9 @@ echo -e "${BLUE}--- Test 5: Error Cases ---${NC}"
 
 # Test: Missing width when height provided
 echo -n "Missing width with height: "
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&height=256" \
-    2>/dev/null || echo "000")
+    2>/dev/null)
 if [ "$HTTP_CODE" = "400" ]; then
     echo -e "${GREEN}400 (correct)${NC}"
 else
@@ -185,9 +272,9 @@ fi
 
 # Test: Dimensions too large
 echo -n "Dimensions > 4096: "
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&width=5000&height=5000" \
-    2>/dev/null || echo "000")
+    2>/dev/null)
 if [ "$HTTP_CODE" = "400" ]; then
     echo -e "${GREEN}400 (correct)${NC}"
 else
@@ -195,21 +282,27 @@ else
 fi
 
 # Test: Multiple parameters (should fail for PNG)
-echo -n "Multiple parameters: "
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
-    "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM},UGRD&f=png" \
-    2>/dev/null || echo "000")
-if [ "$HTTP_CODE" = "400" ]; then
-    echo -e "${GREEN}400 (correct)${NC}"
+# Get a second parameter if available
+SECOND_PARAM=$(echo "$AVAILABLE_PARAMS" | sed -n '2p')
+if [ -n "$SECOND_PARAM" ]; then
+    echo -n "Multiple parameters: "
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM},${SECOND_PARAM}&f=png" \
+        2>/dev/null)
+    if [ "$HTTP_CODE" = "400" ]; then
+        echo -e "${GREEN}400 (correct)${NC}"
+    else
+        echo -e "${RED}$HTTP_CODE (expected 400)${NC}"
+    fi
 else
-    echo -e "${RED}$HTTP_CODE (expected 400)${NC}"
+    echo "Multiple parameters: ${YELLOW}skipped (only one param available)${NC}"
 fi
 
 # Test: PNG on position endpoint (should fail)
 echo -n "PNG on position endpoint: "
-HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
-    "${EDR_URL}/collections/${TEST_COLLECTION}/position?coords=POINT(-99 36)&parameter-name=${FIRST_PARAM}&f=png" \
-    2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    "${EDR_URL}/collections/${TEST_COLLECTION}/position?coords=POINT(-99%2036)&parameter-name=${FIRST_PARAM}&f=png" \
+    2>/dev/null)
 if [ "$HTTP_CODE" = "400" ]; then
     echo -e "${GREEN}400 (correct)${NC}"
 else
@@ -218,11 +311,12 @@ fi
 
 echo ""
 echo -e "${BLUE}--- Test 6: Cache-Control Header ---${NC}"
-CACHE_CONTROL=$(grep -i "cache-control" "${OUTPUT_DIR}/test1_headers.txt" | cut -d: -f2 | tr -d ' \r')
+CACHE_CONTROL=$(grep -i "^cache-control:" "${OUTPUT_DIR}/test1_headers.txt" | cut -d: -f2 | tr -d ' \r')
 echo "Cache-Control: $CACHE_CONTROL"
 if [[ "$CACHE_CONTROL" == *"max-age="* ]]; then
     MAX_AGE=$(echo "$CACHE_CONTROL" | grep -o 'max-age=[0-9]*' | cut -d= -f2)
-    echo "max-age: ${MAX_AGE}s ($(echo "scale=1; $MAX_AGE/60" | bc) minutes)"
+    MINUTES=$((MAX_AGE / 60))
+    echo "max-age: ${MAX_AGE}s (${MINUTES} minutes)"
 fi
 echo ""
 
