@@ -459,6 +459,7 @@ sync_files() {
 
 # Domain
 DOMAIN=$DOMAIN
+BASE_URL=https://$DOMAIN
 
 # PostgreSQL
 POSTGRES_USER=${POSTGRES_USER:-weatherwms}

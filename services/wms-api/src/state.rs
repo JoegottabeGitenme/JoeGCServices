@@ -139,6 +139,7 @@ pub struct AppState {
     pub model_dimensions: ModelDimensionRegistry, // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>, // Layer configurations (from YAML) - styles, units, levels
     pub capabilities_cache: CapabilitiesCache, // Cache for WMS/WMTS capabilities documents
+    pub base_url: String, // Base URL for service endpoints (e.g., "https://folkweather.com")
 }
 
 impl AppState {
@@ -236,6 +237,10 @@ impl AppState {
             .unwrap_or(120);
         let capabilities_cache = CapabilitiesCache::new(capabilities_cache_ttl);
 
+        // Base URL for service endpoints (used in capabilities documents)
+        let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        info!(base_url = %base_url, "Service base URL configured");
+
         Ok(Self {
             catalog,
             cache: Mutex::new(cache),
@@ -249,6 +254,7 @@ impl AppState {
             model_dimensions,
             layer_configs,
             capabilities_cache,
+            base_url,
         })
     }
 }

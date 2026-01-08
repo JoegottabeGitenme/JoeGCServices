@@ -116,6 +116,7 @@ services:
   wms-api:
     ports: []
     environment:
+      BASE_URL: https://${DOMAIN:-folkweather.com}
       DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       S3_ENDPOINT: http://minio:9000

@@ -22,7 +22,7 @@
     - might just be a thing with Brave
 - see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
 - why are we getting orphaned files constantly?
-- ingester should be able to handle multiple downloads at once, currently it does 1 at a time
+- ingester should be able to handle multiple do./wnloads at once, currently it does 1 at a time
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
 - Cache invalidation section in the docs doesn't quite make sense

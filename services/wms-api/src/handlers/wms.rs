@@ -372,6 +372,7 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
         &layer_configs,
         &param_availability,
         &state.model_dimensions,
+        &state.base_url,
     );
 
     // Cache the result
@@ -1187,6 +1188,7 @@ fn build_wms_capabilities_xml_v2(
     layer_configs: &LayerConfigRegistry,
     param_availability: &HashMap<String, ParameterAvailability>,
     dimension_registry: &ModelDimensionRegistry,
+    base_url: &str,
 ) -> String {
     let mut model_layers: Vec<String> = Vec::new();
 
@@ -1344,31 +1346,31 @@ fn build_wms_capabilities_xml_v2(
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<WMS_Capabilities version="{}" xmlns="http://www.opengis.net/wms" xmlns:xlink="http://www.w3.org/1999/xlink">
+<WMS_Capabilities version="{version}" xmlns="http://www.opengis.net/wms" xmlns:xlink="http://www.w3.org/1999/xlink">
   <Service>
     <Name>WMS</Name>
     <Title>Weather WMS Service</Title>
     <Abstract>Web Map Service for weather model data</Abstract>
-    <OnlineResource xlink:href="http://localhost:8080/wms"/>
+    <OnlineResource xlink:href="{base_url}/wms"/>
   </Service>
   <Capability>
     <Request>
       <GetCapabilities>
         <Format>text/xml</Format>
-        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="{base_url}/wms?"/></Get></HTTP></DCPType>
       </GetCapabilities>
       <GetMap>
         <Format>image/png</Format>
         <Format>image/jpeg</Format>
         <Format>image/webp</Format>
-        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="{base_url}/wms?"/></Get></HTTP></DCPType>
       </GetMap>
       <GetFeatureInfo>
         <Format>text/html</Format>
         <Format>application/json</Format>
         <Format>text/xml</Format>
         <Format>text/plain</Format>
-        <DCPType><HTTP><Get><OnlineResource xlink:href="http://localhost:8080/wms?"/></Get></HTTP></DCPType>
+        <DCPType><HTTP><Get><OnlineResource xlink:href="{base_url}/wms?"/></Get></HTTP></DCPType>
       </GetFeatureInfo>
     </Request>
     <Exception><Format>XML</Format></Exception>
@@ -1376,12 +1378,13 @@ fn build_wms_capabilities_xml_v2(
       <Title>Weather Data</Title>
       <CRS>EPSG:4326</CRS>
       <CRS>EPSG:3857</CRS>
-      {}
+      {layers}
     </Layer>
   </Capability>
 </WMS_Capabilities>"#,
-        version,
-        model_layers.join("")
+        version = version,
+        base_url = base_url,
+        layers = model_layers.join("")
     )
 }
 

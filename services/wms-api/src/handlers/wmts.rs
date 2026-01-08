@@ -373,6 +373,7 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         &layer_configs,
         &param_availability,
         &state.model_dimensions,
+        &state.base_url,
     );
 
     // Cache the result
@@ -1052,6 +1053,7 @@ fn build_wmts_capabilities_xml_v2(
     layer_configs: &LayerConfigRegistry,
     param_availability: &HashMap<String, ParameterAvailability>,
     dimension_registry: &ModelDimensionRegistry,
+    base_url: &str,
 ) -> String {
     let mut all_layers: Vec<String> = Vec::new();
 
@@ -1106,13 +1108,13 @@ fn build_wmts_capabilities_xml_v2(
 
             all_layers.push(format!(
                 r#"    <Layer>
-      <ows:Title>{}</ows:Title>
-      <ows:Identifier>{}</ows:Identifier>
+      <ows:Title>{layer_title}</ows:Title>
+      <ows:Identifier>{layer_id}</ows:Identifier>
       <ows:WGS84BoundingBox>
-        <ows:LowerCorner>{} {}</ows:LowerCorner>
-        <ows:UpperCorner>{} {}</ows:UpperCorner>
+        <ows:LowerCorner>{west} {south}</ows:LowerCorner>
+        <ows:UpperCorner>{east} {north}</ows:UpperCorner>
       </ows:WGS84BoundingBox>
-{}
+{styles}
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
       <Format>image/webp</Format>
@@ -1122,15 +1124,20 @@ fn build_wmts_capabilities_xml_v2(
       <TileMatrixSetLink>
         <TileMatrixSet>WorldCRS84Quad</TileMatrixSet>
       </TileMatrixSetLink>
-{}{}
-      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
-      <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
+{time_dimensions}{elevation_dim}
+      <ResourceURL format="image/png" resourceType="tile" template="{base_url}/wmts/rest/{layer_id}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/webp" resourceType="tile" template="{base_url}/wmts/rest/{layer_id}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
-                layer_title, layer_id,
-                west, south, east, north,
-                styles,
-                time_dimensions, elevation_dim,
-                layer_id, layer_id
+                layer_title = layer_title,
+                layer_id = layer_id,
+                west = west,
+                south = south,
+                east = east,
+                north = north,
+                styles = styles,
+                time_dimensions = time_dimensions,
+                elevation_dim = elevation_dim,
+                base_url = base_url,
             ));
         }
 
@@ -1194,11 +1201,11 @@ fn build_wmts_capabilities_xml_v2(
 
                 all_layers.push(format!(
                     r#"    <Layer>
-      <ows:Title>{} - Wind Barbs</ows:Title>
-      <ows:Identifier>{}</ows:Identifier>
+      <ows:Title>{display_name} - Wind Barbs</ows:Title>
+      <ows:Identifier>{layer_id}</ows:Identifier>
       <ows:WGS84BoundingBox>
-        <ows:LowerCorner>{} {}</ows:LowerCorner>
-        <ows:UpperCorner>{} {}</ows:UpperCorner>
+        <ows:LowerCorner>{west} {south}</ows:LowerCorner>
+        <ows:UpperCorner>{east} {north}</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
       <Format>image/png</Format>
@@ -1206,14 +1213,19 @@ fn build_wmts_capabilities_xml_v2(
       <Format>image/webp</Format>
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
       <TileMatrixSetLink><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></TileMatrixSetLink>
-{}{}
-      <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
-      <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
+{time_dimensions}{elevation_dim}
+      <ResourceURL format="image/png" resourceType="tile" template="{base_url}/wmts/rest/{layer_id}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/webp" resourceType="tile" template="{base_url}/wmts/rest/{layer_id}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
-                    model_config.display_name, layer_id,
-                    west, south, east, north,
-                    time_dimensions, elevation_dim,
-                    layer_id, layer_id
+                    display_name = model_config.display_name,
+                    layer_id = layer_id,
+                    west = west,
+                    south = south,
+                    east = east,
+                    north = north,
+                    time_dimensions = time_dimensions,
+                    elevation_dim = elevation_dim,
+                    base_url = base_url,
                 ));
             }
         }
@@ -1236,27 +1248,30 @@ fn build_wmts_capabilities_xml_v2(
   </ows:ServiceIdentification>
   <ows:OperationsMetadata>
     <ows:Operation name="GetCapabilities">
-      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="{base_url}/wmts?"/></ows:HTTP></ows:DCP>
     </ows:Operation>
     <ows:Operation name="GetTile">
-      <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="{base_url}/wmts?"/></ows:HTTP></ows:DCP>
     </ows:Operation>
   </ows:OperationsMetadata>
   <Contents>
-{}
+{layers}
     <TileMatrixSet>
       <ows:Identifier>WebMercatorQuad</ows:Identifier>
       <ows:SupportedCRS>urn:ogc:def:crs:EPSG::3857</ows:SupportedCRS>
-{}
+{webmercator_tile_matrices}
     </TileMatrixSet>
     <TileMatrixSet>
       <ows:Identifier>WorldCRS84Quad</ows:Identifier>
       <ows:SupportedCRS>urn:ogc:def:crs:OGC:1.3:CRS84</ows:SupportedCRS>
-{}
+{wgs84_tile_matrices}
     </TileMatrixSet>
   </Contents>
 </Capabilities>"#,
-        layers, webmercator_tile_matrices, wgs84_tile_matrices
+        base_url = base_url,
+        layers = layers,
+        webmercator_tile_matrices = webmercator_tile_matrices,
+        wgs84_tile_matrices = wgs84_tile_matrices
     )
 }
 
