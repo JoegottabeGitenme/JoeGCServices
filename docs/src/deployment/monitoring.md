@@ -246,16 +246,6 @@ services:
       - ./promtail-config.yml:/etc/promtail/config.yml
 ```
 
-#### Kubernetes (EFK Stack)
-
-Use Elasticsearch + Fluentd + Kibana:
-
-```bash
-helm install elasticsearch elastic/elasticsearch -n logging
-helm install fluentd fluent/fluentd -n logging
-helm install kibana elastic/kibana -n logging
-```
-
 ## Custom Dashboards
 
 ### PromQL Examples

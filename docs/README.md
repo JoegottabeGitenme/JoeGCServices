@@ -1,26 +1,27 @@
 # Weather WMS/WMTS
 
-A Kubernetes-native OGC WMS and WMTS service for meteorological data, written in Rust.
+A Docker-native OGC WMS, WMTS, and EDR service for meteorological data, written in Rust.
 
 ## Overview
 
-This project implements complete OGC Web Map Service (WMS) and Web Map Tile Service (WMTS) for weather data visualization, designed to run on Kubernetes with the following components:
+This project implements complete OGC Web Map Service (WMS), Web Map Tile Service (WMTS), and Environmental Data Retrieval (EDR) APIs for weather data visualization, designed to run with Docker Compose with the following components:
 
 - **Downloader**: Polls NOAA data sources (AWS Open Data, NOMADS) on a schedule and downloads GRIB2/NetCDF files
 - **Ingester**: Processes downloaded files into Zarr format with multi-resolution pyramids, stores in object storage
 - **WMS/WMTS API**: HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications, with inline rendering of gradients, contours, and wind barbs
+- **EDR API**: HTTP server implementing OGC API - Environmental Data Retrieval for point, area, trajectory, and other query types
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              Kubernetes Cluster                              │
+│                              Docker Compose Stack                             │
 │                                                                              │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐    │
-│  │   Ingress   │────▶│   WMS API   │────▶│          Redis              │    │
-│  │             │     │  (renders   │     │      (tile cache)           │    │
-│  └─────────────┘     │   inline)   │     └─────────────────────────────┘    │
-│                      └──────┬──────┘                                         │
+│  │   Nginx     │────▶│   WMS API   │────▶│          Redis              │    │
+│  │  (reverse   │     │  (renders   │     │      (tile cache)           │    │
+│  │   proxy)    │     │   inline)   │     └─────────────────────────────┘    │
+│  └─────────────┘     └──────┬──────┘                                         │
 │                             │                                                │
 │                      ┌──────┴──────┐                                         │
 │                      │             │                                         │
@@ -49,9 +50,7 @@ This project implements complete OGC Web Map Service (WMS) and Web Map Tile Serv
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
-- [minikube](https://minikube.sigs.k8s.io/docs/start/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- [Helm](https://helm.sh/docs/intro/install/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
 - [Rust](https://rustup.rs/) (for local development)
 
 ### Local Development
@@ -74,9 +73,6 @@ This project implements complete OGC Web Map Service (WMS) and Web Map Tile Serv
 
 # Clean everything and start fresh
 ./scripts/start.sh --clean
-
-# Full Kubernetes setup with minikube (optional)
-./scripts/start.sh --kubernetes
 ```
 
 ### Access Services
@@ -90,15 +86,11 @@ open http://localhost:8000
 # WMS API
 curl "http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities"
 
+# EDR API
+curl "http://localhost:8083/edr/collections"
+
 # MinIO Console (minioadmin/minioadmin)
 open http://localhost:9001
-```
-
-For Kubernetes deployment, use port-forward:
-
-```bash
-kubectl port-forward -n weather-wms svc/wms-weather-wms-api 8080:8080
-kubectl port-forward -n weather-wms svc/minio 9001:9001
 ```
 
 ## Project Structure
@@ -108,6 +100,7 @@ weather-wms/
 ├── crates/                     # Shared library crates
 │   ├── wms-common/            # Common types, errors, utilities
 │   ├── wms-protocol/          # OGC WMS/WMTS protocol handling
+│   ├── edr-protocol/          # OGC EDR protocol handling
 │   ├── grib2-parser/          # GRIB2 format parser (GFS, HRRR, MRMS)
 │   ├── netcdf-parser/         # NetCDF parser (GOES satellite)
 │   ├── grid-processor/        # Zarr V3 data access with chunk caching
@@ -119,15 +112,16 @@ weather-wms/
 ├── services/                   # Deployable services
 │   ├── downloader/            # Scheduled data downloading from NOAA
 │   ├── ingester/              # GRIB2/NetCDF to Zarr processing
-│   └── wms-api/               # HTTP API server with inline rendering
+│   ├── wms-api/               # WMS/WMTS HTTP API server with inline rendering
+│   └── edr-api/               # EDR HTTP API server
 ├── config/                     # Configuration files
 │   ├── models/                # Model definitions (GFS, HRRR, GOES, MRMS)
 │   ├── layers/                # WMS/WMTS layer definitions
+│   ├── edr/                   # EDR collection definitions
 │   ├── styles/                # Rendering style definitions (JSON)
 │   └── ingestion.yaml         # Global ingestion settings
 ├── deploy/                     # Deployment configurations
-│   └── helm/                  # Helm charts
-│       └── weather-wms/
+│   └── production/            # Production Docker Compose files
 └── scripts/                    # Development scripts
     └── start.sh               # Local dev startup script
 ```
@@ -154,6 +148,14 @@ Additional models can be added via configuration in `config/models/`.
 - **Bindings**: KVP (query string) and RESTful
 - **TileMatrixSets**: WebMercatorQuad (EPSG:3857), WorldCRS84Quad (EPSG:4326)
 - **Dimensions**: TIME support for temporal data
+
+## EDR Capabilities
+
+### OGC API - Environmental Data Retrieval
+- **Version**: EDR 1.0
+- **Query Types**: Position, Area, Radius, Trajectory, Corridor, Cube, Locations
+- **Formats**: CoverageJSON, GeoJSON
+- **Features**: Named locations, instances (model runs), data availability filtering
 
 ## Style Configuration
 
@@ -240,12 +242,14 @@ config/
 │   ├── gfs.yaml          # GFS layers (parameter -> style mappings, levels)
 │   ├── hrrr.yaml         # HRRR layers
 │   └── ...               # Layer configs per model
+├── edr/                   # EDR collection definitions
+│   ├── hrrr.yaml         # HRRR EDR collections
+│   ├── gfs.yaml          # GFS EDR collections
+│   └── locations.yaml    # Named locations for EDR
 └── styles/                # Rendering style definitions (JSON)
     ├── temperature.json  # Color gradients, contour settings
     └── ...               # One file per style category
 ```
-
-For Kubernetes deployment options, see `deploy/helm/weather-wms/values.yaml`.
 
 ### Environment Variables
 

@@ -289,17 +289,6 @@ for file in "$PROJECT_ROOT"/validation/load-test/scenarios/*-edr*.yaml; do
     fi
 done
 
-# Validate Helm values
-validate_pattern \
-    "$SCHEMA_DIR/helm-values.schema.json" \
-    "deploy/helm/weather-wms/values.yaml" \
-    "Helm Values"
-
-validate_pattern \
-    "$SCHEMA_DIR/helm-values.schema.json" \
-    "deploy/helm/weather-wms/values-*.yaml" \
-    "Helm Values (Environment Overrides)"
-
 # Summary
 echo ""
 echo "=============================================="
