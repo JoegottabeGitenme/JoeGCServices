@@ -5,7 +5,7 @@ model:
   id: hrrr
   name: "HRRR - High-Resolution Rapid Refresh"
   description: "NCEP High-Resolution Rapid Refresh, 3km resolution, CONUS coverage"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests

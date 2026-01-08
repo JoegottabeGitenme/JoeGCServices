@@ -11,7 +11,7 @@ model:
   id: gfs
   name: "GFS - Global Forecast System"
   description: "NCEP Global Forecast System, 0.25° resolution"
-  enabled: false
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
