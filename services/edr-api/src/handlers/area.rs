@@ -10,7 +10,7 @@ use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
-use grid_processor::{BoundingBox, DatasetQuery};
+use grid_processor::{BoundingBox, DatasetQuery, RowOrigin};
 use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -49,6 +49,23 @@ fn resample_nearest(
             let src_idx = src_y * src_width + src_x;
             result.push(data[src_idx]);
         }
+    }
+
+    result
+}
+
+/// Flip rows vertically (reverse row order).
+///
+/// Used to convert RowOrigin::South grids (row 0 = south) to image coordinates
+/// where row 0 should be at the top (north).
+fn flip_rows(data: &[Option<f32>], width: usize, height: usize) -> Vec<Option<f32>> {
+    let mut result = Vec::with_capacity(data.len());
+
+    // Iterate rows in reverse order (last row first)
+    for row in (0..height).rev() {
+        let row_start = row * width;
+        let row_end = row_start + width;
+        result.extend_from_slice(&data[row_start..row_end]);
     }
 
     result
@@ -678,12 +695,16 @@ async fn area_query(
                 query = query.at_run(ref_time);
             }
 
-            // Get metadata for units
+            // Get metadata for units and row origin
             let metadata = state.grid_data_service.get_metadata(&query).await.ok();
             let units_str = metadata
                 .as_ref()
                 .map(|m| m.units.clone())
                 .unwrap_or_default();
+            let row_origin = metadata
+                .as_ref()
+                .map(|m| m.row_origin)
+                .unwrap_or(RowOrigin::North);
 
             // Read the region for this parameter
             let param_region = match state
@@ -709,10 +730,19 @@ async fn area_query(
                 let col = idx % param_region.width;
 
                 // Calculate lon/lat for this grid cell
+                // Latitude calculation depends on row_origin:
+                // - RowOrigin::North: row 0 is at max_lat (top), increases going south
+                // - RowOrigin::South: row 0 is at min_lat (bottom), increases going north
                 let lon =
                     param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
-                let lat =
-                    param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
+                let lat = match row_origin {
+                    RowOrigin::North => {
+                        param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1
+                    }
+                    RowOrigin::South => {
+                        param_region.bbox.min_lat + (row as f64 + 0.5) * param_region.resolution.1
+                    }
+                };
 
                 // Normalize longitude to -180/180 range for polygon comparison
                 // (grid may use 0-360 convention like GFS)
@@ -728,6 +758,14 @@ async fn area_query(
                     masked_data.push(None);
                 }
             }
+
+            // For PNG output, we need north at the top of the image.
+            // If row_origin is South (row 0 = south), flip the rows so north is at top.
+            let masked_data = if row_origin == RowOrigin::South {
+                flip_rows(&masked_data, param_region.width, param_region.height)
+            } else {
+                masked_data
+            };
 
             // Compute value range from the source data (before resampling)
             let (min_val, max_val) = compute_data_range(&masked_data);
@@ -1153,5 +1191,54 @@ mod tests {
     #[test]
     fn test_max_png_dimension_constant() {
         assert_eq!(MAX_PNG_DIMENSION, 4096);
+    }
+
+    #[test]
+    fn test_flip_rows_2x2() {
+        // Input: row 0 = [1, 2], row 1 = [3, 4]
+        // Output: row 0 = [3, 4], row 1 = [1, 2]
+        let data: Vec<Option<f32>> = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+
+        let result = flip_rows(&data, 2, 2);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], Some(3.0)); // First row is now last row
+        assert_eq!(result[1], Some(4.0));
+        assert_eq!(result[2], Some(1.0)); // Last row is now first row
+        assert_eq!(result[3], Some(2.0));
+    }
+
+    #[test]
+    fn test_flip_rows_3x2() {
+        // Input: row 0 = [1, 2, 3], row 1 = [4, 5, 6]
+        // Output: row 0 = [4, 5, 6], row 1 = [1, 2, 3]
+        let data: Vec<Option<f32>> = vec![
+            Some(1.0),
+            Some(2.0),
+            Some(3.0),
+            Some(4.0),
+            Some(5.0),
+            Some(6.0),
+        ];
+
+        let result = flip_rows(&data, 3, 2);
+        assert_eq!(result.len(), 6);
+        assert_eq!(result[0], Some(4.0));
+        assert_eq!(result[1], Some(5.0));
+        assert_eq!(result[2], Some(6.0));
+        assert_eq!(result[3], Some(1.0));
+        assert_eq!(result[4], Some(2.0));
+        assert_eq!(result[5], Some(3.0));
+    }
+
+    #[test]
+    fn test_flip_rows_preserves_none() {
+        // Ensure None values are preserved
+        let data: Vec<Option<f32>> = vec![Some(1.0), None, None, Some(4.0)];
+
+        let result = flip_rows(&data, 2, 2);
+        assert_eq!(result[0], None);
+        assert_eq!(result[1], Some(4.0));
+        assert_eq!(result[2], Some(1.0));
+        assert_eq!(result[3], None);
     }
 }

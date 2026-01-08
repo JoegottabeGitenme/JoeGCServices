@@ -1,32 +1,42 @@
 //! Data PNG encoding for GPU shader consumption.
 //!
-//! Encodes grid data into 16-bit PNG format optimized for WebGL texture upload.
+//! Encodes grid data into PNG format optimized for WebGL texture upload.
 //! This format is designed for weather data visualization using GPU shaders,
 //! similar to the approach used by Windy.com.
 //!
-//! ## Encoding Format
+//! ## Encoding Formats
 //!
-//! - **R channel**: High byte of 16-bit normalized value
-//! - **G channel**: Low byte of 16-bit normalized value
-//! - **B channel**: Reserved (set to 0)
-//! - **A channel**: Data validity mask (255 = valid, 0 = no data/outside polygon)
+//! ### 16-bit mode (default, `depth=16`)
+//!
+//! Uses native PNG 16-bit grayscale with 16-bit alpha:
+//! - **Gray channel**: 16-bit normalized value (0-65535)
+//! - **Alpha channel**: 16-bit validity mask (65535 = valid, 0 = no data)
+//!
+//! This format displays correctly in image viewers as grayscale.
+//!
+//! ### 8-bit mode (`depth=8`)
+//!
+//! Uses PNG 8-bit grayscale with 8-bit alpha:
+//! - **Gray channel**: 8-bit normalized value (0-255)
+//! - **Alpha channel**: 8-bit validity mask (255 = valid, 0 = no data)
+//!
+//! Smaller files (~50%) but only 256 distinct values.
 //!
 //! ## Normalization
 //!
-//! Physical values are normalized to the 0-65535 range:
+//! Physical values are normalized to the 0-65535 (16-bit) or 0-255 (8-bit) range:
 //! ```text
 //! normalized = (value - min) / (max - min)
-//! uint16 = normalized * 65535
-//! R = uint16 >> 8    (high byte)
-//! G = uint16 & 0xFF  (low byte)
+//! uint16 = normalized * 65535  // for 16-bit
+//! uint8 = normalized * 255     // for 8-bit
 //! ```
 //!
 //! ## GLSL Decoding
 //!
+//! For both 8-bit and 16-bit modes, WebGL normalizes values to 0-1:
 //! ```glsl
 //! vec4 texel = texture2D(uDataTexture, vTexCoord);
-//! float encoded = texel.r * 255.0 * 256.0 + texel.g * 255.0;
-//! float normalized = encoded / 65535.0;
+//! float normalized = texel.r;  // Gray channel, already 0-1 in GLSL
 //! float physical_value = normalized * (uMaxValue - uMinValue) + uMinValue;
 //! bool valid = texel.a > 0.5;
 //! ```
@@ -39,7 +49,7 @@
 //! - `EDR:min` - Minimum value used for normalization
 //! - `EDR:max` - Maximum value used for normalization
 //! - `EDR:bbox` - Bounding box as "west,south,east,north"
-//! - `EDR:encoding` - Encoding type ("uint16")
+//! - `EDR:encoding` - Encoding type ("uint16" or "uint8")
 
 use std::io::Write;
 
@@ -170,8 +180,8 @@ impl DataPngEncoder {
             ));
         }
 
-        // Encode data to RGBA pixels
-        let pixels = self.encode_to_rgba(data);
+        // Encode data to 16-bit grayscale+alpha pixels
+        let pixels = self.encode_to_gray_alpha_16bit(data);
 
         // Build PNG with metadata
         let metadata = DataPngMetadata::new(self.min_value, self.max_value)
@@ -213,8 +223,8 @@ impl DataPngEncoder {
             ));
         }
 
-        // Encode data to RGBA pixels
-        let pixels = self.encode_to_rgba(data);
+        // Encode data to 16-bit grayscale+alpha pixels
+        let pixels = self.encode_to_gray_alpha_16bit(data);
 
         // Build metadata
         let metadata = DataPngMetadata::new(self.min_value, self.max_value)
@@ -231,8 +241,13 @@ impl DataPngEncoder {
         })
     }
 
-    /// Encode data values to RGBA pixel buffer
-    fn encode_to_rgba(&self, data: &[Option<f32>]) -> Vec<u8> {
+    /// Encode data values to 16-bit Grayscale+Alpha pixel buffer
+    ///
+    /// Uses native PNG 16-bit depth for both gray and alpha channels.
+    /// This produces images that display correctly in viewers while
+    /// maintaining full 16-bit precision.
+    fn encode_to_gray_alpha_16bit(&self, data: &[Option<f32>]) -> Vec<u8> {
+        // 16-bit grayscale + 16-bit alpha = 4 bytes per pixel
         let mut pixels = Vec::with_capacity(data.len() * 4);
         let range = self.max_value - self.min_value;
 
@@ -249,16 +264,12 @@ impl DataPngEncoder {
                     // Convert to 16-bit
                     let uint16_value = (normalized * 65535.0) as u16;
 
-                    // Split into high and low bytes
-                    let r = (uint16_value >> 8) as u8; // High byte
-                    let g = (uint16_value & 0xFF) as u8; // Low byte
-                    let b = 0u8; // Reserved
-                    let a = 255u8; // Valid data
-
-                    pixels.push(r);
-                    pixels.push(g);
-                    pixels.push(b);
-                    pixels.push(a);
+                    // Gray channel (16-bit big-endian)
+                    pixels.push((uint16_value >> 8) as u8);
+                    pixels.push((uint16_value & 0xFF) as u8);
+                    // Alpha channel (16-bit big-endian) - fully opaque
+                    pixels.push(0xFF);
+                    pixels.push(0xFF);
                 }
                 _ => {
                     // No data - transparent pixel
@@ -273,7 +284,7 @@ impl DataPngEncoder {
         pixels
     }
 
-    /// Create PNG with embedded tEXt metadata chunks
+    /// Create 16-bit Grayscale+Alpha PNG with embedded tEXt metadata chunks
     fn create_png_with_metadata(
         &self,
         pixels: &[u8],
@@ -290,8 +301,8 @@ impl DataPngEncoder {
         let mut ihdr_data = Vec::with_capacity(13);
         ihdr_data.extend_from_slice(&(width as u32).to_be_bytes());
         ihdr_data.extend_from_slice(&(height as u32).to_be_bytes());
-        ihdr_data.push(8); // bit depth
-        ihdr_data.push(6); // color type (RGBA)
+        ihdr_data.push(16); // bit depth (16-bit)
+        ihdr_data.push(4); // color type (Grayscale+Alpha)
         ihdr_data.push(0); // compression method
         ihdr_data.push(0); // filter method
         ihdr_data.push(0); // interlace method
@@ -327,7 +338,8 @@ impl DataPngEncoder {
         write_text_chunk(&mut png, "EDR:height", &format!("{}", metadata.height));
 
         // IDAT chunk (compressed image data)
-        let idat_data = deflate_idat_rgba(pixels, width, height)
+        // 16-bit grayscale+alpha = 4 bytes per pixel
+        let idat_data = deflate_idat_gray_alpha_16bit(pixels, width, height)
             .map_err(|e| format!("IDAT compression failed: {}", e))?;
         write_chunk(&mut png, b"IDAT", &idat_data);
 
@@ -395,29 +407,6 @@ pub fn write_text_chunk(png: &mut Vec<u8>, keyword: &str, text: &str) {
     write_chunk(png, b"tEXt", &data);
 }
 
-/// Deflate RGBA image data for IDAT chunk
-fn deflate_idat_rgba(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // Add filter byte (0 = no filter) to each scanline
-    let mut uncompressed = Vec::with_capacity(height * (1 + width * 4));
-    for y in 0..height {
-        uncompressed.push(0); // filter type: none
-        let row_start = y * width * 4;
-        let row_end = row_start + width * 4;
-        uncompressed.extend_from_slice(&pixels[row_start..row_end]);
-    }
-
-    // Compress with flate2
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-    encoder.write_all(&uncompressed)?;
-    let compressed = encoder.finish()?;
-
-    Ok(compressed)
-}
-
 /// Deflate Grayscale+Alpha image data for IDAT chunk (8-bit mode)
 fn deflate_idat_gray_alpha(
     pixels: &[u8],
@@ -431,6 +420,30 @@ fn deflate_idat_gray_alpha(
         uncompressed.push(0); // filter type: none
         let row_start = y * width * 2;
         let row_end = row_start + width * 2;
+        uncompressed.extend_from_slice(&pixels[row_start..row_end]);
+    }
+
+    // Compress with flate2
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&uncompressed)?;
+    let compressed = encoder.finish()?;
+
+    Ok(compressed)
+}
+
+/// Deflate 16-bit Grayscale+Alpha image data for IDAT chunk
+fn deflate_idat_gray_alpha_16bit(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Add filter byte (0 = no filter) to each scanline
+    // 16-bit Grayscale+Alpha = 4 bytes per pixel (2 for gray, 2 for alpha)
+    let mut uncompressed = Vec::with_capacity(height * (1 + width * 4));
+    for y in 0..height {
+        uncompressed.push(0); // filter type: none
+        let row_start = y * width * 4;
+        let row_end = row_start + width * 4;
         uncompressed.extend_from_slice(&pixels[row_start..row_end]);
     }
 
@@ -673,47 +686,52 @@ mod tests {
         let encoder = DataPngEncoder::new(0.0, 100.0);
 
         // Test minimum value (0.0) -> should encode to 0x0000
+        // 16-bit grayscale+alpha: [gray_hi, gray_lo, alpha_hi, alpha_lo]
         let data = vec![Some(0.0)];
-        let pixels = encoder.encode_to_rgba(&data);
-        assert_eq!(pixels[0], 0); // R = high byte = 0
-        assert_eq!(pixels[1], 0); // G = low byte = 0
-        assert_eq!(pixels[3], 255); // A = valid
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
+        assert_eq!(pixels[0], 0); // Gray high byte = 0
+        assert_eq!(pixels[1], 0); // Gray low byte = 0
+        assert_eq!(pixels[2], 0xFF); // Alpha high byte = 0xFF (valid)
+        assert_eq!(pixels[3], 0xFF); // Alpha low byte = 0xFF (valid)
 
         // Test maximum value (100.0) -> should encode to 0xFFFF
         let data = vec![Some(100.0)];
-        let pixels = encoder.encode_to_rgba(&data);
-        assert_eq!(pixels[0], 255); // R = high byte = 0xFF
-        assert_eq!(pixels[1], 255); // G = low byte = 0xFF
-        assert_eq!(pixels[3], 255); // A = valid
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
+        assert_eq!(pixels[0], 255); // Gray high byte = 0xFF
+        assert_eq!(pixels[1], 255); // Gray low byte = 0xFF
+        assert_eq!(pixels[2], 0xFF); // Alpha high byte = 0xFF (valid)
+        assert_eq!(pixels[3], 0xFF); // Alpha low byte = 0xFF (valid)
 
         // Test middle value (50.0) -> should encode to ~0x7FFF (32767)
         let data = vec![Some(50.0)];
-        let pixels = encoder.encode_to_rgba(&data);
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
         // 50/100 * 65535 = 32767.5 -> 32767 = 0x7FFF
-        assert_eq!(pixels[0], 127); // R = 0x7F
-        assert_eq!(pixels[1], 255); // G = 0xFF
-        assert_eq!(pixels[3], 255); // A = valid
+        assert_eq!(pixels[0], 127); // Gray high byte = 0x7F
+        assert_eq!(pixels[1], 255); // Gray low byte = 0xFF
+        assert_eq!(pixels[2], 0xFF); // Alpha high byte
+        assert_eq!(pixels[3], 0xFF); // Alpha low byte
     }
 
     #[test]
     fn test_null_values_transparent() {
         let encoder = DataPngEncoder::new(0.0, 100.0);
         let data = vec![None];
-        let pixels = encoder.encode_to_rgba(&data);
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
 
-        assert_eq!(pixels[0], 0); // R
-        assert_eq!(pixels[1], 0); // G
-        assert_eq!(pixels[2], 0); // B
-        assert_eq!(pixels[3], 0); // A = transparent
+        assert_eq!(pixels[0], 0); // Gray high
+        assert_eq!(pixels[1], 0); // Gray low
+        assert_eq!(pixels[2], 0); // Alpha high = transparent
+        assert_eq!(pixels[3], 0); // Alpha low = transparent
     }
 
     #[test]
     fn test_nan_values_transparent() {
         let encoder = DataPngEncoder::new(0.0, 100.0);
         let data = vec![Some(f32::NAN)];
-        let pixels = encoder.encode_to_rgba(&data);
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
 
-        assert_eq!(pixels[3], 0); // A = transparent
+        assert_eq!(pixels[2], 0); // Alpha high = transparent
+        assert_eq!(pixels[3], 0); // Alpha low = transparent
     }
 
     #[test]
@@ -808,16 +826,17 @@ mod tests {
 
         // Value below minimum should clamp to 0
         let data = vec![Some(-50.0)];
-        let pixels = encoder.encode_to_rgba(&data);
-        assert_eq!(pixels[0], 0); // R
-        assert_eq!(pixels[1], 0); // G
-        assert_eq!(pixels[3], 255); // A = valid (not masked)
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
+        assert_eq!(pixels[0], 0); // Gray high
+        assert_eq!(pixels[1], 0); // Gray low
+        assert_eq!(pixels[2], 0xFF); // Alpha high = valid (not masked)
+        assert_eq!(pixels[3], 0xFF); // Alpha low = valid (not masked)
 
         // Value above maximum should clamp to max
         let data = vec![Some(150.0)];
-        let pixels = encoder.encode_to_rgba(&data);
-        assert_eq!(pixels[0], 255); // R
-        assert_eq!(pixels[1], 255); // G
+        let pixels = encoder.encode_to_gray_alpha_16bit(&data);
+        assert_eq!(pixels[0], 255); // Gray high
+        assert_eq!(pixels[1], 255); // Gray low
     }
 
     #[test]

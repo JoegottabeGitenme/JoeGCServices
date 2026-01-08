@@ -602,6 +602,10 @@ start_services() {
     log_warn "Timeout waiting for services - they may still be starting"
     log_info "Check status with: ./scripts/deploy-remote.sh --status"
   fi
+  
+  # Restart nginx to ensure it picks up all upstream services
+  log_info "Restarting nginx to refresh upstream DNS..."
+  ssh_cmd "docker restart weather-wms-nginx"
 }
 
 # =============================================================================
@@ -751,6 +755,10 @@ do_rebuild() {
   log_info "Restarting services..."
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml down"
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d"
+  
+  # Restart nginx to refresh DNS cache and pick up config changes
+  log_info "Restarting nginx to refresh upstream DNS..."
+  ssh_cmd "docker restart weather-wms-nginx"
   
   log_success "Rebuild complete!"
 }
