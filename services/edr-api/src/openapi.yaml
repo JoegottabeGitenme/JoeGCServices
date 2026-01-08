@@ -14,12 +14,18 @@ info:
     ## Query Types
     
     The API supports the following EDR query patterns:
-    - **Position** - Point sampling at a single location
+    - **Position** - Point sampling at a single location (supports POINT and MULTIPOINT)
     - **Area** - Polygon-based spatial queries  
     - **Radius** - Circle queries around a point
     - **Trajectory** - Sampling along a path with time
     - **Corridor** - Buffered path queries
     - **Cube** - Bounding box with vertical/temporal extent
+    - **Locations** - Query data at named locations (airports, cities)
+    
+    ## Instances
+    
+    For forecast models (GFS, HRRR), data is organized by model run time (instance).
+    Each query endpoint has an instance variant that allows querying a specific model run.
     
   contact:
     name: Weather WMS Support
@@ -28,12 +34,40 @@ info:
     url: https://opensource.org/licenses/MIT
 
 servers:
-  - url: http://localhost:8083/edr
+  - url: http://localhost:8083
     description: Local development server
 
+tags:
+  - name: Core
+    description: Landing page, API definition, and conformance
+  - name: Collections
+    description: Collection metadata and discovery
+  - name: Position
+    description: Point-based queries
+  - name: Area
+    description: Polygon-based queries
+  - name: Radius
+    description: Circle queries around a point
+  - name: Trajectory
+    description: Path-based queries with time
+  - name: Corridor
+    description: Buffered path queries
+  - name: Cube
+    description: 3D bounding box queries
+  - name: Locations
+    description: Named location queries (airports, cities, etc.)
+  - name: Instances
+    description: Model run instances
+  - name: Health
+    description: Health and metrics endpoints
+
 paths:
-  /:
+  # =============================================================================
+  # Core Endpoints
+  # =============================================================================
+  /edr:
     get:
+      tags: [Core]
       operationId: getLandingPage
       summary: Landing page
       description: Returns the landing page with links to API resources
@@ -45,8 +79,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/LandingPage'
 
-  /api:
+  /edr/api:
     get:
+      tags: [Core]
       operationId: getApiDefinition
       summary: OpenAPI definition
       description: Returns the OpenAPI 3.0 definition for this API
@@ -54,12 +89,30 @@ paths:
         '200':
           description: OpenAPI definition
           content:
-            application/openapi+json;version=3.0:
+            application/vnd.oai.openapi+yaml;version=3.0:
+              schema:
+                type: string
+            application/json:
               schema:
                 type: object
 
-  /conformance:
+  /edr/api.html:
     get:
+      tags: [Core]
+      operationId: getApiHtml
+      summary: API documentation (HTML)
+      description: Returns an HTML page with Swagger UI for interactive API exploration
+      responses:
+        '200':
+          description: Swagger UI HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /edr/conformance:
+    get:
+      tags: [Core]
       operationId: getConformance
       summary: Conformance declaration
       description: Returns the conformance classes implemented by this API
@@ -71,8 +124,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conformance'
 
-  /collections:
+  # =============================================================================
+  # Collections
+  # =============================================================================
+  /edr/collections:
     get:
+      tags: [Collections]
       operationId: getCollections
       summary: List collections
       description: Returns metadata about all available data collections
@@ -84,8 +141,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Collections'
 
-  /collections/{collectionId}:
+  /edr/collections/{collectionId}:
     get:
+      tags: [Collections]
       operationId: getCollection
       summary: Get collection metadata
       description: Returns metadata about a specific collection
@@ -100,227 +158,25 @@ paths:
                 $ref: '#/components/schemas/Collection'
         '404':
           description: Collection not found
-
-  /collections/{collectionId}/position:
-    get:
-      operationId: getPosition
-      summary: Position query
-      description: Sample data at a single point location
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - $ref: '#/components/parameters/coords'
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-      responses:
-        '200':
-          description: Data at the specified position
           content:
-            application/prs.coverage+json:
+            application/json:
               schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
+                $ref: '#/components/schemas/ExceptionResponse'
 
-  /collections/{collectionId}/area:
+  # =============================================================================
+  # Instances
+  # =============================================================================
+  /edr/collections/{collectionId}/instances:
     get:
-      operationId: getArea
-      summary: Area query
-      description: Sample data within a polygon area
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - $ref: '#/components/parameters/coords'
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-        - $ref: '#/components/parameters/resolution-x'
-        - $ref: '#/components/parameters/resolution-y'
-      responses:
-        '200':
-          description: Data within the specified area
-          content:
-            application/prs.coverage+json:
-              schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
-
-  /collections/{collectionId}/radius:
-    get:
-      operationId: getRadius
-      summary: Radius query
-      description: Sample data within a radius of a point
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - $ref: '#/components/parameters/coords'
-        - name: within
-          in: query
-          required: true
-          style: form
-          explode: false
-          description: Radius distance
-          schema:
-            type: number
-        - name: within-units
-          in: query
-          required: false
-          style: form
-          explode: false
-          description: Units for radius (m, km, mi)
-          schema:
-            type: string
-            default: m
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-      responses:
-        '200':
-          description: Data within the specified radius
-          content:
-            application/prs.coverage+json:
-              schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
-
-  /collections/{collectionId}/trajectory:
-    get:
-      operationId: getTrajectory
-      summary: Trajectory query
-      description: Sample data along a path with time coordinates
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - $ref: '#/components/parameters/coords'
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-      responses:
-        '200':
-          description: Data along the trajectory
-          content:
-            application/prs.coverage+json:
-              schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
-
-  /collections/{collectionId}/corridor:
-    get:
-      operationId: getCorridor
-      summary: Corridor query
-      description: Sample data within a buffered path
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - $ref: '#/components/parameters/coords'
-        - name: corridor-width
-          in: query
-          required: true
-          style: form
-          explode: false
-          description: Width of the corridor
-          schema:
-            type: number
-        - name: width-units
-          in: query
-          required: false
-          style: form
-          explode: false
-          description: Units for corridor width
-          schema:
-            type: string
-            default: m
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-      responses:
-        '200':
-          description: Data within the corridor
-          content:
-            application/prs.coverage+json:
-              schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
-
-  /collections/{collectionId}/cube:
-    get:
-      operationId: getCube
-      summary: Cube query
-      description: Sample data within a bounding box with vertical and temporal extent
-      parameters:
-        - $ref: '#/components/parameters/collectionId'
-        - name: bbox
-          in: query
-          required: true
-          style: form
-          explode: false
-          description: Bounding box (minx,miny,maxx,maxy)
-          schema:
-            type: array
-            minItems: 4
-            maxItems: 6
-            items:
-              type: number
-        - $ref: '#/components/parameters/z'
-        - $ref: '#/components/parameters/datetime'
-        - $ref: '#/components/parameters/parameter-name'
-        - $ref: '#/components/parameters/crs'
-        - $ref: '#/components/parameters/f'
-      responses:
-        '200':
-          description: Data within the cube
-          content:
-            application/prs.coverage+json:
-              schema:
-                $ref: '#/components/schemas/CoverageJSON'
-            application/geo+json:
-              schema:
-                $ref: '#/components/schemas/GeoJSON'
-        '400':
-          description: Invalid request parameters
-        '404':
-          description: Collection not found
-
-  /collections/{collectionId}/instances:
-    get:
+      tags: [Instances]
       operationId: getInstances
       summary: List instances
-      description: Returns available instances (model runs) for a collection
+      description: |
+        Returns available instances (model runs) for a collection.
+        
+        For forecast models like GFS and HRRR, instances represent different
+        model initialization times (runs). Each instance contains forecasts
+        valid for different future times.
       parameters:
         - $ref: '#/components/parameters/collectionId'
       responses:
@@ -332,12 +188,17 @@ paths:
                 $ref: '#/components/schemas/Instances'
         '404':
           description: Collection not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExceptionResponse'
 
-  /collections/{collectionId}/instances/{instanceId}:
+  /edr/collections/{collectionId}/instances/{instanceId}:
     get:
+      tags: [Instances]
       operationId: getInstance
       summary: Get instance metadata
-      description: Returns metadata about a specific instance
+      description: Returns metadata about a specific instance (model run)
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/instanceId'
@@ -350,121 +211,895 @@ paths:
                 $ref: '#/components/schemas/Instance'
         '404':
           description: Instance not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExceptionResponse'
+
+  # =============================================================================
+  # Position Query
+  # =============================================================================
+  /edr/collections/{collectionId}/position:
+    get:
+      tags: [Position]
+      operationId: getPosition
+      summary: Position query
+      description: |
+        Sample data at a single point location or multiple points.
+        
+        Supports both POINT and MULTIPOINT WKT geometries:
+        - `POINT(-97.5 35.2)` - Single point
+        - `MULTIPOINT((-97.5 35.2), (-96.0 34.0))` - Multiple points
+        
+        Returns different CoverageJSON domain types based on query:
+        - Single point, single time: `Point`
+        - Single point, multiple times: `PointSeries`
+        - Single point, multiple z levels: `VerticalProfile`
+        - Multiple points: `CoverageCollection` with one Coverage per point
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/position:
+    get:
+      tags: [Position, Instances]
+      operationId: getInstancePosition
+      summary: Position query for a specific instance
+      description: Sample data at a point location from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Area Query
+  # =============================================================================
+  /edr/collections/{collectionId}/area:
+    get:
+      tags: [Area]
+      operationId: getArea
+      summary: Area query
+      description: |
+        Sample data within a polygon area.
+        
+        The coords parameter should contain a WKT POLYGON:
+        `POLYGON((-100 35, -95 35, -95 40, -100 40, -100 35))`
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+        - $ref: '#/components/parameters/resolution-x'
+        - $ref: '#/components/parameters/resolution-y'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/area:
+    get:
+      tags: [Area, Instances]
+      operationId: getInstanceArea
+      summary: Area query for a specific instance
+      description: Sample data within a polygon area from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+        - $ref: '#/components/parameters/resolution-x'
+        - $ref: '#/components/parameters/resolution-y'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Radius Query
+  # =============================================================================
+  /edr/collections/{collectionId}/radius:
+    get:
+      tags: [Radius]
+      operationId: getRadius
+      summary: Radius query
+      description: Sample data within a radius of a point
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - name: within
+          in: query
+          required: true
+          description: Radius distance from the center point
+          schema:
+            type: number
+            example: 100
+        - name: within-units
+          in: query
+          required: false
+          description: Units for the radius distance
+          schema:
+            type: string
+            enum: [m, km, mi]
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/radius:
+    get:
+      tags: [Radius, Instances]
+      operationId: getInstanceRadius
+      summary: Radius query for a specific instance
+      description: Sample data within a radius from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/coords'
+        - name: within
+          in: query
+          required: true
+          description: Radius distance from the center point
+          schema:
+            type: number
+        - name: within-units
+          in: query
+          required: false
+          description: Units for the radius distance
+          schema:
+            type: string
+            enum: [m, km, mi]
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Trajectory Query
+  # =============================================================================
+  /edr/collections/{collectionId}/trajectory:
+    get:
+      tags: [Trajectory]
+      operationId: getTrajectory
+      summary: Trajectory query
+      description: |
+        Sample data along a path with optional time coordinates.
+        
+        The coords parameter should contain a WKT LINESTRING:
+        `LINESTRING(-100 35, -97 36, -95 37)`
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/trajectory:
+    get:
+      tags: [Trajectory, Instances]
+      operationId: getInstanceTrajectory
+      summary: Trajectory query for a specific instance
+      description: Sample data along a path from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/coords'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Corridor Query
+  # =============================================================================
+  /edr/collections/{collectionId}/corridor:
+    get:
+      tags: [Corridor]
+      operationId: getCorridor
+      summary: Corridor query
+      description: |
+        Sample data within a buffered path (corridor).
+        
+        A corridor is a path with a specified width, creating a buffer zone
+        around the trajectory line.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/coords'
+        - name: corridor-width
+          in: query
+          required: true
+          description: Width of the corridor (total width, not radius)
+          schema:
+            type: number
+            example: 10
+        - name: width-units
+          in: query
+          required: false
+          description: Units for the corridor width
+          schema:
+            type: string
+            enum: [m, km, mi]
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/corridor:
+    get:
+      tags: [Corridor, Instances]
+      operationId: getInstanceCorridor
+      summary: Corridor query for a specific instance
+      description: Sample data within a buffered path from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/coords'
+        - name: corridor-width
+          in: query
+          required: true
+          description: Width of the corridor
+          schema:
+            type: number
+        - name: width-units
+          in: query
+          required: false
+          description: Units for the corridor width
+          schema:
+            type: string
+            enum: [m, km, mi]
+            default: m
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Cube Query
+  # =============================================================================
+  /edr/collections/{collectionId}/cube:
+    get:
+      tags: [Cube]
+      operationId: getCube
+      summary: Cube query
+      description: |
+        Sample data within a 3D bounding box with vertical and temporal extent.
+        
+        Per OGC EDR spec, both `bbox` and `z` parameters are REQUIRED for cube queries.
+        
+        Returns a CoverageCollection with one Coverage per z-level, each containing
+        a Grid domain with the requested parameters.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: bbox
+          in: query
+          required: true
+          style: form
+          explode: false
+          description: |
+            Bounding box as west,south,east,north (minx,miny,maxx,maxy).
+            Example: `-100,35,-95,40`
+          schema:
+            type: string
+          example: "-100,35,-95,40"
+        - name: z
+          in: query
+          required: true
+          description: |
+            Vertical level(s). REQUIRED for cube queries. Supports:
+            - Single value: `850`
+            - List: `1000,850,500`
+            - Range: `1000/500`
+          schema:
+            type: string
+          example: "850,700,500"
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+        - name: resolution-x
+          in: query
+          required: false
+          description: Number of grid points along x-axis (0 or omit for native resolution)
+          schema:
+            type: integer
+            minimum: 0
+        - name: resolution-y
+          in: query
+          required: false
+          description: Number of grid points along y-axis (0 or omit for native resolution)
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/cube:
+    get:
+      tags: [Cube, Instances]
+      operationId: getInstanceCube
+      summary: Cube query for a specific instance
+      description: Sample data within a 3D bounding box from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - name: bbox
+          in: query
+          required: true
+          style: form
+          explode: false
+          description: Bounding box as west,south,east,north
+          schema:
+            type: string
+        - name: z
+          in: query
+          required: true
+          description: Vertical level(s) - REQUIRED for cube queries
+          schema:
+            type: string
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+        - name: resolution-x
+          in: query
+          required: false
+          description: Number of grid points along x-axis
+          schema:
+            type: integer
+            minimum: 0
+        - name: resolution-y
+          in: query
+          required: false
+          description: Number of grid points along y-axis
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Locations Query
+  # =============================================================================
+  /edr/collections/{collectionId}/locations:
+    get:
+      tags: [Locations]
+      operationId: getLocations
+      summary: List named locations
+      description: |
+        Returns a GeoJSON FeatureCollection of all available named locations.
+        
+        Named locations include airports (by ICAO code), cities, and other
+        predefined points of interest. Use the location ID to query data
+        at that location without needing to know the coordinates.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: f
+          in: query
+          required: false
+          description: Output format
+          schema:
+            type: string
+            enum: [json, application/json, application/geo+json]
+            default: application/geo+json
+      responses:
+        '200':
+          description: List of named locations
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/LocationsGeoJSON'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationsGeoJSON'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /edr/collections/{collectionId}/locations/{locationId}:
+    get:
+      tags: [Locations]
+      operationId: getLocationData
+      summary: Query data at a named location
+      description: |
+        Query weather data at a specific named location.
+        
+        This is equivalent to a position query but uses a human-readable
+        location identifier instead of coordinates.
+        
+        **Example location IDs:**
+        - `KJFK` - JFK Airport, New York
+        - `KLAX` - LAX Airport, Los Angeles
+        - `KORD` - O'Hare Airport, Chicago
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/locationId'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/locations:
+    get:
+      tags: [Locations, Instances]
+      operationId: getInstanceLocations
+      summary: List named locations for an instance
+      description: Returns available named locations (same as collection-level)
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - name: f
+          in: query
+          required: false
+          description: Output format
+          schema:
+            type: string
+            enum: [json, application/json, application/geo+json]
+            default: application/geo+json
+      responses:
+        '200':
+          description: List of named locations
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/LocationsGeoJSON'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /edr/collections/{collectionId}/instances/{instanceId}/locations/{locationId}:
+    get:
+      tags: [Locations, Instances]
+      operationId: getInstanceLocationData
+      summary: Query data at a named location for a specific instance
+      description: Query weather data at a named location from a specific model run
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - $ref: '#/components/parameters/instanceId'
+        - $ref: '#/components/parameters/locationId'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/f'
+      responses:
+        '200':
+          $ref: '#/components/responses/CoverageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  # =============================================================================
+  # Health and Metrics
+  # =============================================================================
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Health check
+      description: Returns the health status of the service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+              example:
+                status: healthy
+                timestamp: "2024-01-15T12:00:00Z"
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: getReady
+      summary: Readiness check
+      description: Returns whether the service is ready to accept requests
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+                  catalog_connected:
+                    type: boolean
+              example:
+                status: ready
+                catalog_connected: true
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [not_ready]
+                  reason:
+                    type: string
+
+  /metrics:
+    get:
+      tags: [Health]
+      operationId: getMetrics
+      summary: Prometheus metrics
+      description: Returns Prometheus-format metrics for monitoring
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # =============================================================================
+  # Catalog Check (Internal)
+  # =============================================================================
+  /edr/catalog-check:
+    get:
+      tags: [Health]
+      operationId: getCatalogCheck
+      summary: Catalog validation check
+      description: |
+        Returns validation status of the EDR collections against the data catalog.
+        Useful for verifying that configured collections have corresponding data.
+      responses:
+        '200':
+          description: Catalog validation results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  collections_checked:
+                    type: integer
+                  collections_with_data:
+                    type: integer
+                  details:
+                    type: array
+                    items:
+                      type: object
 
 components:
+  # ===========================================================================
+  # Parameters
+  # ===========================================================================
   parameters:
     collectionId:
       name: collectionId
       in: path
       required: true
-      description: Collection identifier
+      description: |
+        Collection identifier. Available collections include:
+        - `gfs-surface` - GFS surface parameters
+        - `gfs-pressure` - GFS pressure level parameters
+        - `hrrr-surface` - HRRR surface parameters
+        - `goes16-abi` - GOES-16 ABI imagery
+        - `mrms-precip` - MRMS precipitation products
       schema:
         type: string
+      example: gfs-surface
 
     instanceId:
       name: instanceId
       in: path
       required: true
-      description: Instance identifier
+      description: |
+        Instance identifier (model run time) in ISO 8601 format.
+        Example: `2024-01-15T12:00:00Z`
       schema:
         type: string
+        format: date-time
+      example: "2024-01-15T12:00:00Z"
+
+    locationId:
+      name: locationId
+      in: path
+      required: true
+      description: |
+        Named location identifier (e.g., ICAO airport code).
+        Use GET /collections/{id}/locations to list available locations.
+      schema:
+        type: string
+      example: KJFK
 
     coords:
       name: coords
       in: query
       required: true
-      style: form
-      explode: false
       description: |
-        Well-Known Text (WKT) geometry:
-        - Position: POINT(lon lat)
-        - Area: POLYGON((lon1 lat1, lon2 lat2, ...))
-        - Trajectory: LINESTRING(lon1 lat1, lon2 lat2, ...)
+        Well-Known Text (WKT) geometry. The geometry type depends on the query:
+        - **Position**: `POINT(lon lat)` or `MULTIPOINT((lon1 lat1), (lon2 lat2))`
+        - **Area**: `POLYGON((lon1 lat1, lon2 lat2, lon3 lat3, lon1 lat1))`
+        - **Trajectory/Corridor**: `LINESTRING(lon1 lat1, lon2 lat2, lon3 lat3)`
+        
+        Coordinates are in WGS84 (lon, lat) order.
       schema:
         type: string
+      example: "POINT(-97.5 35.2)"
 
     z:
       name: z
       in: query
       required: false
-      style: form
-      explode: false
       description: |
-        Vertical level(s). Supports:
-        - Single value: 850
-        - List: 1000,850,500
-        - Range: 1000/500
-        - Recurring: R5/1000/100
+        Vertical level(s). Supports multiple formats:
+        - Single value: `850` (pressure in mb) or `2` (height in m)
+        - Comma-separated list: `1000,850,500`
+        - Range: `1000/500` (from 1000 to 500)
+        - Recurring interval: `R5/1000/100` (5 values starting at 1000, step 100)
+        
+        The units depend on the collection's vertical coordinate system.
       schema:
         type: string
+      example: "850"
 
     datetime:
       name: datetime
       in: query
       required: false
-      style: form
-      explode: false
       description: |
-        Temporal extent. Supports:
-        - Single instant: 2024-01-01T00:00:00Z
-        - Interval: 2024-01-01T00:00:00Z/2024-01-02T00:00:00Z
-        - Open-ended: ../2024-01-01T00:00:00Z or 2024-01-01T00:00:00Z/..
+        Temporal extent in ISO 8601 format. Supports:
+        - Single instant: `2024-01-15T12:00:00Z`
+        - Closed interval: `2024-01-15T00:00:00Z/2024-01-15T23:59:59Z`
+        - Open start: `../2024-01-15T12:00:00Z`
+        - Open end: `2024-01-15T00:00:00Z/..`
+        - Comma-separated list: `2024-01-15T12:00:00Z,2024-01-15T18:00:00Z`
       schema:
         type: string
+      example: "2024-01-15T12:00:00Z"
 
     parameter-name:
       name: parameter-name
       in: query
       required: false
-      style: form
-      explode: false
-      description: Comma-separated list of parameter names to return
+      description: |
+        Comma-separated list of parameter names to return.
+        If not specified, all parameters in the collection are returned.
+        
+        Example parameters: `TMP`, `UGRD,VGRD`, `PRES`
       schema:
         type: string
+      example: "TMP"
 
     crs:
       name: crs
       in: query
       required: false
-      style: form
-      explode: false
-      description: Coordinate reference system (default CRS84)
+      description: Coordinate reference system for the response
       schema:
         type: string
         default: http://www.opengis.net/def/crs/OGC/1.3/CRS84
+      example: "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
 
     f:
       name: f
       in: query
       required: false
-      style: form
-      explode: false
-      description: Response format
+      description: |
+        Response format. Also supports Accept header content negotiation.
+        
+        Supported values:
+        - `CoverageJSON` or `application/prs.coverage+json`
+        - `GeoJSON` or `application/geo+json`
+        - `json` (defaults to CoverageJSON)
       schema:
         type: string
-        enum: [CoverageJSON, GeoJSON, json]
+        enum:
+          - CoverageJSON
+          - GeoJSON
+          - json
+          - application/prs.coverage+json
+          - application/geo+json
         default: CoverageJSON
 
     resolution-x:
       name: resolution-x
       in: query
       required: false
-      style: form
-      explode: false
-      description: Horizontal resolution for area queries
+      description: |
+        Number of grid points along the x-axis for area/cube queries.
+        Use 0 or omit for native resolution.
       schema:
-        type: number
+        type: integer
+        minimum: 0
 
     resolution-y:
       name: resolution-y
       in: query
       required: false
-      style: form
-      explode: false
-      description: Vertical resolution for area queries
+      description: |
+        Number of grid points along the y-axis for area/cube queries.
+        Use 0 or omit for native resolution.
       schema:
-        type: number
+        type: integer
+        minimum: 0
 
+  # ===========================================================================
+  # Responses
+  # ===========================================================================
+  responses:
+    CoverageResponse:
+      description: Coverage data response
+      content:
+        application/prs.coverage+json:
+          schema:
+            $ref: '#/components/schemas/CoverageJSON'
+        application/geo+json:
+          schema:
+            $ref: '#/components/schemas/GeoJSON'
+
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ExceptionResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ExceptionResponse'
+
+    PayloadTooLarge:
+      description: Request exceeds size limits
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ExceptionResponse'
+
+  # ===========================================================================
+  # Schemas
+  # ===========================================================================
   schemas:
     LandingPage:
       type: object
@@ -474,8 +1109,10 @@ components:
       properties:
         title:
           type: string
+          example: "Weather EDR API"
         description:
           type: string
+          example: "OGC API - Environmental Data Retrieval for weather model data"
         links:
           type: array
           items:
@@ -492,10 +1129,18 @@ components:
           format: uri
         rel:
           type: string
+          description: Link relation type
         type:
           type: string
+          description: Media type
         title:
           type: string
+          description: Human-readable title
+      example:
+        href: "http://localhost:8083/edr/collections"
+        rel: "data"
+        type: "application/json"
+        title: "Collections"
 
     Conformance:
       type: object
@@ -507,6 +1152,9 @@ components:
           items:
             type: string
             format: uri
+          example:
+            - "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/core"
+            - "http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/collections"
 
     Collections:
       type: object
@@ -539,8 +1187,10 @@ components:
           $ref: '#/components/schemas/Extent'
         data_queries:
           type: object
+          description: Available query types for this collection
         parameter_names:
           type: object
+          description: Available parameters
         output_formats:
           type: array
           items:
@@ -578,6 +1228,7 @@ components:
                 items:
                   type: string
                   format: date-time
+                  nullable: true
             trs:
               type: string
         vertical:
@@ -614,6 +1265,7 @@ components:
       properties:
         id:
           type: string
+          description: Instance ID (model run time in ISO 8601 format)
         title:
           type: string
         description:
@@ -627,17 +1279,30 @@ components:
 
     CoverageJSON:
       type: object
-      description: CoverageJSON document
+      description: |
+        CoverageJSON document per the CoverageJSON specification.
+        Can be either a single Coverage or a CoverageCollection.
       properties:
         type:
           type: string
           enum: [Coverage, CoverageCollection]
+        domainType:
+          type: string
+          enum: [Point, PointSeries, VerticalProfile, Grid, Trajectory]
         domain:
           type: object
+          description: Domain definition with axes and referencing
         parameters:
           type: object
+          description: Parameter definitions with units
         ranges:
           type: object
+          description: Data values as NdArrays
+        coverages:
+          type: array
+          description: For CoverageCollection, array of Coverage objects
+          items:
+            type: object
 
     GeoJSON:
       type: object
@@ -650,3 +1315,74 @@ components:
           type: array
           items:
             type: object
+            properties:
+              type:
+                type: string
+                enum: [Feature]
+              geometry:
+                type: object
+              properties:
+                type: object
+
+    LocationsGeoJSON:
+      type: object
+      description: GeoJSON FeatureCollection of named locations
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [Feature]
+              id:
+                type: string
+                description: Location identifier (e.g., ICAO code)
+              geometry:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [Point]
+                  coordinates:
+                    type: array
+                    items:
+                      type: number
+                    minItems: 2
+                    maxItems: 2
+              properties:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: Human-readable location name
+                  description:
+                    type: string
+      example:
+        type: FeatureCollection
+        features:
+          - type: Feature
+            id: "KJFK"
+            geometry:
+              type: Point
+              coordinates: [-73.7781, 40.6413]
+            properties:
+              name: "JFK International Airport"
+
+    ExceptionResponse:
+      type: object
+      description: OGC API exception response
+      properties:
+        code:
+          type: string
+          description: Exception code
+        description:
+          type: string
+          description: Human-readable error message
+      example:
+        code: "InvalidParameterValue"
+        description: "Invalid coordinates format"
