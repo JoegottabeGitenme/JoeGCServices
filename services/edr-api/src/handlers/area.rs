@@ -11,6 +11,7 @@ use edr_protocol::{
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
 use grid_processor::{BoundingBox, DatasetQuery};
+use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -19,6 +20,42 @@ use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
+
+/// Resample data using nearest-neighbor interpolation.
+///
+/// This is fast and preserves discrete values well. For smoother results
+/// with continuous data like temperature, bilinear interpolation would be better.
+///
+/// TODO: Add bilinear interpolation option for parameters that benefit from smoothing.
+fn resample_nearest(
+    data: &[Option<f32>],
+    src_width: usize,
+    src_height: usize,
+    dst_width: usize,
+    dst_height: usize,
+) -> Vec<Option<f32>> {
+    let mut result = Vec::with_capacity(dst_width * dst_height);
+
+    for dst_y in 0..dst_height {
+        for dst_x in 0..dst_width {
+            // Map destination pixel to source pixel (nearest neighbor)
+            let src_x = (dst_x as f64 * src_width as f64 / dst_width as f64) as usize;
+            let src_y = (dst_y as f64 * src_height as f64 / dst_height as f64) as usize;
+
+            // Clamp to valid range
+            let src_x = src_x.min(src_width - 1);
+            let src_y = src_y.min(src_height - 1);
+
+            let src_idx = src_y * src_width + src_x;
+            result.push(data[src_idx]);
+        }
+    }
+
+    result
+}
+
+/// Maximum allowed PNG dimension (width or height)
+const MAX_PNG_DIMENSION: usize = 4096;
 
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
@@ -41,6 +78,19 @@ pub struct AreaQueryParams {
 
     /// Output format.
     pub f: Option<String>,
+
+    /// Requested output width in pixels (PNG only, max 4096).
+    /// If specified, height must also be specified.
+    pub width: Option<u32>,
+
+    /// Requested output height in pixels (PNG only, max 4096).
+    /// If specified, width must also be specified.
+    pub height: Option<u32>,
+
+    /// PNG encoding bit depth (PNG only).
+    /// - `16` (default): 16-bit precision using RG channels (65536 values)
+    /// - `8`: 8-bit grayscale+alpha (256 values, ~50% smaller files)
+    pub depth: Option<u8>,
 }
 
 /// GET /edr/collections/:collection_id/area
@@ -142,8 +192,17 @@ async fn area_query(
         .collect();
 
     // Check area size limit
+    // Use higher limit for PNG queries (typically used for large regional coverage)
     let area_sq_degrees = area_query_struct.area_sq_degrees();
-    let max_area = model_config.limits.max_area_sq_degrees.unwrap_or(100.0);
+    let max_area = if output_format == OutputFormat::Png {
+        model_config
+            .limits
+            .max_area_sq_degrees_png
+            .or(model_config.limits.max_area_sq_degrees)
+            .unwrap_or(100.0)
+    } else {
+        model_config.limits.max_area_sq_degrees.unwrap_or(100.0)
+    };
     if area_sq_degrees > max_area {
         return error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -229,6 +288,58 @@ async fn area_query(
         requested_params
     };
 
+    // PNG output requires exactly one parameter
+    if output_format == OutputFormat::Png && params_to_query.len() != 1 {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(format!(
+                "PNG output requires exactly one parameter. Use parameter-name to select a single parameter. Requested: {}",
+                if params_to_query.is_empty() { "none".to_string() } else { params_to_query.join(", ") }
+            )),
+        );
+    }
+
+    // Validate width/height parameters (PNG only)
+    let requested_dimensions: Option<(usize, usize)> = match (params.width, params.height) {
+        (Some(w), Some(h)) => {
+            if output_format != OutputFormat::Png {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(
+                        "width and height parameters are only supported for PNG output (f=png)",
+                    ),
+                );
+            }
+            let w = w as usize;
+            let h = h as usize;
+            if w == 0 || h == 0 {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request("width and height must be greater than 0"),
+                );
+            }
+            if w > MAX_PNG_DIMENSION || h > MAX_PNG_DIMENSION {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "width and height must not exceed {}. Requested: {}x{}",
+                        MAX_PNG_DIMENSION, w, h
+                    )),
+                );
+            }
+            Some((w, h))
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(
+                    "Both width and height must be specified together, or neither",
+                ),
+            );
+        }
+        (None, None) => None,
+    };
+
     // Get the bbox of the polygon for grid queries
     let bbox = area_query_struct.bbox();
 
@@ -264,22 +375,25 @@ async fn area_query(
         time_strings.len()
     };
 
-    // Estimate grid size based on bbox (assume ~0.03 degree resolution for HRRR, ~0.25 for GFS)
-    let resolution = 0.05; // Conservative estimate
+    // Check response size limits (skip for PNG - binary PNG is much smaller than JSON)
+    if output_format != OutputFormat::Png {
+        // Estimate grid size based on bbox (assume ~0.03 degree resolution for HRRR, ~0.25 for GFS)
+        let resolution = 0.05; // Conservative estimate
 
-    let estimate = ResponseSizeEstimate::for_area(
-        params_to_query.len(),
-        num_times,
-        num_levels,
-        area_sq_degrees,
-        resolution,
-    );
-
-    if let Err(limit_err) = estimate.check_limits(&model_config.limits) {
-        return error_response(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            ExceptionResponse::payload_too_large(limit_err.to_string()),
+        let estimate = ResponseSizeEstimate::for_area(
+            params_to_query.len(),
+            num_times,
+            num_levels,
+            area_sq_degrees,
+            resolution,
         );
+
+        if let Err(limit_err) = estimate.check_limits(&model_config.limits) {
+            return error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ExceptionResponse::payload_too_large(limit_err.to_string()),
+            );
+        }
     }
 
     // Parse instance_id if provided and validate it exists
@@ -528,38 +642,246 @@ async fn area_query(
     }
 
     // Serialize response based on requested format
-    let (json, content_type) = match output_format {
+    match output_format {
+        OutputFormat::Png => {
+            // PNG output - encode data as 16-bit PNG for GPU shaders
+            // We already validated that there's exactly one parameter
+            //
+            // Note: The query-building logic below mirrors the JSON path above (lines ~436-449).
+            // While this is duplication, extracting it adds complexity since:
+            // - JSON path iterates multiple parameters in a loop with different error handling
+            // - PNG path handles exactly one parameter with different response formatting
+            // The duplication is intentional to keep each code path self-contained and readable.
+            let param_name = &params_to_query[0];
+
+            // Find the parameter definition for units
+            let param_def = collection_def
+                .parameters
+                .iter()
+                .find(|p| p.name == *param_name);
+
+            // Build the level string
+            let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
+
+            // Build the DatasetQuery
+            let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+
+            if let Some(level) = &level_str {
+                query = query.at_level(level);
+            }
+
+            if let Some(valid_time) = query_time {
+                query = query.at_valid_time(valid_time);
+            }
+
+            if let Some(ref_time) = reference_time {
+                query = query.at_run(ref_time);
+            }
+
+            // Get metadata for units
+            let metadata = state.grid_data_service.get_metadata(&query).await.ok();
+            let units_str = metadata
+                .as_ref()
+                .map(|m| m.units.clone())
+                .unwrap_or_default();
+
+            // Read the region for this parameter
+            let param_region = match state
+                .grid_data_service
+                .read_region(&query, &grid_bbox, None)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Failed to read region for PNG: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error(format!("Failed to read data: {}", e)),
+                    );
+                }
+            };
+
+            // Apply polygon mask - set values outside polygon to None
+            let mut masked_data: Vec<Option<f32>> = Vec::with_capacity(param_region.data.len());
+
+            for (idx, &value) in param_region.data.iter().enumerate() {
+                let row = idx / param_region.width;
+                let col = idx % param_region.width;
+
+                // Calculate lon/lat for this grid cell
+                let lon =
+                    param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
+                let lat =
+                    param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
+
+                // Normalize longitude to -180/180 range for polygon comparison
+                // (grid may use 0-360 convention like GFS)
+                let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
+                // Check if point is inside any polygon
+                let inside_any = all_area_queries
+                    .iter()
+                    .any(|aq| aq.contains_point(lon_normalized, lat));
+                if inside_any && !value.is_nan() {
+                    masked_data.push(Some(value));
+                } else {
+                    masked_data.push(None);
+                }
+            }
+
+            // Compute value range from the source data (before resampling)
+            let (min_val, max_val) = compute_data_range(&masked_data);
+
+            // Apply resampling if requested dimensions differ from source
+            let (output_data, output_width, output_height) =
+                if let Some((req_width, req_height)) = requested_dimensions {
+                    if req_width != param_region.width || req_height != param_region.height {
+                        let resampled = resample_nearest(
+                            &masked_data,
+                            param_region.width,
+                            param_region.height,
+                            req_width,
+                            req_height,
+                        );
+                        (resampled, req_width, req_height)
+                    } else {
+                        (masked_data, param_region.width, param_region.height)
+                    }
+                } else {
+                    (masked_data, param_region.width, param_region.height)
+                };
+
+            // Determine encoding bit depth (default to 16-bit)
+            let use_8bit = params.depth == Some(8);
+            if let Some(depth) = params.depth {
+                if depth != 8 && depth != 16 {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(format!(
+                            "Invalid depth value: {}. Must be 8 or 16.",
+                            depth
+                        )),
+                    );
+                }
+            }
+
+            let png_bbox = [
+                param_region.bbox.min_lon,
+                param_region.bbox.min_lat,
+                param_region.bbox.max_lon,
+                param_region.bbox.max_lat,
+            ];
+
+            // Encode to PNG using appropriate encoder
+            let (png_bytes, encoding_name) = if use_8bit {
+                // 8-bit grayscale+alpha (~50% smaller, 256 values)
+                let encoder = DataPng8BitEncoder::new(min_val, max_val);
+                match encoder.encode_with_metadata(
+                    &output_data,
+                    output_width,
+                    output_height,
+                    param_name,
+                    &units_str,
+                    png_bbox,
+                ) {
+                    Ok(e) => (e.png_bytes, "uint8"),
+                    Err(e) => {
+                        tracing::error!("Failed to encode 8-bit PNG: {}", e);
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            ExceptionResponse::internal_error(format!(
+                                "Failed to encode PNG: {}",
+                                e
+                            )),
+                        );
+                    }
+                }
+            } else {
+                // 16-bit RGBA (default, 65536 values)
+                let encoder = DataPngEncoder::new(min_val, max_val);
+                match encoder.encode_with_metadata(
+                    &output_data,
+                    output_width,
+                    output_height,
+                    param_name,
+                    &units_str,
+                    png_bbox,
+                ) {
+                    Ok(e) => (e.png_bytes, "uint16"),
+                    Err(e) => {
+                        tracing::error!("Failed to encode 16-bit PNG: {}", e);
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            ExceptionResponse::internal_error(format!(
+                                "Failed to encode PNG: {}",
+                                e
+                            )),
+                        );
+                    }
+                }
+            };
+
+            // Build response with metadata headers
+            // Use per-model cache policy for PNG responses
+            let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(
+                    header::CACHE_CONTROL,
+                    format!("max-age={}", png_cache_max_age),
+                )
+                .header("X-EDR-Parameter", param_name.as_str())
+                .header("X-EDR-Units", &units_str)
+                .header("X-EDR-Min", format!("{}", min_val))
+                .header("X-EDR-Max", format!("{}", max_val))
+                .header("X-EDR-Encoding", encoding_name)
+                .header(
+                    "X-EDR-BBox",
+                    format!(
+                        "{},{},{},{}",
+                        png_bbox[0], png_bbox[1], png_bbox[2], png_bbox[3]
+                    ),
+                )
+                .header("X-EDR-Width", format!("{}", output_width))
+                .header("X-EDR-Height", format!("{}", output_height))
+                .body(png_bytes.into())
+                .unwrap()
+        }
         OutputFormat::GeoJson => {
             let geojson = EdrFeatureCollection::from(&coverage);
             match serde_json::to_string_pretty(&geojson) {
-                Ok(j) => (j, output_format.content_type()),
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, output_format.content_type())
+                    .header(header::CACHE_CONTROL, "max-age=300")
+                    .body(json.into())
+                    .unwrap(),
                 Err(e) => {
                     tracing::error!("Failed to serialize GeoJSON: {}", e);
-                    return error_response(
+                    error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         ExceptionResponse::internal_error("Failed to serialize response"),
-                    );
+                    )
                 }
             }
         }
         OutputFormat::CoverageJson => match serde_json::to_string_pretty(&coverage) {
-            Ok(j) => (j, output_format.content_type()),
+            Ok(json) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, output_format.content_type())
+                .header(header::CACHE_CONTROL, "max-age=300")
+                .body(json.into())
+                .unwrap(),
             Err(e) => {
                 tracing::error!("Failed to serialize CoverageJSON: {}", e);
-                return error_response(
+                error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ExceptionResponse::internal_error("Failed to serialize response"),
-                );
+                )
             }
         },
-    };
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "max-age=300")
-        .body(json.into())
-        .unwrap()
+    }
 }
 
 /// Build a catalog-compatible level string from EDR config.
@@ -680,5 +1002,156 @@ mod tests {
 
         assert!(area_query.contains_point(-99.0, 36.0));
         assert!(!area_query.contains_point(-101.0, 36.0));
+    }
+
+    #[test]
+    fn test_png_encoder_integration() {
+        // Test that the PNG encoder works with typical area query data
+        let data: Vec<Option<f32>> = vec![
+            Some(10.0),
+            Some(15.0),
+            None, // Outside polygon
+            Some(20.0),
+            Some(12.5),
+            Some(17.5),
+            None,
+            Some(22.5),
+            Some(11.0),
+        ];
+
+        let (min_val, max_val) = compute_data_range(&data);
+        assert_eq!(min_val, 10.0);
+        assert_eq!(max_val, 22.5);
+
+        let encoder = DataPngEncoder::new(min_val, max_val);
+        let result = encoder.encode_with_metadata(
+            &data,
+            3,
+            3,
+            "temperature",
+            "K",
+            [-100.0, 35.0, -98.0, 37.0],
+        );
+
+        assert!(result.is_ok());
+        let encoded = result.unwrap();
+
+        // Verify PNG signature
+        assert_eq!(&encoded.png_bytes[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+
+        // Verify metadata
+        assert_eq!(encoded.metadata.parameter_name, "temperature");
+        assert_eq!(encoded.metadata.units, "K");
+        assert_eq!(encoded.metadata.width, 3);
+        assert_eq!(encoded.metadata.height, 3);
+    }
+
+    #[test]
+    fn test_png_encoder_all_null_data() {
+        // Test handling of completely masked/no-data regions
+        let data: Vec<Option<f32>> = vec![None, None, None, None];
+
+        let (min_val, max_val) = compute_data_range(&data);
+        // Should use default range for all-null data
+        assert_eq!(min_val, 0.0);
+        assert_eq!(max_val, 1.0);
+
+        let encoder = DataPngEncoder::new(min_val, max_val);
+        let result = encoder.encode(&data, 2, 2);
+
+        assert!(result.is_ok());
+        // Should produce a valid (transparent) PNG
+        let encoded = result.unwrap();
+        assert!(!encoded.png_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_resample_nearest_upsample() {
+        // 2x2 -> 4x4 (double size)
+        let data: Vec<Option<f32>> = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 4, 4);
+        assert_eq!(result.len(), 16);
+
+        // Top-left quadrant should all be 1.0
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(1.0));
+        assert_eq!(result[4], Some(1.0));
+        assert_eq!(result[5], Some(1.0));
+
+        // Bottom-right quadrant should all be 4.0
+        assert_eq!(result[10], Some(4.0));
+        assert_eq!(result[11], Some(4.0));
+        assert_eq!(result[14], Some(4.0));
+        assert_eq!(result[15], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_downsample() {
+        // 4x4 -> 2x2 (half size)
+        let data: Vec<Option<f32>> = vec![
+            Some(1.0),
+            Some(1.0),
+            Some(2.0),
+            Some(2.0),
+            Some(1.0),
+            Some(1.0),
+            Some(2.0),
+            Some(2.0),
+            Some(3.0),
+            Some(3.0),
+            Some(4.0),
+            Some(4.0),
+            Some(3.0),
+            Some(3.0),
+            Some(4.0),
+            Some(4.0),
+        ];
+
+        let result = resample_nearest(&data, 4, 4, 2, 2);
+        assert_eq!(result.len(), 4);
+
+        // Should pick center-ish pixels
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(2.0));
+        assert_eq!(result[2], Some(3.0));
+        assert_eq!(result[3], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_preserves_none() {
+        // Ensure None values are preserved through resampling
+        let data: Vec<Option<f32>> = vec![Some(1.0), None, None, Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 4, 4);
+        assert_eq!(result.len(), 16);
+
+        // Top-left should be Some(1.0)
+        assert_eq!(result[0], Some(1.0));
+
+        // Top-right quadrant should be None
+        assert_eq!(result[2], None);
+        assert_eq!(result[3], None);
+
+        // Bottom-right should be Some(4.0)
+        assert_eq!(result[15], Some(4.0));
+    }
+
+    #[test]
+    fn test_resample_nearest_same_size() {
+        // Same size should return equivalent data
+        let data: Vec<Option<f32>> = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+
+        let result = resample_nearest(&data, 2, 2, 2, 2);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], Some(1.0));
+        assert_eq!(result[1], Some(2.0));
+        assert_eq!(result[2], Some(3.0));
+        assert_eq!(result[3], Some(4.0));
+    }
+
+    #[test]
+    fn test_max_png_dimension_constant() {
+        assert_eq!(MAX_PNG_DIMENSION, 4096);
     }
 }

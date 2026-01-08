@@ -630,6 +630,129 @@ stress_test_queries:
     weight: 0.3
     description: "HEAVY: Corridor at all 7 pressure levels"
 
+# =============================================================================
+# PNG OUTPUT SCENARIOS - GPU Shader Data Encoding
+# =============================================================================
+# These scenarios test PNG output for area queries, returning 16-bit encoded
+# data for GPU shader consumption. PNG output requires exactly one parameter.
+#
+# PNG encoding:
+# - R+G channels: 16-bit normalized value (R=high byte, G=low byte)
+# - A channel: Data validity mask (255=valid, 0=no data/outside polygon)
+#
+# Response headers include encoding metadata:
+# - X-EDR-Parameter, X-EDR-Units, X-EDR-Min, X-EDR-Max
+# - X-EDR-BBox, X-EDR-Width, X-EDR-Height, X-EDR-Encoding
+
+png_area_queries:
+  # Basic PNG area query - temperature
+  - name: png_area_temperature
+    collection: hrrr-surface
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP"]
+    format: png
+    weight: 2.0
+    expected_content_type: image/png
+    description: "1x1 degree temperature PNG for shader"
+    
+  # PNG area query - wind component U
+  - name: png_area_wind_u
+    collection: hrrr-height-agl
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["UGRD"]
+    format: png
+    weight: 1.5
+    expected_content_type: image/png
+    description: "1x1 degree U wind component PNG"
+    
+  # PNG area query - wind component V
+  - name: png_area_wind_v
+    collection: hrrr-height-agl
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["VGRD"]
+    format: png
+    weight: 1.5
+    expected_content_type: image/png
+    description: "1x1 degree V wind component PNG"
+    
+  # Larger PNG area - 2x2 degrees
+  - name: png_area_medium
+    collection: hrrr-surface
+    coords: "POLYGON((-102 38,-100 38,-100 40,-102 40,-102 38))"
+    parameters: ["TMP"]
+    format: png
+    weight: 1.0
+    expected_content_type: image/png
+    description: "2x2 degree temperature PNG"
+    
+  # PNG at isobaric level
+  - name: png_area_isobaric
+    collection: hrrr-isobaric
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP"]
+    z: "850"
+    format: png
+    weight: 1.0
+    expected_content_type: image/png
+    description: "1x1 degree temperature PNG at 850 hPa"
+    
+  # PNG with Accept header instead of f parameter
+  - name: png_area_accept_header
+    collection: hrrr-surface
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP"]
+    accept_header: "image/png"
+    weight: 1.0
+    expected_content_type: image/png
+    description: "PNG via Accept header negotiation"
+    
+  # Complex polygon PNG
+  - name: png_area_complex
+    collection: hrrr-surface
+    coords: "POLYGON((-102 38,-100 38,-100 40,-101 40,-101 39,-102 39,-102 38))"
+    parameters: ["TMP"]
+    format: png
+    weight: 0.5
+    expected_content_type: image/png
+    description: "L-shaped polygon PNG"
+    
+  # Random location PNG
+  - name: png_area_random
+    collection: hrrr-surface
+    random_bbox:
+      min_lon: -120
+      max_lon: -80
+      min_lat: 30
+      max_lat: 48
+    polygon_size: 1.0
+    parameters: ["TMP"]
+    format: png
+    weight: 1.5
+    expected_content_type: image/png
+    description: "Random 1x1 degree PNG within CONUS"
+
+# PNG edge cases (validation tests)
+png_edge_cases:
+  # PNG with multiple parameters (should fail with 400)
+  - name: png_multi_param_error
+    collection: hrrr-surface
+    coords: "POLYGON((-101 39,-100 39,-100 40,-101 40,-101 39))"
+    parameters: ["TMP", "RH"]
+    format: png
+    weight: 0.1
+    expected_status: 400
+    description: "PNG with 2 params - should fail"
+    
+  # PNG for position query (should fail with 400)
+  - name: png_position_error
+    collection: hrrr-surface
+    coords: "POINT(-100 40)"
+    parameters: ["TMP"]
+    format: png
+    weight: 0.1
+    expected_status: 400
+    description: "PNG for position query - should fail"
+
 # Test points for random location generation
 test_points:
   - name: oklahoma

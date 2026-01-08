@@ -91,9 +91,12 @@ settings:
   output_formats:
     - application/vnd.cov+json
     - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+  cache_policy:
+    png_max_age: 300  # 5 minutes - GOES updates every ~5 minutes
 
 limits:
   max_parameters_per_request: 10

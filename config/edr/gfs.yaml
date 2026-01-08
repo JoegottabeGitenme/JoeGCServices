@@ -232,4 +232,5 @@ limits:
   max_vertical_levels: 20         # Accommodates all 17 isobaric levels
   max_response_size_mb: 100       # Higher than HRRR due to lower resolution
   max_area_sq_degrees: 200        # ~2000km x 1000km regional area
+  max_area_sq_degrees_png: 10000  # PNG queries - global or large regional coverage
   max_radius_km: 750              # Larger radius acceptable at this resolution

@@ -18,6 +18,7 @@ wms-common = { path = "../../crates/wms-common" }
 storage = { path = "../../crates/storage" }
 grid-processor = { path = "../../crates/grid-processor" }
 projection = { path = "../../crates/projection" }
+renderer = { path = "../../crates/renderer" }
 
 tokio = { workspace = true }
 axum = { workspace = true }

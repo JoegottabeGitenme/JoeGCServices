@@ -214,6 +214,10 @@ pub struct ModelSettings {
     /// Supported CRS list.
     #[serde(default = "default_supported_crs")]
     pub supported_crs: Vec<String>,
+
+    /// Cache policy for responses.
+    #[serde(default)]
+    pub cache_policy: CachePolicy,
 }
 
 impl Default for ModelSettings {
@@ -222,15 +226,40 @@ impl Default for ModelSettings {
             output_formats: default_output_formats(),
             default_crs: default_crs(),
             supported_crs: default_supported_crs(),
+            cache_policy: CachePolicy::default(),
         }
     }
 }
 
+/// Cache policy settings for HTTP responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachePolicy {
+    /// Cache-Control max-age for PNG responses in seconds.
+    /// Default varies by typical model update frequency.
+    #[serde(default = "default_png_max_age")]
+    pub png_max_age: u32,
+}
+
+impl Default for CachePolicy {
+    fn default() -> Self {
+        Self {
+            png_max_age: default_png_max_age(),
+        }
+    }
+}
+
+/// Default PNG cache max-age: 5 minutes (300 seconds)
+fn default_png_max_age() -> u32 {
+    300
+}
+
 fn default_output_formats() -> Vec<String> {
     // Supported output formats for EDR data queries
+    // Note: image/png is supported for area queries only (returns 16-bit encoded data for GPU shaders)
     vec![
         "application/vnd.cov+json".to_string(),
         "application/geo+json".to_string(),
+        "image/png".to_string(),
     ]
 }
 
@@ -268,6 +297,12 @@ pub struct LimitsConfig {
     #[serde(default = "default_max_area")]
     pub max_area_sq_degrees: Option<f64>,
 
+    /// Maximum area for PNG area queries in square degrees.
+    /// PNG queries typically request larger areas (e.g., full CONUS for GPU rendering).
+    /// Falls back to max_area_sq_degrees if not set.
+    #[serde(default)]
+    pub max_area_sq_degrees_png: Option<f64>,
+
     /// Maximum radius for radius queries in km.
     #[serde(default = "default_max_radius")]
     pub max_radius_km: Option<f64>,
@@ -289,6 +324,7 @@ impl Default for LimitsConfig {
             max_vertical_levels: default_max_levels(),
             max_response_size_mb: default_max_response_mb(),
             max_area_sq_degrees: default_max_area(),
+            max_area_sq_degrees_png: None, // Falls back to max_area_sq_degrees
             max_radius_km: default_max_radius(),
             max_trajectory_points: default_max_trajectory_points(),
             max_corridor_length_km: default_max_corridor_length(),
@@ -362,6 +398,25 @@ mod tests {
         let settings = ModelSettings::default();
         assert!(!settings.output_formats.is_empty());
         assert_eq!(settings.default_crs, "CRS:84");
+    }
+
+    #[test]
+    fn test_cache_policy_defaults() {
+        let policy = CachePolicy::default();
+        assert_eq!(policy.png_max_age, 300); // 5 minutes
+    }
+
+    #[test]
+    fn test_cache_policy_yaml_parsing() {
+        let yaml = r#"
+model: test
+collections: []
+settings:
+  cache_policy:
+    png_max_age: 3600
+"#;
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.settings.cache_policy.png_max_age, 3600);
     }
 
     #[test]
@@ -459,5 +514,50 @@ limits:
         assert_eq!(config.limits.max_time_steps, 36);
         assert_eq!(config.limits.max_vertical_levels, 1);
         assert_eq!(config.limits.max_area_sq_degrees, Some(50.0));
+    }
+
+    #[test]
+    fn test_png_area_limit_parsing() {
+        let yaml = r#"
+model: hrrr
+collections:
+  - id: hrrr-surface
+    title: "Surface"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: TMP
+        levels: [surface]
+limits:
+  max_area_sq_degrees: 100
+  max_area_sq_degrees_png: 2500
+"#;
+
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.limits.max_area_sq_degrees, Some(100.0));
+        assert_eq!(config.limits.max_area_sq_degrees_png, Some(2500.0));
+    }
+
+    #[test]
+    fn test_png_area_limit_defaults_to_none() {
+        let yaml = r#"
+model: test
+collections:
+  - id: test
+    title: "Test"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: TMP
+        levels: [surface]
+limits:
+  max_area_sq_degrees: 100
+"#;
+
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.limits.max_area_sq_degrees, Some(100.0));
+        assert_eq!(config.limits.max_area_sq_degrees_png, None);
     }
 }
