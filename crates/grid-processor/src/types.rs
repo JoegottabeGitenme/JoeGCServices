@@ -418,6 +418,141 @@ mod tests {
         stats.misses = 20;
         assert!((stats.hit_rate() - 0.8).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn test_uses_0_360_longitude() {
+        // GFS-style grid (0 to 360)
+        let gfs_bbox = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+        assert!(gfs_bbox.uses_0_360_longitude());
+
+        // Standard -180/180 grid
+        let standard_bbox = BoundingBox::new(-180.0, -90.0, 180.0, 90.0);
+        assert!(!standard_bbox.uses_0_360_longitude());
+
+        // HRRR-style regional grid (negative longitudes, < 180)
+        let hrrr_bbox = BoundingBox::new(-122.7, 21.1, -60.9, 47.8);
+        assert!(!hrrr_bbox.uses_0_360_longitude());
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_360_grid_europe() {
+        // Europe request: -10 to 40 (crosses prime meridian, NOT dateline)
+        let europe_bbox = BoundingBox::new(-10.0, 35.0, 40.0, 70.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        // This DOES trigger the cross-prime-meridian logic because:
+        // - GFS uses 0-360
+        // - Request min_lon < 0 and max_lon >= 0
+        // After normalization, -10 becomes 350, so we'd have 350 to 40 (inverted)
+        assert!(europe_bbox.crosses_dateline_on_360_grid(&gfs_grid));
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_360_grid_pacific() {
+        // Pacific request that actually crosses the dateline: Japan to Alaska
+        // 140E to 220E (or 140 to -140 in -180/180)
+        let pacific_bbox = BoundingBox::new(140.0, 30.0, -140.0, 60.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        // min_lon=140 (positive), max_lon=-140 (negative)
+        // This is min > max in both conventions, so it's a wraparound case
+        // But our function checks min_lon < 0 && max_lon >= 0, so this returns false
+        // (the caller would need different handling for this case)
+        assert!(!pacific_bbox.crosses_dateline_on_360_grid(&gfs_grid));
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_360_grid_us() {
+        // US request: entirely in Western hemisphere (no crossing)
+        let us_bbox = BoundingBox::new(-125.0, 25.0, -65.0, 50.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        // Both min and max are negative, so after normalization:
+        // -125 -> 235, -65 -> 295, which is 235 to 295 (valid, not inverted)
+        assert!(!us_bbox.crosses_dateline_on_360_grid(&gfs_grid));
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_360_grid_asia() {
+        // Asia request: entirely in Eastern hemisphere (no crossing)
+        let asia_bbox = BoundingBox::new(70.0, 10.0, 140.0, 55.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        // Both positive, no conversion needed
+        assert!(!asia_bbox.crosses_dateline_on_360_grid(&gfs_grid));
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_standard_grid() {
+        // On a -180/180 grid, the function should always return false
+        let europe_bbox = BoundingBox::new(-10.0, 35.0, 40.0, 70.0);
+        let standard_grid = BoundingBox::new(-180.0, -90.0, 180.0, 90.0);
+
+        assert!(!europe_bbox.crosses_dateline_on_360_grid(&standard_grid));
+    }
+
+    #[test]
+    fn test_normalize_to_grid_europe_on_gfs() {
+        // Europe request on GFS grid
+        let europe_bbox = BoundingBox::new(-10.0, 35.0, 40.0, 70.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        let normalized = europe_bbox.normalize_to_grid(&gfs_grid);
+
+        // -10 should become 350
+        assert!((normalized.min_lon - 350.0).abs() < 0.01);
+        // 40 stays 40 (positive)
+        assert!((normalized.max_lon - 40.0).abs() < 0.01);
+        // Latitude unchanged
+        assert!((normalized.min_lat - 35.0).abs() < 0.01);
+        assert!((normalized.max_lat - 70.0).abs() < 0.01);
+
+        // Note: This creates an "inverted" bbox where min_lon > max_lon
+        // This is why we need special handling for cross-prime-meridian cases
+        assert!(normalized.min_lon > normalized.max_lon);
+    }
+
+    #[test]
+    fn test_normalize_to_grid_us_on_gfs() {
+        // US request on GFS grid (entirely Western hemisphere)
+        let us_bbox = BoundingBox::new(-125.0, 25.0, -65.0, 50.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        let normalized = us_bbox.normalize_to_grid(&gfs_grid);
+
+        // -125 -> 235, -65 -> 295
+        assert!((normalized.min_lon - 235.0).abs() < 0.01);
+        assert!((normalized.max_lon - 295.0).abs() < 0.01);
+
+        // This is a valid bbox (min < max)
+        assert!(normalized.min_lon < normalized.max_lon);
+    }
+
+    #[test]
+    fn test_normalize_to_grid_asia_on_gfs() {
+        // Asia request on GFS grid (entirely Eastern hemisphere, no change needed)
+        let asia_bbox = BoundingBox::new(70.0, 10.0, 140.0, 55.0);
+        let gfs_grid = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+
+        let normalized = asia_bbox.normalize_to_grid(&gfs_grid);
+
+        // No change - both longitudes already positive
+        assert!((normalized.min_lon - 70.0).abs() < 0.01);
+        assert!((normalized.max_lon - 140.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize_to_grid_on_standard_grid() {
+        // On a -180/180 grid, no normalization should happen
+        let us_bbox = BoundingBox::new(-125.0, 25.0, -65.0, 50.0);
+        let standard_grid = BoundingBox::new(-180.0, -90.0, 180.0, 90.0);
+
+        let normalized = us_bbox.normalize_to_grid(&standard_grid);
+
+        // Should be unchanged
+        assert!((normalized.min_lon - (-125.0)).abs() < 0.01);
+        assert!((normalized.max_lon - (-65.0)).abs() < 0.01);
+    }
 }
 
 // ============================================================================

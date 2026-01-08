@@ -603,23 +603,198 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         Ok(chunk_data.get(idx).copied().unwrap_or(f32::NAN))
     }
+
+    /// Read a region that crosses the prime meridian (0°) on a 0-360 grid.
+    /// This happens when the request spans from negative to positive longitude
+    /// (e.g., Europe at -10° to 40° on a GFS grid stored as 0-360).
+    ///
+    /// We read two parts:
+    /// 1. Western part: from (min_lon + 360) to 360° (e.g., 350° to 360°)
+    /// 2. Eastern part: from 0° to max_lon (e.g., 0° to 40°)
+    /// Then stitch them together horizontally.
+    async fn read_region_cross_prime_meridian(&self, bbox: &BoundingBox) -> Result<GridRegion> {
+        let (res_x, res_y) = self.metadata.resolution();
+        let grid_bbox = &self.metadata.bbox;
+        let (grid_w, grid_h) = self.metadata.shape;
+
+        // Western part: negative longitudes converted to 0-360
+        // e.g., -10° becomes 350°
+        let west_min_lon = bbox.min_lon + 360.0;
+        let west_max_lon = 360.0; // Up to the prime meridian
+
+        // Eastern part: positive longitudes stay as-is
+        let east_min_lon = 0.0; // From prime meridian
+        let east_max_lon = bbox.max_lon;
+
+        // Calculate column indices for each part
+        let west_min_col = ((west_min_lon - grid_bbox.min_lon) / res_x)
+            .floor()
+            .max(0.0) as usize;
+        let west_max_col = ((west_max_lon - grid_bbox.min_lon) / res_x)
+            .ceil()
+            .min(grid_w as f64) as usize;
+        let east_min_col = ((east_min_lon - grid_bbox.min_lon) / res_x)
+            .floor()
+            .max(0.0) as usize;
+        let east_max_col = ((east_max_lon - grid_bbox.min_lon) / res_x)
+            .ceil()
+            .min(grid_w as f64) as usize;
+
+        let west_width = west_max_col.saturating_sub(west_min_col);
+        let east_width = east_max_col.saturating_sub(east_min_col);
+        let out_width = west_width + east_width;
+
+        // Calculate row indices (same for both parts)
+        let (min_row, max_row) = match self.metadata.row_origin {
+            RowOrigin::North => {
+                let min_r = ((grid_bbox.max_lat - bbox.max_lat) / res_y)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((grid_bbox.max_lat - bbox.min_lat) / res_y)
+                    .ceil()
+                    .min(grid_h as f64) as usize;
+                (min_r, max_r)
+            }
+            RowOrigin::South => {
+                let min_r = ((bbox.min_lat - grid_bbox.min_lat) / res_y)
+                    .floor()
+                    .max(0.0) as usize;
+                let max_r = ((bbox.max_lat - grid_bbox.min_lat) / res_y)
+                    .ceil()
+                    .min(grid_h as f64) as usize;
+                (min_r, max_r)
+            }
+        };
+        let out_height = max_row.saturating_sub(min_row);
+
+        if out_width == 0 || out_height == 0 {
+            return Ok(GridRegion::new(vec![], 0, 0, *bbox, (res_x, res_y)));
+        }
+
+        tracing::debug!(
+            path = %self.path,
+            west_cols = ?(west_min_col, west_max_col),
+            east_cols = ?(east_min_col, east_max_col),
+            rows = ?(min_row, max_row),
+            out_size = ?(out_width, out_height),
+            "Reading cross-prime-meridian region"
+        );
+
+        // Read chunks for western part
+        let west_bbox = BoundingBox::new(west_min_lon, bbox.min_lat, west_max_lon, bbox.max_lat);
+        let west_chunks = self.chunks_for_bbox(&west_bbox);
+
+        // Read chunks for eastern part
+        let east_bbox = BoundingBox::new(east_min_lon, bbox.min_lat, east_max_lon, bbox.max_lat);
+        let east_chunks = self.chunks_for_bbox(&east_bbox);
+
+        // Combine chunk lists (deduplicate if any overlap)
+        let mut all_chunks: Vec<(usize, usize)> = Vec::new();
+        for c in west_chunks.iter().chain(east_chunks.iter()) {
+            if !all_chunks.contains(c) {
+                all_chunks.push(*c);
+            }
+        }
+
+        // Read all chunks in parallel
+        let chunk_futures: Vec<_> = all_chunks
+            .iter()
+            .map(|(cx, cy)| self.read_chunk(*cx, *cy))
+            .collect();
+        let chunk_results = futures::future::join_all(chunk_futures).await;
+        let chunk_data: Vec<_> = chunk_results.into_iter().collect::<Result<Vec<_>>>()?;
+
+        // Create a map from chunk coord to data
+        let chunk_map: std::collections::HashMap<(usize, usize), &Vec<f32>> = all_chunks
+            .iter()
+            .zip(chunk_data.iter())
+            .map(|(k, v)| (*k, v))
+            .collect();
+
+        // Allocate output and fill from chunks
+        let (chunk_w, chunk_h) = self.metadata.chunk_shape;
+        let mut output = vec![self.metadata.fill_value; out_width * out_height];
+
+        // Copy western part (columns west_min_col to west_max_col -> output columns 0 to west_width)
+        for out_row in 0..out_height {
+            let grid_row = min_row + out_row;
+            for out_col in 0..west_width {
+                let grid_col = west_min_col + out_col;
+                let value = self.get_value_from_chunks(
+                    &chunk_map, grid_col, grid_row, chunk_w, chunk_h, grid_w,
+                );
+                output[out_row * out_width + out_col] = value;
+            }
+        }
+
+        // Copy eastern part (columns east_min_col to east_max_col -> output columns west_width to out_width)
+        for out_row in 0..out_height {
+            let grid_row = min_row + out_row;
+            for out_col in 0..east_width {
+                let grid_col = east_min_col + out_col;
+                let value = self.get_value_from_chunks(
+                    &chunk_map, grid_col, grid_row, chunk_w, chunk_h, grid_w,
+                );
+                output[out_row * out_width + (west_width + out_col)] = value;
+            }
+        }
+
+        // Return with the requested bbox (in -180/180 convention)
+        Ok(GridRegion::new(
+            output,
+            out_width,
+            out_height,
+            *bbox,
+            (res_x, res_y),
+        ))
+    }
+
+    /// Helper to get a value from the chunk map at given grid coordinates
+    fn get_value_from_chunks(
+        &self,
+        chunk_map: &std::collections::HashMap<(usize, usize), &Vec<f32>>,
+        col: usize,
+        row: usize,
+        chunk_w: usize,
+        chunk_h: usize,
+        grid_w: usize,
+    ) -> f32 {
+        let chunk_x = col / chunk_w;
+        let chunk_y = row / chunk_h;
+
+        if let Some(chunk) = chunk_map.get(&(chunk_x, chunk_y)) {
+            let chunk_start_col = chunk_x * chunk_w;
+            let chunk_start_row = chunk_y * chunk_h;
+            let local_col = col - chunk_start_col;
+            let local_row = row - chunk_start_row;
+            let chunk_actual_w = chunk_w.min(grid_w - chunk_start_col);
+            let idx = local_row * chunk_actual_w + local_col;
+            chunk.get(idx).copied().unwrap_or(self.metadata.fill_value)
+        } else {
+            self.metadata.fill_value
+        }
+    }
 }
 
 #[async_trait]
 impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGridProcessor<S> {
     async fn read_region(&self, bbox: &BoundingBox) -> Result<GridRegion> {
-        // Check if this request crosses the dateline on a 0-360 grid
-        // If so, we need to read the FULL grid and let the caller handle resampling
-        let effective_bbox = if bbox.crosses_dateline_on_360_grid(&self.metadata.bbox) {
+        // Check if this request crosses the prime meridian on a 0-360 grid
+        // (e.g., Europe at -10 to 40 on a GFS grid stored as 0-360)
+        // If so, we need to read the two parts and stitch them together
+        let crosses_prime_meridian = bbox.crosses_dateline_on_360_grid(&self.metadata.bbox);
+
+        if crosses_prime_meridian {
             tracing::debug!(
                 path = %self.path,
                 request_bbox = ?bbox,
                 grid_bbox = ?self.metadata.bbox,
-                "Request crosses dateline on 0-360 grid, reading full grid"
+                "Request crosses prime meridian on 0-360 grid, reading two parts"
             );
-            // Use the full grid bbox instead of the request bbox
-            self.metadata.bbox.clone()
-        } else {
+            return self.read_region_cross_prime_meridian(bbox).await;
+        }
+
+        let effective_bbox = {
             // Add a buffer of 2 grid cells around the requested bbox to ensure
             // bilinear interpolation works correctly at tile boundaries.
             // Without this buffer, edge pixels would clamp to the last available

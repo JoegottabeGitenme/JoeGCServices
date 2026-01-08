@@ -349,3 +349,284 @@ async fn test_chunk_cache_efficiency() {
 
     println!("Cache efficiency test passed!");
 }
+
+/// Write a Zarr array with 0-360 longitude convention (like GFS).
+fn write_zarr_array_0_360(
+    path: &std::path::Path,
+    data: &[f32],
+    width: usize,
+    height: usize,
+    chunk_size: usize,
+    bbox: &BoundingBox,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(path)?;
+    let store = Arc::new(FilesystemStore::new(path)?);
+
+    let array = ArrayBuilder::new(
+        vec![height as u64, width as u64],
+        DataType::Float32,
+        vec![chunk_size as u64, chunk_size as u64].try_into()?,
+        FillValue::from(f32::NAN),
+    )
+    .attributes({
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("model".to_string(), serde_json::json!("gfs_test"));
+        attrs.insert("parameter".to_string(), serde_json::json!("TMP"));
+        attrs.insert("level".to_string(), serde_json::json!("2 m above ground"));
+        attrs.insert("units".to_string(), serde_json::json!("K"));
+        attrs.insert(
+            "reference_time".to_string(),
+            serde_json::json!("2024-12-12T00:00:00Z"),
+        );
+        attrs.insert("forecast_hour".to_string(), serde_json::json!(0));
+        attrs.insert(
+            "bbox".to_string(),
+            serde_json::json!([bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat]),
+        );
+        attrs
+    })
+    .build(store.clone(), "/")?;
+
+    array.store_metadata()?;
+
+    let subset = ArraySubset::new_with_start_shape(vec![0, 0], vec![height as u64, width as u64])?;
+    array.store_array_subset_elements(&subset, data)?;
+
+    Ok(())
+}
+
+/// Create test data where value encodes the longitude (col * resolution + min_lon).
+/// This lets us verify which part of the grid we're reading.
+fn create_longitude_test_data(width: usize, height: usize, min_lon: f64, res_x: f64) -> Vec<f32> {
+    let mut data = Vec::with_capacity(width * height);
+    for _row in 0..height {
+        for col in 0..width {
+            // Value = longitude at this column
+            let lon = min_lon + col as f64 * res_x;
+            data.push(lon as f32);
+        }
+    }
+    data
+}
+
+#[tokio::test]
+async fn test_cross_prime_meridian_europe() {
+    // Simulate a GFS-like global grid with 0-360 longitude
+    // Using 1 degree resolution for simplicity
+    let width = 360;
+    let height = 180;
+    let chunk_size = 64;
+    // GFS-style bbox: 0 to 360 longitude
+    let bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+    let res_x = 1.0;
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_gfs_360.zarr");
+
+    // Create data where value = longitude
+    let original_data = create_longitude_test_data(width, height, 0.0, res_x);
+
+    write_zarr_array_0_360(&zarr_path, &original_data, width, height, chunk_size, &bbox)
+        .expect("Failed to write Zarr");
+
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let config = GridProcessorConfig::default();
+    let processor =
+        ZarrGridProcessor::open(store, "/", config).expect("Failed to open ZarrGridProcessor");
+
+    // Request Europe: -10 to 40 longitude (crosses prime meridian)
+    let europe_bbox = BoundingBox::new(-10.0, 35.0, 40.0, 70.0);
+    let region = processor
+        .read_region(&europe_bbox)
+        .await
+        .expect("Failed to read Europe region");
+
+    // The returned region should have the Europe bbox, NOT the full grid bbox
+    assert!(
+        (region.bbox.min_lon - (-10.0)).abs() < 1.0,
+        "Returned bbox min_lon should be ~-10, got {}",
+        region.bbox.min_lon
+    );
+    assert!(
+        (region.bbox.max_lon - 40.0).abs() < 1.0,
+        "Returned bbox max_lon should be ~40, got {}",
+        region.bbox.max_lon
+    );
+
+    // Width should be ~50 columns (from -10 to 40 = 50 degrees at 1 deg resolution)
+    assert!(
+        region.width >= 48 && region.width <= 52,
+        "Width should be ~50 for -10 to 40 degrees, got {}",
+        region.width
+    );
+
+    // Height should be ~35 rows (from 35 to 70 = 35 degrees at 1 deg resolution)
+    assert!(
+        region.height >= 33 && region.height <= 37,
+        "Height should be ~35 for 35 to 70 degrees, got {}",
+        region.height
+    );
+
+    // Verify the data contains the correct longitudes
+    // Western columns (originally -10 to 0, stored as 350-360) should have values 350-360
+    // Eastern columns (0 to 40) should have values 0-40
+
+    // Check first column (should be ~350, representing -10 degrees)
+    let first_col_lon = region.data[0];
+    assert!(
+        (first_col_lon - 350.0).abs() < 2.0,
+        "First column should have longitude ~350 (representing -10), got {}",
+        first_col_lon
+    );
+
+    // Check middle column (around prime meridian, lon ~0 = stored as 0 or 360)
+    let mid_col = region.width / 5; // ~10 columns in = around 0 degrees
+    let mid_lon = region.data[mid_col];
+    // Should be around 0 or just past 350+10=360
+    assert!(
+        mid_lon < 5.0 || mid_lon > 358.0,
+        "Column near prime meridian should have lon ~0 or ~360, got {}",
+        mid_lon
+    );
+
+    // Check last column (should be ~40)
+    let last_col_lon = region.data[region.width - 1];
+    assert!(
+        (last_col_lon - 39.0).abs() < 2.0,
+        "Last column should have longitude ~39-40, got {}",
+        last_col_lon
+    );
+
+    println!("Cross prime meridian test (Europe) passed!");
+    println!("  Grid: {}x{} (0-360 longitude)", width, height);
+    println!("  Request: -10 to 40 longitude");
+    println!("  Result: {}x{}", region.width, region.height);
+    println!(
+        "  First column lon: {}, Last column lon: {}",
+        first_col_lon, last_col_lon
+    );
+}
+
+#[tokio::test]
+async fn test_no_crossing_us_region() {
+    // Test that requests entirely in Western hemisphere work correctly
+    // (no crossing needed, just coordinate conversion)
+    let width = 360;
+    let height = 180;
+    let chunk_size = 64;
+    let bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+    let res_x = 1.0;
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_gfs_us.zarr");
+
+    let original_data = create_longitude_test_data(width, height, 0.0, res_x);
+
+    write_zarr_array_0_360(&zarr_path, &original_data, width, height, chunk_size, &bbox)
+        .expect("Failed to write Zarr");
+
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let config = GridProcessorConfig::default();
+    let processor =
+        ZarrGridProcessor::open(store, "/", config).expect("Failed to open ZarrGridProcessor");
+
+    // Request CONUS: -125 to -65 longitude (entirely Western hemisphere, no crossing)
+    let us_bbox = BoundingBox::new(-125.0, 25.0, -65.0, 50.0);
+    let region = processor
+        .read_region(&us_bbox)
+        .await
+        .expect("Failed to read US region");
+
+    // Width should be ~60 columns
+    assert!(
+        region.width >= 58 && region.width <= 64,
+        "Width should be ~60 for -125 to -65 degrees, got {}",
+        region.width
+    );
+
+    // Check that the data has correct longitudes (stored as 235-295)
+    let first_col_lon = region.data[0];
+    // -125 stored as 360-125 = 235
+    assert!(
+        (first_col_lon - 235.0).abs() < 5.0,
+        "First column should have longitude ~235 (representing -125), got {}",
+        first_col_lon
+    );
+
+    let last_col_lon = region.data[region.width - 1];
+    // -65 stored as 360-65 = 295
+    assert!(
+        (last_col_lon - 295.0).abs() < 5.0,
+        "Last column should have longitude ~295 (representing -65), got {}",
+        last_col_lon
+    );
+
+    println!("No-crossing US test passed!");
+    println!("  Request: -125 to -65 longitude");
+    println!("  Result: {}x{}", region.width, region.height);
+    println!(
+        "  First column lon: {}, Last column lon: {}",
+        first_col_lon, last_col_lon
+    );
+}
+
+#[tokio::test]
+async fn test_no_crossing_asia_region() {
+    // Test that requests entirely in Eastern hemisphere work correctly
+    // (no conversion needed)
+    let width = 360;
+    let height = 180;
+    let chunk_size = 64;
+    let bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+    let res_x = 1.0;
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_gfs_asia.zarr");
+
+    let original_data = create_longitude_test_data(width, height, 0.0, res_x);
+
+    write_zarr_array_0_360(&zarr_path, &original_data, width, height, chunk_size, &bbox)
+        .expect("Failed to write Zarr");
+
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let config = GridProcessorConfig::default();
+    let processor =
+        ZarrGridProcessor::open(store, "/", config).expect("Failed to open ZarrGridProcessor");
+
+    // Request Asia: 70 to 140 longitude (entirely Eastern hemisphere)
+    let asia_bbox = BoundingBox::new(70.0, 10.0, 140.0, 55.0);
+    let region = processor
+        .read_region(&asia_bbox)
+        .await
+        .expect("Failed to read Asia region");
+
+    // Width should be ~70 columns
+    assert!(
+        region.width >= 68 && region.width <= 74,
+        "Width should be ~70 for 70 to 140 degrees, got {}",
+        region.width
+    );
+
+    // Check that the data has correct longitudes (stored as-is: 70-140)
+    let first_col_lon = region.data[0];
+    assert!(
+        (first_col_lon - 70.0).abs() < 5.0,
+        "First column should have longitude ~70, got {}",
+        first_col_lon
+    );
+
+    let last_col_lon = region.data[region.width - 1];
+    assert!(
+        (last_col_lon - 139.0).abs() < 5.0,
+        "Last column should have longitude ~139-140, got {}",
+        last_col_lon
+    );
+
+    println!("No-crossing Asia test passed!");
+    println!("  Request: 70 to 140 longitude");
+    println!("  Result: {}x{}", region.width, region.height);
+    println!(
+        "  First column lon: {}, Last column lon: {}",
+        first_col_lon, last_col_lon
+    );
+}
