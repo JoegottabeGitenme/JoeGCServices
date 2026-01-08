@@ -155,6 +155,7 @@ paths:
         - $ref: '#/components/parameters/f'
         - $ref: '#/components/parameters/width'
         - $ref: '#/components/parameters/height'
+        - $ref: '#/components/parameters/depth'
       responses:
         '200':
           description: Data within the specified area
@@ -170,13 +171,14 @@ paths:
                 type: string
                 format: binary
                 description: |
-                  16-bit encoded PNG for GPU shader consumption.
+                  PNG-encoded data for GPU shader consumption.
+                  Use depth=8 for 8-bit grayscale+alpha (smaller) or depth=16 (default) for 16-bit precision.
                   Response headers include:
                   - X-EDR-Parameter: Parameter name
                   - X-EDR-Units: Unit symbol
                   - X-EDR-Min: Minimum value for decoding
                   - X-EDR-Max: Maximum value for decoding
-                  - X-EDR-Encoding: Encoding type (uint16)
+                  - X-EDR-Encoding: Encoding type (uint8 or uint16)
                   - X-EDR-BBox: Bounding box (west,south,east,north)
                   - X-EDR-Width: Image width in pixels
                   - X-EDR-Height: Image height in pixels
@@ -522,6 +524,23 @@ components:
         type: integer
         minimum: 1
         maximum: 4096
+
+    depth:
+      name: depth
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        PNG encoding bit depth (PNG output only).
+        - 16 (default): 16-bit precision using RG channels (65536 distinct values).
+          Best for scientific applications requiring exact values.
+        - 8: 8-bit grayscale+alpha (256 distinct values, ~50% smaller files).
+          Best for visualization where exact precision is not critical.
+      schema:
+        type: integer
+        enum: [8, 16]
+        default: 16
 
   schemas:
     LandingPage:

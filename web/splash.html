@@ -644,6 +644,7 @@
             <nav class="nav-links">
                 <a href="#services" class="nav-link">Services</a>
                 <a href="#examples" class="nav-link">Examples</a>
+                <a href="#edr-png-examples" class="nav-link">EDR PNG</a>
                 <a href="#api" class="nav-link">API</a>
             </nav>
         </div>
@@ -825,6 +826,101 @@
                         </div>
                     </a>
                 </div>
+            </div>
+        </section>
+
+        <!-- EDR PNG Examples Section -->
+        <section class="section" id="edr-png-examples">
+            <h2 class="section-title">
+                <span class="icon">&#127912;</span>
+                EDR Data PNG Output
+            </h2>
+            <div class="examples-section">
+                <p class="card-description">
+                    EDR area queries can return PNG-encoded data for GPU shader consumption. 
+                    16-bit precision for scientific use, or 8-bit for smaller files. Click any image to open the full request.
+                </p>
+                <div class="examples-grid">
+                    <!-- HRRR Temperature CONUS -->
+                    <a href="/edr/collections/hrrr-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-1">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/hrrr-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
+                                 alt="HRRR Temperature PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-1').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-1').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">HRRR Temperature (8-bit PNG)</div>
+                            <div class="example-desc">Raw data texture for WebGL - CONUS coverage</div>
+                        </div>
+                    </a>
+
+                    <!-- GFS Temperature CONUS -->
+                    <a href="/edr/collections/gfs-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-2">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/gfs-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
+                                 alt="GFS Temperature PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-2').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-2').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GFS Temperature (8-bit PNG)</div>
+                            <div class="example-desc">Global model data as GPU texture</div>
+                        </div>
+                    </a>
+
+                    <!-- HRRR Surface Pressure -->
+                    <a href="/edr/collections/hrrr-surface/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=PRES&f=png&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-3">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/hrrr-surface/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=PRES&f=png&width=400&height=200"
+                                 alt="HRRR Pressure PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-3').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-3').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">HRRR Pressure (16-bit PNG)</div>
+                            <div class="example-desc">Full 16-bit precision for accurate values</div>
+                        </div>
+                    </a>
+
+                    <!-- GFS Global -->
+                    <a href="/edr/collections/gfs-height-agl/area?coords=POLYGON((-180%20-60,180%20-60,180%2080,-180%2080,-180%20-60))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-4">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/gfs-height-agl/area?coords=POLYGON((-180%20-60,180%20-60,180%2080,-180%2080,-180%20-60))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
+                                 alt="GFS Global Temperature PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-4').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-4').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GFS Global Temperature</div>
+                            <div class="example-desc">Worldwide coverage in single request</div>
+                        </div>
+                    </a>
+                </div>
+                <p class="card-description" style="margin-top: 1rem; font-size: 0.8rem;">
+                    PNG responses include <code>X-EDR-Min</code>, <code>X-EDR-Max</code>, and <code>X-EDR-Encoding</code> headers for shader decoding.
+                    See <a href="/edr/api" style="color: var(--primary-light);">API docs</a> for GLSL examples.
+                </p>
             </div>
         </section>
 

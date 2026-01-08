@@ -11,7 +11,7 @@ use edr_protocol::{
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
 use grid_processor::{BoundingBox, DatasetQuery};
-use renderer::data_png::{compute_data_range, DataPngEncoder};
+use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -86,6 +86,11 @@ pub struct AreaQueryParams {
     /// Requested output height in pixels (PNG only, max 4096).
     /// If specified, width must also be specified.
     pub height: Option<u32>,
+
+    /// PNG encoding bit depth (PNG only).
+    /// - `16` (default): 16-bit precision using RG channels (65536 values)
+    /// - `8`: 8-bit grayscale+alpha (256 values, ~50% smaller files)
+    pub depth: Option<u8>,
 }
 
 /// GET /edr/collections/:collection_id/area
@@ -187,8 +192,17 @@ async fn area_query(
         .collect();
 
     // Check area size limit
+    // Use higher limit for PNG queries (typically used for large regional coverage)
     let area_sq_degrees = area_query_struct.area_sq_degrees();
-    let max_area = model_config.limits.max_area_sq_degrees.unwrap_or(100.0);
+    let max_area = if output_format == OutputFormat::Png {
+        model_config
+            .limits
+            .max_area_sq_degrees_png
+            .or(model_config.limits.max_area_sq_degrees)
+            .unwrap_or(100.0)
+    } else {
+        model_config.limits.max_area_sq_degrees.unwrap_or(100.0)
+    };
     if area_sq_degrees > max_area {
         return error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -361,22 +375,25 @@ async fn area_query(
         time_strings.len()
     };
 
-    // Estimate grid size based on bbox (assume ~0.03 degree resolution for HRRR, ~0.25 for GFS)
-    let resolution = 0.05; // Conservative estimate
+    // Check response size limits (skip for PNG - binary PNG is much smaller than JSON)
+    if output_format != OutputFormat::Png {
+        // Estimate grid size based on bbox (assume ~0.03 degree resolution for HRRR, ~0.25 for GFS)
+        let resolution = 0.05; // Conservative estimate
 
-    let estimate = ResponseSizeEstimate::for_area(
-        params_to_query.len(),
-        num_times,
-        num_levels,
-        area_sq_degrees,
-        resolution,
-    );
-
-    if let Err(limit_err) = estimate.check_limits(&model_config.limits) {
-        return error_response(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            ExceptionResponse::payload_too_large(limit_err.to_string()),
+        let estimate = ResponseSizeEstimate::for_area(
+            params_to_query.len(),
+            num_times,
+            num_levels,
+            area_sq_degrees,
+            resolution,
         );
+
+        if let Err(limit_err) = estimate.check_limits(&model_config.limits) {
+            return error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ExceptionResponse::payload_too_large(limit_err.to_string()),
+            );
+        }
     }
 
     // Parse instance_id if provided and validate it exists
@@ -697,10 +714,14 @@ async fn area_query(
                 let lat =
                     param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
 
+                // Normalize longitude to -180/180 range for polygon comparison
+                // (grid may use 0-360 convention like GFS)
+                let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
                 // Check if point is inside any polygon
                 let inside_any = all_area_queries
                     .iter()
-                    .any(|aq| aq.contains_point(lon, lat));
+                    .any(|aq| aq.contains_point(lon_normalized, lat));
                 if inside_any && !value.is_nan() {
                     masked_data.push(Some(value));
                 } else {
@@ -730,8 +751,20 @@ async fn area_query(
                     (masked_data, param_region.width, param_region.height)
                 };
 
-            // Create encoder and encode to PNG
-            let encoder = DataPngEncoder::new(min_val, max_val);
+            // Determine encoding bit depth (default to 16-bit)
+            let use_8bit = params.depth == Some(8);
+            if let Some(depth) = params.depth {
+                if depth != 8 && depth != 16 {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request(format!(
+                            "Invalid depth value: {}. Must be 8 or 16.",
+                            depth
+                        )),
+                    );
+                }
+            }
+
             let png_bbox = [
                 param_region.bbox.min_lon,
                 param_region.bbox.min_lat,
@@ -739,21 +772,52 @@ async fn area_query(
                 param_region.bbox.max_lat,
             ];
 
-            let encoded = match encoder.encode_with_metadata(
-                &output_data,
-                output_width,
-                output_height,
-                param_name,
-                &units_str,
-                png_bbox,
-            ) {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::error!("Failed to encode PNG: {}", e);
-                    return error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ExceptionResponse::internal_error(format!("Failed to encode PNG: {}", e)),
-                    );
+            // Encode to PNG using appropriate encoder
+            let (png_bytes, encoding_name) = if use_8bit {
+                // 8-bit grayscale+alpha (~50% smaller, 256 values)
+                let encoder = DataPng8BitEncoder::new(min_val, max_val);
+                match encoder.encode_with_metadata(
+                    &output_data,
+                    output_width,
+                    output_height,
+                    param_name,
+                    &units_str,
+                    png_bbox,
+                ) {
+                    Ok(e) => (e.png_bytes, "uint8"),
+                    Err(e) => {
+                        tracing::error!("Failed to encode 8-bit PNG: {}", e);
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            ExceptionResponse::internal_error(format!(
+                                "Failed to encode PNG: {}",
+                                e
+                            )),
+                        );
+                    }
+                }
+            } else {
+                // 16-bit RGBA (default, 65536 values)
+                let encoder = DataPngEncoder::new(min_val, max_val);
+                match encoder.encode_with_metadata(
+                    &output_data,
+                    output_width,
+                    output_height,
+                    param_name,
+                    &units_str,
+                    png_bbox,
+                ) {
+                    Ok(e) => (e.png_bytes, "uint16"),
+                    Err(e) => {
+                        tracing::error!("Failed to encode 16-bit PNG: {}", e);
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            ExceptionResponse::internal_error(format!(
+                                "Failed to encode PNG: {}",
+                                e
+                            )),
+                        );
+                    }
                 }
             };
 
@@ -771,7 +835,7 @@ async fn area_query(
                 .header("X-EDR-Units", &units_str)
                 .header("X-EDR-Min", format!("{}", min_val))
                 .header("X-EDR-Max", format!("{}", max_val))
-                .header("X-EDR-Encoding", "uint16")
+                .header("X-EDR-Encoding", encoding_name)
                 .header(
                     "X-EDR-BBox",
                     format!(
@@ -781,7 +845,7 @@ async fn area_query(
                 )
                 .header("X-EDR-Width", format!("{}", output_width))
                 .header("X-EDR-Height", format!("{}", output_height))
-                .body(encoded.png_bytes.into())
+                .body(png_bytes.into())
                 .unwrap()
         }
         OutputFormat::GeoJson => {

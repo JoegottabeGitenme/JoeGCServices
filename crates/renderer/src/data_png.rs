@@ -418,6 +418,213 @@ fn deflate_idat_rgba(
     Ok(compressed)
 }
 
+/// Deflate Grayscale+Alpha image data for IDAT chunk (8-bit mode)
+fn deflate_idat_gray_alpha(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Add filter byte (0 = no filter) to each scanline
+    // Grayscale+Alpha = 2 bytes per pixel
+    let mut uncompressed = Vec::with_capacity(height * (1 + width * 2));
+    for y in 0..height {
+        uncompressed.push(0); // filter type: none
+        let row_start = y * width * 2;
+        let row_end = row_start + width * 2;
+        uncompressed.extend_from_slice(&pixels[row_start..row_end]);
+    }
+
+    // Compress with flate2
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&uncompressed)?;
+    let compressed = encoder.finish()?;
+
+    Ok(compressed)
+}
+
+/// Encoder for 8-bit grayscale PNG output.
+///
+/// Uses Grayscale+Alpha (2 channels, 8-bit each):
+/// - Gray channel: normalized value (0-255)
+/// - Alpha channel: validity mask (255 = valid, 0 = no data)
+///
+/// This format is ~4x smaller than the 16-bit RGBA format but has only
+/// 256 distinct values instead of 65536.
+///
+/// ## GLSL Decoding
+///
+/// ```glsl
+/// vec4 texel = texture2D(uDataTexture, vTexCoord);
+/// float normalized = texel.r;  // Already 0-1 in GLSL
+/// float physical_value = normalized * (uMaxValue - uMinValue) + uMinValue;
+/// bool valid = texel.a > 0.5;
+/// ```
+pub struct DataPng8BitEncoder {
+    /// Minimum value for normalization
+    pub min_value: f32,
+    /// Maximum value for normalization
+    pub max_value: f32,
+}
+
+impl DataPng8BitEncoder {
+    /// Create a new 8-bit encoder with the given value range
+    pub fn new(min_value: f32, max_value: f32) -> Self {
+        Self {
+            min_value,
+            max_value,
+        }
+    }
+
+    /// Create an encoder by computing min/max from the data
+    pub fn from_data(data: &[Option<f32>]) -> Self {
+        let (min_val, max_val) = compute_data_range(data);
+        Self::new(min_val, max_val)
+    }
+
+    /// Encode grid data to an 8-bit Grayscale+Alpha PNG
+    pub fn encode_with_metadata(
+        &self,
+        data: &[Option<f32>],
+        width: usize,
+        height: usize,
+        parameter_name: &str,
+        units: &str,
+        bbox: [f64; 4],
+    ) -> Result<EncodedDataPng, String> {
+        // Validate dimensions
+        if width > MAX_PNG_DIMENSION || height > MAX_PNG_DIMENSION {
+            return Err(format!(
+                "PNG dimensions {}x{} exceed maximum {}x{}",
+                width, height, MAX_PNG_DIMENSION, MAX_PNG_DIMENSION
+            ));
+        }
+
+        if data.len() != width * height {
+            return Err(format!(
+                "Data length {} does not match dimensions {}x{}={}",
+                data.len(),
+                width,
+                height,
+                width * height
+            ));
+        }
+
+        // Encode data to Grayscale+Alpha pixels
+        let pixels = self.encode_to_gray_alpha(data);
+
+        // Build metadata
+        let metadata = DataPngMetadata::new(self.min_value, self.max_value)
+            .with_parameter(parameter_name)
+            .with_units(units)
+            .with_bbox(bbox[0], bbox[1], bbox[2], bbox[3])
+            .with_dimensions(width as u32, height as u32);
+
+        let png_bytes = self.create_png_with_metadata(&pixels, width, height, &metadata)?;
+
+        Ok(EncodedDataPng {
+            png_bytes,
+            metadata,
+        })
+    }
+
+    /// Encode data values to Grayscale+Alpha pixel buffer
+    fn encode_to_gray_alpha(&self, data: &[Option<f32>]) -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(data.len() * 2);
+        let range = self.max_value - self.min_value;
+
+        for value in data {
+            match value {
+                Some(v) if !v.is_nan() => {
+                    // Normalize to 0.0-1.0
+                    let normalized = if range > 0.0 {
+                        ((v - self.min_value) / range).clamp(0.0, 1.0)
+                    } else {
+                        0.5 // If min == max, use middle value
+                    };
+
+                    // Convert to 8-bit
+                    let gray = (normalized * 255.0) as u8;
+                    let alpha = 255u8; // Valid data
+
+                    pixels.push(gray);
+                    pixels.push(alpha);
+                }
+                _ => {
+                    // No data - transparent pixel
+                    pixels.push(0);
+                    pixels.push(0);
+                }
+            }
+        }
+
+        pixels
+    }
+
+    /// Create 8-bit Grayscale+Alpha PNG with embedded tEXt metadata chunks
+    fn create_png_with_metadata(
+        &self,
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        metadata: &DataPngMetadata,
+    ) -> Result<Vec<u8>, String> {
+        let mut png = Vec::new();
+
+        // PNG signature
+        png.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+
+        // IHDR chunk
+        let mut ihdr_data = Vec::with_capacity(13);
+        ihdr_data.extend_from_slice(&(width as u32).to_be_bytes());
+        ihdr_data.extend_from_slice(&(height as u32).to_be_bytes());
+        ihdr_data.push(8); // bit depth (8-bit)
+        ihdr_data.push(4); // color type (Grayscale+Alpha)
+        ihdr_data.push(0); // compression method
+        ihdr_data.push(0); // filter method
+        ihdr_data.push(0); // interlace method
+        write_chunk(&mut png, b"IHDR", &ihdr_data);
+
+        // tEXt chunks with metadata (must come before IDAT)
+        write_text_chunk(&mut png, "EDR:encoding", "uint8");
+
+        if !metadata.parameter_name.is_empty() {
+            write_text_chunk(&mut png, "EDR:parameter", &metadata.parameter_name);
+        }
+
+        if !metadata.units.is_empty() {
+            write_text_chunk(&mut png, "EDR:units", &metadata.units);
+        }
+
+        write_text_chunk(&mut png, "EDR:min", &format!("{}", metadata.min_value));
+        write_text_chunk(&mut png, "EDR:max", &format!("{}", metadata.max_value));
+
+        // Only write bbox if it's been set (not all zeros)
+        if metadata.bbox != [0.0, 0.0, 0.0, 0.0] {
+            write_text_chunk(
+                &mut png,
+                "EDR:bbox",
+                &format!(
+                    "{},{},{},{}",
+                    metadata.bbox[0], metadata.bbox[1], metadata.bbox[2], metadata.bbox[3]
+                ),
+            );
+        }
+
+        write_text_chunk(&mut png, "EDR:width", &format!("{}", metadata.width));
+        write_text_chunk(&mut png, "EDR:height", &format!("{}", metadata.height));
+
+        // IDAT chunk (compressed image data)
+        let idat_data = deflate_idat_gray_alpha(pixels, width, height)
+            .map_err(|e| format!("IDAT compression failed: {}", e))?;
+        write_chunk(&mut png, b"IDAT", &idat_data);
+
+        // IEND chunk
+        write_chunk(&mut png, b"IEND", &[]);
+
+        Ok(png)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,5 +848,137 @@ mod tests {
         assert_eq!(metadata.height, 256);
         assert_eq!(metadata.min_value, -50.0);
         assert_eq!(metadata.max_value, 50.0);
+    }
+
+    // ============================================
+    // 8-bit encoder tests
+    // ============================================
+
+    #[test]
+    fn test_8bit_encoder_creation() {
+        let encoder = DataPng8BitEncoder::new(-50.0, 50.0);
+        assert_eq!(encoder.min_value, -50.0);
+        assert_eq!(encoder.max_value, 50.0);
+    }
+
+    #[test]
+    fn test_8bit_encoder_from_data() {
+        let data = vec![Some(10.0), Some(20.0), None, Some(15.0)];
+        let encoder = DataPng8BitEncoder::from_data(&data);
+        assert_eq!(encoder.min_value, 10.0);
+        assert_eq!(encoder.max_value, 20.0);
+    }
+
+    #[test]
+    fn test_8bit_encoding_values() {
+        let encoder = DataPng8BitEncoder::new(0.0, 100.0);
+
+        // Test minimum value (0.0) -> should encode to 0
+        let data = vec![Some(0.0)];
+        let pixels = encoder.encode_to_gray_alpha(&data);
+        assert_eq!(pixels[0], 0); // Gray = 0
+        assert_eq!(pixels[1], 255); // Alpha = valid
+
+        // Test maximum value (100.0) -> should encode to 255
+        let data = vec![Some(100.0)];
+        let pixels = encoder.encode_to_gray_alpha(&data);
+        assert_eq!(pixels[0], 255); // Gray = 255
+        assert_eq!(pixels[1], 255); // Alpha = valid
+
+        // Test middle value (50.0) -> should encode to ~127
+        let data = vec![Some(50.0)];
+        let pixels = encoder.encode_to_gray_alpha(&data);
+        assert_eq!(pixels[0], 127); // Gray = 127 (50/100 * 255 = 127.5)
+        assert_eq!(pixels[1], 255); // Alpha = valid
+    }
+
+    #[test]
+    fn test_8bit_null_values_transparent() {
+        let encoder = DataPng8BitEncoder::new(0.0, 100.0);
+        let data = vec![None];
+        let pixels = encoder.encode_to_gray_alpha(&data);
+
+        assert_eq!(pixels[0], 0); // Gray
+        assert_eq!(pixels[1], 0); // Alpha = transparent
+    }
+
+    #[test]
+    fn test_8bit_nan_values_transparent() {
+        let encoder = DataPng8BitEncoder::new(0.0, 100.0);
+        let data = vec![Some(f32::NAN)];
+        let pixels = encoder.encode_to_gray_alpha(&data);
+
+        assert_eq!(pixels[1], 0); // Alpha = transparent
+    }
+
+    #[test]
+    fn test_8bit_encode_with_metadata() {
+        let encoder = DataPng8BitEncoder::new(-50.0, 50.0);
+        let data = vec![Some(0.0); 4];
+
+        let result =
+            encoder.encode_with_metadata(&data, 2, 2, "wind_u", "m/s", [-100.0, 35.0, -98.0, 37.0]);
+        assert!(result.is_ok());
+
+        let encoded = result.unwrap();
+        assert!(!encoded.png_bytes.is_empty());
+        assert_eq!(encoded.metadata.parameter_name, "wind_u");
+        assert_eq!(encoded.metadata.units, "m/s");
+        assert_eq!(encoded.metadata.bbox, [-100.0, 35.0, -98.0, 37.0]);
+        assert_eq!(encoded.metadata.width, 2);
+        assert_eq!(encoded.metadata.height, 2);
+    }
+
+    #[test]
+    fn test_8bit_png_signature() {
+        let encoder = DataPng8BitEncoder::new(0.0, 100.0);
+        let data = vec![Some(50.0); 4];
+
+        let result = encoder
+            .encode_with_metadata(&data, 2, 2, "test", "", [0.0, 0.0, 0.0, 0.0])
+            .unwrap();
+        let bytes = &result.png_bytes;
+
+        // Check PNG signature
+        assert_eq!(&bytes[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+    }
+
+    #[test]
+    fn test_8bit_contains_uint8_encoding() {
+        let encoder = DataPng8BitEncoder::new(-10.0, 10.0);
+        let data = vec![Some(0.0); 4];
+
+        let result = encoder
+            .encode_with_metadata(&data, 2, 2, "temperature", "K", [-100.0, 35.0, -98.0, 37.0])
+            .unwrap();
+
+        let png_str = String::from_utf8_lossy(&result.png_bytes);
+
+        // Check that encoding is marked as uint8
+        assert!(png_str.contains("EDR:encoding"));
+        assert!(png_str.contains("uint8"));
+    }
+
+    #[test]
+    fn test_8bit_smaller_than_16bit() {
+        let data: Vec<Option<f32>> = (0..256 * 256).map(|i| Some(i as f32 / 65536.0)).collect();
+
+        let encoder_16 = DataPngEncoder::new(0.0, 1.0);
+        let encoder_8 = DataPng8BitEncoder::new(0.0, 1.0);
+
+        let result_16 = encoder_16
+            .encode_with_metadata(&data, 256, 256, "test", "", [0.0, 0.0, 1.0, 1.0])
+            .unwrap();
+        let result_8 = encoder_8
+            .encode_with_metadata(&data, 256, 256, "test", "", [0.0, 0.0, 1.0, 1.0])
+            .unwrap();
+
+        // 8-bit should be significantly smaller (roughly half due to 2 channels vs 4)
+        assert!(
+            result_8.png_bytes.len() < result_16.png_bytes.len(),
+            "8-bit PNG ({} bytes) should be smaller than 16-bit PNG ({} bytes)",
+            result_8.png_bytes.len(),
+            result_16.png_bytes.len()
+        );
     }
 }

@@ -46,6 +46,7 @@
   - [WMS Endpoints](./api-reference/wms.md)
   - [WMTS Endpoints](./api-reference/wmts.md)
   - [EDR Endpoints](./api-reference/edr.md)
+  - [EDR PNG Output](./api-reference/edr-png-output.md)
   - [REST API](./api-reference/rest-api.md)
   - [Examples](./api-reference/examples.md)
 

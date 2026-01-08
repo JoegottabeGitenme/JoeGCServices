@@ -141,20 +141,29 @@ fi
 echo "Using parameter: $FIRST_PARAM"
 echo ""
 
-# Define test polygon based on collection type
+# Define test polygons based on collection type
 # Note: Spaces are URL-encoded as %20
 if [[ "$TEST_COLLECTION" == *"goes"* ]]; then
     # GOES covers Pacific/Western US
     TEST_POLYGON="POLYGON((-125%2035,-120%2035,-120%2040,-125%2040,-125%2035))"
-    BBOX_DESC="California coast"
+    BBOX_DESC="California coast (small)"
+    # GOES doesn't have PNG area limit configured, use smaller CONUS
+    CONUS_POLYGON="POLYGON((-125%2025,-100%2025,-100%2050,-125%2050,-125%2025))"
+    CONUS_DESC="Western CONUS"
 elif [[ "$TEST_COLLECTION" == *"gfs"* ]]; then
-    # GFS is global - use CONUS area
+    # GFS is global - use small area for basic tests
     TEST_POLYGON="POLYGON((-100%2035,-98%2035,-98%2037,-100%2037,-100%2035))"
-    BBOX_DESC="Oklahoma/Kansas"
+    BBOX_DESC="Oklahoma/Kansas (small)"
+    # GFS has high PNG limit, can do full CONUS
+    CONUS_POLYGON="POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))"
+    CONUS_DESC="Full CONUS"
 else
-    # HRRR/MRMS/NDFD cover CONUS
+    # HRRR/MRMS/NDFD cover CONUS - use small area for basic tests
     TEST_POLYGON="POLYGON((-100%2035,-98%2035,-98%2037,-100%2037,-100%2035))"
-    BBOX_DESC="Oklahoma/Kansas"
+    BBOX_DESC="Oklahoma/Kansas (small)"
+    # HRRR has 2500 sq deg PNG limit, can do full CONUS
+    CONUS_POLYGON="POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))"
+    CONUS_DESC="Full CONUS"
 fi
 
 echo -e "${BLUE}--- Test 1: Basic PNG Request ---${NC}"
@@ -239,7 +248,70 @@ else
 fi
 echo ""
 
-echo -e "${BLUE}--- Test 4: Verify CORS Headers ---${NC}"
+echo -e "${BLUE}--- Test 4: 8-bit Encoding (depth=8) ---${NC}"
+PNG_FILE_8BIT="${OUTPUT_DIR}/test4_8bit.png"
+PNG_FILE_16BIT="${OUTPUT_DIR}/test4_16bit.png"
+RESPONSE_HEADERS_8BIT="${OUTPUT_DIR}/test4_8bit_headers.txt"
+RESPONSE_HEADERS_16BIT="${OUTPUT_DIR}/test4_16bit_headers.txt"
+
+# Get 16-bit version for comparison
+HTTP_CODE_16=$(curl -s -o "$PNG_FILE_16BIT" -D "$RESPONSE_HEADERS_16BIT" -w "%{http_code}" \
+    "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&width=256&height=256" \
+    2>/dev/null)
+
+# Get 8-bit version
+HTTP_CODE_8=$(curl -s -o "$PNG_FILE_8BIT" -D "$RESPONSE_HEADERS_8BIT" -w "%{http_code}" \
+    "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&width=256&height=256&depth=8" \
+    2>/dev/null)
+
+if [ "$HTTP_CODE_8" = "200" ]; then
+    echo -e "${GREEN}Success! HTTP $HTTP_CODE_8${NC}"
+    SIZE_8BIT=$(ls -l "$PNG_FILE_8BIT" | awk '{print $5}')
+    SIZE_16BIT=$(ls -l "$PNG_FILE_16BIT" | awk '{print $5}')
+    ENCODING=$(grep -i "^x-edr-encoding:" "$RESPONSE_HEADERS_8BIT" | cut -d: -f2 | tr -d ' \r')
+    echo "Encoding: $ENCODING"
+    echo "8-bit size:  $(ls -lh "$PNG_FILE_8BIT" | awk '{print $5}') ($SIZE_8BIT bytes)"
+    echo "16-bit size: $(ls -lh "$PNG_FILE_16BIT" | awk '{print $5}') ($SIZE_16BIT bytes)"
+    if [ "$SIZE_8BIT" -lt "$SIZE_16BIT" ]; then
+        SAVINGS=$(( (SIZE_16BIT - SIZE_8BIT) * 100 / SIZE_16BIT ))
+        echo -e "${GREEN}8-bit is ${SAVINGS}% smaller${NC}"
+    else
+        echo -e "${YELLOW}Warning: 8-bit not smaller than 16-bit${NC}"
+    fi
+else
+    echo -e "${RED}Failed! HTTP $HTTP_CODE_8${NC}"
+    cat "$PNG_FILE_8BIT" 2>/dev/null || true
+fi
+echo ""
+
+echo -e "${BLUE}--- Test 5: Full CONUS Coverage ---${NC}"
+echo "Area: $CONUS_DESC"
+PNG_FILE="${OUTPUT_DIR}/test5_conus.png"
+RESPONSE_HEADERS="${OUTPUT_DIR}/test5_headers.txt"
+
+# Request full CONUS with 8-bit encoding for smaller size
+HTTP_CODE=$(curl -s -o "$PNG_FILE" -D "$RESPONSE_HEADERS" -w "%{http_code}" \
+    "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${CONUS_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&depth=8&width=1024&height=512" \
+    2>/dev/null)
+
+if [ "$HTTP_CODE" = "200" ]; then
+    echo -e "${GREEN}Success! HTTP $HTTP_CODE${NC}"
+    echo "File size: $(ls -lh "$PNG_FILE" | awk '{print $5}')"
+    WIDTH=$(grep -i "^x-edr-width:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    HEIGHT=$(grep -i "^x-edr-height:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    BBOX=$(grep -i "^x-edr-bbox:" "$RESPONSE_HEADERS" | cut -d: -f2 | tr -d ' \r')
+    echo "Dimensions: ${WIDTH}x${HEIGHT}"
+    echo "BBox: $BBOX"
+elif [ "$HTTP_CODE" = "413" ]; then
+    echo -e "${YELLOW}Area too large (413) - PNG area limit may not be configured${NC}"
+    cat "$PNG_FILE" 2>/dev/null | head -5 || true
+else
+    echo -e "${RED}Failed! HTTP $HTTP_CODE${NC}"
+    cat "$PNG_FILE" 2>/dev/null || true
+fi
+echo ""
+
+echo -e "${BLUE}--- Test 6: Verify CORS Headers ---${NC}"
 # Use OPTIONS to check CORS preflight
 CORS_HEADERS=$(curl -sf -I -X OPTIONS \
     -H "Origin: http://example.com" \
@@ -257,7 +329,7 @@ else
 fi
 echo ""
 
-echo -e "${BLUE}--- Test 5: Error Cases ---${NC}"
+echo -e "${BLUE}--- Test 7: Error Cases ---${NC}"
 
 # Test: Missing width when height provided
 echo -n "Missing width with height: "
@@ -310,7 +382,20 @@ else
 fi
 
 echo ""
-echo -e "${BLUE}--- Test 6: Cache-Control Header ---${NC}"
+
+# Test: Invalid depth value
+echo -n "Invalid depth value: "
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    "${EDR_URL}/collections/${TEST_COLLECTION}/area?coords=${TEST_POLYGON}&parameter-name=${FIRST_PARAM}&f=png&depth=12" \
+    2>/dev/null)
+if [ "$HTTP_CODE" = "400" ]; then
+    echo -e "${GREEN}400 (correct)${NC}"
+else
+    echo -e "${RED}$HTTP_CODE (expected 400)${NC}"
+fi
+
+echo ""
+echo -e "${BLUE}--- Test 8: Cache-Control Header ---${NC}"
 CACHE_CONTROL=$(grep -i "^cache-control:" "${OUTPUT_DIR}/test1_headers.txt" | cut -d: -f2 | tr -d ' \r')
 echo "Cache-Control: $CACHE_CONTROL"
 if [[ "$CACHE_CONTROL" == *"max-age="* ]]; then

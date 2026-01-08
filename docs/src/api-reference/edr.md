@@ -209,12 +209,15 @@ These parameters are supported by all data query types:
 
 ### Output Formats
 
-The EDR API supports two output formats for data queries:
+The EDR API supports multiple output formats for data queries:
 
-| Format | Content-Type | Query Param Values |
-|--------|-------------|-------------------|
-| CoverageJSON | `application/vnd.cov+json` | `covjson`, `coveragejson`, `json` (default) |
-| GeoJSON | `application/geo+json` | `geojson`, `geo+json` |
+| Format | Content-Type | Query Param Values | Supported Queries |
+|--------|-------------|-------------------|-------------------|
+| CoverageJSON | `application/vnd.cov+json` | `covjson`, `coveragejson`, `json` (default) | All |
+| GeoJSON | `application/geo+json` | `geojson`, `geo+json` | All |
+| PNG | `image/png` | `png` | Area only |
+
+> **PNG Output**: For GPU-based visualization, area queries support PNG output with 8-bit or 16-bit encoding. See [EDR PNG Output](./edr-png-output.md) for details.
 
 **Request format via query parameter:**
 ```http

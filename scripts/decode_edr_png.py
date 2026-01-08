@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Decode and visualize EDR 16-bit PNG data.
+Decode and visualize EDR PNG data (8-bit or 16-bit).
 
-This script fetches a PNG from the EDR API, decodes the 16-bit values,
+This script fetches a PNG from the EDR API, decodes the encoded values,
 and optionally displays or saves a visualization.
+
+Supports both encoding formats:
+- 16-bit (uint16): RGBA where R=high byte, G=low byte, A=validity
+- 8-bit (uint8): Grayscale+Alpha where Gray=value, A=validity
 
 Usage:
     python scripts/decode_edr_png.py [options]
@@ -15,8 +19,8 @@ Examples:
     # Save visualization
     python scripts/decode_edr_png.py --save output.png
 
-    # Custom URL
-    python scripts/decode_edr_png.py --url "http://localhost:8083/edr/collections/hrrr-surface/area?..."
+    # Custom URL with 8-bit encoding
+    python scripts/decode_edr_png.py --url "http://localhost:8083/edr/collections/hrrr-surface/area?...&depth=8"
 
     # Decode existing file
     python scripts/decode_edr_png.py --file /tmp/edr-png-test/test1_basic.png --min 250 --max 310
@@ -73,6 +77,61 @@ def decode_16bit_png(img_array):
     valid_mask = a > 127
 
     return normalized, valid_mask
+
+
+def decode_8bit_png(img_array):
+    """
+    Decode 8-bit values from Grayscale+Alpha or LA PNG.
+
+    Returns:
+        values: Normalized values (0-1 range)
+        valid_mask: Boolean mask of valid pixels
+    """
+    if len(img_array.shape) == 2:
+        # Pure grayscale without alpha
+        normalized = img_array.astype(np.float32) / 255.0
+        valid_mask = np.ones(img_array.shape, dtype=bool)
+    elif img_array.shape[2] == 2:
+        # Grayscale + Alpha (LA mode)
+        gray = img_array[:, :, 0].astype(np.float32)
+        a = img_array[:, :, 1]
+        normalized = gray / 255.0
+        valid_mask = a > 127
+    elif img_array.shape[2] == 4:
+        # RGBA - treat as 8-bit grayscale from R channel
+        gray = img_array[:, :, 0].astype(np.float32)
+        a = img_array[:, :, 3]
+        normalized = gray / 255.0
+        valid_mask = a > 127
+    else:
+        raise ValueError(f"Unexpected image shape: {img_array.shape}")
+
+    return normalized, valid_mask
+
+
+def detect_encoding(img, headers):
+    """
+    Detect whether PNG uses 8-bit or 16-bit encoding.
+
+    Returns: '8bit' or '16bit'
+    """
+    # Check header first
+    encoding = headers.get("x-edr-encoding", "").lower()
+    if encoding == "uint8":
+        return "8bit"
+    if encoding == "uint16":
+        return "16bit"
+
+    # Infer from image mode
+    if img.mode in ("L", "LA"):
+        return "8bit"
+    if img.mode in ("RGB", "RGBA"):
+        # Could be either - check if G channel looks like low byte data
+        # For 16-bit encoding, G channel should have varied values
+        # For 8-bit misinterpreted as RGBA, G would typically be 0 or match R
+        return "16bit"  # Default assumption for RGBA
+
+    return "16bit"
 
 
 def denormalize(normalized: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
@@ -163,15 +222,32 @@ def main():
         for k, v in headers.items():
             print(f"  {k}: {v}")
 
-    # Decode 16-bit values
-    if img.mode != "RGBA":
-        print(f"\nWarning: Expected RGBA, got {img.mode}")
-        if img.mode == "RGB":
-            # Add alpha channel
-            img = img.convert("RGBA")
-            img_array = np.array(img)
+    # Detect encoding and decode
+    encoding = detect_encoding(img, headers)
+    print(f"  Encoding: {encoding}")
 
-    normalized, valid_mask = decode_16bit_png(img_array)
+    if encoding == "8bit":
+        # Handle various 8-bit modes
+        if img.mode == "LA":
+            # Already Grayscale+Alpha
+            pass
+        elif img.mode == "L":
+            # Grayscale without alpha - convert to LA
+            img = img.convert("LA")
+            img_array = np.array(img)
+        elif img.mode in ("RGB", "RGBA"):
+            # Might be 8-bit stored as RGB/RGBA
+            img = img.convert("LA")
+            img_array = np.array(img)
+        normalized, valid_mask = decode_8bit_png(img_array)
+    else:
+        # 16-bit decoding
+        if img.mode != "RGBA":
+            print(f"\nWarning: Expected RGBA for 16-bit, got {img.mode}")
+            if img.mode == "RGB":
+                img = img.convert("RGBA")
+                img_array = np.array(img)
+        normalized, valid_mask = decode_16bit_png(img_array)
 
     # Get min/max for denormalization
     min_val = args.min
@@ -236,9 +312,18 @@ def main():
             plt.show()
 
     # Print sample GLSL decoding code
-    print(f"\n--- GLSL Decoding Example ---")
-    print("""
-// In fragment shader:
+    print(f"\n--- GLSL Decoding Example ({encoding}) ---")
+    if encoding == "8bit":
+        print("""
+// 8-bit decoding (Grayscale+Alpha):
+vec4 texel = texture2D(uDataTexture, vTexCoord);
+float normalized = texel.r;  // Already 0-1 in GLSL
+float value = normalized * (uMaxValue - uMinValue) + uMinValue;
+bool valid = texel.a > 0.5;
+""")
+    else:
+        print("""
+// 16-bit decoding (RGBA):
 vec4 texel = texture2D(uDataTexture, vTexCoord);
 float encoded = texel.r * 255.0 * 256.0 + texel.g * 255.0;
 float normalized = encoded / 65535.0;
