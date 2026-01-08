@@ -504,7 +504,6 @@ fn test_ndfd_lambert_mercator_resampling() {
 /// and that the western side of the grid is not mirrored.
 #[test]
 fn test_ndfd_lambert_grid_indices() {
-    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
     use projection::LambertConformal;
 
     let proj = LambertConformal::ndfd();
@@ -549,4 +548,352 @@ fn test_ndfd_lambert_grid_indices() {
     );
     assert!(la_i < 500.0, "LA i should be in western half of grid");
     assert!(ny_i > 1500.0, "NY i should be in eastern half of grid");
+}
+
+// ============================================================================
+// Lambert Conformal pyramid level scaling tests
+// ============================================================================
+
+/// Test that Lambert resampling correctly handles pyramid level scaling for HRRR
+/// This test verifies the fix for the bug where pyramid level data (e.g., 449x264)
+/// was being indexed using native resolution coordinates (1799x1059), causing
+/// data to render in a tiny rectangle instead of full CONUS coverage.
+#[test]
+fn test_hrrr_lambert_pyramid_level_scaling() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use projection::LambertConformal;
+
+    let proj = LambertConformal::hrrr();
+
+    // Native HRRR dimensions: 1799 x 1059
+    // Pyramid level 2 dimensions: 449 x 264 (scale factor 4)
+    let native_width = proj.nx;
+    let native_height = proj.ny;
+    let pyramid_width = 449usize;
+    let pyramid_height = 264usize;
+
+    assert_eq!(native_width, 1799, "HRRR native width should be 1799");
+    assert_eq!(native_height, 1059, "HRRR native height should be 1059");
+
+    // Create pyramid level 2 data with a gradient pattern
+    // Value = (i + j) to create a recognizable pattern
+    let mut pyramid_data = vec![f32::NAN; pyramid_width * pyramid_height];
+    for j in 0..pyramid_height {
+        for i in 0..pyramid_width {
+            pyramid_data[j * pyramid_width + i] = (i + j) as f32;
+        }
+    }
+
+    // Request a tile that covers the center of CONUS
+    // This area should definitely have data if pyramid scaling is correct
+    let output_bbox = [-105.0f32, 35.0, -95.0, 45.0]; // Central US (Kansas/Oklahoma area)
+    let output_width = 256;
+    let output_height = 256;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &pyramid_data,
+        pyramid_width,
+        pyramid_height,
+        output_width,
+        output_height,
+        output_bbox,
+        output_bbox, // data_bounds (not used for Lambert)
+        false,       // use_mercator
+        "hrrr",
+        None,  // goes_projection
+        false, // grid_uses_360
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    // Count valid (non-NaN) pixels
+    let valid_count = result.iter().filter(|v| !v.is_nan()).count();
+    let valid_percent = (valid_count as f64 / result.len() as f64) * 100.0;
+
+    println!("HRRR pyramid level scaling test:");
+    println!("  Native dims: {}x{}", native_width, native_height);
+    println!("  Pyramid dims: {}x{}", pyramid_width, pyramid_height);
+    println!("  Output bbox: {:?}", output_bbox);
+    println!(
+        "  Valid pixels: {} / {} ({:.1}%)",
+        valid_count,
+        result.len(),
+        valid_percent
+    );
+
+    // The center of CONUS should have substantial coverage
+    // Before the fix, this would be ~0% because indices were out of bounds
+    // After the fix, this should be >80% (accounting for edges outside HRRR coverage)
+    assert!(
+        valid_percent > 50.0,
+        "Expected >50% valid pixels in central US, got {:.1}%. \
+         This suggests pyramid level scaling is not working correctly.",
+        valid_percent
+    );
+}
+
+/// Test that Lambert resampling correctly handles pyramid level scaling for NDFD
+#[test]
+fn test_ndfd_lambert_pyramid_level_scaling() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use projection::LambertConformal;
+
+    let proj = LambertConformal::ndfd();
+
+    // Native NDFD dimensions: 2145 x 1377
+    // Simulate pyramid level 2 dimensions: 536 x 344 (scale factor 4)
+    let native_width = proj.nx;
+    let native_height = proj.ny;
+    let pyramid_width = 536usize;
+    let pyramid_height = 344usize;
+
+    assert_eq!(native_width, 2145, "NDFD native width should be 2145");
+    assert_eq!(native_height, 1377, "NDFD native height should be 1377");
+
+    // Create pyramid level data with a gradient pattern
+    let mut pyramid_data = vec![f32::NAN; pyramid_width * pyramid_height];
+    for j in 0..pyramid_height {
+        for i in 0..pyramid_width {
+            pyramid_data[j * pyramid_width + i] = (i + j) as f32;
+        }
+    }
+
+    // Request a tile that covers the center of CONUS
+    let output_bbox = [-100.0f32, 30.0, -90.0, 40.0]; // Texas/Louisiana area
+    let output_width = 256;
+    let output_height = 256;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &pyramid_data,
+        pyramid_width,
+        pyramid_height,
+        output_width,
+        output_height,
+        output_bbox,
+        output_bbox, // data_bounds (not used for Lambert)
+        false,       // use_mercator
+        "ndfd",
+        None,  // goes_projection
+        false, // grid_uses_360
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    // Count valid (non-NaN) pixels
+    let valid_count = result.iter().filter(|v| !v.is_nan()).count();
+    let valid_percent = (valid_count as f64 / result.len() as f64) * 100.0;
+
+    println!("NDFD pyramid level scaling test:");
+    println!("  Native dims: {}x{}", native_width, native_height);
+    println!("  Pyramid dims: {}x{}", pyramid_width, pyramid_height);
+    println!("  Output bbox: {:?}", output_bbox);
+    println!(
+        "  Valid pixels: {} / {} ({:.1}%)",
+        valid_count,
+        result.len(),
+        valid_percent
+    );
+
+    assert!(
+        valid_percent > 50.0,
+        "Expected >50% valid pixels in south-central US, got {:.1}%. \
+         This suggests pyramid level scaling is not working correctly.",
+        valid_percent
+    );
+}
+
+/// Test that Lambert Mercator resampling also handles pyramid level scaling
+#[test]
+fn test_hrrr_lambert_mercator_pyramid_level_scaling() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+
+    // Pyramid level 2 dimensions
+    let pyramid_width = 449usize;
+    let pyramid_height = 264usize;
+
+    // Create pyramid level data
+    let mut pyramid_data = vec![f32::NAN; pyramid_width * pyramid_height];
+    for j in 0..pyramid_height {
+        for i in 0..pyramid_width {
+            pyramid_data[j * pyramid_width + i] = (i + j) as f32;
+        }
+    }
+
+    // Request a Mercator tile covering central US
+    let output_bbox = [-105.0f32, 35.0, -95.0, 45.0];
+    let output_width = 256;
+    let output_height = 256;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &pyramid_data,
+        pyramid_width,
+        pyramid_height,
+        output_width,
+        output_height,
+        output_bbox,
+        output_bbox, // data_bounds (not used for Lambert)
+        true,        // use_mercator = true for WMTS tiles
+        "hrrr",
+        None,
+        false,
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    let valid_count = result.iter().filter(|v| !v.is_nan()).count();
+    let valid_percent = (valid_count as f64 / result.len() as f64) * 100.0;
+
+    println!("HRRR Lambert Mercator pyramid level scaling test:");
+    println!("  Pyramid dims: {}x{}", pyramid_width, pyramid_height);
+    println!("  Output bbox: {:?}", output_bbox);
+    println!(
+        "  Valid pixels: {} / {} ({:.1}%)",
+        valid_count,
+        result.len(),
+        valid_percent
+    );
+
+    assert!(
+        valid_percent > 50.0,
+        "Expected >50% valid pixels for Mercator output, got {:.1}%. \
+         This suggests pyramid level scaling is not working in Mercator mode.",
+        valid_percent
+    );
+}
+
+/// Test that native resolution (no scaling) still works correctly
+#[test]
+fn test_hrrr_lambert_native_resolution() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use projection::LambertConformal;
+
+    let proj = LambertConformal::hrrr();
+
+    // Use native dimensions (scale factor = 1.0)
+    let data_width = proj.nx;
+    let data_height = proj.ny;
+
+    // Create native resolution data
+    let mut data = vec![f32::NAN; data_width * data_height];
+    for j in 0..data_height {
+        for i in 0..data_width {
+            data[j * data_width + i] = (i + j) as f32;
+        }
+    }
+
+    // Request a tile covering central US
+    let output_bbox = [-105.0f32, 35.0, -95.0, 45.0];
+    let output_width = 256;
+    let output_height = 256;
+
+    let result = resample_grid_for_bbox_with_proj(
+        &data,
+        data_width,
+        data_height,
+        output_width,
+        output_height,
+        output_bbox,
+        output_bbox,
+        false,
+        "hrrr",
+        None,
+        false,
+    );
+
+    assert_eq!(result.len(), output_width * output_height);
+
+    let valid_count = result.iter().filter(|v| !v.is_nan()).count();
+    let valid_percent = (valid_count as f64 / result.len() as f64) * 100.0;
+
+    println!("HRRR native resolution test:");
+    println!("  Native dims: {}x{}", data_width, data_height);
+    println!("  Output bbox: {:?}", output_bbox);
+    println!(
+        "  Valid pixels: {} / {} ({:.1}%)",
+        valid_count,
+        result.len(),
+        valid_percent
+    );
+
+    // Native resolution should also have good coverage
+    assert!(
+        valid_percent > 50.0,
+        "Expected >50% valid pixels at native resolution, got {:.1}%.",
+        valid_percent
+    );
+}
+
+/// Test pyramid scaling with various scale factors
+#[test]
+fn test_lambert_pyramid_various_scale_factors() {
+    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use projection::LambertConformal;
+
+    let proj = LambertConformal::hrrr();
+    let native_width = proj.nx;
+    let native_height = proj.ny;
+
+    // Test multiple pyramid levels
+    let scale_factors = [1.0, 2.0, 4.0, 8.0];
+
+    let output_bbox = [-100.0f32, 35.0, -95.0, 40.0];
+    let output_width = 128;
+    let output_height = 128;
+
+    println!("\nTesting various pyramid scale factors:");
+
+    for scale in scale_factors {
+        let pyramid_width = (native_width as f64 / scale).ceil() as usize;
+        let pyramid_height = (native_height as f64 / scale).ceil() as usize;
+
+        // Create pyramid data
+        let mut pyramid_data = vec![f32::NAN; pyramid_width * pyramid_height];
+        for j in 0..pyramid_height {
+            for i in 0..pyramid_width {
+                pyramid_data[j * pyramid_width + i] = 100.0 + scale as f32; // Encode scale in value
+            }
+        }
+
+        let result = resample_grid_for_bbox_with_proj(
+            &pyramid_data,
+            pyramid_width,
+            pyramid_height,
+            output_width,
+            output_height,
+            output_bbox,
+            output_bbox,
+            false,
+            "hrrr",
+            None,
+            false,
+        );
+
+        let valid_count = result.iter().filter(|v| !v.is_nan()).count();
+        let valid_percent = (valid_count as f64 / result.len() as f64) * 100.0;
+
+        // Check that we get the correct value (100 + scale)
+        let expected_value = 100.0 + scale as f32;
+        let values_correct = result
+            .iter()
+            .filter(|v| !v.is_nan())
+            .all(|&v| (v - expected_value).abs() < 0.1);
+
+        println!(
+            "  Scale {}: dims {}x{}, valid {:.1}%, values_correct: {}",
+            scale, pyramid_width, pyramid_height, valid_percent, values_correct
+        );
+
+        assert!(
+            valid_percent > 30.0,
+            "Scale {}: Expected >30% valid pixels, got {:.1}%",
+            scale,
+            valid_percent
+        );
+
+        assert!(
+            values_correct,
+            "Scale {}: Values should be approximately {}",
+            scale, expected_value
+        );
+    }
 }
