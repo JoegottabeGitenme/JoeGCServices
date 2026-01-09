@@ -280,7 +280,7 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         // Grid spans from ~150°E to ~-94°W, crossing the Date Line
         // Using Western hemisphere notation: -210° to -94° (lon range ~116°)
         // Or approximately -170° to -130° for the main Alaska area
-        "nbm-alaska" => BoundingBox::new(-170.0, 50.0, -130.0, 72.0),
+        "nbm-alaska" => BoundingBox::new(-180.0, 40.5, -120.0, 75.0),
         // Hawaii: Mercator 2.5km (625x561)
         "nbm-hawaii" => BoundingBox::new(-164.0, 15.0, -150.0, 26.0),
         // Puerto Rico/USVI: Mercator 2.5km (339x225)
@@ -794,7 +794,7 @@ mod tests {
         let bbox19_fd = get_model_bbox("goes19-fulldisk");
         let bbox18_fd = get_model_bbox("goes18-fulldisk");
         let bbox19_conus = get_model_bbox("goes19");
-        let bbox18_conus = get_model_bbox("goes18");
+        let _bbox18_conus = get_model_bbox("goes18");
 
         // Full disk should have much larger coverage than CONUS
         assert!(

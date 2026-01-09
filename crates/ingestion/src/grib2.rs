@@ -662,7 +662,7 @@ mod tests {
         // This test verifies the JSON-building logic that adds multiscale metadata
         // to the zarr_json for catalog storage. This is critical for pyramid level
         // selection during rendering.
-        use grid_processor::types::{BoundingBox, MultiscaleMetadata, PyramidLevel, RowOrigin};
+        use grid_processor::types::{BoundingBox, MultiscaleMetadata, ProjectionType, PyramidLevel, RowOrigin};
         use grid_processor::writer::ZarrMetadata;
 
         // Create mock ZarrMetadata (basic metadata without multiscale)
@@ -681,6 +681,7 @@ mod tests {
             dtype: "float32".to_string(),
             compression: "blosc".to_string(),
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         // Create mock MultiscaleMetadata (pyramid levels)
@@ -760,7 +761,7 @@ mod tests {
         // This test verifies that the multiscale metadata we add to zarr_json
         // can be correctly parsed by the rendering code's parse_multiscale_metadata
         use grid_processor::parse_multiscale_metadata;
-        use grid_processor::types::{BoundingBox, MultiscaleMetadata, PyramidLevel, RowOrigin};
+        use grid_processor::types::{BoundingBox, MultiscaleMetadata, ProjectionType, PyramidLevel, RowOrigin};
         use grid_processor::writer::ZarrMetadata;
 
         // Create mock metadata
@@ -779,6 +780,7 @@ mod tests {
             dtype: "float32".to_string(),
             compression: "blosc".to_string(),
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         let multiscale_metadata = MultiscaleMetadata {
