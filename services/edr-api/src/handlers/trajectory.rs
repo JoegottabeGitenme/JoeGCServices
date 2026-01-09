@@ -602,12 +602,16 @@ fn build_level_string(
                 None
             }
         }
-        _ => param_def
-            .and_then(|p| p.levels.first())
-            .and_then(|l| match l {
-                LevelValue::Named(name) => Some(name.clone()),
-                LevelValue::Numeric(_) => None,
-            }),
+        _ => {
+            // Unknown level type, try to use named level from param
+            // Convert underscores to spaces (config uses cloud_base, catalog uses "cloud base")
+            param_def
+                .and_then(|p| p.levels.first())
+                .and_then(|l| match l {
+                    LevelValue::Named(name) => Some(name.replace('_', " ")),
+                    LevelValue::Numeric(_) => None,
+                })
+        }
     }
 }
 
