@@ -385,11 +385,36 @@ async fn cube_query(
     let mut coverages: Vec<CoverageJson> = Vec::new();
 
     for z_val in &z_values {
-        // Get the first param to determine grid size
-        let first_param = match params_to_query.first() {
-            Some(p) => p,
-            None => continue,
-        };
+        // Filter parameters to only those that exist at this z level
+        let params_at_level: Vec<_> = params_to_query
+            .iter()
+            .filter(|param_name| {
+                let param_def = collection_def
+                    .parameters
+                    .iter()
+                    .find(|p| p.name == **param_name);
+
+                // Check if this parameter exists at the current z level
+                if let Some(pd) = param_def {
+                    pd.levels.iter().any(|l| match l {
+                        LevelValue::Numeric(n) => (*n - z_val).abs() < 0.001,
+                        LevelValue::Named(_) => true, // Named levels match any z
+                    })
+                } else {
+                    true // If no param definition, include it
+                }
+            })
+            .cloned()
+            .collect();
+
+        // Skip this z level if no parameters exist at it
+        if params_at_level.is_empty() {
+            tracing::debug!("No parameters at z={}, skipping coverage", z_val);
+            continue;
+        }
+
+        // Get the first matching param to determine grid size
+        let first_param = &params_at_level[0];
 
         let param_def = collection_def
             .parameters
@@ -448,10 +473,10 @@ async fn cube_query(
             *z_val,
         );
 
-        // Build ranges for each parameter
+        // Build ranges for each parameter at this level
         let mut ranges: HashMap<String, NdArray> = HashMap::new();
 
-        for param_name in &params_to_query {
+        for param_name in &params_at_level {
             let param_def = collection_def
                 .parameters
                 .iter()

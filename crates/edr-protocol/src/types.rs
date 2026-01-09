@@ -226,9 +226,12 @@ impl VerticalExtent {
     }
 
     /// Create a vertical extent with specific level values.
+    /// The interval represents the range [min, max] of all levels.
     pub fn with_levels(levels: Vec<f64>, vrs: Option<String>) -> Self {
+        let min = levels.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = levels.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         Self {
-            interval: levels.into_iter().map(|l| vec![Some(l), Some(l)]).collect(),
+            interval: vec![vec![Some(min), Some(max)]],
             vrs,
         }
     }

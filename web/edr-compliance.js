@@ -6983,18 +6983,18 @@ async function testCubeMultiZ(collection) {
         return { passed: true, checks: [{ name: 'Collection has less than 2 z levels (test N/A)', passed: true }] };
     }
 
-    const z1 = verticalValues[0];
-    const z2 = verticalValues[1];
-    const z3 = verticalValues[2] || z2;
-    
+    // Get unique z levels (up to 3, no duplicates)
+    const zLevels = verticalValues.slice(0, Math.min(3, verticalValues.length));
+    const zParam = zLevels.join(',');
+
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
-    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${z1},${z2},${z3}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zParam}`;
     const res = await fetchJson(url);
-    
+
     // Check coverages count matches z levels
     const coverages = res.json?.coverages || [];
-    const expectedCount = verticalValues.length >= 3 ? 3 : 2;
-    
+    const expectedCount = zLevels.length;
+
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
@@ -7006,7 +7006,7 @@ async function testCubeMultiZ(collection) {
         checks,
         response: res,
         url,
-        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${z1},${z2},${z3}`
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zParam}`
     };
 }
 
