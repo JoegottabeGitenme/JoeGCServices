@@ -146,7 +146,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     fn create_test_zarr_metadata() -> ZarrMetadata {
-        use crate::types::RowOrigin;
+        use crate::types::{ProjectionType, RowOrigin};
         ZarrMetadata {
             model: "gfs".to_string(),
             parameter: "TMP".to_string(),
@@ -162,6 +162,7 @@ mod tests {
             dtype: "float32".to_string(),
             compression: "blosc".to_string(),
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         }
     }
 

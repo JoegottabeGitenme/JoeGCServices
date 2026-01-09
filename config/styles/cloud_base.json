@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Cloud Base Height Styles",
+    "description": "Styles for cloud base height (lowest cloud layer)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Cloud Base Height",
+      "description": "Height of lowest cloud layer in meters",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 5000
+      },
+      "stops": [
+        { "value": 0, "color": "#800000", "label": "0" },
+        { "value": 60, "color": "#FF00FF", "label": "200ft" },
+        { "value": 150, "color": "#FF0000", "label": "500ft" },
+        { "value": 300, "color": "#FF6600", "label": "1000ft" },
+        { "value": 600, "color": "#FFCC00", "label": "2000ft" },
+        { "value": 900, "color": "#FFFF00", "label": "3000ft" },
+        { "value": 1500, "color": "#99FF99", "label": "5000ft" },
+        { "value": 3000, "color": "#66FF6680", "label": "10000ft" },
+        { "value": 5000, "color": "#FFFFFF00", "label": ">15000ft" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Cloud Base (ft)",
+        "labels": ["<500ft", "1000ft", "3000ft", "5000ft", ">10000ft"]
+      }
+    }
+  }
+}

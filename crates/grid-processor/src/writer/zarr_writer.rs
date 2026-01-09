@@ -17,7 +17,9 @@ use zarrs::storage::{ReadableStorageTraits, StoreKey, WritableStorageTraits};
 use crate::config::{GridProcessorConfig, PyramidConfig, ZarrCompression};
 use crate::downsample::{generate_pyramid, DownsampleMethod};
 use crate::error::{GridProcessorError, Result};
-use crate::types::{AxisInfo, BoundingBox, MultiscaleMetadata, PyramidLevel, RowOrigin};
+use crate::types::{
+    AxisInfo, BoundingBox, MultiscaleMetadata, ProjectionType, PyramidLevel, RowOrigin,
+};
 
 /// Helper for serde to skip NaN values.
 fn is_nan_f32(v: &f32) -> bool {
@@ -64,6 +66,10 @@ pub struct ZarrMetadata {
     /// - `South`: Row 0 at min_lat (Lambert Conformal grids like HRRR, NDFD)
     #[serde(default)]
     pub row_origin: RowOrigin,
+    /// The map projection type used by this grid.
+    /// This determines how geographic coordinates map to grid indices.
+    #[serde(default)]
+    pub projection: ProjectionType,
 }
 
 impl ZarrMetadata {
@@ -190,6 +196,7 @@ impl ZarrWriter {
             reference_time,
             forecast_hour,
             row_origin: RowOrigin::North, // Default; caller should override for Lambert grids
+            projection: ProjectionType::Geographic, // Default; caller should override if needed
         };
 
         Ok(ZarrWriteResult {
@@ -405,6 +412,7 @@ impl ZarrWriter {
             reference_time,
             forecast_hour,
             row_origin: RowOrigin::North, // Default; caller should override for Lambert grids
+            projection: ProjectionType::Geographic, // Default; caller should override if needed
         };
 
         Ok(ZarrWriteResult {
@@ -459,6 +467,7 @@ impl ZarrWriter {
     /// * `downsample_method` - Method to use for downsampling
     /// * `row_origin` - Which edge of the grid row 0 corresponds to
     ///   (`North` for standard grids like GFS, `South` for Lambert grids like HRRR/NDFD)
+    /// * `projection` - The map projection type used by this grid
     ///
     /// # Returns
     /// `MultiscaleWriteResult` containing metadata and bytes written
@@ -479,6 +488,7 @@ impl ZarrWriter {
         pyramid_config: &PyramidConfig,
         downsample_method: DownsampleMethod,
         row_origin: RowOrigin,
+        projection: ProjectionType,
     ) -> Result<MultiscaleWriteResult> {
         let store = Arc::new(storage);
         let chunk_size = self.config.zarr_chunk_size;
@@ -618,6 +628,7 @@ impl ZarrWriter {
             reference_time,
             forecast_hour,
             row_origin,
+            projection,
         };
 
         Ok(MultiscaleWriteResult {
@@ -737,6 +748,7 @@ impl ZarrWriter {
             reference_time,
             forecast_hour,
             row_origin: RowOrigin::North, // Default; caller should override for Lambert grids
+            projection: ProjectionType::Geographic, // Default; caller should override if needed
         };
 
         Ok(ZarrWriteResult {
@@ -956,6 +968,7 @@ mod tests {
             reference_time: Utc::now(),
             forecast_hour: 6,
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         let json = metadata.to_json();

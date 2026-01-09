@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Haines Index Styles",
+    "description": "Styles for Haines Index (fire weather potential)"
+  },
+  "styles": {
+    "categorical": {
+      "default": true,
+      "name": "Haines Index",
+      "description": "Haines Index for atmospheric conditions affecting wildfire growth (2-6 scale)",
+      "type": "filled_contour",
+      "units": "index",
+      "range": {
+        "min": 2,
+        "max": 6
+      },
+      "stops": [
+        { "value": 2, "color": "#00AA00", "label": "2 (Very Low)" },
+        { "value": 3, "color": "#66CC00", "label": "3 (Low)" },
+        { "value": 4, "color": "#FFCC00", "label": "4 (Moderate)" },
+        { "value": 5, "color": "#FF6600", "label": "5 (High)" },
+        { "value": 6, "color": "#CC0000", "label": "6 (Very High)" }
+      ],
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Haines Index",
+        "labels": ["2 (Very Low)", "3 (Low)", "4 (Moderate)", "5 (High)", "6 (Very High)"],
+        "description": "Lower values = stable atmosphere, Higher values = unstable with dry air"
+      }
+    }
+  }
+}

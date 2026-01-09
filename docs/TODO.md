@@ -33,7 +33,6 @@
 - Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
 - System design high level architecture diagram isn't right anymore
 - Minio object storage section is wrong
-- also NBM https://vlab.noaa.gov/web/mdl/nbm-download
 - let's try to get registered on the OGC implementation database
 - need to check units and other metadata in all query type outputs
 - lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
@@ -45,3 +44,4 @@
 - need deploy script to restart nginx towards the end of the script
 - need to see if precaching and cache warming is actually doing anything
 - lets download WMS and WMTS compliance documents and ensure our services adhere
+- need to double check getFeatureInfo for all WMS products within their BBOX's, should be fairly easy to script up

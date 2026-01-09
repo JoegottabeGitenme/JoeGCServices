@@ -57,7 +57,7 @@ pub fn detect_file_type(path: &str) -> FileType {
 
 /// Extract model name from filename.
 ///
-/// Supports: GFS, HRRR, MRMS, GOES-18, GOES-19
+/// Supports: GFS, HRRR, MRMS, NDFD, NBM (all regions), GOES-18, GOES-19
 pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
     let filename = Path::new(file_path).file_name().and_then(|s| s.to_str())?;
 
@@ -86,6 +86,15 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
     } else if lower.contains("ndfd") || lower.starts_with("ds.") {
         // NDFD files use ds.{element}.bin naming (e.g., ds.temp.bin)
         Some("ndfd".to_string())
+    } else if lower.starts_with("nbm-") {
+        // NBM files are named like nbm-conus_*, nbm-alaska_*, nbm-hawaii_*, etc.
+        // Extract the full model name including region (e.g., "nbm-conus", "nbm-alaska")
+        if let Some(underscore_pos) = lower.find('_') {
+            Some(lower[..underscore_pos].to_string())
+        } else {
+            // Fallback: just "nbm" if no underscore found
+            Some("nbm".to_string())
+        }
     } else {
         None
     }
@@ -264,6 +273,20 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         // SW (0,0): lat=20.19, lon=-121.55; NW (0,1376): lat=49.94, lon=-130.10
         // SE (2144,0): lat=20.33, lon=-69.21; NE (2144,1376): lat=50.11, lon=-60.89
         "ndfd" => BoundingBox::new(-130.1, 20.19, -60.89, 50.11),
+        // NBM (National Blend of Models) regional grids
+        // CONUS: Lambert Conformal 2.5km (2345x1597)
+        "nbm-conus" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+        // Alaska: Polar Stereographic ~3km (1649x1105)
+        // Grid spans from ~150°E to ~-94°W, crossing the Date Line
+        // Using Western hemisphere notation: -210° to -94° (lon range ~116°)
+        // Or approximately -170° to -130° for the main Alaska area
+        "nbm-alaska" => BoundingBox::new(-170.0, 50.0, -130.0, 72.0),
+        // Hawaii: Mercator 2.5km (625x561)
+        "nbm-hawaii" => BoundingBox::new(-164.0, 15.0, -150.0, 26.0),
+        // Puerto Rico/USVI: Mercator 2.5km (339x225)
+        "nbm-puertorico" => BoundingBox::new(-69.0, 16.0, -63.0, 20.0),
+        // Guam/Marianas: Mercator 2.5km (193x193)
+        "nbm-guam" => BoundingBox::new(141.0, 11.0, 148.0, 18.0),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
@@ -490,6 +513,36 @@ mod tests {
         assert_eq!(
             extract_model_from_filename("ndfd_conus_temp.grib2"),
             Some("ndfd".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_nbm() {
+        // NBM regional files
+        assert_eq!(
+            extract_model_from_filename("nbm-conus_20260108_12z_f006.grib2"),
+            Some("nbm-conus".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("nbm-alaska_20260108_00z_f012.grib2"),
+            Some("nbm-alaska".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("nbm-hawaii_20260108_06z_f024.grib2"),
+            Some("nbm-hawaii".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("nbm-puertorico_20260108_18z_f001.grib2"),
+            Some("nbm-puertorico".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("nbm-guam_20260108_21z_f048.grib2"),
+            Some("nbm-guam".to_string())
+        );
+        // With full path
+        assert_eq!(
+            extract_model_from_filename("/data/downloads/nbm-hawaii_20260108_21z_f015.grib2"),
+            Some("nbm-hawaii".to_string())
         );
     }
 
@@ -792,6 +845,69 @@ mod tests {
         assert!(bbox.max_x > -70.0, "NDFD should extend east of -70°");
         assert!(bbox.min_y >= 20.0, "NDFD should be at or north of 20°N");
         assert!(bbox.max_y < 55.0, "NDFD should be south of 55°N");
+    }
+
+    #[test]
+    fn test_get_model_bbox_nbm() {
+        // NBM CONUS covers continental US
+        let bbox_conus = get_model_bbox("nbm-conus");
+        assert!(
+            bbox_conus.min_x < -120.0,
+            "NBM CONUS should extend west of -120°"
+        );
+        assert!(
+            bbox_conus.max_x > -70.0,
+            "NBM CONUS should extend east of -70°"
+        );
+        assert!(
+            bbox_conus.min_y >= 15.0,
+            "NBM CONUS should be at or north of 15°N"
+        );
+        assert!(bbox_conus.max_y < 60.0, "NBM CONUS should be south of 60°N");
+
+        // NBM Alaska
+        let bbox_ak = get_model_bbox("nbm-alaska");
+        assert!(
+            bbox_ak.min_x < -170.0,
+            "NBM Alaska should extend west of -170°"
+        );
+        assert!(
+            bbox_ak.max_y > 70.0,
+            "NBM Alaska should extend north of 70°N"
+        );
+
+        // NBM Hawaii
+        let bbox_hi = get_model_bbox("nbm-hawaii");
+        assert!(
+            bbox_hi.min_x < -160.0 && bbox_hi.min_x > -170.0,
+            "NBM Hawaii should be around -160°"
+        );
+        assert!(
+            bbox_hi.min_y > 10.0 && bbox_hi.max_y < 30.0,
+            "NBM Hawaii should be around 15-25°N"
+        );
+
+        // NBM Puerto Rico
+        let bbox_pr = get_model_bbox("nbm-puertorico");
+        assert!(
+            bbox_pr.min_x > -70.0 && bbox_pr.max_x < -62.0,
+            "NBM PR should be around -67°"
+        );
+        assert!(
+            bbox_pr.min_y > 15.0 && bbox_pr.max_y < 21.0,
+            "NBM PR should be around 18°N"
+        );
+
+        // NBM Guam
+        let bbox_gu = get_model_bbox("nbm-guam");
+        assert!(
+            bbox_gu.min_x > 140.0 && bbox_gu.max_x < 150.0,
+            "NBM Guam should be around 145°E"
+        );
+        assert!(
+            bbox_gu.min_y > 10.0 && bbox_gu.max_y < 20.0,
+            "NBM Guam should be around 13°N"
+        );
     }
 
     // ==================== FileType Enum ====================

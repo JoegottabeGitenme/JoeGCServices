@@ -9,10 +9,10 @@ use tracing::{debug, info, warn};
 use zarrs_filesystem::FilesystemStore;
 
 use grid_processor::{
-    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, PyramidConfig, RowOrigin,
-    ZarrWriter,
+    BoundingBox as GpBoundingBox, DownsampleMethod, GridProcessorConfig, ProjectionType,
+    PyramidConfig, RowOrigin, ZarrWriter,
 };
-use projection::LambertConformal;
+use projection::{LambertConformal, Mercator, PolarStereographic};
 use storage::{Catalog, CatalogEntry, ObjectStorage};
 
 use crate::error::{IngestionError, Result};
@@ -204,15 +204,32 @@ pub async fn ingest_grib2(
             );
         }
 
-        // Calculate bounding box and row origin
-        // HRRR and NDFD use Lambert Conformal projection where row 0 is at the south (min_lat)
-        // Standard geographic grids (GFS, MRMS) have row 0 at the north (max_lat)
-        let (gp_bbox, row_origin) = if model == "hrrr" {
+        // Calculate bounding box, row origin, and projection type
+        // Different models use different projections and scanning conventions:
+        //
+        // Lambert Conformal (HRRR, NDFD, NBM-CONUS):
+        //   - Row 0 is at the south (min_lat), row increases northward
+        //   - Requires projection transform for coordinate conversion
+        //
+        // Polar Stereographic (NBM-Alaska):
+        //   - Row 0 is at the south edge of the grid
+        //   - May cross the Date Line (180°/-180°)
+        //   - Requires projection transform
+        //
+        // Mercator (NBM-Hawaii, NBM-PuertoRico, NBM-Guam):
+        //   - Row 0 is at the south (min_lat)
+        //   - Requires projection transform (though simpler than Lambert)
+        //
+        // Geographic (GFS, MRMS, etc.):
+        //   - Row 0 is at the north (max_lat)
+        //   - Simple linear coordinate mapping
+        let (gp_bbox, row_origin, projection_type) = if model == "hrrr" {
             let proj = LambertConformal::hrrr();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
             (
                 GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
                 RowOrigin::South,
+                ProjectionType::LambertConformal,
             )
         } else if model == "ndfd" {
             let proj = LambertConformal::ndfd();
@@ -220,8 +237,55 @@ pub async fn ingest_grib2(
             (
                 GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
                 RowOrigin::South,
+                ProjectionType::LambertConformal,
             )
-        } else {
+        } else if model == "nbm-conus" {
+            // NBM CONUS uses Lambert Conformal
+            let proj = LambertConformal::nbm_conus();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+                ProjectionType::LambertConformal,
+            )
+        } else if model == "nbm-alaska" {
+            // NBM Alaska uses Polar Stereographic
+            let proj = PolarStereographic::nbm_alaska();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+                ProjectionType::PolarStereographic,
+            )
+        } else if model == "nbm-hawaii" {
+            // NBM Hawaii uses Mercator
+            let proj = Mercator::nbm_hawaii();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds_normalized();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+                ProjectionType::Mercator,
+            )
+        } else if model == "nbm-puertorico" {
+            // NBM Puerto Rico uses Mercator
+            let proj = Mercator::nbm_puertorico();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds_normalized();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+                ProjectionType::Mercator,
+            )
+        } else if model == "nbm-guam" {
+            // NBM Guam uses Mercator
+            let proj = Mercator::nbm_guam();
+            let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+            (
+                GpBoundingBox::new(min_lon, min_lat, max_lon, max_lat),
+                RowOrigin::South,
+                ProjectionType::Mercator,
+            )
+        } else if model.starts_with("goes") {
+            // GOES satellites use Geostationary projection
             let grib_bbox = get_bbox_from_grid(&message.grid_definition);
             (
                 GpBoundingBox::new(
@@ -231,6 +295,20 @@ pub async fn ingest_grib2(
                     grib_bbox.max_y,
                 ),
                 RowOrigin::North,
+                ProjectionType::Geostationary,
+            )
+        } else {
+            // Default: Geographic grid (GFS, MRMS, etc.)
+            let grib_bbox = get_bbox_from_grid(&message.grid_definition);
+            (
+                GpBoundingBox::new(
+                    grib_bbox.min_x,
+                    grib_bbox.min_y,
+                    grib_bbox.max_x,
+                    grib_bbox.max_y,
+                ),
+                RowOrigin::North,
+                ProjectionType::Geographic,
             )
         };
 
@@ -252,6 +330,7 @@ pub async fn ingest_grib2(
             forecast_hour,
             &zarr_storage_path,
             row_origin,
+            projection_type,
         )
         .await
         {
@@ -353,6 +432,7 @@ async fn write_and_upload_zarr(
     forecast_hour: u32,
     storage_path: &str,
     row_origin: RowOrigin,
+    projection: ProjectionType,
 ) -> Result<(u64, serde_json::Value)> {
     // Create temporary directory for Zarr output
     let temp_dir = tempfile::tempdir()?;
@@ -390,6 +470,7 @@ async fn write_and_upload_zarr(
             &pyramid_config,
             downsample_method,
             row_origin,
+            projection,
         )
         .map_err(|e| IngestionError::ZarrWrite(format!("Failed to write Zarr: {}", e)))?;
 

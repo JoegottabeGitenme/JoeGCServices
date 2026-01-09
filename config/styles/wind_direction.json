@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Wind Direction Styles",
+    "description": "Styles for wind direction in degrees"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Wind Direction",
+      "description": "Wind direction colored by compass heading (circular scale)",
+      "type": "gradient",
+      "units": "degrees",
+      "range": {
+        "min": 0,
+        "max": 360
+      },
+      "stops": [
+        { "value": 0, "color": "#0000FF", "label": "N (0°)" },
+        { "value": 45, "color": "#0080FF", "label": "NE (45°)" },
+        { "value": 90, "color": "#00FFFF", "label": "E (90°)" },
+        { "value": 135, "color": "#00FF80", "label": "SE (135°)" },
+        { "value": 180, "color": "#00FF00", "label": "S (180°)" },
+        { "value": 225, "color": "#FFFF00", "label": "SW (225°)" },
+        { "value": 270, "color": "#FF8000", "label": "W (270°)" },
+        { "value": 315, "color": "#FF0080", "label": "NW (315°)" },
+        { "value": 360, "color": "#0000FF", "label": "N (360°)" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "wrap",
+      "legend": {
+        "title": "Wind Direction",
+        "labels": ["N", "E", "S", "W", "N"]
+      }
+    }
+  }
+}

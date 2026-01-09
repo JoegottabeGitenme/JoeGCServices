@@ -1,0 +1,90 @@
+# NBM Hawaii EDR Configuration
+
+model: nbm-hawaii
+
+collections:
+  - id: nbm-hawaii-surface
+    title: "NBM Hawaii - Surface Weather"
+    description: "Surface temperature, humidity, and basic weather parameters"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+      - name: TMAX
+        levels: [2]
+      - name: TMIN
+        levels: [2]
+      - name: RH
+        levels: [2]
+    run_mode: instances
+
+  - id: nbm-hawaii-precipitation
+    title: "NBM Hawaii - Precipitation"
+    description: "Precipitation amount and probability forecasts"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: APCP01
+        levels: [surface]
+      - name: APCP06
+        levels: [surface]
+      - name: POP06
+        levels: [surface]
+    run_mode: instances
+
+  - id: nbm-hawaii-wind
+    title: "NBM Hawaii - Wind"
+    description: "Wind speed, direction, and gusts (trade winds)"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: WIND
+        levels: [10]
+      - name: UGRD
+        levels: [10]
+      - name: VGRD
+        levels: [10]
+      - name: WDIR
+        levels: [10]
+      - name: GUST
+        levels: [10]
+    run_mode: instances
+
+  - id: nbm-hawaii-aviation
+    title: "NBM Hawaii - Aviation"
+    description: "Aviation weather parameters"
+    level_filter:
+      level_type: mixed
+    parameters:
+      - name: VIS
+        levels: [surface]
+      - name: CEIL
+        levels: [cloud_base]
+      - name: TCDC
+        levels: [entire_atmosphere]
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 3600
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 48
+  max_vertical_levels: 10
+  max_response_size_mb: 50
+  max_area_sq_degrees: 50
+  max_area_sq_degrees_png: 400

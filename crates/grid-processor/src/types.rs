@@ -17,6 +17,65 @@ pub enum RowOrigin {
     South,
 }
 
+/// The map projection used by a grid dataset.
+///
+/// This determines how geographic coordinates map to grid indices.
+/// For Geographic grids, a simple linear mapping is used.
+/// For projected grids (Lambert, Mercator, Polar Stereographic),
+/// the projection math must be used for accurate coordinate conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionType {
+    /// Geographic (lat/lon) grid - simple linear mapping.
+    #[default]
+    Geographic,
+    /// Lambert Conformal Conic projection (HRRR, NDFD, NBM-CONUS).
+    LambertConformal,
+    /// Mercator projection (NBM-Hawaii, NBM-PuertoRico, NBM-Guam).
+    Mercator,
+    /// Polar Stereographic projection (NBM-Alaska).
+    PolarStereographic,
+    /// Geostationary satellite projection (GOES).
+    Geostationary,
+}
+
+impl ProjectionType {
+    /// Parse from string (case-insensitive).
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "geographic" | "latlon" | "lat_lon" => Self::Geographic,
+            "lambert" | "lambert_conformal" | "lcc" => Self::LambertConformal,
+            "mercator" => Self::Mercator,
+            "polar" | "polar_stereographic" | "ps" => Self::PolarStereographic,
+            "geostationary" | "geos" => Self::Geostationary,
+            _ => Self::Geographic,
+        }
+    }
+
+    /// Check if this projection requires special coordinate transformation.
+    /// Geographic grids can use simple linear interpolation.
+    pub fn requires_projection_transform(&self) -> bool {
+        !matches!(self, Self::Geographic)
+    }
+
+    /// Check if this projection may cross the Date Line.
+    pub fn may_cross_dateline(&self) -> bool {
+        matches!(self, Self::PolarStereographic | Self::Geographic)
+    }
+}
+
+impl std::fmt::Display for ProjectionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Geographic => write!(f, "geographic"),
+            Self::LambertConformal => write!(f, "lambert_conformal"),
+            Self::Mercator => write!(f, "mercator"),
+            Self::PolarStereographic => write!(f, "polar_stereographic"),
+            Self::Geostationary => write!(f, "geostationary"),
+        }
+    }
+}
+
 /// A geographic bounding box in WGS84 coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BoundingBox {
@@ -135,6 +194,66 @@ impl BoundingBox {
             *self
         }
     }
+
+    /// Check if this bounding box crosses the Date Line (180°/-180° longitude).
+    ///
+    /// This is detected when:
+    /// - min_lon > max_lon (inverted bbox, e.g., 150° to -120°)
+    /// - Or the span is > 180° and includes both positive and negative longitudes
+    pub fn crosses_dateline(&self) -> bool {
+        // Most common case: min_lon > max_lon after normalization
+        // e.g., Alaska grid: 150°E to -94°W = min_lon=150, max_lon=-94
+        if self.min_lon > self.max_lon {
+            return true;
+        }
+
+        // Edge case: bbox spans > 180° and crosses through 180°
+        // This shouldn't normally happen with proper bbox construction
+        false
+    }
+
+    /// Split this bounding box at the Date Line into two non-crossing bboxes.
+    ///
+    /// Returns Some((west_bbox, east_bbox)) if crossing the Date Line, None otherwise.
+    /// - west_bbox: covers min_lon to 180°
+    /// - east_bbox: covers -180° to max_lon
+    ///
+    /// This is useful for grids like NBM Alaska that span from ~150°E to ~-94°W.
+    pub fn split_at_dateline(&self) -> Option<(BoundingBox, BoundingBox)> {
+        if !self.crosses_dateline() {
+            return None;
+        }
+
+        // min_lon is the western edge (positive, e.g., 150°)
+        // max_lon is the eastern edge (negative, e.g., -94°)
+        let west_bbox = BoundingBox::new(self.min_lon, self.min_lat, 180.0, self.max_lat);
+        let east_bbox = BoundingBox::new(-180.0, self.min_lat, self.max_lon, self.max_lat);
+
+        Some((west_bbox, east_bbox))
+    }
+
+    /// Normalize longitude to the -180 to 180 range.
+    pub fn normalize_longitude(lon: f64) -> f64 {
+        let mut normalized = lon;
+        while normalized > 180.0 {
+            normalized -= 360.0;
+        }
+        while normalized < -180.0 {
+            normalized += 360.0;
+        }
+        normalized
+    }
+
+    /// Create a bounding box from coordinates that may be in 0-360 format,
+    /// normalizing to -180/180 format.
+    pub fn from_0_360(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Self {
+        Self {
+            min_lon: Self::normalize_longitude(min_lon),
+            min_lat,
+            max_lon: Self::normalize_longitude(max_lon),
+            max_lat,
+        }
+    }
 }
 
 impl Default for BoundingBox {
@@ -205,6 +324,84 @@ impl GridRegion {
     /// Check if the region is empty.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    /// Stitch two grid regions horizontally (west + east).
+    ///
+    /// This is used for Date Line crossing grids where we read two separate regions
+    /// and need to combine them into a single continuous grid.
+    ///
+    /// # Arguments
+    /// * `west_region` - The western region (covers min_lon to 180°)
+    /// * `east_region` - The eastern region (covers -180° to max_lon)
+    ///
+    /// # Returns
+    /// A new GridRegion combining both, or an error if they can't be stitched.
+    pub fn stitch_horizontal(
+        west_region: GridRegion,
+        east_region: GridRegion,
+    ) -> Result<GridRegion, String> {
+        // Validate that heights match
+        if west_region.height != east_region.height {
+            return Err(format!(
+                "Height mismatch: west={}, east={}",
+                west_region.height, east_region.height
+            ));
+        }
+
+        // Validate that resolutions are compatible
+        let res_tolerance = 0.0001;
+        if (west_region.resolution.0 - east_region.resolution.0).abs() > res_tolerance
+            || (west_region.resolution.1 - east_region.resolution.1).abs() > res_tolerance
+        {
+            return Err(format!(
+                "Resolution mismatch: west={:?}, east={:?}",
+                west_region.resolution, east_region.resolution
+            ));
+        }
+
+        let height = west_region.height;
+        let west_width = west_region.width;
+        let east_width = east_region.width;
+        let total_width = west_width + east_width;
+
+        // Allocate combined data buffer
+        let mut combined_data = vec![f32::NAN; total_width * height];
+
+        // Copy data row by row
+        // West region goes on the left, east region on the right
+        for row in 0..height {
+            let west_row_start = row * west_width;
+            let east_row_start = row * east_width;
+            let combined_row_start = row * total_width;
+
+            // Copy west region data
+            combined_data[combined_row_start..combined_row_start + west_width]
+                .copy_from_slice(&west_region.data[west_row_start..west_row_start + west_width]);
+
+            // Copy east region data
+            combined_data[combined_row_start + west_width..combined_row_start + total_width]
+                .copy_from_slice(&east_region.data[east_row_start..east_row_start + east_width]);
+        }
+
+        // Compute combined bounding box
+        // West bbox: (min_lon, min_lat) to (180, max_lat)
+        // East bbox: (-180, min_lat) to (max_lon, max_lat)
+        // Combined: uses the Date Line crossing representation (min_lon > max_lon)
+        let combined_bbox = BoundingBox::new(
+            west_region.bbox.min_lon,
+            west_region.bbox.min_lat,
+            east_region.bbox.max_lon, // Will be negative, creating a crossing bbox
+            west_region.bbox.max_lat,
+        );
+
+        Ok(GridRegion {
+            data: combined_data,
+            width: total_width,
+            height,
+            bbox: combined_bbox,
+            resolution: west_region.resolution,
+        })
     }
 }
 
@@ -417,6 +614,93 @@ mod tests {
         stats.hits = 80;
         stats.misses = 20;
         assert!((stats.hit_rate() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bbox_crosses_dateline() {
+        // Normal bbox - doesn't cross
+        let normal = BoundingBox::new(-120.0, 30.0, -80.0, 50.0);
+        assert!(!normal.crosses_dateline());
+
+        // Alaska-style bbox - crosses (min > max)
+        let alaska = BoundingBox::new(150.0, 40.0, -94.0, 72.0);
+        assert!(alaska.crosses_dateline());
+
+        // Pacific bbox centered on Date Line
+        let pacific = BoundingBox::new(170.0, -10.0, -170.0, 10.0);
+        assert!(pacific.crosses_dateline());
+    }
+
+    #[test]
+    fn test_bbox_split_at_dateline() {
+        // Normal bbox - no split
+        let normal = BoundingBox::new(-120.0, 30.0, -80.0, 50.0);
+        assert!(normal.split_at_dateline().is_none());
+
+        // Alaska-style bbox - should split
+        let alaska = BoundingBox::new(150.0, 40.0, -94.0, 72.0);
+        let split = alaska.split_at_dateline();
+        assert!(split.is_some());
+
+        let (west, east) = split.unwrap();
+        // West part: 150° to 180°
+        assert!((west.min_lon - 150.0).abs() < 0.01);
+        assert!((west.max_lon - 180.0).abs() < 0.01);
+        // East part: -180° to -94°
+        assert!((east.min_lon - (-180.0)).abs() < 0.01);
+        assert!((east.max_lon - (-94.0)).abs() < 0.01);
+        // Latitudes preserved
+        assert!((west.min_lat - 40.0).abs() < 0.01);
+        assert!((west.max_lat - 72.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_grid_region_stitch_horizontal() {
+        // Create west region (2x3, covers 150° to 180°)
+        let west_data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let west = GridRegion::new(
+            west_data,
+            2,
+            3,
+            BoundingBox::new(150.0, 40.0, 180.0, 70.0),
+            (15.0, 10.0),
+        );
+
+        // Create east region (2x3, covers -180° to -150°)
+        let east_data: Vec<f32> = vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let east = GridRegion::new(
+            east_data,
+            2,
+            3,
+            BoundingBox::new(-180.0, 40.0, -150.0, 70.0),
+            (15.0, 10.0),
+        );
+
+        let combined = GridRegion::stitch_horizontal(west, east).unwrap();
+
+        // Check dimensions
+        assert_eq!(combined.width, 4);
+        assert_eq!(combined.height, 3);
+
+        // Check data order (west then east for each row)
+        assert_eq!(combined.data[0], 1.0); // row 0, col 0 (west)
+        assert_eq!(combined.data[1], 2.0); // row 0, col 1 (west)
+        assert_eq!(combined.data[2], 7.0); // row 0, col 2 (east)
+        assert_eq!(combined.data[3], 8.0); // row 0, col 3 (east)
+        assert_eq!(combined.data[4], 3.0); // row 1, col 0 (west)
+        assert_eq!(combined.data[5], 4.0); // row 1, col 1 (west)
+        assert_eq!(combined.data[6], 9.0); // row 1, col 2 (east)
+        assert_eq!(combined.data[7], 10.0); // row 1, col 3 (east)
+    }
+
+    #[test]
+    fn test_normalize_longitude() {
+        assert!((BoundingBox::normalize_longitude(0.0) - 0.0).abs() < 0.01);
+        assert!((BoundingBox::normalize_longitude(180.0) - 180.0).abs() < 0.01);
+        assert!((BoundingBox::normalize_longitude(-180.0) - (-180.0)).abs() < 0.01);
+        assert!((BoundingBox::normalize_longitude(270.0) - (-90.0)).abs() < 0.01);
+        assert!((BoundingBox::normalize_longitude(-270.0) - 90.0).abs() < 0.01);
+        assert!((BoundingBox::normalize_longitude(360.0) - 0.0).abs() < 0.01);
     }
 }
 

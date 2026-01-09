@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Ice Accumulation Styles",
+    "description": "Styles for freezing rain and ice accumulation"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Ice Accumulation",
+      "description": "Ice/freezing rain accumulation in meters (displayed in inches)",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 0.05
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 0.001, "color": "#FFE0FF", "label": "Trace" },
+        { "value": 0.003, "color": "#FFAAFF", "label": "0.1 in" },
+        { "value": 0.006, "color": "#FF66FF", "label": "0.25 in" },
+        { "value": 0.012, "color": "#DD00DD", "label": "0.5 in" },
+        { "value": 0.025, "color": "#AA00AA", "label": "1 in" },
+        { "value": 0.05, "color": "#660066", "label": "2+ in" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Ice (in)",
+        "labels": ["Trace", "0.1", "0.25", "0.5", "1+"],
+        "description": "Light (<0.25in), Moderate (0.25-0.5in), Heavy (>0.5in)"
+      }
+    }
+  }
+}

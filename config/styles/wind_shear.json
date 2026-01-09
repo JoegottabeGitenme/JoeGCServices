@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Wind Shear Styles",
+    "description": "Styles for low-level wind shear"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Low-Level Wind Shear",
+      "description": "Wind shear speed in the 0-2000ft AGL layer",
+      "type": "gradient",
+      "units": "m/s",
+      "range": {
+        "min": 0,
+        "max": 25
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 2, "color": "#E0FFE0", "label": "Light" },
+        { "value": 5, "color": "#99FF99", "label": "5 m/s" },
+        { "value": 8, "color": "#FFFF00", "label": "Moderate" },
+        { "value": 10, "color": "#FFCC00", "label": "10 m/s" },
+        { "value": 12, "color": "#FF9900", "label": "Strong" },
+        { "value": 15, "color": "#FF6600", "label": "15 m/s" },
+        { "value": 18, "color": "#FF0000", "label": "Severe" },
+        { "value": 25, "color": "#990000", "label": "25+ m/s" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Wind Shear (m/s)",
+        "labels": ["0", "5", "10", "15", "20+"],
+        "description": "Light (<5), Moderate (5-10), Strong (10-15), Severe (>15)"
+      }
+    }
+  }
+}

@@ -9,7 +9,7 @@ use zarrs_filesystem::FilesystemStore;
 
 use grid_processor::{
     reproject_geostationary_to_geographic, BoundingBox as GpBoundingBox, DownsampleMethod,
-    GridProcessorConfig, PyramidConfig, RowOrigin, ZarrWriter,
+    GridProcessorConfig, ProjectionType, PyramidConfig, RowOrigin, ZarrWriter,
 };
 use projection::Geostationary;
 use storage::{Catalog, CatalogEntry, ObjectStorage};
@@ -306,6 +306,7 @@ async fn write_and_upload_zarr(
             &pyramid_config,
             downsample_method,
             RowOrigin::North,
+            ProjectionType::Geographic, // Reprojected from geostationary to geographic
         )
         .map_err(|e| IngestionError::ZarrWrite(format!("Failed to write Zarr: {}", e)))?;
 

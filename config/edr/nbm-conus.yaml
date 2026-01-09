@@ -1,0 +1,188 @@
+# NBM CONUS EDR Configuration
+# Defines collections grouped by category for the OGC EDR API
+#
+# NBM provides a comprehensive blend of model output including:
+# - Surface weather (temp, humidity, precipitation)
+# - Aviation parameters (visibility, ceiling, wind)
+# - Winter weather (snow, ice accumulation)
+# - Fire weather (Fosberg, Haines indices)
+# - Convective parameters (CAPE, CIN, thunderstorm probabilities)
+
+model: nbm-conus
+
+collections:
+  # ==========================================================================
+  # Surface Weather Collection
+  # ==========================================================================
+  - id: nbm-conus-surface
+    title: "NBM CONUS - Surface Weather"
+    description: "Surface temperature, humidity, and basic weather parameters"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+      - name: TMAX
+        levels: [2]
+      - name: TMIN
+        levels: [2]
+      - name: APTMP
+        levels: [2]
+      - name: RH
+        levels: [2]
+      - name: MAXRH
+        levels: [2]
+      - name: MINRH
+        levels: [2]
+    run_mode: instances
+
+  # ==========================================================================
+  # Precipitation Collection
+  # ==========================================================================
+  - id: nbm-conus-precipitation
+    title: "NBM CONUS - Precipitation"
+    description: "Precipitation amount and probability forecasts"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: APCP01
+        levels: [surface]
+      - name: APCP06
+        levels: [surface]
+      - name: POP01
+        levels: [surface]
+      - name: POP06
+        levels: [surface]
+      - name: POP12
+        levels: [surface]
+    run_mode: instances
+
+  # ==========================================================================
+  # Wind Collection
+  # ==========================================================================
+  - id: nbm-conus-wind
+    title: "NBM CONUS - Wind"
+    description: "Wind speed, direction, and gusts at multiple heights"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: WIND
+        levels: [10]
+      - name: UGRD
+        levels: [10]
+      - name: VGRD
+        levels: [10]
+      - name: WDIR
+        levels: [10]
+      - name: GUST
+        levels: [10]
+      - name: WIND30
+        levels: [30]
+      - name: WIND80
+        levels: [80]
+    run_mode: instances
+
+  # ==========================================================================
+  # Aviation Collection
+  # ==========================================================================
+  - id: nbm-conus-aviation
+    title: "NBM CONUS - Aviation"
+    description: "Aviation weather parameters (visibility, ceiling, clouds, wind shear)"
+    level_filter:
+      # Mixed levels - visibility is surface, ceiling is cloud base
+      level_type: mixed
+    parameters:
+      - name: VIS
+        levels: [surface]
+      - name: CEIL
+        levels: [cloud_base]
+      - name: TCDC
+        levels: [entire_atmosphere]
+      - name: HCB
+        levels: [cloud_base]
+      - name: LLWS
+        levels: [0-2000_ft]
+    run_mode: instances
+
+  # ==========================================================================
+  # Winter Weather Collection
+  # ==========================================================================
+  - id: nbm-conus-winter
+    title: "NBM CONUS - Winter Weather"
+    description: "Snow, ice accumulation and winter weather probabilities"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: ASNOW06
+        levels: [surface]
+      - name: FZRA06
+        levels: [surface]
+      - name: PSNOW06
+        levels: [surface]
+      - name: PFZRA06
+        levels: [surface]
+      - name: SNOLEV
+        levels: [surface]
+    run_mode: instances
+
+  # ==========================================================================
+  # Fire Weather Collection
+  # ==========================================================================
+  - id: nbm-conus-fire
+    title: "NBM CONUS - Fire Weather"
+    description: "Fire weather indices and related parameters"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: FOSINDX
+        levels: [surface]
+      - name: HAINES
+        levels: [surface]
+      # Fire weather also uses RH and wind - but those are in other collections
+    run_mode: instances
+
+  # ==========================================================================
+  # Convective Collection
+  # ==========================================================================
+  - id: nbm-conus-convective
+    title: "NBM CONUS - Convective"
+    description: "Convective parameters and thunderstorm probabilities"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: CAPE
+        levels: [surface]
+      - name: CIN
+        levels: [surface]
+      - name: LI
+        levels: [surface]
+      - name: PTSTM12
+        levels: [surface]
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 3600 # 1 hour - NBM updates hourly
+
+limits:
+  max_parameters_per_request: 15
+  max_time_steps: 48
+  max_vertical_levels: 10
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100
+  max_area_sq_degrees_png: 2500

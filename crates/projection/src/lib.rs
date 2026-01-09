@@ -11,3 +11,5 @@ pub mod transform;
 
 pub use geostationary::Geostationary;
 pub use lambert::LambertConformal;
+pub use mercator::Mercator;
+pub use polar::PolarStereographic;

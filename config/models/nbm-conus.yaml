@@ -1,0 +1,742 @@
+# NBM CONUS - National Blend of Models Configuration
+# Statistically post-processed multi-model blend from MDL
+# 2.5km resolution, Lambert Conformal projection
+#
+# Data source: AWS S3 (noaa-nbm-grib2-pds)
+# Documentation: https://vlab.noaa.gov/web/mdl/nbm
+#
+# NBM blends ~40+ model inputs including GFS, NAM, HRRR, ECMWF, etc.
+# using bias-correction and dynamic weighting schemes.
+
+model:
+  id: nbm-conus
+  name: "NBM - National Blend of Models (CONUS)"
+  description: "NOAA/MDL National Blend of Models for CONUS, 2.5km resolution"
+  enabled: true
+
+# WMS/WMTS dimension configuration
+dimensions:
+  type: forecast # "forecast" = RUN+FORECAST dimensions
+  run: true # RUN dimension - model initialization time (ISO8601)
+  forecast: true # FORECAST dimension - hours ahead from run time
+  elevation: true # ELEVATION dimension - vertical levels (10m, 30m, 80m winds)
+
+source:
+  type: aws_s3
+  bucket: noaa-nbm-grib2-pds
+  # NBM uses blend.YYYYMMDD/CC/core/ structure
+  # Core files contain main deterministic products
+  prefix_template: "blend.{date}/{cycle:02}/core"
+  file_pattern: "blend.t{cycle:02}z.core.f{forecast:03}.co.grib2"
+  region: us-east-1
+
+grid:
+  projection: lambert_conformal
+  resolution: "2.5km"
+  bbox:
+    # Approximate lat/lon bounds for CONUS Lambert Conformal grid
+    min_lon: -126.0
+    min_lat: 19.2
+    max_lon: -60.0
+    max_lat: 50.0
+  projection_params:
+    # From NBM GRIB2 Section 3 specification
+    lat1: 19.229 # Latitude of first grid point
+    lon1: 233.7234 # Longitude of first grid point (360-based: 233.7234 = -126.2766)
+    lov: 265.0 # Central meridian (360-based: 265 = -95)
+    latin1: 25.0 # First standard parallel
+    latin2: 25.0 # Second standard parallel (tangent cone)
+    dx: 2539.703 # X-direction grid length in meters
+    dy: 2539.703 # Y-direction grid length in meters
+    nx: 2345 # Number of points along X-axis
+    ny: 1597 # Number of points along Y-axis
+    earth_radius: 6371200 # Spherical earth radius in meters
+
+schedule:
+  cycles:
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] # Hourly
+  forecast_hours:
+    start: 1
+    end: 48 # Short-range focus (NBM goes to 264h but we limit to 48h)
+    step: 1 # Every hour
+  poll_interval_secs: 3600 # Check every hour
+  delay_hours: 2 # NBM typically available ~2 hours after cycle time
+  max_concurrent: 3 # Allow up to 3 concurrent downloads
+
+retention:
+  hours: 6 # Keep data for 6 hours
+  keep_latest_runs: 2 # Always keep at least 2 recent runs
+
+# Precaching configuration
+precaching:
+  enabled: false
+  keep_recent_cycles: 1
+  forecast_hours: [1, 6, 12, 24, 48]
+  warm_on_ingest: false
+  poll_interval_secs: 300
+  parameters: ["TMP", "WSPD", "APCP"]
+
+# GRIB2 level type codes reference (Table 4.5):
+#   1 = surface
+#   100 = isobaric (pressure level in Pa)
+#   101 = mean sea level
+#   103 = height above ground (in m)
+#   200 = entire atmosphere
+
+parameters:
+  # ==========================================================================
+  # SURFACE WEATHER ELEMENTS
+  # ==========================================================================
+
+  # Temperature at 2m
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "C"
+    conversion: K_to_C
+    valid_range: [180, 340]
+
+  # Dew Point Temperature at 2m
+  - name: DPT
+    description: "Dew Point Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 6
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "C"
+    conversion: K_to_C
+    valid_range: [180, 320]
+
+  # Maximum Temperature (12-hour window: 12z-00z or 00z-12z)
+  - name: TMAX
+    description: "Maximum Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 4
+    downsample: max
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "C"
+    conversion: K_to_C
+    valid_range: [180, 350]
+
+  # Minimum Temperature (12-hour window)
+  - name: TMIN
+    description: "Minimum Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 5
+    downsample: min
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "C"
+    conversion: K_to_C
+    valid_range: [180, 340]
+
+  # Apparent Temperature (derived from temp, humidity, wind)
+  - name: APTMP
+    description: "Apparent Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 21
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "C"
+    conversion: K_to_C
+    valid_range: [180, 350]
+
+  # Relative Humidity at 2m
+  - name: RH
+    description: "Relative Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 1
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Maximum Relative Humidity (12-hour window)
+  - name: MAXRH
+    description: "Maximum Relative Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 27 # Local table
+    downsample: max
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Minimum Relative Humidity (12-hour window)
+  - name: MINRH
+    description: "Minimum Relative Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 28 # Local table
+    downsample: min
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: "%"
+    valid_range: [0, 100]
+
+  # ==========================================================================
+  # PRECIPITATION PARAMETERS
+  # ==========================================================================
+
+  # Quantitative Precipitation Forecast (1-hour)
+  - name: APCP01
+    description: "1-Hour Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 8
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 1
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2
+    display_units: mm
+    accumulation: true
+    valid_range: [0, 200]
+
+  # Quantitative Precipitation Forecast (6-hour)
+  - name: APCP06
+    description: "6-Hour Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 8
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2
+    display_units: mm
+    accumulation: true
+    valid_range: [0, 500]
+
+  # Probability of Precipitation (1-hour)
+  - name: POP01
+    description: "1-Hour Probability of Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 2
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 1
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Probability of Precipitation (6-hour)
+  - name: POP06
+    description: "6-Hour Probability of Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 2
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Probability of Precipitation (12-hour)
+  - name: POP12
+    description: "12-Hour Probability of Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 2
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 12
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+  # ==========================================================================
+  # AVIATION WEATHER ELEMENTS - WIND
+  # ==========================================================================
+
+  # Wind Speed at 10m
+  - name: WIND
+    description: "Wind Speed"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 1
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    units: m/s
+    valid_range: [0, 100]
+
+  # U-Component of Wind at 10m
+  - name: UGRD
+    description: "U-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 2
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    units: m/s
+    valid_range: [-100, 100]
+
+  # V-Component of Wind at 10m
+  - name: VGRD
+    description: "V-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 3
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    units: m/s
+    valid_range: [-100, 100]
+
+  # Wind Direction at 10m
+  - name: WDIR
+    description: "Wind Direction"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 0
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    units: degrees
+    valid_range: [0, 360]
+
+  # Wind Gust at 10m
+  - name: GUST
+    description: "Wind Speed (Gust)"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 22
+    downsample: max
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    units: m/s
+    valid_range: [0, 150]
+
+  # Wind Speed at 30m (for wind energy applications)
+  - name: WIND30
+    description: "Wind Speed at 30m"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 1
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 30
+        display: "30 m above ground"
+    units: m/s
+    valid_range: [0, 100]
+
+  # Wind Speed at 80m (for wind energy applications)
+  - name: WIND80
+    description: "Wind Speed at 80m"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 1
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 80
+        display: "80 m above ground"
+    units: m/s
+    valid_range: [0, 120]
+
+  # ==========================================================================
+  # AVIATION WEATHER ELEMENTS - VISIBILITY & CLOUDS
+  # ==========================================================================
+
+  # Visibility
+  - name: VIS
+    description: "Visibility"
+    grib2:
+      discipline: 0
+      category: 19
+      number: 0
+    downsample: min
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: km
+    conversion: m_to_km
+    valid_range: [0, 50000]
+
+  # Ceiling Height (lowest broken/overcast layer)
+  - name: CEIL
+    description: "Ceiling Height"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 13
+    downsample: min
+    levels:
+      - type: cloud_base
+        level_code: 2
+        display: "cloud base"
+    units: m
+    display_units: ft
+    conversion: m_to_ft
+    valid_range: [0, 20000]
+
+  # Total Cloud Cover
+  - name: TCDC
+    description: "Total Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 1
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Cloud Base Height (lowest cloud layer, any coverage)
+  - name: HCB
+    description: "Cloud Base Height"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 11
+    downsample: min
+    levels:
+      - type: cloud_base
+        level_code: 2
+        display: "cloud base"
+    units: m
+    display_units: ft
+    conversion: m_to_ft
+    valid_range: [0, 20000]
+
+  # Low-Level Wind Shear Speed
+  - name: LLWS
+    description: "Low-Level Wind Shear Speed"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 15
+    downsample: max
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 610 # 0-2000 ft AGL
+        display: "0-2000 ft AGL"
+    units: m/s
+    valid_range: [0, 50]
+
+  # ==========================================================================
+  # WINTER WEATHER ELEMENTS
+  # ==========================================================================
+
+  # Snow Accumulation (6-hour)
+  - name: ASNOW06
+    description: "6-Hour Snow Accumulation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 29
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: in
+    conversion: m_to_in
+    valid_range: [0, 2]
+
+  # Ice Accumulation (6-hour)
+  - name: FZRA06
+    description: "6-Hour Ice Accumulation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 66
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: in
+    conversion: m_to_in
+    valid_range: [0, 0.5]
+
+  # Probability of Snow (6-hour)
+  - name: PSNOW06
+    description: "6-Hour Probability of Snow"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 37
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Probability of Freezing Rain (6-hour)
+  - name: PFZRA06
+    description: "6-Hour Probability of Freezing Rain"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 38
+    downsample: mean
+    time_range:
+      type: accumulation
+      hours: 6
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Snow Level (elevation where precipitation transitions)
+  - name: SNOLEV
+    description: "Snow Level"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 33
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: ft
+    conversion: m_to_ft
+    valid_range: [0, 5000]
+
+  # ==========================================================================
+  # FIRE WEATHER ELEMENTS
+  # ==========================================================================
+
+  # Fosberg Fire Weather Index
+  - name: FOSINDX
+    description: "Fosberg Fire Weather Index"
+    grib2:
+      discipline: 2 # Land surface
+      category: 4 # Fire weather
+      number: 2
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "index"
+    valid_range: [0, 100]
+
+  # Haines Index (low-level variant)
+  - name: HAINES
+    description: "Haines Index"
+    grib2:
+      discipline: 2
+      category: 4
+      number: 1
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "index"
+    valid_range: [2, 6]
+
+  # ==========================================================================
+  # CONVECTIVE PARAMETERS
+  # ==========================================================================
+
+  # Convective Available Potential Energy (surface-based)
+  - name: CAPE
+    description: "Convective Available Potential Energy"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 6
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: J/kg
+    valid_range: [0, 10000]
+
+  # Convective Inhibition (surface-based)
+  - name: CIN
+    description: "Convective Inhibition"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: J/kg
+    valid_range: [-2000, 0]
+
+  # Lifted Index
+  - name: LI
+    description: "Lifted Index"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 0
+    downsample: min
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: K
+    display_units: "C"
+    valid_range: [-15, 15]
+
+  # ==========================================================================
+  # THUNDERSTORM PROBABILITIES
+  # ==========================================================================
+
+  # Probability of Thunderstorms (12-hour)
+  - name: PTSTM12
+    description: "12-Hour Probability of Thunderstorms"
+    grib2:
+      discipline: 0
+      category: 19
+      number: 2
+    downsample: max
+    time_range:
+      type: accumulation
+      hours: 12
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "%"
+    valid_range: [0, 100]
+
+# Composite layers (derived from multiple parameters)
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs
+
+  - name: WIND_VECTORS
+    description: "Wind vectors visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_vectors

@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Lifted Index Styles",
+    "description": "Styles for Lifted Index (atmospheric stability indicator)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Lifted Index",
+      "description": "Atmospheric stability - negative values indicate instability (convection potential)",
+      "type": "gradient",
+      "units": "K",
+      "range": {
+        "min": -10,
+        "max": 10
+      },
+      "stops": [
+        { "value": -10, "color": "#FF0000", "label": "-10 (Extreme)" },
+        { "value": -6, "color": "#FF6600", "label": "-6 (Strong)" },
+        { "value": -4, "color": "#FFAA00", "label": "-4 (Moderate)" },
+        { "value": -2, "color": "#FFCC00", "label": "-2 (Weak)" },
+        { "value": 0, "color": "#FFFF99", "label": "0 (Marginal)" },
+        { "value": 2, "color": "#CCFFCC", "label": "2" },
+        { "value": 4, "color": "#99FFFF", "label": "4" },
+        { "value": 6, "color": "#66CCFF", "label": "6 (Stable)" },
+        { "value": 10, "color": "#3399FF", "label": "10 (Very Stable)" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Lifted Index",
+        "labels": ["Unstable (-6)", "Weak (-2)", "Neutral (0)", "Stable (+4)", "Very Stable (+8)"],
+        "description": "Negative = unstable (thunderstorm potential), Positive = stable"
+      }
+    }
+  }
+}

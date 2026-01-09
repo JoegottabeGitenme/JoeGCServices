@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Snow Level Styles",
+    "description": "Styles for snow level elevation (rain/snow transition height)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Snow Level",
+      "description": "Elevation where precipitation transitions from rain to snow",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 4000
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF", "label": "Sea level" },
+        { "value": 300, "color": "#E8E8FF", "label": "1000ft" },
+        { "value": 600, "color": "#C8C8FF", "label": "2000ft" },
+        { "value": 900, "color": "#A0A0FF", "label": "3000ft" },
+        { "value": 1200, "color": "#8080FF", "label": "4000ft" },
+        { "value": 1500, "color": "#6060FF", "label": "5000ft" },
+        { "value": 2000, "color": "#4040DD", "label": "6500ft" },
+        { "value": 2500, "color": "#2020BB", "label": "8000ft" },
+        { "value": 3000, "color": "#000099", "label": "10000ft" },
+        { "value": 4000, "color": "#000066", "label": "13000ft+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Snow Level (ft)",
+        "labels": ["1000", "3000", "5000", "8000", "10000+"]
+      }
+    }
+  }
+}
