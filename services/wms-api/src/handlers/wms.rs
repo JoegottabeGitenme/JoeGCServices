@@ -343,8 +343,8 @@ async fn wms_get_capabilities(state: Arc<AppState>, params: WmsParams) -> Respon
                     let key = format!("{}_{}", model_id, layer.parameter);
                     param_availability.insert(key, availability);
 
-                    // Track if we have WSPD for this model
-                    if layer.parameter == "WSPD" {
+                    // Track if we have WSPD/WIND for this model
+                    if layer.parameter == "WSPD" || layer.parameter == "WIND" {
                         has_wspd = true;
                     }
                 }
@@ -876,7 +876,7 @@ async fn render_weather_data(
 
     // Get default level if not specified
     let level = match &dimensions.elevation {
-        Some(elev) => Some(elev.clone()),
+        Some(elev) => Some(elev.replace(" ", "_")),
         None => {
             let configs = state.layer_configs.read().await;
             configs
@@ -899,7 +899,7 @@ async fn render_weather_data(
 
         // Check if model uses speed/direction (WSPD/WDIR) or U/V components (UGRD/VGRD)
         // NDFD uses speed/direction, most other models use U/V components
-        let uses_speed_direction = matches!(model, "ndfd");
+        let uses_speed_direction = model.starts_with("nbm") || model == "ndfd";
 
         if uses_speed_direction {
             return crate::rendering::render_wind_barbs_from_speed_direction_tile(
@@ -1224,7 +1224,7 @@ fn build_wms_capabilities_xml_v2(
             match layer.parameter.as_str() {
                 "UGRD" => ugrd_availability = Some(availability),
                 "VGRD" => vgrd_availability = Some(availability),
-                "WSPD" => wspd_availability = Some(availability),
+                "WSPD" | "WIND" => wspd_availability = Some(availability),
                 "WDIR" => wdir_availability = Some(availability),
                 _ => {}
             }

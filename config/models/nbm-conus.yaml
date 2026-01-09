@@ -74,7 +74,7 @@ precaching:
   forecast_hours: [1, 6, 12, 24, 48]
   warm_on_ingest: false
   poll_interval_secs: 300
-  parameters: ["TMP", "WSPD", "APCP"]
+  parameters: ["TMP", "WIND", "APCP"]
 
 # GRIB2 level type codes reference (Table 4.5):
 #   1 = surface
@@ -100,7 +100,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -118,7 +118,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -136,7 +136,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -154,7 +154,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -172,7 +172,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -190,7 +190,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: "%"
     valid_range: [0, 100]
 
@@ -206,7 +206,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: "%"
     valid_range: [0, 100]
 
@@ -222,7 +222,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: "%"
     valid_range: [0, 100]
 
@@ -328,7 +328,7 @@ parameters:
   # AVIATION WEATHER ELEMENTS - WIND
   # ==========================================================================
 
-  # Wind Speed at 10m
+  # Wind Speed at 10m (NBM provides wind at 10m, 30m, 80m - NOT 2m)
   - name: WIND
     description: "Wind Speed"
     grib2:
@@ -340,41 +340,9 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: m/s
     valid_range: [0, 100]
-
-  # U-Component of Wind at 10m
-  - name: UGRD
-    description: "U-Component of Wind"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 2
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 10
-        display: "10 m above ground"
-    units: m/s
-    valid_range: [-100, 100]
-
-  # V-Component of Wind at 10m
-  - name: VGRD
-    description: "V-Component of Wind"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 3
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 10
-        display: "10 m above ground"
-    units: m/s
-    valid_range: [-100, 100]
 
   # Wind Direction at 10m
   - name: WDIR
@@ -388,7 +356,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: degrees
     valid_range: [0, 360]
 
@@ -404,41 +372,9 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: m/s
     valid_range: [0, 150]
-
-  # Wind Speed at 30m (for wind energy applications)
-  - name: WIND30
-    description: "Wind Speed at 30m"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 1
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 30
-        display: "30 m above ground"
-    units: m/s
-    valid_range: [0, 100]
-
-  # Wind Speed at 80m (for wind energy applications)
-  - name: WIND80
-    description: "Wind Speed at 80m"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 1
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 80
-        display: "80 m above ground"
-    units: m/s
-    valid_range: [0, 120]
 
   # ==========================================================================
   # AVIATION WEATHER ELEMENTS - VISIBILITY & CLOUDS
@@ -733,10 +669,5 @@ parameters:
 composites:
   - name: WIND_BARBS
     description: "Wind barbs visualization"
-    requires: [UGRD, VGRD]
-    renderer: wind_barbs
-
-  - name: WIND_VECTORS
-    description: "Wind vectors visualization"
-    requires: [UGRD, VGRD]
-    renderer: wind_vectors
+    requires: [WIND, WDIR]
+    renderer: wind_barbs_spd_dir

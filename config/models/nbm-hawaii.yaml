@@ -76,7 +76,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -93,7 +93,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -110,7 +110,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -127,7 +127,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: K
     display_units: "C"
     conversion: K_to_C
@@ -144,7 +144,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display: "{value} m above ground"
     units: "%"
     valid_range: [0, 100]
 
@@ -204,7 +204,7 @@ parameters:
     units: "%"
     valid_range: [0, 100]
 
-  # Wind
+  # Wind - NBM provides wind at 10m, 30m, 80m - NOT 2m
   - name: WIND
     description: "Wind Speed"
     grib2:
@@ -216,39 +216,9 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: m/s
     valid_range: [0, 80]
-
-  - name: UGRD
-    description: "U-Component of Wind"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 2
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 10
-        display: "10 m above ground"
-    units: m/s
-    valid_range: [-80, 80]
-
-  - name: VGRD
-    description: "V-Component of Wind"
-    grib2:
-      discipline: 0
-      category: 2
-      number: 3
-    downsample: mean
-    levels:
-      - type: height_above_ground
-        level_code: 103
-        value: 10
-        display: "10 m above ground"
-    units: m/s
-    valid_range: [-80, 80]
 
   - name: WDIR
     description: "Wind Direction"
@@ -261,7 +231,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: degrees
     valid_range: [0, 360]
 
@@ -276,7 +246,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display: "{value} m above ground"
     units: m/s
     valid_range: [0, 100]
 
@@ -327,8 +297,9 @@ parameters:
     units: "%"
     valid_range: [0, 100]
 
+# Composite layers (derived from multiple parameters)
 composites:
   - name: WIND_BARBS
     description: "Wind barbs visualization"
-    requires: [UGRD, VGRD]
-    renderer: wind_barbs
+    requires: [WIND, WDIR]
+    renderer: wind_barbs_spd_dir

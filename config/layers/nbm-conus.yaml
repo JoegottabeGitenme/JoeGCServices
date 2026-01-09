@@ -227,37 +227,13 @@ layers:
       - value: "10 m above ground"
         default: true
 
-  - id: nbm_conus_WIND30
-    parameter: WIND30
-    title: "Wind Speed at 30m"
-    abstract: "Sustained wind speed at 30m above ground (wind energy)"
-    style_file: wind.json
-    units:
-      native: m/s
-      display: m/s
-    levels:
-      - value: "30 m above ground"
-        default: true
-
-  - id: nbm_conus_WIND80
-    parameter: WIND80
-    title: "Wind Speed at 80m"
-    abstract: "Sustained wind speed at 80m above ground (wind energy hub height)"
-    style_file: wind.json
-    units:
-      native: m/s
-      display: m/s
-    levels:
-      - value: "80 m above ground"
-        default: true
-
   - id: nbm_conus_WIND_BARBS
     parameter: WIND_BARBS
     title: "Wind Barbs"
-    abstract: "Wind direction and speed barbs (composite of UGRD/VGRD)"
+    abstract: "Wind direction and speed barbs (composite of WIND/WDIR)"
     style_file: wind_barbs.json
     composite: true
-    requires: [UGRD, VGRD]
+    requires: [WIND, WDIR]
     levels:
       - value: "10 m above ground"
         default: true
