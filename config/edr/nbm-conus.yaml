@@ -3,12 +3,13 @@
 #
 # NBM provides a comprehensive blend of model output including:
 # - Surface weather (precipitation, fire indices, convective parameters)
-# - Near-surface parameters (temp, humidity at 2m; wind at 10m/30m/80m)
+# - Near-surface parameters (temp, humidity at 2m; wind at 10m)
 # - Cloud and atmospheric parameters (ceiling, total cloud cover)
 #
-# Collections are organized by vertical level type (consistent with GFS/HRRR):
+# Collections are organized by vertical level (OGC EDR requires consistent vertical extent):
 # - surface: Parameters at the surface level
-# - height-agl: Parameters at heights above ground level
+# - 2m-agl: Temperature/humidity at 2m above ground
+# - 10m-agl: Wind parameters at 10m above ground
 # - cloud: Cloud-related parameters (ceiling, cloud cover)
 
 model: nbm-conus
@@ -66,16 +67,15 @@ collections:
     run_mode: instances
 
   # ==========================================================================
-  # Heights Above Ground Level
+  # 2m Above Ground Level - Temperature and Humidity
   # ==========================================================================
-  - id: nbm-conus-height-agl
-    title: "NBM CONUS - Heights Above Ground"
-    description: "Parameters at heights above ground level (2m temp/humidity, 10m/30m/80m wind)"
+  - id: nbm-conus-2m-agl
+    title: "NBM CONUS - 2m Above Ground"
+    description: "Temperature and humidity parameters at 2m above ground level"
     level_filter:
       level_type: height_above_ground
       level_code: 103
     parameters:
-      # 2m temperature and humidity
       - name: TMP
         levels: [2]
       - name: DPT
@@ -92,7 +92,18 @@ collections:
         levels: [2]
       - name: MINRH
         levels: [2]
-      # 10m wind
+    run_mode: instances
+
+  # ==========================================================================
+  # 10m Above Ground Level - Wind Parameters
+  # ==========================================================================
+  - id: nbm-conus-10m-agl
+    title: "NBM CONUS - 10m Above Ground"
+    description: "Wind parameters at 10m above ground level"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
       - name: WIND
         levels: [10]
       - name: UGRD
@@ -103,11 +114,6 @@ collections:
         levels: [10]
       - name: GUST
         levels: [10]
-      # Higher level winds
-      - name: WIND
-        levels: [30]
-      - name: WIND
-        levels: [80]
     run_mode: instances
 
   # ==========================================================================

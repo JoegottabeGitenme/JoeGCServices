@@ -1,9 +1,10 @@
 # NBM Guam EDR Configuration
 # Defines collections organized by vertical level for the OGC EDR API
 #
-# Collections are organized by vertical level type (consistent with GFS/HRRR):
+# Collections are organized by vertical level (OGC EDR requires consistent vertical extent):
 # - surface: Parameters at the surface level
-# - height-agl: Parameters at heights above ground level
+# - 2m-agl: Temperature/humidity at 2m above ground
+# - 10m-agl: Wind parameters at 10m above ground
 # - cloud: Cloud-related parameters (ceiling, cloud cover)
 
 model: nbm-guam
@@ -32,16 +33,15 @@ collections:
     run_mode: instances
 
   # ==========================================================================
-  # Heights Above Ground Level
+  # 2m Above Ground Level - Temperature and Humidity
   # ==========================================================================
-  - id: nbm-guam-height-agl
-    title: "NBM Guam - Heights Above Ground"
-    description: "Parameters at heights above ground level (2m temp/humidity, 10m wind)"
+  - id: nbm-guam-2m-agl
+    title: "NBM Guam - 2m Above Ground"
+    description: "Temperature and humidity parameters at 2m above ground level"
     level_filter:
       level_type: height_above_ground
       level_code: 103
     parameters:
-      # 2m temperature and humidity
       - name: TMP
         levels: [2]
       - name: DPT
@@ -52,7 +52,18 @@ collections:
         levels: [2]
       - name: RH
         levels: [2]
-      # 10m wind
+    run_mode: instances
+
+  # ==========================================================================
+  # 10m Above Ground Level - Wind Parameters
+  # ==========================================================================
+  - id: nbm-guam-10m-agl
+    title: "NBM Guam - 10m Above Ground"
+    description: "Wind parameters at 10m above ground level"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
       - name: WIND
         levels: [10]
       - name: UGRD
