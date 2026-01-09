@@ -27,11 +27,25 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
+
+/// Filter collection parameters to only those with available data.
+fn filter_available_parameters(
+    collection_def: &crate::config::CollectionDefinition,
+    availability: &ModelAvailability,
+) -> Vec<String> {
+    collection_def
+        .parameters
+        .iter()
+        .filter(|p| availability.has_parameter(&p.name))
+        .map(|p| p.name.clone())
+        .collect()
+}
 
 /// WKT representation for EPSG:4326
 const WGS84_WKT: &str = r#"GEOGCS["Unknown", DATUM["Unknown", SPHEROID["WGS_1984", 6378137.0, 298.257223563]], PRIMEM["Greenwich",0], UNIT["degree", 0.017453], AXIS["Lon", EAST], AXIS["Lat", NORTH]]"#;
@@ -116,6 +130,34 @@ async fn cube_query(
             ExceptionResponse::not_found(format!("Collection not found: {}", collection_id)),
         );
     };
+
+    // Get availability for this model
+    let availability = state
+        .availability_cache
+        .get_model_availability(&state.catalog, &model_config.model)
+        .await;
+
+    let Some(availability) = availability else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no available data",
+                collection_id
+            )),
+        );
+    };
+
+    let available_params = filter_available_parameters(collection_def, &availability);
+
+    if available_params.is_empty() {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no parameters with available data",
+                collection_id
+            )),
+        );
+    }
 
     // Check if this collection supports cube queries (requires numeric vertical levels)
     let has_vertical_levels = collection_def
@@ -229,26 +271,19 @@ async fn cube_query(
         .map(|p| edr_protocol::PositionQuery::parse_parameter_names(p))
         .unwrap_or_default();
 
-    // Determine which parameters to query
+    // Determine which parameters to query (filtered by availability)
     let params_to_query: Vec<_> = if requested_params.is_empty() {
-        collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
+        // Return all available parameters
+        available_params.clone()
     } else {
-        let available: Vec<_> = collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        // Validate requested parameters exist and have data
         for param in &requested_params {
-            if !available.contains(&param.as_str()) {
+            if !available_params.contains(param) {
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     ExceptionResponse::bad_request(format!(
                         "Parameter '{}' not available in collection. Available: {:?}",
-                        param, available
+                        param, available_params
                     )),
                 );
             }

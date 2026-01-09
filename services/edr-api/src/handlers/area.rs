@@ -15,11 +15,25 @@ use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder}
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
+
+/// Filter collection parameters to only those with available data.
+fn filter_available_parameters(
+    collection_def: &crate::config::CollectionDefinition,
+    availability: &ModelAvailability,
+) -> Vec<String> {
+    collection_def
+        .parameters
+        .iter()
+        .filter(|p| availability.has_parameter(&p.name))
+        .map(|p| p.name.clone())
+        .collect()
+}
 
 /// Resample data using nearest-neighbor interpolation.
 ///
@@ -161,6 +175,34 @@ async fn area_query(
         );
     };
 
+    // Get availability for this model
+    let availability = state
+        .availability_cache
+        .get_model_availability(&state.catalog, &model_config.model)
+        .await;
+
+    let Some(availability) = availability else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no available data",
+                collection_id
+            )),
+        );
+    };
+
+    let available_params = filter_available_parameters(collection_def, &availability);
+
+    if available_params.is_empty() {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no parameters with available data",
+                collection_id
+            )),
+        );
+    }
+
     // Check for required coords parameter
     let coords_str = match &params.coords {
         Some(c) if !c.trim().is_empty() => c.as_str(),
@@ -283,26 +325,17 @@ async fn area_query(
 
     // Determine which parameters to query
     let params_to_query: Vec<_> = if requested_params.is_empty() {
-        // Return all parameters in collection
-        collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
+        // Return all available parameters
+        available_params.clone()
     } else {
-        // Validate requested parameters exist in collection
-        let available: Vec<_> = collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        // Validate requested parameters exist and have data
         for param in &requested_params {
-            if !available.contains(&param.as_str()) {
+            if !available_params.contains(param) {
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     ExceptionResponse::bad_request(format!(
                         "Parameter '{}' not available in collection. Available: {:?}",
-                        param, available
+                        param, available_params
                     )),
                 );
             }
