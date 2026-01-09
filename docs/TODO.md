@@ -45,3 +45,4 @@
 - need to see if precaching and cache warming is actually doing anything
 - lets download WMS and WMTS compliance documents and ensure our services adhere
 - need to double check getFeatureInfo for all WMS products within their BBOX's, should be fairly easy to script up
+- downloader pod seems to be holding onto data in prod right now

@@ -1,16 +1,58 @@
 # NBM Alaska EDR Configuration
-# Defines collections for the OGC EDR API
+# Defines collections organized by vertical level for the OGC EDR API
+#
+# Collections are organized by vertical level type (consistent with GFS/HRRR):
+# - surface: Parameters at the surface level
+# - height-agl: Parameters at heights above ground level
+# - cloud: Cloud-related parameters (ceiling, cloud cover)
 
 model: nbm-alaska
 
 collections:
+  # ==========================================================================
+  # Surface Level Parameters
+  # ==========================================================================
   - id: nbm-alaska-surface
-    title: "NBM Alaska - Surface Weather"
-    description: "Surface temperature, humidity, and basic weather parameters"
+    title: "NBM Alaska - Surface"
+    description: "Surface-level parameters including precipitation, visibility, and winter weather"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      # Precipitation
+      - name: APCP01
+        levels: [surface]
+      - name: APCP06
+        levels: [surface]
+      - name: POP06
+        levels: [surface]
+      - name: POP12
+        levels: [surface]
+      # Visibility
+      - name: VIS
+        levels: [surface]
+      # Winter weather
+      - name: ASNOW06
+        levels: [surface]
+      - name: PSNOW06
+        levels: [surface]
+      - name: FZRA06
+        levels: [surface]
+      - name: SNOLEV
+        levels: [surface]
+    run_mode: instances
+
+  # ==========================================================================
+  # Heights Above Ground Level
+  # ==========================================================================
+  - id: nbm-alaska-height-agl
+    title: "NBM Alaska - Heights Above Ground"
+    description: "Parameters at heights above ground level (2m temp/humidity, 10m wind)"
     level_filter:
       level_type: height_above_ground
       level_code: 103
     parameters:
+      # 2m temperature and humidity
       - name: TMP
         levels: [2]
       - name: DPT
@@ -21,32 +63,7 @@ collections:
         levels: [2]
       - name: RH
         levels: [2]
-    run_mode: instances
-
-  - id: nbm-alaska-precipitation
-    title: "NBM Alaska - Precipitation"
-    description: "Precipitation amount and probability forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: APCP01
-        levels: [surface]
-      - name: APCP06
-        levels: [surface]
-      - name: POP06
-        levels: [surface]
-      - name: POP12
-        levels: [surface]
-    run_mode: instances
-
-  - id: nbm-alaska-wind
-    title: "NBM Alaska - Wind"
-    description: "Wind speed, direction, and gusts"
-    level_filter:
-      level_type: height_above_ground
-      level_code: 103
-    parameters:
+      # 10m wind
       - name: WIND
         levels: [10]
       - name: UGRD
@@ -59,35 +76,19 @@ collections:
         levels: [10]
     run_mode: instances
 
-  - id: nbm-alaska-aviation
-    title: "NBM Alaska - Aviation"
-    description: "Aviation weather parameters"
+  # ==========================================================================
+  # Cloud and Atmospheric Parameters
+  # ==========================================================================
+  - id: nbm-alaska-cloud
+    title: "NBM Alaska - Cloud"
+    description: "Cloud parameters including ceiling and total cloud cover"
     level_filter:
       level_type: mixed
     parameters:
-      - name: VIS
-        levels: [surface]
       - name: CEIL
         levels: [cloud_base]
       - name: TCDC
         levels: [entire_atmosphere]
-    run_mode: instances
-
-  - id: nbm-alaska-winter
-    title: "NBM Alaska - Winter Weather"
-    description: "Snow and ice accumulation forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: ASNOW06
-        levels: [surface]
-      - name: PSNOW06
-        levels: [surface]
-      - name: FZRA06
-        levels: [surface]
-      - name: SNOLEV
-        levels: [surface]
     run_mode: instances
 
 settings:

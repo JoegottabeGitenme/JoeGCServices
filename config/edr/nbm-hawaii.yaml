@@ -1,15 +1,47 @@
 # NBM Hawaii EDR Configuration
+# Defines collections organized by vertical level for the OGC EDR API
+#
+# Collections are organized by vertical level type (consistent with GFS/HRRR):
+# - surface: Parameters at the surface level
+# - height-agl: Parameters at heights above ground level
+# - cloud: Cloud-related parameters (ceiling, cloud cover)
 
 model: nbm-hawaii
 
 collections:
+  # ==========================================================================
+  # Surface Level Parameters
+  # ==========================================================================
   - id: nbm-hawaii-surface
-    title: "NBM Hawaii - Surface Weather"
-    description: "Surface temperature, humidity, and basic weather parameters"
+    title: "NBM Hawaii - Surface"
+    description: "Surface-level parameters including precipitation and visibility"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      # Precipitation
+      - name: APCP01
+        levels: [surface]
+      - name: APCP06
+        levels: [surface]
+      - name: POP06
+        levels: [surface]
+      # Visibility
+      - name: VIS
+        levels: [surface]
+    run_mode: instances
+
+  # ==========================================================================
+  # Heights Above Ground Level
+  # ==========================================================================
+  - id: nbm-hawaii-height-agl
+    title: "NBM Hawaii - Heights Above Ground"
+    description: "Parameters at heights above ground level (2m temp/humidity, 10m wind)"
     level_filter:
       level_type: height_above_ground
       level_code: 103
     parameters:
+      # 2m temperature and humidity
       - name: TMP
         levels: [2]
       - name: DPT
@@ -20,30 +52,7 @@ collections:
         levels: [2]
       - name: RH
         levels: [2]
-    run_mode: instances
-
-  - id: nbm-hawaii-precipitation
-    title: "NBM Hawaii - Precipitation"
-    description: "Precipitation amount and probability forecasts"
-    level_filter:
-      level_type: surface
-      level_code: 1
-    parameters:
-      - name: APCP01
-        levels: [surface]
-      - name: APCP06
-        levels: [surface]
-      - name: POP06
-        levels: [surface]
-    run_mode: instances
-
-  - id: nbm-hawaii-wind
-    title: "NBM Hawaii - Wind"
-    description: "Wind speed, direction, and gusts (trade winds)"
-    level_filter:
-      level_type: height_above_ground
-      level_code: 103
-    parameters:
+      # 10m wind
       - name: WIND
         levels: [10]
       - name: UGRD
@@ -56,14 +65,15 @@ collections:
         levels: [10]
     run_mode: instances
 
-  - id: nbm-hawaii-aviation
-    title: "NBM Hawaii - Aviation"
-    description: "Aviation weather parameters"
+  # ==========================================================================
+  # Cloud and Atmospheric Parameters
+  # ==========================================================================
+  - id: nbm-hawaii-cloud
+    title: "NBM Hawaii - Cloud"
+    description: "Cloud parameters including ceiling and total cloud cover"
     level_filter:
       level_type: mixed
     parameters:
-      - name: VIS
-        levels: [surface]
       - name: CEIL
         levels: [cloud_base]
       - name: TCDC
