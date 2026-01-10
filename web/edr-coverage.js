@@ -782,17 +782,58 @@ class EDRCoverageValidator {
      */
     async executeTask(task) {
         const { collId, param, level, time, levelCheck, paramCheck, coll } = task;
-        
+
         // Determine which formats to test
-        const formats = this.outputFormat === 'both' 
-            ? ['covjson', 'geojson'] 
-            : [this.outputFormat];
-        
+        let formats;
+        if (this.outputFormat === 'both') {
+            formats = ['covjson', 'geojson'];
+        } else if (this.outputFormat === 'png') {
+            // PNG only works for area queries
+            if (this.queryType !== 'area') {
+                // Skip with warning for non-area queries
+                const skipResult = {
+                    collection: collId,
+                    parameter: param,
+                    level,
+                    time,
+                    format: 'png',
+                    queryType: this.queryType,
+                    status: 'skip',
+                    message: `PNG format only supported for area queries (current: ${this.queryType})`,
+                    duration: 0,
+                    url: ''
+                };
+                this.results.checks.push(skipResult);
+                this.results.summary.skip++;
+                this.updateSummary();
+                this.logRequest(skipResult);
+
+                if (levelCheck) {
+                    levelCheck.queryResult = 'skip';
+                    levelCheck.queryMessage = skipResult.message;
+                }
+                if (paramCheck) {
+                    paramCheck.queryResults.push(skipResult);
+                }
+
+                this.completedChecks++;
+                const percent = Math.round((this.completedChecks / this.totalChecks) * 100);
+                this.updateProgress(percent, `Skipped ${collId}/${param} (PNG not supported)`);
+                return skipResult;
+            }
+            formats = ['png'];
+        } else {
+            formats = [this.outputFormat];
+        }
+
         const results = [];
-        
+
         for (const format of formats) {
             let result;
-            if (this.queryType === 'area') {
+            if (format === 'png') {
+                // PNG always uses area query
+                result = await this.testAreaQueryPng(collId, param, level, time, coll);
+            } else if (this.queryType === 'area') {
                 result = await this.testAreaQuery(collId, param, level, time, coll, format);
             } else if (this.queryType === 'radius') {
                 result = await this.testRadiusQuery(collId, param, level, time, coll, format);
@@ -807,7 +848,7 @@ class EDRCoverageValidator {
             } else {
                 result = await this.testPositionQuery(collId, param, level, time, coll, format);
             }
-            
+
             results.push(result);
             
             // Track in results
@@ -1126,6 +1167,192 @@ class EDRCoverageValidator {
                 url
             };
         }
+    }
+
+    /**
+     * Make a single area query requesting PNG format and validate the image response
+     * PNG output is only supported for area queries with a single parameter
+     */
+    async testAreaQueryPng(collectionId, parameter, level, time, coll) {
+        // Create a 1x1 degree polygon centered on the test area (or random point)
+        const { lon, lat } = this.getQueryCoordinates(coll);
+        const halfDeg = 0.5;
+        const minLon = lon - halfDeg;
+        const maxLon = lon + halfDeg;
+        const minLat = lat - halfDeg;
+        const maxLat = lat + halfDeg;
+
+        const polygon = `POLYGON((${minLon} ${minLat},${maxLon} ${minLat},${maxLon} ${maxLat},${minLon} ${maxLat},${minLon} ${minLat}))`;
+
+        // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
+        const params = new URLSearchParams();
+        params.set('coords', polygon);
+        params.set('f', 'png');
+        params.set('parameter-name', parameter);
+        if (level !== null) {
+            params.set('z', level);
+        }
+        if (time) {
+            params.set('datetime', time);
+        }
+        const url = `${this.endpoint}/collections/${collectionId}/area?${params.toString()}`;
+
+        const startTime = performance.now();
+
+        try {
+            const response = await fetch(url, {
+                signal: this.abortController?.signal
+            });
+            const duration = Math.round(performance.now() - startTime);
+
+            if (!response.ok) {
+                // Try to get error details from JSON response
+                let errorDetail = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorJson = await response.json();
+                    if (errorJson.detail) {
+                        errorDetail = errorJson.detail;
+                    }
+                } catch {
+                    // Ignore JSON parse errors
+                }
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format: 'png',
+                    queryType: 'area',
+                    status: 'fail',
+                    message: errorDetail,
+                    duration,
+                    url
+                };
+            }
+
+            // Check content type
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('image/png')) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format: 'png',
+                    queryType: 'area',
+                    status: 'fail',
+                    message: `Expected image/png content-type, got: ${contentType}`,
+                    duration,
+                    url
+                };
+            }
+
+            // Get the image as a blob
+            const blob = await response.blob();
+            const imageSize = blob.size;
+
+            // Validate PNG header (first 8 bytes should be PNG signature)
+            const arrayBuffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+            const pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+            const hasValidHeader = pngSignature.every((b, i) => bytes[i] === b);
+
+            if (!hasValidHeader) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format: 'png',
+                    queryType: 'area',
+                    status: 'fail',
+                    message: `Invalid PNG header (size: ${imageSize} bytes)`,
+                    duration,
+                    url,
+                    imageSize
+                };
+            }
+
+            // Check minimum image size (a 1x1 PNG is at least ~67 bytes)
+            if (imageSize < 67) {
+                return {
+                    collection: collectionId,
+                    parameter,
+                    level,
+                    time,
+                    format: 'png',
+                    queryType: 'area',
+                    status: 'fail',
+                    message: `PNG too small: ${imageSize} bytes`,
+                    duration,
+                    url,
+                    imageSize
+                };
+            }
+
+            // Extract image dimensions from PNG header (IHDR chunk)
+            // IHDR chunk starts at byte 8 (after signature), length at 8-11, 'IHDR' at 12-15
+            // Width at bytes 16-19, height at bytes 20-23 (big-endian)
+            let width = 0, height = 0;
+            if (bytes.length >= 24) {
+                width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+                height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+            }
+
+            // Check for X-Data-* headers that contain metadata
+            const dataMin = response.headers.get('x-data-min');
+            const dataMax = response.headers.get('x-data-max');
+            const dataUnits = response.headers.get('x-data-units');
+
+            const metadataInfo = [];
+            if (dataMin !== null) metadataInfo.push(`min=${dataMin}`);
+            if (dataMax !== null) metadataInfo.push(`max=${dataMax}`);
+            if (dataUnits) metadataInfo.push(`units=${dataUnits}`);
+
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format: 'png',
+                queryType: 'area',
+                status: 'pass',
+                message: `PNG image received (${width}x${height}, ${this.formatBytes(imageSize)})${metadataInfo.length > 0 ? ' [' + metadataInfo.join(', ') + ']' : ''}`,
+                duration,
+                url,
+                imageSize,
+                imageWidth: width,
+                imageHeight: height,
+                dataMin: dataMin !== null ? parseFloat(dataMin) : null,
+                dataMax: dataMax !== null ? parseFloat(dataMax) : null,
+                dataUnits
+            };
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            return {
+                collection: collectionId,
+                parameter,
+                level,
+                time,
+                format: 'png',
+                queryType: 'area',
+                status: 'fail',
+                message: error.message,
+                duration: Math.round(performance.now() - startTime),
+                url
+            };
+        }
+    }
+
+    /**
+     * Format bytes into human-readable string
+     */
+    formatBytes(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     /**

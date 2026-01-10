@@ -760,6 +760,18 @@ async fn area_query(
                 }
             };
 
+            // Check if we got any data (region may be empty if polygon is outside data bounds)
+            if param_region.width == 0 || param_region.height == 0 {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "No data available for the requested area. The polygon may be outside the collection's geographic bounds. \
+                         Requested bbox: [{:.2}, {:.2}, {:.2}, {:.2}]",
+                        grid_bbox.min_lon, grid_bbox.min_lat, grid_bbox.max_lon, grid_bbox.max_lat
+                    )),
+                );
+            }
+
             // Apply polygon mask - set values outside polygon to None
             let mut masked_data: Vec<Option<f32>> = Vec::with_capacity(param_region.data.len());
 
