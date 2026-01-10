@@ -217,6 +217,7 @@ async fn run_server(args: Args) {
                     HeaderName::from_static("cache-control"),
                     HeaderName::from_static("content-type"),
                     HeaderName::from_static("etag"),
+                    HeaderName::from_static("x-cache"),
                     // Custom EDR PNG headers for frontend consumption
                     HeaderName::from_static("x-edr-parameter"),
                     HeaderName::from_static("x-edr-units"),

@@ -298,6 +298,113 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             longitude_increment_millidegrees: dj / 1000,
             scanning_mode,
         })
+    } else if grid_template == 10 {
+        // Template 10: Mercator Projection
+        // GRIB2 Code Table 3.1 - Template 3.10
+        //
+        // Byte 0: Shape of the Earth (Table 3.2)
+        // Byte 1: Scale factor of radius of spherical Earth
+        // Bytes 2-5: Scaled value of radius of spherical Earth
+        // Byte 6: Scale factor of major axis of oblate spheroid Earth
+        // Bytes 7-10: Scaled value of major axis
+        // Byte 11: Scale factor of minor axis
+        // Bytes 12-15: Scaled value of minor axis
+        // Bytes 16-19: Ni - number of points along a parallel (u32)
+        // Bytes 20-23: Nj - number of points along a meridian (u32)
+        // Bytes 24-27: La1 - latitude of first grid point (i32, microdegrees)
+        // Bytes 28-31: Lo1 - longitude of first grid point (i32, microdegrees)
+        // Byte 32: Resolution and component flags
+        // Bytes 33-36: LaD - latitude where Dx and Dy are specified
+        // Bytes 37-40: La2 - latitude of last grid point (i32, microdegrees)
+        // Bytes 41-44: Lo2 - longitude of last grid point (i32, microdegrees)
+        // Byte 45: Scanning mode
+        // Bytes 46-49: Orientation of the grid (angle between i direction and equator)
+        // Bytes 50-53: Di - longitudinal direction grid length in meters (u32)
+        // Bytes 54-57: Dj - latitudinal direction grid length in meters (u32)
+
+        if gd.len() < 58 {
+            return Err(Grib2Error::InvalidSection {
+                section: 3,
+                reason: format!(
+                    "Template 10 (Mercator) needs at least 58 bytes, got {}",
+                    gd.len()
+                ),
+            });
+        }
+
+        let grid_shape = gd[0];
+        let ni = u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]]);
+        let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
+        let la1 = decode_grib2_signed(&gd[24..28]);
+        let lo1 = decode_grib2_signed(&gd[28..32]);
+        let la2 = decode_grib2_signed(&gd[37..41]);
+        let lo2 = decode_grib2_signed(&gd[41..45]);
+        let scanning_mode = gd[45];
+
+        Ok(GridDefinition {
+            grid_shape,
+            num_points_longitude: ni,
+            num_points_latitude: nj,
+            first_latitude_millidegrees: la1 / 1000,
+            first_longitude_millidegrees: lo1 / 1000,
+            last_latitude_millidegrees: la2 / 1000,
+            last_longitude_millidegrees: lo2 / 1000,
+            latitude_increment_millidegrees: 0, // Dx/Dy are in meters for Mercator
+            longitude_increment_millidegrees: 0,
+            scanning_mode,
+        })
+    } else if grid_template == 20 {
+        // Template 20: Polar Stereographic Projection
+        // GRIB2 Code Table 3.1 - Template 3.20
+        //
+        // Byte 0: Shape of the Earth (Table 3.2)
+        // Byte 1: Scale factor of radius of spherical Earth
+        // Bytes 2-5: Scaled value of radius of spherical Earth
+        // Byte 6: Scale factor of major axis of oblate spheroid Earth
+        // Bytes 7-10: Scaled value of major axis
+        // Byte 11: Scale factor of minor axis
+        // Bytes 12-15: Scaled value of minor axis
+        // Bytes 16-19: Nx - number of points along X-axis (u32)
+        // Bytes 20-23: Ny - number of points along Y-axis (u32)
+        // Bytes 24-27: La1 - latitude of first grid point (i32, microdegrees)
+        // Bytes 28-31: Lo1 - longitude of first grid point (i32, microdegrees)
+        // Byte 32: Resolution and component flags
+        // Bytes 33-36: LaD - latitude where Dx and Dy are specified
+        // Bytes 37-40: LoV - orientation of the grid (longitude of vertical meridian)
+        // Bytes 41-44: Dx - X-direction grid length in meters (u32)
+        // Bytes 45-48: Dy - Y-direction grid length in meters (u32)
+        // Byte 49: Projection centre flag (0 = North Pole on projection plane)
+        // Byte 50: Scanning mode
+
+        if gd.len() < 51 {
+            return Err(Grib2Error::InvalidSection {
+                section: 3,
+                reason: format!(
+                    "Template 20 (Polar Stereographic) needs at least 51 bytes, got {}",
+                    gd.len()
+                ),
+            });
+        }
+
+        let grid_shape = gd[0];
+        let ni = u32::from_be_bytes([gd[16], gd[17], gd[18], gd[19]]);
+        let nj = u32::from_be_bytes([gd[20], gd[21], gd[22], gd[23]]);
+        let la1 = decode_grib2_signed(&gd[24..28]);
+        let lo1 = decode_grib2_signed(&gd[28..32]);
+        let scanning_mode = gd[50];
+
+        Ok(GridDefinition {
+            grid_shape,
+            num_points_longitude: ni,
+            num_points_latitude: nj,
+            first_latitude_millidegrees: la1 / 1000,
+            first_longitude_millidegrees: lo1 / 1000,
+            last_latitude_millidegrees: 0, // Not defined for Polar Stereographic
+            last_longitude_millidegrees: 0,
+            latitude_increment_millidegrees: 0, // Dx/Dy are in meters
+            longitude_increment_millidegrees: 0,
+            scanning_mode,
+        })
     } else if grid_template == 30 {
         // Template 30: Lambert Conformal
         // GRIB2 Code Table 3.1 - Template 3.30

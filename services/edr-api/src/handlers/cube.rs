@@ -27,11 +27,25 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
+
+/// Filter collection parameters to only those with available data.
+fn filter_available_parameters(
+    collection_def: &crate::config::CollectionDefinition,
+    availability: &ModelAvailability,
+) -> Vec<String> {
+    collection_def
+        .parameters
+        .iter()
+        .filter(|p| availability.has_parameter(&p.name))
+        .map(|p| p.name.clone())
+        .collect()
+}
 
 /// WKT representation for EPSG:4326
 const WGS84_WKT: &str = r#"GEOGCS["Unknown", DATUM["Unknown", SPHEROID["WGS_1984", 6378137.0, 298.257223563]], PRIMEM["Greenwich",0], UNIT["degree", 0.017453], AXIS["Lon", EAST], AXIS["Lat", NORTH]]"#;
@@ -116,6 +130,34 @@ async fn cube_query(
             ExceptionResponse::not_found(format!("Collection not found: {}", collection_id)),
         );
     };
+
+    // Get availability for this model
+    let availability = state
+        .availability_cache
+        .get_model_availability(&state.catalog, &model_config.model)
+        .await;
+
+    let Some(availability) = availability else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no available data",
+                collection_id
+            )),
+        );
+    };
+
+    let available_params = filter_available_parameters(collection_def, &availability);
+
+    if available_params.is_empty() {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no parameters with available data",
+                collection_id
+            )),
+        );
+    }
 
     // Check if this collection supports cube queries (requires numeric vertical levels)
     let has_vertical_levels = collection_def
@@ -229,26 +271,19 @@ async fn cube_query(
         .map(|p| edr_protocol::PositionQuery::parse_parameter_names(p))
         .unwrap_or_default();
 
-    // Determine which parameters to query
+    // Determine which parameters to query (filtered by availability)
     let params_to_query: Vec<_> = if requested_params.is_empty() {
-        collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
+        // Return all available parameters
+        available_params.clone()
     } else {
-        let available: Vec<_> = collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        // Validate requested parameters exist and have data
         for param in &requested_params {
-            if !available.contains(&param.as_str()) {
+            if !available_params.contains(param) {
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     ExceptionResponse::bad_request(format!(
                         "Parameter '{}' not available in collection. Available: {:?}",
-                        param, available
+                        param, available_params
                     )),
                 );
             }
@@ -385,11 +420,36 @@ async fn cube_query(
     let mut coverages: Vec<CoverageJson> = Vec::new();
 
     for z_val in &z_values {
-        // Get the first param to determine grid size
-        let first_param = match params_to_query.first() {
-            Some(p) => p,
-            None => continue,
-        };
+        // Filter parameters to only those that exist at this z level
+        let params_at_level: Vec<_> = params_to_query
+            .iter()
+            .filter(|param_name| {
+                let param_def = collection_def
+                    .parameters
+                    .iter()
+                    .find(|p| p.name == **param_name);
+
+                // Check if this parameter exists at the current z level
+                if let Some(pd) = param_def {
+                    pd.levels.iter().any(|l| match l {
+                        LevelValue::Numeric(n) => (*n - z_val).abs() < 0.001,
+                        LevelValue::Named(_) => true, // Named levels match any z
+                    })
+                } else {
+                    true // If no param definition, include it
+                }
+            })
+            .cloned()
+            .collect();
+
+        // Skip this z level if no parameters exist at it
+        if params_at_level.is_empty() {
+            tracing::debug!("No parameters at z={}, skipping coverage", z_val);
+            continue;
+        }
+
+        // Get the first matching param to determine grid size
+        let first_param = &params_at_level[0];
 
         let param_def = collection_def
             .parameters
@@ -448,10 +508,10 @@ async fn cube_query(
             *z_val,
         );
 
-        // Build ranges for each parameter
+        // Build ranges for each parameter at this level
         let mut ranges: HashMap<String, NdArray> = HashMap::new();
 
-        for param_name in &params_to_query {
+        for param_name in &params_at_level {
             let param_def = collection_def
                 .parameters
                 .iter()
@@ -760,12 +820,16 @@ fn build_level_string(
                 None
             }
         }
-        _ => param_def
-            .and_then(|p| p.levels.first())
-            .and_then(|l| match l {
-                LevelValue::Named(name) => Some(name.clone()),
-                LevelValue::Numeric(_) => None,
-            }),
+        _ => {
+            // Unknown level type, try to use named level from param
+            // Convert underscores to spaces (config uses cloud_base, catalog uses "cloud base")
+            param_def
+                .and_then(|p| p.levels.first())
+                .and_then(|l| match l {
+                    LevelValue::Named(name) => Some(name.replace('_', " ")),
+                    LevelValue::Numeric(_) => None,
+                })
+        }
     }
 }
 

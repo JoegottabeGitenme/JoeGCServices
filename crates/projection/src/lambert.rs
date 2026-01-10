@@ -164,6 +164,27 @@ impl LambertConformal {
         )
     }
 
+    /// Create projection parameters for NBM CONUS 2.5km grid.
+    ///
+    /// NBM CONUS uses Lambert Conformal with:
+    /// - First point: 19.229°N, 233.7234°E (= -126.2766°W)
+    /// - LoV: 265.0°E (= -95.0°W)
+    /// - Standard parallels: 25.0°N (both - tangent cone)
+    /// - Grid: 2345 x 1597, 2539.703m spacing
+    pub fn nbm_conus() -> Self {
+        Self::from_grib2(
+            19.229,    // lat1
+            -126.2766, // lon1 (233.7234 - 360)
+            -95.0,     // LoV (265.0 - 360)
+            25.0,      // latin1
+            25.0,      // latin2
+            2539.703,  // dx
+            2539.703,  // dy
+            2345,      // nx
+            1597,      // ny
+        )
+    }
+
     /// Convert geographic coordinates (lat/lon in degrees) to grid indices (i, j).
     ///
     /// Returns (i, j) where i is the column (x) and j is the row (y).
@@ -392,6 +413,47 @@ mod tests {
             min_lat
         );
         assert!(max_lat > 45.0, "max_lat should be > 45, got {}", max_lat);
+    }
+
+    #[test]
+    fn test_nbm_conus_projection() {
+        let proj = LambertConformal::nbm_conus();
+
+        // First grid point should map to (0, 0)
+        let (i, j) = proj.geo_to_grid(19.229, -126.2766);
+        println!("First point (19.229, -126.28): i={:.2}, j={:.2}", i, j);
+        assert!((i - 0.0).abs() < 0.5, "i should be ~0, got {}", i);
+        assert!((j - 0.0).abs() < 0.5, "j should be ~0, got {}", j);
+
+        // Test Kansas City (center of CONUS)
+        let (i, j) = proj.geo_to_grid(39.0, -94.5);
+        println!("Kansas City (39.0, -94.5): i={:.0}, j={:.0}", i, j);
+        // Should be roughly in the middle of the 2345x1597 grid
+        assert!(
+            i > 900.0 && i < 1500.0,
+            "KC should be in middle x, got {}",
+            i
+        );
+        assert!(
+            j > 600.0 && j < 1100.0,
+            "KC should be in middle y, got {}",
+            j
+        );
+
+        // Test bounds
+        let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+        println!(
+            "NBM CONUS bounds: lon {:.2} to {:.2}, lat {:.2} to {:.2}",
+            min_lon, max_lon, min_lat, max_lat
+        );
+        assert!(
+            min_lon < -124.0,
+            "min_lon should be < -124, got {}",
+            min_lon
+        );
+        assert!(max_lon > -65.0, "max_lon should be > -65, got {}", max_lon);
+        assert!(min_lat > 15.0, "min_lat should be > 15, got {}", min_lat);
+        assert!(max_lat > 50.0, "max_lat should be > 50, got {}", max_lat);
     }
 
     #[test]

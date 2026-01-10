@@ -763,6 +763,8 @@ async function runAllTests() {
         'accept-covjson', 'accept-json', 'accept-unsupported', 'accept-geojson',
         // GeoJSON Output Format
         'f-param-geojson', 'content-type-geojson', 'geojson-structure',
+        // PNG Output Format (Area queries only)
+        'f-param-png', 'content-type-png', 'png-structure', 'png-not-supported-position', 'png-multi-param-error',
         // CoverageJSON Structure Validation (LOW PRIORITY)
         'covjson-referencing', 'covjson-ndarray', 'covjson-observed-property', 'covjson-axes',
         // Alternate Format Links (LOW PRIORITY)
@@ -1389,6 +1391,17 @@ async function executeTest(testName, collection) {
             return testGeoJsonStructure(collection);
         case 'accept-geojson':
             return testAcceptGeoJson(collection);
+        // PNG Output Format tests
+        case 'f-param-png':
+            return testFParamPng(collection);
+        case 'content-type-png':
+            return testContentTypePng(collection);
+        case 'png-structure':
+            return testPngStructure(collection);
+        case 'png-not-supported-position':
+            return testPngNotSupportedPosition(collection);
+        case 'png-multi-param-error':
+            return testPngMultiParamError(collection);
         // Cube Query tests
         case 'cube-basic':
             return testCubeBasic(collection);
@@ -1731,6 +1744,17 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=geojson`];
         case 'accept-geojson':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2) (with Accept: application/geo+json)`];
+        // PNG Output Format URLs (use URL-encoded coords to show proper format)
+        case 'f-param-png':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+        case 'content-type-png':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+        case 'png-structure':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+        case 'png-not-supported-position':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5+35.2)&f=png`];
+        case 'png-multi-param-error':
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png (no parameter-name)`];
         // Cube Query URLs
         case 'cube-basic':
             return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850`];
@@ -6725,6 +6749,275 @@ async function testAcceptGeoJson(collection) {
 }
 
 // ============================================================
+// PNG OUTPUT FORMAT TESTS
+// PNG output is only supported for area queries with a single parameter
+// ============================================================
+
+// Helper to fetch PNG response (returns blob instead of json)
+async function fetchPng(url) {
+    const startTime = performance.now();
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+        });
+        const duration = Math.round(performance.now() - startTime);
+
+        if (!response.ok) {
+            // Try to get error details from JSON response
+            let errorDetail = '';
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || '';
+            } catch {
+                // Ignore JSON parse errors
+            }
+            return {
+                ok: false,
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                duration,
+                errorDetail
+            };
+        }
+
+        const blob = await response.blob();
+        const arrayBuffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+
+        return {
+            ok: true,
+            status: response.status,
+            headers: response.headers,
+            blob,
+            bytes,
+            size: blob.size,
+            duration
+        };
+    } catch (e) {
+        console.error('fetchPng error:', e);
+        return {
+            ok: false,
+            status: 0,
+            statusText: e.message,
+            duration: Math.round(performance.now() - startTime)
+        };
+    }
+}
+
+// Test that f=png parameter returns image/png for area queries
+async function testFParamPng(collection) {
+    const col = collection;
+
+    // Get first parameter from collection
+    const paramName = Object.keys(col.parameter_names || {})[0];
+    if (!paramName) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'No parameters in collection', passed: true, warning: true }]
+        };
+    }
+
+    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
+    const params = new URLSearchParams();
+    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
+    params.set('f', 'png');
+    params.set('parameter-name', paramName);
+    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    const res = await fetchPng(url);
+
+    const contentType = res.headers?.get('content-type') || '';
+    const isPng = contentType.includes('image/png');
+
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'f=png parameter accepted', passed: res.ok },
+        { name: 'Content-Type is image/png', passed: isPng }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        url,
+        contentType
+    };
+}
+
+// Test that PNG response has correct Content-Type header
+async function testContentTypePng(collection) {
+    const col = collection;
+
+    // Get first parameter from collection
+    const paramName = Object.keys(col.parameter_names || {})[0];
+    if (!paramName) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'No parameters in collection', passed: true, warning: true }]
+        };
+    }
+
+    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
+    const params = new URLSearchParams();
+    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
+    params.set('f', 'png');
+    params.set('parameter-name', paramName);
+    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    const res = await fetchPng(url);
+
+    const contentType = res.headers?.get('content-type') || '';
+    const isImagePng = contentType === 'image/png' || contentType.startsWith('image/png;');
+
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has Content-Type header', passed: contentType.length > 0 },
+        { name: 'Content-Type is image/png', passed: isImagePng }
+    ];
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        url,
+        contentType
+    };
+}
+
+// Test that PNG response is a valid PNG image
+async function testPngStructure(collection) {
+    const col = collection;
+
+    // Get first parameter from collection
+    const paramName = Object.keys(col.parameter_names || {})[0];
+    if (!paramName) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'No parameters in collection', passed: true, warning: true }]
+        };
+    }
+
+    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
+    const params = new URLSearchParams();
+    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
+    params.set('f', 'png');
+    params.set('parameter-name', paramName);
+    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    const res = await fetchPng(url);
+
+    if (!res.ok) {
+        return {
+            passed: false,
+            checks: [{ name: `HTTP ${res.status}: ${res.errorDetail || res.statusText}`, passed: false }],
+            url
+        };
+    }
+
+    // Check PNG signature (first 8 bytes)
+    const pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    const hasValidHeader = res.bytes && res.bytes.length >= 8 &&
+        pngSignature.every((b, i) => res.bytes[i] === b);
+
+    // Minimum PNG size check (1x1 PNG is at least ~67 bytes)
+    const hasMinimumSize = res.size >= 67;
+
+    // Extract dimensions from IHDR chunk (bytes 16-23)
+    let width = 0, height = 0;
+    if (res.bytes && res.bytes.length >= 24) {
+        width = (res.bytes[16] << 24) | (res.bytes[17] << 16) | (res.bytes[18] << 8) | res.bytes[19];
+        height = (res.bytes[20] << 24) | (res.bytes[21] << 16) | (res.bytes[22] << 8) | res.bytes[23];
+    }
+    const hasValidDimensions = width > 0 && height > 0;
+
+    // Check for X-Data-* metadata headers
+    const hasDataMin = res.headers?.get('x-data-min') !== null;
+    const hasDataMax = res.headers?.get('x-data-max') !== null;
+    const hasDataUnits = res.headers?.get('x-data-units') !== null;
+
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Valid PNG header signature', passed: hasValidHeader },
+        { name: `PNG size: ${res.size} bytes`, passed: hasMinimumSize },
+        { name: `PNG dimensions: ${width}x${height}`, passed: hasValidDimensions },
+        { name: 'Has X-Data-Min header', passed: hasDataMin },
+        { name: 'Has X-Data-Max header', passed: hasDataMax },
+        { name: 'Has X-Data-Units header', passed: hasDataUnits }
+    ];
+    return {
+        passed: hasValidHeader && hasMinimumSize && hasValidDimensions,
+        checks,
+        url,
+        imageSize: res.size,
+        imageWidth: width,
+        imageHeight: height
+    };
+}
+
+// Test that PNG format is not supported for position queries (should return error)
+async function testPngNotSupportedPosition(collection) {
+    const col = collection;
+    // Use URLSearchParams to properly encode query parameters
+    const params = new URLSearchParams();
+    params.set('coords', 'POINT(-97.5 35.2)');
+    params.set('f', 'png');
+    const url = `${API_BASE}/collections/${col.id}/position?${params.toString()}`;
+
+    const res = await fetchPng(url);
+
+    // PNG should NOT be supported for position queries
+    // Expected: 400 Bad Request with an error message
+    const isRejected = res.status === 400 || res.status === 406 || res.status === 415;
+
+    const checks = [
+        { name: 'Position query with f=png rejected', passed: isRejected },
+        { name: `Status ${res.status} (expected 400/406/415)`, passed: isRejected }
+    ];
+    return {
+        passed: isRejected,
+        checks,
+        url,
+        errorDetail: res.errorDetail
+    };
+}
+
+// Test that PNG request without parameter-name (multiple params) returns error
+async function testPngMultiParamError(collection) {
+    const col = collection;
+
+    // Check if collection has multiple parameters
+    const paramNames = Object.keys(col.parameter_names || {});
+    if (paramNames.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection has fewer than 2 parameters, skipping multi-param test', passed: true, warning: true }]
+        };
+    }
+
+    // Request PNG without specifying parameter-name (should fail with 400)
+    // Use URLSearchParams to properly encode query parameters
+    const params = new URLSearchParams();
+    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
+    params.set('f', 'png');
+    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    const res = await fetchPng(url);
+
+    // Should return 400 Bad Request with error about requiring single parameter
+    const isRejected = res.status === 400;
+    const hasCorrectError = res.errorDetail && res.errorDetail.includes('exactly one parameter');
+
+    const checks = [
+        { name: 'Status 400 (Bad Request)', passed: isRejected },
+        { name: 'Error mentions single parameter requirement', passed: hasCorrectError }
+    ];
+    return {
+        passed: isRejected && hasCorrectError,
+        checks,
+        url,
+        errorDetail: res.errorDetail
+    };
+}
+
+// ============================================================
 // CUBE QUERY TESTS
 // OGC EDR Spec: Section 8.2.7 Cube Query, Requirement A.28
 // ============================================================
@@ -6983,18 +7276,18 @@ async function testCubeMultiZ(collection) {
         return { passed: true, checks: [{ name: 'Collection has less than 2 z levels (test N/A)', passed: true }] };
     }
 
-    const z1 = verticalValues[0];
-    const z2 = verticalValues[1];
-    const z3 = verticalValues[2] || z2;
-    
+    // Get unique z levels (up to 3, no duplicates)
+    const zLevels = verticalValues.slice(0, Math.min(3, verticalValues.length));
+    const zParam = zLevels.join(',');
+
     const bbox = `${bboxArray[0]},${bboxArray[1]},${bboxArray[2]},${bboxArray[3]}`;
-    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${z1},${z2},${z3}`;
+    const url = `${API_BASE}/collections/${col.id}/cube?bbox=${bbox}&z=${zParam}`;
     const res = await fetchJson(url);
-    
+
     // Check coverages count matches z levels
     const coverages = res.json?.coverages || [];
-    const expectedCount = verticalValues.length >= 3 ? 3 : 2;
-    
+    const expectedCount = zLevels.length;
+
     const checks = [
         { name: 'Status 200', passed: res.status === 200 },
         { name: 'Type is CoverageCollection', passed: res.json?.type === 'CoverageCollection' },
@@ -7006,7 +7299,7 @@ async function testCubeMultiZ(collection) {
         checks,
         response: res,
         url,
-        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${z1},${z2},${z3}`
+        coordsInfo: `Cube bbox: [${bboxArray.map(v => v.toFixed(4)).join(', ')}], z=${zParam}`
     };
 }
 
@@ -8748,6 +9041,27 @@ const SPEC_LINKS = {
     'accept-geojson': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_http',
         title: 'HTTP Content Negotiation for GeoJSON'
+    },
+    // PNG Output Format
+    'f-param-png': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition',
+        title: 'f Parameter for PNG Format (Area queries)'
+    },
+    'content-type-png': {
+        url: 'https://www.iana.org/assignments/media-types/image/png',
+        title: 'PNG Content-Type (image/png)'
+    },
+    'png-structure': {
+        url: 'https://www.w3.org/TR/PNG/',
+        title: 'PNG Image Structure Validation'
+    },
+    'png-not-supported-position': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition',
+        title: 'PNG Format Not Supported for Position Queries'
+    },
+    'png-multi-param-error': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition',
+        title: 'PNG Requires Exactly One Parameter'
     },
     // JSON Schema Validation
     'schema-covjson-position': {

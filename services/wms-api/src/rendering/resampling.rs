@@ -10,7 +10,7 @@
 //!
 //! All resampling uses bilinear interpolation for smooth results.
 
-use projection::{Geostationary, LambertConformal};
+use projection::{Geostationary, LambertConformal, Mercator, PolarStereographic};
 use tracing::debug;
 
 use super::types::GoesProjectionParams;
@@ -553,6 +553,171 @@ pub fn resample_grid_for_bbox_with_proj(
                     grid_uses_360,
                 )
             }
+        }
+    } else if model == "nbm-conus" {
+        // NBM CONUS uses Lambert Conformal projection
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_bbox = ?output_bbox,
+            "Using Lambert Conformal resampling for NBM CONUS"
+        );
+        let proj = LambertConformal::nbm_conus();
+
+        if use_mercator {
+            resample_lambert_to_mercator_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        } else {
+            resample_lambert_to_geographic_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        }
+    } else if model == "nbm-alaska" {
+        // NBM Alaska uses Polar Stereographic projection
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_bbox = ?output_bbox,
+            "Using Polar Stereographic resampling for NBM Alaska"
+        );
+        let proj = PolarStereographic::nbm_alaska();
+
+        if use_mercator {
+            resample_polar_stereo_to_mercator_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        } else {
+            resample_polar_stereo_to_geographic_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        }
+    } else if model == "nbm-hawaii" {
+        // NBM Hawaii uses Mercator projection
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_bbox = ?output_bbox,
+            "Using Mercator resampling for NBM Hawaii"
+        );
+        let proj = Mercator::nbm_hawaii();
+
+        if use_mercator {
+            resample_mercator_to_mercator_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        } else {
+            resample_mercator_to_geographic_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        }
+    } else if model == "nbm-puertorico" {
+        // NBM Puerto Rico uses Mercator projection
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_bbox = ?output_bbox,
+            "Using Mercator resampling for NBM Puerto Rico"
+        );
+        let proj = Mercator::nbm_puertorico();
+
+        if use_mercator {
+            resample_mercator_to_mercator_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        } else {
+            resample_mercator_to_geographic_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        }
+    } else if model == "nbm-guam" {
+        // NBM Guam uses Mercator projection
+        debug!(
+            model = model,
+            use_mercator = use_mercator,
+            data_width = data_width,
+            data_height = data_height,
+            output_bbox = ?output_bbox,
+            "Using Mercator resampling for NBM Guam"
+        );
+        let proj = Mercator::nbm_guam();
+
+        if use_mercator {
+            resample_mercator_to_mercator_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
+        } else {
+            resample_mercator_to_geographic_with_proj(
+                data,
+                data_width,
+                data_height,
+                output_width,
+                output_height,
+                output_bbox,
+                &proj,
+            )
         }
     } else {
         // GFS and other models use geographic (lat/lon) grids
@@ -1112,6 +1277,352 @@ fn resample_geostationary_to_mercator_with_proj(
                 || grid_j >= data_height as f64 - 1.0
             {
                 // Outside GOES coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// Mercator projection resampling (NBM Hawaii, Puerto Rico, Guam)
+// ============================================================================
+
+/// Resample from Mercator grid (NBM regional) to geographic output
+///
+/// This handles the projection transformation from NBM's Mercator grids
+/// (Hawaii, Puerto Rico, Guam) to a regular lat/lon grid for WMS output.
+fn resample_mercator_to_geographic_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &Mercator,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel, find the corresponding grid point in the Mercator grid
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate geographic coordinates of this output pixel (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+            let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
+
+            // Convert geographic to Mercator grid indices
+            let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+/// Resample from Mercator grid to Web Mercator output
+///
+/// This handles the projection transformation from NBM's Mercator grids
+/// to Web Mercator (EPSG:3857) for WMTS tiles.
+fn resample_mercator_to_mercator_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &Mercator,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    // Convert lat bounds to Mercator Y coordinates for proper Y-axis spacing
+    let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
+    let max_merc_y = lat_to_mercator_y(out_max_lat as f64);
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate position in output image (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            // Longitude is linear in degrees
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+
+            // Y position uses Mercator spacing, then convert back to latitude
+            // y_ratio 0 = top = max_merc_y, y_ratio 1 = bottom = min_merc_y
+            let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
+            let lat = mercator_y_to_lat(merc_y);
+
+            // Convert geographic to Mercator grid indices
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// Polar Stereographic projection resampling (NBM Alaska)
+// ============================================================================
+
+/// Resample from Polar Stereographic grid (NBM Alaska) to geographic output
+///
+/// This handles the projection transformation from NBM Alaska's Polar Stereographic
+/// grid to a regular lat/lon grid for WMS output.
+fn resample_polar_stereo_to_geographic_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &PolarStereographic,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel, find the corresponding grid point in the Polar Stereographic grid
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate geographic coordinates of this output pixel (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+            let lat = out_max_lat - y_ratio * (out_max_lat - out_min_lat); // Y is inverted
+
+            // Convert geographic to Polar Stereographic grid indices
+            let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
+                continue;
+            }
+
+            // Bilinear interpolation
+            let i1 = grid_i.floor() as usize;
+            let j1 = grid_j.floor() as usize;
+            let i2 = (i1 + 1).min(data_width - 1);
+            let j2 = (j1 + 1).min(data_height - 1);
+
+            let di = grid_i - i1 as f64;
+            let dj = grid_j - j1 as f64;
+
+            // Sample four surrounding grid points
+            let v11 = data.get(j1 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v21 = data.get(j1 * data_width + i2).copied().unwrap_or(f32::NAN);
+            let v12 = data.get(j2 * data_width + i1).copied().unwrap_or(f32::NAN);
+            let v22 = data.get(j2 * data_width + i2).copied().unwrap_or(f32::NAN);
+
+            // Skip if any corner is NaN
+            if v11.is_nan() || v21.is_nan() || v12.is_nan() || v22.is_nan() {
+                continue;
+            }
+
+            // Bilinear interpolation
+            let di = di as f32;
+            let dj = dj as f32;
+            let v1 = v11 * (1.0 - di) + v21 * di;
+            let v2 = v12 * (1.0 - di) + v22 * di;
+            let value = v1 * (1.0 - dj) + v2 * dj;
+
+            output[out_y * output_width + out_x] = value;
+        }
+    }
+
+    output
+}
+
+/// Resample from Polar Stereographic grid to Web Mercator output
+///
+/// This handles the projection transformation from NBM Alaska's Polar Stereographic
+/// grid to Web Mercator (EPSG:3857) for WMTS tiles.
+fn resample_polar_stereo_to_mercator_with_proj(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    proj: &PolarStereographic,
+) -> Vec<f32> {
+    let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
+
+    // Convert lat bounds to Mercator Y coordinates for proper Y-axis spacing
+    let min_merc_y = lat_to_mercator_y(out_min_lat as f64);
+    let max_merc_y = lat_to_mercator_y(out_max_lat as f64);
+
+    let mut output = vec![f32::NAN; output_width * output_height];
+
+    // For each output pixel
+    for out_y in 0..output_height {
+        for out_x in 0..output_width {
+            // Calculate position in output image (pixel center)
+            let x_ratio = (out_x as f32 + 0.5) / output_width as f32;
+            let y_ratio = (out_y as f32 + 0.5) / output_height as f32;
+
+            // Longitude is linear in degrees
+            let lon = out_min_lon + x_ratio * (out_max_lon - out_min_lon);
+
+            // Y position uses Mercator spacing, then convert back to latitude
+            // y_ratio 0 = top = max_merc_y, y_ratio 1 = bottom = min_merc_y
+            let merc_y = max_merc_y - y_ratio as f64 * (max_merc_y - min_merc_y);
+            let lat = mercator_y_to_lat(merc_y);
+
+            // Convert geographic to Polar Stereographic grid indices
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
+
+            // Scale indices if data dimensions differ from native projection dimensions
+            let scale_x = data_width as f64 / proj.nx as f64;
+            let scale_y = data_height as f64 / proj.ny as f64;
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
+
+            // Check if within grid bounds
+            if grid_i < 0.0
+                || grid_i >= data_width as f64 - 1.0
+                || grid_j < 0.0
+                || grid_j >= data_height as f64 - 1.0
+            {
+                // Outside coverage - leave as NaN
                 continue;
             }
 

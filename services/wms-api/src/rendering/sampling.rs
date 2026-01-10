@@ -8,7 +8,7 @@
 //! - Bilinear interpolation for smooth value queries
 //! - Unit conversion for display values (using native units from Zarr metadata)
 
-use projection::{Geostationary, LambertConformal};
+use projection::{Geostationary, LambertConformal, Mercator, PolarStereographic};
 use storage::Catalog;
 use tracing::info;
 
@@ -522,7 +522,7 @@ pub fn sample_mrms_grid_value(
     bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false)
 }
 
-/// Sample grid value with projection awareness (for GOES geostationary projection)
+/// Sample grid value with projection awareness (for GOES geostationary projection and NBM models)
 pub fn sample_grid_value_with_projection(
     grid_data: &[f32],
     grid_width: usize,
@@ -533,9 +533,139 @@ pub fn sample_grid_value_with_projection(
     goes_projection: Option<&GoesProjectionParams>,
     grid_bbox: Option<[f32; 4]>,
 ) -> Result<f32, String> {
-    // Handle Lambert Conformal projections (HRRR, NDFD)
+    // Handle Lambert Conformal projections (HRRR, NDFD, NBM-CONUS)
     if model == "hrrr" || model == "ndfd" {
         return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
+    }
+
+    // NBM CONUS uses Lambert Conformal
+    if model == "nbm-conus" {
+        let proj = LambertConformal::nbm_conus();
+        let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+        // Scale indices if data dimensions differ from native projection dimensions
+        let scale_x = grid_width as f64 / proj.nx as f64;
+        let scale_y = grid_height as f64 / proj.ny as f64;
+        let grid_x = native_i * scale_x;
+        let grid_y = native_j * scale_y;
+
+        // Bounds check
+        if grid_x < 0.0
+            || grid_y < 0.0
+            || grid_x >= grid_width as f64 - 1.0
+            || grid_y >= grid_height as f64 - 1.0
+        {
+            return Err(format!(
+                "Point ({}, {}) outside NBM CONUS coverage (grid coords: {:.2}, {:.2})",
+                lon, lat, grid_x, grid_y
+            ));
+        }
+
+        return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+    }
+
+    // NBM Alaska uses Polar Stereographic
+    if model == "nbm-alaska" {
+        let proj = PolarStereographic::nbm_alaska();
+        let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+        // Scale indices if data dimensions differ from native projection dimensions
+        let scale_x = grid_width as f64 / proj.nx as f64;
+        let scale_y = grid_height as f64 / proj.ny as f64;
+        let grid_x = native_i * scale_x;
+        let grid_y = native_j * scale_y;
+
+        // Bounds check
+        if grid_x < 0.0
+            || grid_y < 0.0
+            || grid_x >= grid_width as f64 - 1.0
+            || grid_y >= grid_height as f64 - 1.0
+        {
+            return Err(format!(
+                "Point ({}, {}) outside NBM Alaska coverage (grid coords: {:.2}, {:.2})",
+                lon, lat, grid_x, grid_y
+            ));
+        }
+
+        return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+    }
+
+    // NBM Hawaii uses Mercator
+    if model == "nbm-hawaii" {
+        let proj = Mercator::nbm_hawaii();
+        let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+        // Scale indices if data dimensions differ from native projection dimensions
+        let scale_x = grid_width as f64 / proj.nx as f64;
+        let scale_y = grid_height as f64 / proj.ny as f64;
+        let grid_x = native_i * scale_x;
+        let grid_y = native_j * scale_y;
+
+        // Bounds check
+        if grid_x < 0.0
+            || grid_y < 0.0
+            || grid_x >= grid_width as f64 - 1.0
+            || grid_y >= grid_height as f64 - 1.0
+        {
+            return Err(format!(
+                "Point ({}, {}) outside NBM Hawaii coverage (grid coords: {:.2}, {:.2})",
+                lon, lat, grid_x, grid_y
+            ));
+        }
+
+        return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+    }
+
+    // NBM Puerto Rico uses Mercator
+    if model == "nbm-puertorico" {
+        let proj = Mercator::nbm_puertorico();
+        let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+        // Scale indices if data dimensions differ from native projection dimensions
+        let scale_x = grid_width as f64 / proj.nx as f64;
+        let scale_y = grid_height as f64 / proj.ny as f64;
+        let grid_x = native_i * scale_x;
+        let grid_y = native_j * scale_y;
+
+        // Bounds check
+        if grid_x < 0.0
+            || grid_y < 0.0
+            || grid_x >= grid_width as f64 - 1.0
+            || grid_y >= grid_height as f64 - 1.0
+        {
+            return Err(format!(
+                "Point ({}, {}) outside NBM Puerto Rico coverage (grid coords: {:.2}, {:.2})",
+                lon, lat, grid_x, grid_y
+            ));
+        }
+
+        return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
+    }
+
+    // NBM Guam uses Mercator
+    if model == "nbm-guam" {
+        let proj = Mercator::nbm_guam();
+        let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+        // Scale indices if data dimensions differ from native projection dimensions
+        let scale_x = grid_width as f64 / proj.nx as f64;
+        let scale_y = grid_height as f64 / proj.ny as f64;
+        let grid_x = native_i * scale_x;
+        let grid_y = native_j * scale_y;
+
+        // Bounds check
+        if grid_x < 0.0
+            || grid_y < 0.0
+            || grid_x >= grid_width as f64 - 1.0
+            || grid_y >= grid_height as f64 - 1.0
+        {
+            return Err(format!(
+                "Point ({}, {}) outside NBM Guam coverage (grid coords: {:.2}, {:.2})",
+                lon, lat, grid_x, grid_y
+            ));
+        }
+
+        return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
     }
 
     // Handle MRMS regional lat/lon grid

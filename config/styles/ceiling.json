@@ -1,0 +1,63 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Ceiling Height Styles",
+    "description": "Styles for cloud ceiling height, used in aviation weather"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Ceiling Height",
+      "description": "Cloud ceiling height in meters, colored by aviation categories",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 5000
+      },
+      "stops": [
+        { "value": 0, "color": "#800000", "label": "0" },
+        { "value": 60, "color": "#FF00FF", "label": "200ft (LIFR)" },
+        { "value": 150, "color": "#FF0000", "label": "500ft (IFR)" },
+        { "value": 300, "color": "#FF6600", "label": "1000ft" },
+        { "value": 600, "color": "#FFCC00", "label": "2000ft (MVFR)" },
+        { "value": 900, "color": "#FFFF00", "label": "3000ft" },
+        { "value": 1500, "color": "#99FF99", "label": "5000ft (VFR)" },
+        { "value": 3000, "color": "#66FF6680", "label": "10000ft" },
+        { "value": 5000, "color": "#FFFFFF00", "label": ">15000ft" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Ceiling (ft)",
+        "labels": ["<500ft", "1000ft", "3000ft", "5000ft", ">10000ft"],
+        "description": "LIFR (<200ft), IFR (200-500ft), MVFR (500-1000ft), VFR (>1000ft)"
+      }
+    },
+    "aviation": {
+      "name": "Aviation Ceiling",
+      "description": "Ceiling colored by FAA flight category",
+      "type": "filled_contour",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 3000
+      },
+      "stops": [
+        { "value": 0, "color": "#FF00FF", "label": "LIFR" },
+        { "value": 60, "color": "#FF00FF", "label": "" },
+        { "value": 61, "color": "#FF0000", "label": "IFR" },
+        { "value": 150, "color": "#FF0000", "label": "" },
+        { "value": 151, "color": "#0000FF", "label": "MVFR" },
+        { "value": 300, "color": "#0000FF", "label": "" },
+        { "value": 301, "color": "#00FF00", "label": "VFR" },
+        { "value": 3000, "color": "#00FF00", "label": "" }
+      ],
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Flight Category (Ceiling)",
+        "labels": ["LIFR (<200ft)", "IFR (200-500ft)", "MVFR (500-1000ft)", "VFR (>1000ft)"]
+      }
+    }
+  }
+}

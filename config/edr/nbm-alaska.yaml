@@ -1,0 +1,122 @@
+# NBM Alaska EDR Configuration
+# Defines collections organized by vertical level for the OGC EDR API
+#
+# Collections are organized by vertical level (OGC EDR requires consistent vertical extent):
+# - surface: Parameters at the surface level
+# - 2m-agl: Temperature/humidity at 2m above ground
+# - 10m-agl: Wind parameters at 10m above ground
+# - cloud: Cloud-related parameters (ceiling, cloud cover)
+
+model: nbm-alaska
+
+collections:
+  # ==========================================================================
+  # Surface Level Parameters
+  # ==========================================================================
+  - id: nbm-alaska-surface
+    title: "NBM Alaska - Surface"
+    description: "Surface-level parameters including precipitation, visibility, and winter weather"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      # Precipitation
+      - name: APCP01
+        levels: [surface]
+      - name: APCP06
+        levels: [surface]
+      - name: POP06
+        levels: [surface]
+      - name: POP12
+        levels: [surface]
+      # Visibility
+      - name: VIS
+        levels: [surface]
+      # Winter weather
+      - name: ASNOW06
+        levels: [surface]
+      - name: PSNOW06
+        levels: [surface]
+      - name: FZRA06
+        levels: [surface]
+      - name: SNOLEV
+        levels: [surface]
+    run_mode: instances
+
+  # ==========================================================================
+  # 2m Above Ground Level - Temperature and Humidity
+  # ==========================================================================
+  - id: nbm-alaska-2m-agl
+    title: "NBM Alaska - 2m Above Ground"
+    description: "Temperature and humidity parameters at 2m above ground level"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+      - name: DPT
+        levels: [2]
+      - name: TMAX
+        levels: [2]
+      - name: TMIN
+        levels: [2]
+      - name: RH
+        levels: [2]
+    run_mode: instances
+
+  # ==========================================================================
+  # 10m Above Ground Level - Wind Parameters
+  # ==========================================================================
+  - id: nbm-alaska-10m-agl
+    title: "NBM Alaska - 10m Above Ground"
+    description: "Wind parameters at 10m above ground level"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: WIND
+        levels: [10]
+      - name: UGRD
+        levels: [10]
+      - name: VGRD
+        levels: [10]
+      - name: WDIR
+        levels: [10]
+      - name: GUST
+        levels: [10]
+    run_mode: instances
+
+  # ==========================================================================
+  # Cloud and Atmospheric Parameters
+  # ==========================================================================
+  - id: nbm-alaska-cloud
+    title: "NBM Alaska - Cloud"
+    description: "Cloud parameters including ceiling and total cloud cover"
+    level_filter:
+      level_type: mixed
+    parameters:
+      - name: CEIL
+        levels: [cloud_base]
+      - name: TCDC
+        levels: [entire_atmosphere]
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 3600
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 48
+  max_vertical_levels: 10
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100
+  max_area_sq_degrees_png: 2500

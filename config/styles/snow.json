@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Snow Accumulation Styles",
+    "description": "Styles for snow accumulation"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Snow Accumulation",
+      "description": "Snow accumulation in meters (displayed in inches)",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 0.5
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "0" },
+        { "value": 0.005, "color": "#E8E8FF", "label": "Trace" },
+        { "value": 0.025, "color": "#C8C8FF", "label": "1 in" },
+        { "value": 0.05, "color": "#A0A0FF", "label": "2 in" },
+        { "value": 0.075, "color": "#8080FF", "label": "3 in" },
+        { "value": 0.1, "color": "#6060FF", "label": "4 in" },
+        { "value": 0.15, "color": "#4040FF", "label": "6 in" },
+        { "value": 0.2, "color": "#2020FF", "label": "8 in" },
+        { "value": 0.3, "color": "#0000DD", "label": "12 in" },
+        { "value": 0.5, "color": "#0000AA", "label": "18+ in" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Snow (in)",
+        "labels": ["Trace", "2", "4", "8", "12+"]
+      }
+    }
+  }
+}

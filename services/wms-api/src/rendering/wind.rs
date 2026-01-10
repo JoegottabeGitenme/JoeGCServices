@@ -17,7 +17,7 @@ use std::time::Instant;
 use storage::{Catalog, CatalogEntry};
 use tracing::{debug, info, warn};
 
-use super::resampling::{resample_for_mercator, resample_for_model_geographic};
+use super::resampling::{resample_for_model_geographic, resample_grid_for_bbox};
 use grid_processor::GridProcessorFactory;
 
 // ============================================================================
@@ -907,10 +907,16 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
     use wms_common::tile::{tile_bbox, TileBufferConfig};
 
     // Get the catalog entries for wind speed and direction
+    // NBM models use "WIND" for wind speed, others use "WSPD"
+    let speed_param = if model.starts_with("nbm") {
+        "WIND"
+    } else {
+        "WSPD"
+    };
     let speed_entry = get_speed_direction_entry(
         catalog,
         model,
-        "WSPD",
+        speed_param,
         observation_time,
         forecast_hour,
         level,
@@ -928,10 +934,10 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
 
     // Ensure both entries have Zarr metadata
     if speed_entry.zarr_metadata.is_none() {
-        return Err(
-            "WSPD data is not available - missing Zarr metadata (ingestion may be incomplete)"
-                .to_string(),
-        );
+        return Err(format!(
+            "{} data is not available - missing Zarr metadata (ingestion may be incomplete)",
+            speed_param
+        ));
     }
     if dir_entry.zarr_metadata.is_none() {
         return Err(
@@ -987,10 +993,11 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
     // This ensures barbs align correctly with the underlying data in Web Mercator projection
     let use_mercator = tile_coord.is_some(); // WMTS tiles use Mercator
 
-    // Resample data to the render bbox
+    // Resample data to the render bbox using model-aware resampling
+    // This handles projection transformations for different models (e.g., NBM Alaska uses Polar Stereographic)
     let (speed_resampled, dir_resampled) = if use_mercator {
-        // Use Mercator resampling for WMTS tiles
-        let speed = resample_for_mercator(
+        // Use model-aware Mercator resampling for WMTS tiles
+        let speed = resample_grid_for_bbox(
             &speed_data,
             grid_width,
             grid_height,
@@ -998,9 +1005,11 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
             render_height,
             render_bbox,
             data_bounds,
+            true, // use_mercator
+            model,
             grid_uses_360,
         );
-        let dir = resample_for_mercator(
+        let dir = resample_grid_for_bbox(
             &dir_data,
             grid_width,
             grid_height,
@@ -1008,6 +1017,8 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
             render_height,
             render_bbox,
             data_bounds,
+            true, // use_mercator
+            model,
             grid_uses_360,
         );
         (speed, dir)

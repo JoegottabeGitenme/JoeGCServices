@@ -15,11 +15,25 @@ use grid_processor::DatasetQuery;
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
+
+/// Filter collection parameters to only those with available data.
+fn filter_available_parameters(
+    collection_def: &crate::config::CollectionDefinition,
+    availability: &ModelAvailability,
+) -> Vec<String> {
+    collection_def
+        .parameters
+        .iter()
+        .filter(|p| availability.has_parameter(&p.name))
+        .map(|p| p.name.clone())
+        .collect()
+}
 
 /// Query parameters for position endpoint.
 #[derive(Debug, Deserialize)]
@@ -102,6 +116,36 @@ async fn position_query(
             ExceptionResponse::not_found(format!("Collection not found: {}", collection_id)),
         );
     };
+
+    // Get availability for this model
+    let availability = state
+        .availability_cache
+        .get_model_availability(&state.catalog, &model_config.model)
+        .await;
+
+    // Return 404 if model has no data
+    let Some(availability) = availability else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no available data",
+                collection_id
+            )),
+        );
+    };
+
+    // Get available parameters (filter to only those with data)
+    let available_params = filter_available_parameters(collection_def, &availability);
+
+    if available_params.is_empty() {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {} has no parameters with available data",
+                collection_id
+            )),
+        );
+    }
 
     // Check for required coords parameter
     let coords_str = match &params.coords {
@@ -190,26 +234,17 @@ async fn position_query(
 
     // Determine which parameters to query
     let params_to_query: Vec<_> = if requested_params.is_empty() {
-        // Return all parameters in collection
-        collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
+        // Return all available parameters
+        available_params.clone()
     } else {
-        // Validate requested parameters exist in collection
-        let available: Vec<_> = collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        // Validate requested parameters exist and have data
         for param in &requested_params {
-            if !available.contains(&param.as_str()) {
+            if !available_params.contains(param) {
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     ExceptionResponse::bad_request(format!(
                         "Parameter '{}' not available in collection. Available: {:?}",
-                        param, available
+                        param, available_params
                     )),
                 );
             }
@@ -686,10 +721,11 @@ fn build_level_string(
         }
         _ => {
             // Unknown level type, try to use named level from param
+            // Convert underscores to spaces (config uses cloud_base, catalog uses "cloud base")
             param_def
                 .and_then(|p| p.levels.first())
                 .and_then(|l| match l {
-                    LevelValue::Named(name) => Some(name.clone()),
+                    LevelValue::Named(name) => Some(name.replace('_', " ")),
                     LevelValue::Numeric(_) => None,
                 })
         }

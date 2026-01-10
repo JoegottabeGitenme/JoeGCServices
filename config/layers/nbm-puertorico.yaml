@@ -1,0 +1,203 @@
+# NBM Puerto Rico Layer Configuration
+# Defines WMS/WMTS layers exposed for the NBM model (Puerto Rico & USVI region)
+
+model: nbm-puertorico
+display_name: "NBM - National Blend of Models (Puerto Rico)"
+
+default_bbox:
+  west: -68.5
+  south: 17.0
+  east: -63.0
+  north: 19.5
+
+layers:
+  # Surface Temperature
+  - id: nbm_pr_TMP
+    parameter: TMP
+    title: "Temperature"
+    abstract: "Air temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: nbm_pr_DPT
+    parameter: DPT
+    title: "Dew Point Temperature"
+    abstract: "Dew point temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: nbm_pr_TMAX
+    parameter: TMAX
+    title: "Maximum Temperature"
+    abstract: "Maximum temperature over 12-hour period"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: nbm_pr_TMIN
+    parameter: TMIN
+    title: "Minimum Temperature"
+    abstract: "Minimum temperature over 12-hour period"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: nbm_pr_RH
+    parameter: RH
+    title: "Relative Humidity"
+    abstract: "Relative humidity at 2m above ground"
+    style_file: humidity.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # Precipitation (tropical - important for PR)
+  - id: nbm_pr_APCP01
+    parameter: APCP01
+    title: "1-Hour Precipitation"
+    abstract: "Total precipitation over 1-hour period"
+    style_file: precipitation.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    accumulation: true
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nbm_pr_APCP06
+    parameter: APCP06
+    title: "6-Hour Precipitation"
+    abstract: "Total precipitation over 6-hour period"
+    style_file: precipitation.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    accumulation: true
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nbm_pr_POP06
+    parameter: POP06
+    title: "6-Hour PoP"
+    abstract: "Probability of precipitation for 6-hour period"
+    style_file: probability.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "surface"
+        default: true
+
+  # Wind (hurricane region - important for PR)
+  - id: nbm_pr_WIND
+    parameter: WIND
+    title: "Wind Speed"
+    abstract: "Sustained wind speed at 10m above ground"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: nbm_pr_WDIR
+    parameter: WDIR
+    title: "Wind Direction"
+    abstract: "Wind direction at 10m above ground"
+    style_file: wind_direction.json
+    units:
+      native: degrees
+      display: degrees
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: nbm_pr_GUST
+    parameter: GUST
+    title: "Wind Gust"
+    abstract: "Maximum wind gust at 10m above ground"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: nbm_pr_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Wind Barbs"
+    abstract: "Wind direction and speed barbs"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [WIND, WDIR]
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  # Aviation
+  - id: nbm_pr_VIS
+    parameter: VIS
+    title: "Visibility"
+    abstract: "Surface visibility"
+    style_file: visibility.json
+    units:
+      native: m
+      display: km
+      conversion: m_to_km
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nbm_pr_CEIL
+    parameter: CEIL
+    title: "Ceiling Height"
+    abstract: "Ceiling height (lowest broken/overcast cloud layer)"
+    style_file: ceiling.json
+    units:
+      native: m
+      display: ft
+      conversion: m_to_ft
+    levels:
+      - value: "cloud base"
+        default: true
+
+  - id: nbm_pr_TCDC
+    parameter: TCDC
+    title: "Total Cloud Cover"
+    abstract: "Total cloud cover for entire atmospheric column"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "entire atmosphere"
+        default: true
