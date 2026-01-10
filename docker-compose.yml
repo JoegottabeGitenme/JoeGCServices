@@ -358,6 +358,8 @@ services:
       STATUS_PORT: 8081
       # Config directory
       CONFIG_DIR: /app/config
+      # Max age for pending ingestion before file cleanup (default: 2 hours)
+      PENDING_INGESTION_MAX_AGE_SECS: ${PENDING_INGESTION_MAX_AGE_SECS:-7200}
     volumes:
       - downloader_data:/data/downloads
       - downloader_state:/data/downloader
