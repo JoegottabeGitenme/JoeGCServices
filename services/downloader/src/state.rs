@@ -369,6 +369,38 @@ impl DownloadState {
         Ok(records)
     }
 
+    /// Get completed downloads that haven't been ingested yet, with timestamps.
+    /// Returns (url, filename, completed_at) for determining stale files.
+    pub async fn get_pending_ingestion_with_timestamps(
+        &self,
+    ) -> Result<Vec<(String, String, DateTime<Utc>)>> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT url, filename, completed_at FROM completed_downloads WHERE ingested = 0 ORDER BY completed_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(url, filename, completed_at)| {
+                DateTime::parse_from_rfc3339(&completed_at)
+                    .ok()
+                    .map(|dt| (url, filename, dt.with_timezone(&Utc)))
+            })
+            .collect())
+    }
+
+    /// Delete a completed_downloads record by URL.
+    /// Used when abandoning stale files that failed ingestion.
+    pub async fn delete_completed_record(&self, url: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM completed_downloads WHERE url = ?")
+            .bind(url)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Mark a download as ingested.
     pub async fn mark_ingested(&self, url: &str) -> Result<()> {
         sqlx::query("UPDATE completed_downloads SET ingested = 1 WHERE url = ?")
@@ -672,6 +704,27 @@ impl DownloadState {
             .context("Failed to vacuum database")?;
 
         debug!("Database vacuumed");
+        Ok(())
+    }
+
+    /// Insert a completed download record directly (for testing).
+    /// If `completed_at` is None, uses current time.
+    #[cfg(test)]
+    pub async fn insert_completed_for_test(
+        &self,
+        url: &str,
+        filename: &str,
+        completed_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let timestamp = completed_at.unwrap_or_else(Utc::now).to_rfc3339();
+        sqlx::query(
+            "INSERT INTO completed_downloads (url, filename, completed_at, ingested) VALUES (?, ?, ?, 0)",
+        )
+        .bind(url)
+        .bind(filename)
+        .bind(&timestamp)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

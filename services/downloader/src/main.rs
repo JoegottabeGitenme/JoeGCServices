@@ -110,6 +110,10 @@ struct Args {
     /// Max age for partial files before cleanup in seconds (default: 3600 = 1 hour)
     #[arg(long, env = "PARTIAL_FILE_MAX_AGE_SECS", default_value = "3600")]
     partial_file_max_age_secs: u64,
+
+    /// Max age for pending ingestion files before cleanup in seconds (default: 7200 = 2 hours)
+    #[arg(long, env = "PENDING_INGESTION_MAX_AGE_SECS", default_value = "7200")]
+    pending_ingestion_max_age_secs: u64,
 }
 
 #[tokio::main]
@@ -179,6 +183,7 @@ async fn main() -> Result<()> {
         dry_run: args.cleanup_dry_run,
         interval_secs: args.cleanup_interval_secs,
         partial_file_max_age_secs: args.partial_file_max_age_secs,
+        pending_ingestion_max_age_secs: args.pending_ingestion_max_age_secs,
         completed_record_retention_days: args.completed_record_retention_days,
         failed_record_retention_days: args.failed_record_retention_days,
         output_dir: args.output_dir.clone(),
@@ -190,6 +195,7 @@ async fn main() -> Result<()> {
         cleanup_config.clone(),
         state.clone(),
         cleanup_metrics.clone(),
+        args.ingester_url.clone(),
     );
 
     // Run startup cleanup to handle any orphan files from previous runs
