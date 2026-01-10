@@ -706,6 +706,27 @@ impl DownloadState {
         debug!("Database vacuumed");
         Ok(())
     }
+
+    /// Insert a completed download record directly (for testing).
+    /// If `completed_at` is None, uses current time.
+    #[cfg(test)]
+    pub async fn insert_completed_for_test(
+        &self,
+        url: &str,
+        filename: &str,
+        completed_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let timestamp = completed_at.unwrap_or_else(Utc::now).to_rfc3339();
+        sqlx::query(
+            "INSERT INTO completed_downloads (url, filename, completed_at, ingested) VALUES (?, ?, ?, 0)",
+        )
+        .bind(url)
+        .bind(filename)
+        .bind(&timestamp)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 /// Completed download record.

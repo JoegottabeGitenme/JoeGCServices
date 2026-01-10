@@ -49,3 +49,4 @@ aws-sdk-s3 = "1.11"
 tokio-test = { workspace = true }
 tempfile = "3"
 filetime = "0.2"
+wiremock = "0.6"

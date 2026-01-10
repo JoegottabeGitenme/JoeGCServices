@@ -254,21 +254,11 @@ impl CleanupTask {
             }
         }
 
-        // Retry pending ingestion (helps recover after restart)
-        match self.retry_pending_ingestion().await {
-            Ok(retry_stats) => stats.merge(retry_stats),
+        // Process pending files (retry recent ones, delete stale ones)
+        match self.process_pending_files().await {
+            Ok(pending_stats) => stats.merge(pending_stats),
             Err(e) => {
-                let msg = format!("Failed to retry pending ingestion: {}", e);
-                warn!("{}", msg);
-                stats.errors.push(msg);
-            }
-        }
-
-        // Clean stale pending files (failed ingestion > max age)
-        match self.cleanup_stale_pending_files().await {
-            Ok(stale_stats) => stats.merge(stale_stats),
-            Err(e) => {
-                let msg = format!("Failed to cleanup stale pending files: {}", e);
+                let msg = format!("Failed to process pending files: {}", e);
                 warn!("{}", msg);
                 stats.errors.push(msg);
             }
@@ -319,27 +309,17 @@ impl CleanupTask {
             }
         }
 
-        // 2. Retry pending ingestion (attempt to recover failed ingestions)
-        match self.retry_pending_ingestion().await {
-            Ok(retry_stats) => stats.merge(retry_stats),
+        // 2. Process pending files (retry recent ones, delete stale ones)
+        match self.process_pending_files().await {
+            Ok(pending_stats) => stats.merge(pending_stats),
             Err(e) => {
-                let msg = format!("Failed to retry pending ingestion: {}", e);
+                let msg = format!("Failed to process pending files: {}", e);
                 warn!("{}", msg);
                 stats.errors.push(msg);
             }
         }
 
-        // 3. Clean stale pending files (failed ingestion > max age)
-        match self.cleanup_stale_pending_files().await {
-            Ok(stale_stats) => stats.merge(stale_stats),
-            Err(e) => {
-                let msg = format!("Failed to cleanup stale pending files: {}", e);
-                warn!("{}", msg);
-                stats.errors.push(msg);
-            }
-        }
-
-        // 4. Clean orphan files (ingested but still on disk)
+        // 3. Clean orphan files (ingested but still on disk)
         match self.cleanup_orphan_files().await {
             Ok(orphan_stats) => stats.merge(orphan_stats),
             Err(e) => {
@@ -349,7 +329,7 @@ impl CleanupTask {
             }
         }
 
-        // 5. Prune database records
+        // 4. Prune database records
         match self.prune_database().await {
             Ok(db_stats) => stats.merge(db_stats),
             Err(e) => {
@@ -611,121 +591,137 @@ impl CleanupTask {
         Ok(stats)
     }
 
-    /// Retry ingestion for files that downloaded but failed to ingest.
-    /// This helps recover from temporary ingester outages.
-    async fn retry_pending_ingestion(&self) -> Result<CleanupStats> {
+    /// Process pending ingestion files: retry recent ones, clean up stale ones.
+    ///
+    /// This combines retry logic and stale cleanup to avoid double DB queries.
+    /// Files are categorized by age:
+    /// - < 5 minutes: Too recent, skip (let normal flow handle it)
+    /// - 5 minutes to max_age: Retry ingestion
+    /// - > max_age: Delete file and DB record
+    async fn process_pending_files(&self) -> Result<CleanupStats> {
         let mut stats = CleanupStats::default();
 
-        // Skip if no ingester URL configured
-        let ingester_url = match &self.ingester_url {
-            Some(url) => url,
-            None => {
-                debug!("No ingester URL configured, skipping ingestion retry");
-                return Ok(stats);
-            }
-        };
-
-        // Get all pending ingestion files with timestamps
+        // Get all pending ingestion files with timestamps (single DB query)
         let pending_files = self.state.get_pending_ingestion_with_timestamps().await?;
 
         if pending_files.is_empty() {
-            debug!("No pending ingestion files to retry");
-            return Ok(stats);
-        }
-
-        debug!(
-            count = pending_files.len(),
-            "Found pending ingestion files to retry"
-        );
-
-        for (url, filename, _completed_at) in pending_files {
-            // Check if file still exists on disk
-            let file_path = self.config.output_dir.join(&filename);
-            if !file_path.exists() {
-                debug!(
-                    file = %filename,
-                    "Pending file no longer exists, skipping retry"
-                );
-                continue;
-            }
-
-            stats.ingestion_retries += 1;
-
-            // Attempt to trigger ingestion
-            let ingest_path = format!("/data/downloads/{}", filename);
-            let result = self
-                .http_client
-                .post(ingester_url)
-                .json(&serde_json::json!({
-                    "file_path": ingest_path,
-                    "source_url": url
-                }))
-                .send()
-                .await;
-
-            match result {
-                Ok(response) if response.status().is_success() => {
-                    info!(
-                        file = %filename,
-                        "Ingestion retry succeeded"
-                    );
-                    stats.ingestion_retries_succeeded += 1;
-
-                    // Mark as ingested and delete the file
-                    let _ = self.state.mark_ingested(&url).await;
-                    delete_ingested_file(&self.config.output_dir, &filename).await;
-                }
-                Ok(response) => {
-                    debug!(
-                        file = %filename,
-                        status = %response.status(),
-                        "Ingestion retry failed (will try again later)"
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        file = %filename,
-                        error = %e,
-                        "Ingestion retry request failed (will try again later)"
-                    );
-                }
-            }
-        }
-
-        if stats.ingestion_retries > 0 {
-            info!(
-                retries = stats.ingestion_retries,
-                succeeded = stats.ingestion_retries_succeeded,
-                "Ingestion retry complete"
-            );
-        }
-
-        Ok(stats)
-    }
-
-    /// Clean up stale pending files that have failed ingestion for too long.
-    /// Files older than pending_ingestion_max_age_secs are deleted along with their DB records.
-    async fn cleanup_stale_pending_files(&self) -> Result<CleanupStats> {
-        let mut stats = CleanupStats::default();
-
-        // Get all pending ingestion files with timestamps
-        let pending_files = self.state.get_pending_ingestion_with_timestamps().await?;
-
-        if pending_files.is_empty() {
+            debug!("No pending ingestion files to process");
             return Ok(stats);
         }
 
         let now = Utc::now();
+        let min_retry_age = chrono::Duration::minutes(5);
         let max_age = chrono::Duration::seconds(self.config.pending_ingestion_max_age_secs as i64);
+
+        // Partition files into retryable vs stale
+        let mut retryable = Vec::new();
+        let mut stale = Vec::new();
 
         for (url, filename, completed_at) in pending_files {
             let age = now - completed_at;
 
-            if age <= max_age {
-                // File is not stale yet, skip
+            if age < min_retry_age {
+                // Too recent - let normal download flow handle it
+                debug!(
+                    file = %filename,
+                    age_secs = age.num_seconds(),
+                    "Skipping recently completed file (waiting for normal ingestion)"
+                );
                 continue;
+            } else if age <= max_age {
+                retryable.push((url, filename, completed_at));
+            } else {
+                stale.push((url, filename, completed_at));
             }
+        }
 
+        // Process retryable files (only if ingester URL is configured)
+        if let Some(ref ingester_url) = self.ingester_url {
+            if !retryable.is_empty() {
+                debug!(
+                    count = retryable.len(),
+                    "Found pending ingestion files to retry"
+                );
+
+                for (url, filename, _completed_at) in retryable {
+                    // Check if file still exists on disk
+                    let file_path = self.config.output_dir.join(&filename);
+                    if !file_path.exists() {
+                        debug!(
+                            file = %filename,
+                            "Pending file no longer exists, skipping retry"
+                        );
+                        continue;
+                    }
+
+                    stats.ingestion_retries += 1;
+
+                    // Attempt to trigger ingestion
+                    let ingest_path = format!("/data/downloads/{}", filename);
+                    let result = self
+                        .http_client
+                        .post(ingester_url)
+                        .json(&serde_json::json!({
+                            "file_path": ingest_path,
+                            "source_url": url
+                        }))
+                        .send()
+                        .await;
+
+                    match result {
+                        Ok(response) if response.status().is_success() => {
+                            info!(
+                                file = %filename,
+                                "Ingestion retry succeeded"
+                            );
+                            stats.ingestion_retries_succeeded += 1;
+
+                            // Mark as ingested first - only delete if this succeeds
+                            if let Err(e) = self.state.mark_ingested(&url).await {
+                                let msg = format!("Failed to mark {} as ingested: {}", filename, e);
+                                warn!("{}", msg);
+                                stats.errors.push(msg);
+                                continue; // Don't delete the file if we couldn't mark it
+                            }
+
+                            delete_ingested_file(&self.config.output_dir, &filename).await;
+                        }
+                        Ok(response) => {
+                            debug!(
+                                file = %filename,
+                                status = %response.status(),
+                                "Ingestion retry failed (will try again later)"
+                            );
+                        }
+                        Err(e) => {
+                            debug!(
+                                file = %filename,
+                                error = %e,
+                                "Ingestion retry request failed (will try again later)"
+                            );
+                        }
+                    }
+                }
+
+                if stats.ingestion_retries > 0 {
+                    info!(
+                        retries = stats.ingestion_retries,
+                        succeeded = stats.ingestion_retries_succeeded,
+                        "Ingestion retry complete"
+                    );
+                }
+            }
+        } else if !retryable.is_empty() {
+            debug!(
+                count = retryable.len(),
+                "No ingester URL configured, skipping {} retryable files",
+                retryable.len()
+            );
+        }
+
+        // Process stale files (delete file and DB record)
+        for (url, filename, completed_at) in stale {
+            let age = now - completed_at;
             let file_path = self.config.output_dir.join(&filename);
             let age_hours = age.num_minutes() as f64 / 60.0;
 
@@ -739,11 +735,8 @@ impl CleanupTask {
             } else {
                 // Delete file if it exists
                 if file_path.exists() {
-                    match tokio::fs::metadata(&file_path).await {
-                        Ok(metadata) => {
-                            stats.bytes_reclaimed += metadata.len();
-                        }
-                        Err(_) => {}
+                    if let Ok(metadata) = tokio::fs::metadata(&file_path).await {
+                        stats.bytes_reclaimed += metadata.len();
                     }
 
                     match tokio::fs::remove_file(&file_path).await {
@@ -1245,5 +1238,252 @@ mod tests {
         // This should not panic, just log a warning
         delete_ingested_file(output_dir.path(), filename).await;
         // If we get here without panicking, the test passes
+    }
+
+    #[tokio::test]
+    async fn test_process_pending_files_successful_retry() {
+        use crate::state::DownloadState;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Start mock ingester server
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Create a pending file (completed 10 minutes ago - past min retry age)
+        let filename = "pending_retry.grib2";
+        let file_path = output_dir.path().join(filename);
+        tokio::fs::write(&file_path, "data to ingest")
+            .await
+            .unwrap();
+
+        // Add to DB as completed but not ingested (10 minutes ago to pass 5-minute min age)
+        let ten_minutes_ago = Utc::now() - chrono::Duration::minutes(10);
+        state
+            .insert_completed_for_test(
+                "http://example.com/test.grib2",
+                filename,
+                Some(ten_minutes_ago),
+            )
+            .await
+            .unwrap();
+
+        // Create cleanup task with mock ingester URL
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let ingester_url = format!("{}/ingest", mock_server.uri());
+        let cleanup_task =
+            CleanupTask::new(config, state.clone(), metrics.clone(), Some(ingester_url));
+
+        // Run cleanup
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Verify retry was attempted and succeeded
+        assert_eq!(stats.ingestion_retries, 1, "Should have 1 retry attempt");
+        assert_eq!(stats.ingestion_retries_succeeded, 1, "Retry should succeed");
+
+        // File should be deleted after successful ingestion
+        assert!(
+            !file_path.exists(),
+            "File should be deleted after successful retry"
+        );
+
+        // DB record should be marked as ingested
+        let pending = state.get_pending_ingestion().await.unwrap();
+        assert!(pending.is_empty(), "No pending files should remain");
+    }
+
+    #[tokio::test]
+    async fn test_process_pending_files_failed_retry_keeps_file() {
+        use crate::state::DownloadState;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Start mock ingester server that returns 500 error
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Create a pending file
+        let filename = "pending_fail.grib2";
+        let file_path = output_dir.path().join(filename);
+        tokio::fs::write(&file_path, "data to ingest")
+            .await
+            .unwrap();
+
+        // Add to DB as completed but not ingested (10 minutes ago)
+        let ten_minutes_ago = Utc::now() - chrono::Duration::minutes(10);
+        state
+            .insert_completed_for_test(
+                "http://example.com/fail.grib2",
+                filename,
+                Some(ten_minutes_ago),
+            )
+            .await
+            .unwrap();
+
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let ingester_url = format!("{}/ingest", mock_server.uri());
+        let cleanup_task =
+            CleanupTask::new(config, state.clone(), metrics.clone(), Some(ingester_url));
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Verify retry was attempted but failed
+        assert_eq!(stats.ingestion_retries, 1, "Should have 1 retry attempt");
+        assert_eq!(stats.ingestion_retries_succeeded, 0, "Retry should fail");
+
+        // File should still exist
+        assert!(file_path.exists(), "File should remain after failed retry");
+
+        // DB record should still be pending
+        let pending = state.get_pending_ingestion().await.unwrap();
+        assert_eq!(pending.len(), 1, "Pending file should remain in DB");
+    }
+
+    #[tokio::test]
+    async fn test_process_pending_files_stale_cleanup() {
+        use crate::state::DownloadState;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Create a stale pending file (completed 3 hours ago, max age is 2 hours)
+        let filename = "stale_pending.grib2";
+        let file_path = output_dir.path().join(filename);
+        tokio::fs::write(&file_path, "stale data").await.unwrap();
+
+        // Completed 3 hours ago (past the 2-hour max age)
+        let three_hours_ago = Utc::now() - chrono::Duration::hours(3);
+        state
+            .insert_completed_for_test(
+                "http://example.com/stale.grib2",
+                filename,
+                Some(three_hours_ago),
+            )
+            .await
+            .unwrap();
+
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200, // 2 hours
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        // No ingester URL - only stale cleanup should happen
+        let cleanup_task = CleanupTask::new(config, state.clone(), metrics.clone(), None);
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Verify stale file was deleted
+        assert_eq!(
+            stats.stale_pending_files_deleted, 1,
+            "Should delete 1 stale file"
+        );
+        assert!(!file_path.exists(), "Stale file should be deleted");
+
+        // DB record should be gone
+        let pending = state.get_pending_ingestion().await.unwrap();
+        assert!(pending.is_empty(), "No pending files should remain");
+    }
+
+    #[tokio::test]
+    async fn test_process_pending_files_skips_recent() {
+        use crate::state::DownloadState;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // Create a very recent pending file (just now - should be skipped)
+        let filename = "recent_pending.grib2";
+        let file_path = output_dir.path().join(filename);
+        tokio::fs::write(&file_path, "recent data").await.unwrap();
+
+        // Completed just now (should be skipped as too recent)
+        state
+            .insert_completed_for_test("http://example.com/recent.grib2", filename, None)
+            .await
+            .unwrap();
+
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let cleanup_task = CleanupTask::new(
+            config,
+            state.clone(),
+            metrics.clone(),
+            Some("http://ingester:8082/ingest".to_string()),
+        );
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        // Verify no retry was attempted (file is too recent)
+        assert_eq!(stats.ingestion_retries, 0, "Should skip recent file");
+
+        // File should still exist
+        assert!(file_path.exists(), "Recent file should remain");
+
+        // DB record should still be pending
+        let pending = state.get_pending_ingestion().await.unwrap();
+        assert_eq!(pending.len(), 1, "Recent pending file should remain");
     }
 }
