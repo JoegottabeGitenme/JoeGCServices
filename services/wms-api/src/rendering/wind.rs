@@ -908,7 +908,11 @@ pub async fn render_wind_barbs_from_speed_direction_tile(
 
     // Get the catalog entries for wind speed and direction
     // NBM models use "WIND" for wind speed, others use "WSPD"
-    let speed_param = if model.starts_with("nbm") { "WIND" } else { "WSPD" };
+    let speed_param = if model.starts_with("nbm") {
+        "WIND"
+    } else {
+        "WSPD"
+    };
     let speed_entry = get_speed_direction_entry(
         catalog,
         model,
