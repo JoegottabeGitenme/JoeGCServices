@@ -10,6 +10,7 @@
 # Coverage: Western CONUS, Pacific (-175 to -100 lon, 14.5 to 55.5 lat)
 
 model: goes18
+data_type: observation
 
 collections:
   # ===========================================================================
@@ -29,7 +30,7 @@ collections:
       - name: CMI_C02
         levels: [visible_red]
       - name: CMI_C03
-        levels: [veggie]
+        levels: [visible_veggie]
     run_mode: instances
 
   # Water vapor bands (bands 8, 9, 10)
@@ -59,7 +60,7 @@ collections:
       - name: CMI_C13
         levels: [clean_ir]
       - name: CMI_C14
-        levels: [ir_window]
+        levels: [ir]
     run_mode: instances
 
   # ===========================================================================
@@ -80,7 +81,7 @@ collections:
       - name: CMI_C02
         levels: [visible_red]
       - name: CMI_C03
-        levels: [veggie]
+        levels: [visible_veggie]
     run_mode: latest
 
   - id: goes18-water-vapor-latest
@@ -108,7 +109,7 @@ collections:
       - name: CMI_C13
         levels: [clean_ir]
       - name: CMI_C14
-        levels: [ir_window]
+        levels: [ir]
     run_mode: latest
 
 settings:

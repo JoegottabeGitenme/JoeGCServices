@@ -11,6 +11,7 @@
 # GOES-19 became operational GOES-East on April 4, 2025
 
 model: goes19-fulldisk
+data_type: observation
 
 collections:
   # ===========================================================================

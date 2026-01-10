@@ -89,7 +89,7 @@ parameters:
     levels:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
-        display: "veggie"
+        display: "visible_veggie"
     units: "reflectance"
     valid_range: [0, 1.5] # Reflectance factor
 
@@ -161,7 +161,7 @@ parameters:
     levels:
       - type: top_of_atmosphere
         level_code: 8 # Nominal top of atmosphere (GRIB2 Table 4.5)
-        display: "ir_window"
+        display: "ir"
     units: "K"
     display_units: "K"
     valid_range: [180, 350] # Brightness temperature range

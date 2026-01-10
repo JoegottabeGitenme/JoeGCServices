@@ -10,6 +10,7 @@
 # Coverage: Full western Pacific hemisphere visible from GOES-West
 
 model: goes18-fulldisk
+data_type: observation
 
 collections:
   # ===========================================================================

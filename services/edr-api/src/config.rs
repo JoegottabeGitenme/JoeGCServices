@@ -6,6 +6,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Type of data in a model: forecast or observation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DataType {
+    /// Forecast data (e.g., HRRR, GFS, NBM) - queried by reference time + forecast hour.
+    #[default]
+    Forecast,
+    /// Observation data (e.g., GOES, MRMS) - queried by observation time.
+    Observation,
+}
+
+impl DataType {
+    /// Check if this is observation data.
+    pub fn is_observation(&self) -> bool {
+        matches!(self, DataType::Observation)
+    }
+}
+
 /// EDR configuration loaded from YAML files.
 #[derive(Debug, Clone, Default)]
 pub struct EdrConfig {
@@ -101,6 +119,12 @@ pub struct ModelEdrConfig {
     /// Model identifier (e.g., "hrrr", "gfs").
     pub model: String,
 
+    /// Data type: "forecast" (default) or "observation".
+    /// Observation data (like GOES satellite) is queried by observation time.
+    /// Forecast data (like HRRR, GFS) is queried by reference time + forecast hour.
+    #[serde(default)]
+    pub data_type: DataType,
+
     /// Collection definitions for this model.
     #[serde(default)]
     pub collections: Vec<CollectionDefinition>,
@@ -112,6 +136,17 @@ pub struct ModelEdrConfig {
     /// Response size limits.
     #[serde(default)]
     pub limits: LimitsConfig,
+}
+
+impl ModelEdrConfig {
+    /// Create a DatasetQuery for the appropriate data type (forecast vs observation).
+    pub fn create_query(&self, parameter: &str) -> grid_processor::DatasetQuery {
+        if self.data_type.is_observation() {
+            grid_processor::DatasetQuery::observation(&self.model, parameter)
+        } else {
+            grid_processor::DatasetQuery::forecast(&self.model, parameter)
+        }
+    }
 }
 
 /// Definition of an EDR collection.
@@ -187,6 +222,84 @@ pub struct ParameterDefinition {
 pub enum LevelValue {
     Numeric(f64),
     Named(String),
+}
+
+/// Build a catalog-compatible level string from EDR config.
+///
+/// This converts EDR configuration (level_filter + parameter definition + optional z value)
+/// into the level string format used in the catalog database.
+///
+/// # Arguments
+/// * `level_filter` - The collection's level filter configuration
+/// * `param_def` - Optional parameter definition with specific levels
+/// * `z_value` - Optional z value from query parameter
+///
+/// # Returns
+/// The level string to use for catalog lookup, or None if no level applies
+pub fn build_level_string(
+    level_filter: &LevelFilter,
+    param_def: Option<&ParameterDefinition>,
+    z_value: Option<f64>,
+) -> Option<String> {
+    // Use z_value if provided, otherwise use the first level from param definition
+    let level_value = z_value.or_else(|| {
+        param_def
+            .and_then(|p| p.levels.first())
+            .and_then(|l| match l {
+                LevelValue::Numeric(n) => Some(*n),
+                LevelValue::Named(_) => None,
+            })
+    });
+
+    match level_filter.level_type.as_str() {
+        "surface" => Some("surface".to_string()),
+        "mean_sea_level" => Some("mean sea level".to_string()),
+        "entire_atmosphere" => Some("entire atmosphere".to_string()),
+        "isobaric" => {
+            // Isobaric levels stored as "XXX mb"
+            level_value.map(|v| format!("{} mb", v as i32))
+        }
+        "height_above_ground" => {
+            // Height above ground stored as "X m above ground"
+            level_value.map(|v| format!("{} m above ground", v as i32))
+        }
+        "cloud_layer" => {
+            // Map cloud layer codes to names
+            // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
+            // (x2=bottom, x3=top, x4=layer; some products use different codes)
+            if let Some(code) = level_filter.level_code {
+                match code {
+                    212 | 213 | 214 => Some("low cloud layer".to_string()),
+                    222 | 223 | 224 => Some("middle cloud layer".to_string()),
+                    232 | 233 | 234 => Some("high cloud layer".to_string()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => {
+            // Unknown level type, try to use named level from param
+            // Map config-friendly names to database level strings
+            param_def
+                .and_then(|p| p.levels.first())
+                .and_then(|l| match l {
+                    LevelValue::Named(name) => {
+                        // Map common config names to database level strings
+                        let db_level = match name.as_str() {
+                            "cloud_base" => "cloud base",
+                            "entire_atmosphere" => "entire atmosphere",
+                            "mean_sea_level" => "mean sea level",
+                            // For satellite data (GOES), level names use underscores in DB
+                            // (e.g., "visible_blue", "upper_vapor")
+                            _ => name.as_str(),
+                        };
+                        Some(db_level.to_string())
+                    }
+                    LevelValue::Numeric(_) => None,
+                })
+        }
+    }
 }
 
 /// Run mode for a collection.

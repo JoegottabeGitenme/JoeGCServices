@@ -1761,17 +1761,17 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=geojson`];
         case 'accept-geojson':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2) (with Accept: application/geo+json)`];
-        // PNG Output Format URLs (use URL-encoded coords to show proper format)
+        // PNG Output Format URLs (coordinates derived from collection extent)
         case 'f-param-png':
-            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((<extent>))&f=png&parameter-name=<first>`];
         case 'content-type-png':
-            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((<extent>))&f=png&parameter-name=<first>`];
         case 'png-structure':
-            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png&parameter-name=<first>`];
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((<extent>))&f=png&parameter-name=<first>`];
         case 'png-not-supported-position':
-            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5+35.2)&f=png`];
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(<center>)&f=png`];
         case 'png-multi-param-error':
-            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98+35,-97+35,-97+36,-98+36,-98+35))&f=png (no parameter-name)`];
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((<extent>))&f=png (no parameter-name)`];
         // Cube Query URLs
         case 'cube-basic':
             return [`${API_BASE}/collections/${colId}/cube?bbox=-98,35,-97,36&z=850`];
@@ -7024,12 +7024,17 @@ async function testFParamPng(collection) {
         };
     }
 
-    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
-    const params = new URLSearchParams();
-    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
-    params.set('f', 'png');
-    params.set('parameter-name', paramName);
-    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    // Get valid polygon from collection extent
+    const { polygon, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: true }]
+        };
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=png&parameter-name=${encodeURIComponent(paramName)}`;
     const res = await fetchPng(url);
 
     const contentType = res.headers?.get('content-type') || '';
@@ -7062,12 +7067,17 @@ async function testContentTypePng(collection) {
         };
     }
 
-    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
-    const params = new URLSearchParams();
-    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
-    params.set('f', 'png');
-    params.set('parameter-name', paramName);
-    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    // Get valid polygon from collection extent
+    const { polygon, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: true }]
+        };
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=png&parameter-name=${encodeURIComponent(paramName)}`;
     const res = await fetchPng(url);
 
     const contentType = res.headers?.get('content-type') || '';
@@ -7100,12 +7110,17 @@ async function testPngStructure(collection) {
         };
     }
 
-    // Use URLSearchParams to properly encode query parameters and avoid HTML entity issues
-    const params = new URLSearchParams();
-    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
-    params.set('f', 'png');
-    params.set('parameter-name', paramName);
-    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    // Get valid polygon from collection extent
+    const { polygon, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: true }]
+        };
+    }
+
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=png&parameter-name=${encodeURIComponent(paramName)}`;
     const res = await fetchPng(url);
 
     if (!res.ok) {
@@ -7159,11 +7174,19 @@ async function testPngStructure(collection) {
 // Test that PNG format is not supported for position queries (should return error)
 async function testPngNotSupportedPosition(collection) {
     const col = collection;
-    // Use URLSearchParams to properly encode query parameters
-    const params = new URLSearchParams();
-    params.set('coords', 'POINT(-97.5 35.2)');
-    params.set('f', 'png');
-    const url = `${API_BASE}/collections/${col.id}/position?${params.toString()}`;
+
+    // Get valid coordinates from collection extent
+    const { coords, warning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: warning || 'Cannot determine valid coordinates', passed: true, warning: true }]
+        };
+    }
+
+    const point = `POINT(${coords.lon} ${coords.lat})`;
+    const url = `${API_BASE}/collections/${col.id}/position?coords=${encodeURIComponent(point)}&f=png`;
 
     const res = await fetchPng(url);
 
@@ -7197,12 +7220,18 @@ async function testPngMultiParamError(collection) {
         };
     }
 
+    // Get valid polygon from collection extent
+    const { polygon, warning } = await getValidPolygon(col.id, 1.0);
+    if (!polygon) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: warning || 'Cannot determine valid area', passed: true, warning: true }]
+        };
+    }
+
     // Request PNG without specifying parameter-name (should fail with 400)
-    // Use URLSearchParams to properly encode query parameters
-    const params = new URLSearchParams();
-    params.set('coords', 'POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))');
-    params.set('f', 'png');
-    const url = `${API_BASE}/collections/${col.id}/area?${params.toString()}`;
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}&f=png`;
     const res = await fetchPng(url);
 
     // Should return 400 Bad Request with error about requiring single parameter
