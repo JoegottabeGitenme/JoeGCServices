@@ -228,10 +228,7 @@ impl VerticalExtent {
     /// Create a vertical extent with specific level values.
     /// Each level becomes its own interval entry.
     pub fn with_levels(levels: Vec<f64>, vrs: Option<String>) -> Self {
-        let interval = levels
-            .into_iter()
-            .map(|level| vec![Some(level)])
-            .collect();
+        let interval = levels.into_iter().map(|level| vec![Some(level)]).collect();
         Self { interval, vrs }
     }
 }
