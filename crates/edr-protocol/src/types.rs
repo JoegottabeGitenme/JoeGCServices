@@ -206,30 +206,70 @@ impl TemporalExtent {
 }
 
 /// Vertical extent with level values.
+///
+/// Per OGC EDR spec (Table C.8):
+/// - `interval`: Array of [min, max] pairs describing the overall vertical range
+/// - `values`: Array of discrete height/level values supported by the collection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerticalExtent {
-    /// Vertical level values.
+    /// Vertical level interval as [min, max] pairs.
+    /// Each inner array should contain two values: minimum and maximum vertical level.
     pub interval: Vec<Vec<Option<f64>>>,
 
-    /// Vertical reference system.
+    /// Available vertical level values.
+    /// Lists all discrete levels available in the collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<f64>>,
+
+    /// Vertical reference system (e.g., "hPa", "m").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vrs: Option<String>,
 }
 
 impl VerticalExtent {
-    /// Create a vertical extent from min and max values.
+    /// Create a vertical extent from min and max values (continuous range).
+    /// Use this when discrete level values are not known.
     pub fn new(min: f64, max: f64) -> Self {
         Self {
             interval: vec![vec![Some(min), Some(max)]],
+            values: None,
             vrs: None,
         }
     }
 
     /// Create a vertical extent with specific level values.
-    /// Each level becomes its own interval entry.
-    pub fn with_levels(levels: Vec<f64>, vrs: Option<String>) -> Self {
-        let interval = levels.into_iter().map(|level| vec![Some(level)]).collect();
-        Self { interval, vrs }
+    /// Sets interval to [min, max] of the levels and values to the full list.
+    pub fn with_levels(mut levels: Vec<f64>, vrs: Option<String>) -> Self {
+        if levels.is_empty() {
+            return Self {
+                interval: vec![],
+                values: None,
+                vrs,
+            };
+        }
+
+        // Sort levels to find min/max
+        levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let min = levels.first().copied();
+        let max = levels.last().copied();
+
+        Self {
+            interval: vec![vec![min, max]],
+            values: Some(levels),
+            vrs,
+        }
+    }
+
+    /// Add available level values (builder pattern).
+    pub fn with_values(mut self, values: Vec<f64>) -> Self {
+        self.values = Some(values);
+        self
+    }
+
+    /// Set the vertical reference system (builder pattern).
+    pub fn with_vrs(mut self, vrs: impl Into<String>) -> Self {
+        self.vrs = Some(vrs.into());
+        self
     }
 }
 
@@ -346,6 +386,8 @@ mod tests {
         assert_eq!(extent.interval.len(), 1);
         assert_eq!(extent.interval[0][0], Some(1000.0));
         assert_eq!(extent.interval[0][1], Some(250.0));
+        // new() doesn't set values (for continuous ranges)
+        assert!(extent.values.is_none());
     }
 
     #[test]
@@ -354,8 +396,49 @@ mod tests {
             vec![1000.0, 850.0, 700.0, 500.0, 300.0, 250.0],
             Some("hPa".to_string()),
         );
-        assert_eq!(extent.interval.len(), 6);
+        // interval should be a single [min, max] pair
+        assert_eq!(extent.interval.len(), 1);
+        assert_eq!(extent.interval[0][0], Some(250.0)); // min (sorted)
+        assert_eq!(extent.interval[0][1], Some(1000.0)); // max (sorted)
+                                                         // values should contain all levels, sorted
+        assert!(extent.values.is_some());
+        let values = extent.values.unwrap();
+        assert_eq!(values.len(), 6);
+        assert_eq!(values[0], 250.0); // sorted ascending
+        assert_eq!(values[5], 1000.0);
         assert_eq!(extent.vrs, Some("hPa".to_string()));
+    }
+
+    #[test]
+    fn test_vertical_extent_with_levels_empty() {
+        let extent = VerticalExtent::with_levels(vec![], Some("hPa".to_string()));
+        assert!(extent.interval.is_empty());
+        assert!(extent.values.is_none());
+        assert_eq!(extent.vrs, Some("hPa".to_string()));
+    }
+
+    #[test]
+    fn test_vertical_extent_builder() {
+        let extent = VerticalExtent::new(0.0, 10000.0)
+            .with_values(vec![0.0, 1000.0, 5000.0, 10000.0])
+            .with_vrs("m");
+        assert_eq!(extent.vrs, Some("m".to_string()));
+        assert!(extent.values.is_some());
+        assert_eq!(extent.values.unwrap().len(), 4);
+    }
+
+    #[test]
+    fn test_vertical_extent_serialization() {
+        let extent =
+            VerticalExtent::with_levels(vec![1000.0, 500.0, 250.0], Some("hPa".to_string()));
+        let json = serde_json::to_string(&extent).unwrap();
+        // Should have interval with [min, max]
+        assert!(json.contains("\"interval\""));
+        // Should have values array
+        assert!(json.contains("\"values\""));
+        // Should have vrs
+        assert!(json.contains("\"vrs\""));
+        assert!(json.contains("\"hPa\""));
     }
 
     #[test]

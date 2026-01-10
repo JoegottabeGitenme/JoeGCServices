@@ -36,7 +36,9 @@ pub struct Mercator {
     pub earth_radius: f64,
 
     // Computed constants
-    /// Scale factor at reference latitude
+    /// Scale factor at reference latitude (cos(lat_d))
+    /// Used for computing true ground distances at the reference latitude.
+    #[allow(dead_code)]
     k0: f64,
     /// Mercator Y coordinate of first grid point
     y1: f64,

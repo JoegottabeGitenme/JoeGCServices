@@ -387,25 +387,39 @@ async function getValidDatetime(collectionId) {
 
 // Helper to extract vertical level values from collection metadata
 // Handles both 'values' array and 'interval' array formats per EDR spec
+// Also handles legacy non-compliant formats defensively
 function extractVerticalLevels(vertical) {
     if (!vertical) return [];
     
-    // First check for explicit values array
-    if (vertical.values && vertical.values.length > 0) {
-        return vertical.values;
+    // Prefer explicit values array (spec-compliant format)
+    if (vertical.values && Array.isArray(vertical.values) && vertical.values.length > 0) {
+        // Filter to ensure we only return valid values (numbers or strings, not null/undefined)
+        return vertical.values.filter(v => v !== null && v !== undefined);
     }
     
     // Fall back to extracting from interval array
-    // interval is array of [min, max] pairs - extract unique values
-    if (vertical.interval && vertical.interval.length > 0) {
+    // Per spec, interval should be array of [min, max] pairs
+    // But handle legacy format where each level might be a single-element array
+    if (vertical.interval && Array.isArray(vertical.interval) && vertical.interval.length > 0) {
         const levels = new Set();
         for (const pair of vertical.interval) {
             if (Array.isArray(pair)) {
-                if (pair[0] !== null) levels.add(pair[0]);
-                if (pair[1] !== null && pair[1] !== pair[0]) levels.add(pair[1]);
+                // Add first element if valid
+                if (pair[0] !== null && pair[0] !== undefined) {
+                    levels.add(pair[0]);
+                }
+                // Only add second element if it exists, is valid, and differs from first
+                if (pair.length > 1 && pair[1] !== null && pair[1] !== undefined && pair[1] !== pair[0]) {
+                    levels.add(pair[1]);
+                }
             }
         }
-        return Array.from(levels).sort((a, b) => a - b);
+        // Sort numerically if all values are numbers, otherwise return as-is
+        const levelArray = Array.from(levels);
+        if (levelArray.every(v => typeof v === 'number')) {
+            return levelArray.sort((a, b) => a - b);
+        }
+        return levelArray;
     }
     
     return [];
@@ -686,7 +700,7 @@ async function runAllTests() {
         // Collections
         'collections-list', 'collection-structure', 'collection-links',
         // Extent
-        'extent-spatial', 'extent-temporal', 'extent-vertical',
+        'extent-spatial', 'extent-temporal', 'extent-vertical', 'extent-vertical-format',
         // Instances
         'instances-list', 'instance-structure', 'instance-extent',
         // Position Query
@@ -1091,6 +1105,8 @@ async function executeTest(testName, collection) {
             return testExtentTemporal(collection);
         case 'extent-vertical':
             return testExtentVertical(collection);
+        case 'extent-vertical-format':
+            return testExtentVerticalFormat(collection);
         case 'instances-list':
             return testInstancesList(collection);
         case 'instance-structure':
@@ -1507,6 +1523,7 @@ function getTestUrls(testName) {
         case 'extent-spatial':
         case 'extent-temporal':
         case 'extent-vertical':
+        case 'extent-vertical-format':
             return [`${API_BASE}/collections/${colId}`];
         case 'instances-list':
         case 'instance-structure':
@@ -2075,15 +2092,202 @@ async function testExtentVertical(collection) {
     const extent = colRes.json?.extent;
     const vertical = extent?.vertical;
     
+    // Per OGC EDR spec Table C.8:
+    // - interval: Array of [min, max] pairs (each should have 2 values)
+    // - values: Array of discrete height values supported
+    
+    // Check interval format compliance
+    let intervalFormatValid = true;
+    let intervalFormatWarning = null;
+    if (vertical?.interval && Array.isArray(vertical.interval)) {
+        for (let i = 0; i < vertical.interval.length; i++) {
+            const pair = vertical.interval[i];
+            if (!Array.isArray(pair)) {
+                intervalFormatValid = false;
+                intervalFormatWarning = `interval[${i}] is not an array`;
+                break;
+            }
+            if (pair.length !== 2) {
+                intervalFormatValid = false;
+                intervalFormatWarning = `interval[${i}] has ${pair.length} elements, expected 2 [min, max]`;
+                break;
+            }
+            // Check for undefined values (the bug we fixed)
+            if (pair[0] === undefined || pair[1] === undefined) {
+                intervalFormatValid = false;
+                intervalFormatWarning = `interval[${i}] contains undefined values`;
+                break;
+            }
+        }
+    }
+    
+    // Check values array format compliance
+    let valuesFormatValid = true;
+    let valuesFormatWarning = null;
+    if (vertical?.values && Array.isArray(vertical.values)) {
+        for (let i = 0; i < vertical.values.length; i++) {
+            const val = vertical.values[i];
+            if (val === undefined || val === null) {
+                valuesFormatValid = false;
+                valuesFormatWarning = `values[${i}] is ${val}`;
+                break;
+            }
+        }
+    }
+    
     const checks = [
         { name: 'Has extent object', passed: !!extent },
         { name: 'Has vertical extent', passed: !!vertical },
         { name: 'Has interval or values', passed: !!(vertical?.interval || vertical?.values) },
-        { name: 'Has VRS (vertical ref system)', passed: !!vertical?.vrs }
+        { name: 'Has VRS (vertical ref system)', passed: !!vertical?.vrs },
+        { 
+            name: 'interval format valid ([min, max] pairs)', 
+            passed: intervalFormatValid,
+            warning: intervalFormatWarning
+        },
+        { 
+            name: 'values array format valid (no undefined/null)', 
+            passed: valuesFormatValid,
+            warning: valuesFormatWarning
+        }
     ];
+    
+    const hasWarning = checks.some(c => c.warning);
     
     return {
         passed: checks.every(c => c.passed),
+        warning: hasWarning,
+        checks,
+        response: colRes
+    };
+}
+
+// Dedicated test for vertical extent format compliance (Table C.8)
+// This test specifically validates the structure to prevent issues like z=1000/undefined
+async function testExtentVerticalFormat(collection) {
+    const col = collection;
+    
+    // Check if collection has vertical extent
+    if (!collectionHasVerticalExtent(col)) {
+        return { 
+            skipped: true,
+            reason: 'No vertical extent',
+            checks: [{ name: 'Collection has no vertical extent', passed: true, skipped: true }]
+        };
+    }
+
+    const colRes = await fetchJson(`${API_BASE}/collections/${col.id}`);
+    const vertical = colRes.json?.extent?.vertical;
+    
+    if (!vertical) {
+        return {
+            passed: false,
+            checks: [{ name: 'Vertical extent is missing', passed: false }],
+            response: colRes
+        };
+    }
+    
+    const checks = [];
+    
+    // Check 1: Has either interval or values (required per spec)
+    const hasIntervalOrValues = !!(vertical.interval || vertical.values);
+    checks.push({
+        name: 'Has interval or values array',
+        passed: hasIntervalOrValues
+    });
+    
+    // Check 2: If interval exists, validate format per Table C.8
+    // "Array of level values array, each Level value Array should contain two values"
+    if (vertical.interval && Array.isArray(vertical.interval)) {
+        let intervalValid = true;
+        let intervalError = null;
+        
+        for (let i = 0; i < vertical.interval.length; i++) {
+            const pair = vertical.interval[i];
+            
+            if (!Array.isArray(pair)) {
+                intervalValid = false;
+                intervalError = `interval[${i}] is not an array`;
+                break;
+            }
+            
+            if (pair.length !== 2) {
+                intervalValid = false;
+                intervalError = `interval[${i}] has ${pair.length} element(s), spec requires 2 [min, max]`;
+                break;
+            }
+            
+            // Check for undefined values (this was the bug causing z=1000/undefined)
+            if (pair[0] === undefined) {
+                intervalValid = false;
+                intervalError = `interval[${i}][0] (min) is undefined`;
+                break;
+            }
+            if (pair[1] === undefined) {
+                intervalValid = false;
+                intervalError = `interval[${i}][1] (max) is undefined`;
+                break;
+            }
+        }
+        
+        checks.push({
+            name: 'interval format: each pair has [min, max]',
+            passed: intervalValid,
+            warning: intervalError
+        });
+    }
+    
+    // Check 3: If values exists, validate it's a flat array with no undefined/null
+    if (vertical.values && Array.isArray(vertical.values)) {
+        let valuesValid = true;
+        let valuesError = null;
+        
+        for (let i = 0; i < vertical.values.length; i++) {
+            const val = vertical.values[i];
+            if (val === undefined) {
+                valuesValid = false;
+                valuesError = `values[${i}] is undefined`;
+                break;
+            }
+            if (val === null) {
+                valuesValid = false;
+                valuesError = `values[${i}] is null`;
+                break;
+            }
+        }
+        
+        checks.push({
+            name: 'values array: no undefined/null entries',
+            passed: valuesValid,
+            warning: valuesError
+        });
+        
+        // Check that values can be used for z-range tests (at least 2 levels for range)
+        if (vertical.values.length >= 2) {
+            checks.push({
+                name: 'values has 2+ levels (enables z-range tests)',
+                passed: true
+            });
+        } else {
+            checks.push({
+                name: 'values has 2+ levels (enables z-range tests)',
+                passed: true,
+                warning: `Only ${vertical.values.length} level(s) - z-range tests will be skipped`
+            });
+        }
+    }
+    
+    // Check 4: Has VRS (vertical reference system)
+    checks.push({
+        name: 'Has vrs (vertical reference system)',
+        passed: !!vertical.vrs
+    });
+    
+    const hasWarning = checks.some(c => c.warning);
+    
+    return {
+        passed: checks.every(c => c.passed),
+        warning: hasWarning,
         checks,
         response: colRes
     };
@@ -8723,6 +8927,10 @@ const SPEC_LINKS = {
     'extent-vertical': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#req_core_rc-extent',
         title: 'Vertical Extent (Requirement A.22)'
+    },
+    'extent-vertical-format': {
+        url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#_vertical_object',
+        title: 'Vertical Object Format (Table C.8)'
     },
     'instances-list': {
         url: 'https://docs.ogc.org/is/19-086r6/19-086r6.html#rc_instances-section',
