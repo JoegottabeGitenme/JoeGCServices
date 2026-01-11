@@ -27,6 +27,9 @@ use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::location_cache::LocationCacheKey;
+use crate::metrics::{
+    extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
+};
 use crate::state::AppState;
 
 /// Filter collection parameters to only those with available data.
@@ -200,6 +203,11 @@ async fn location_query(
     params: LocationQueryParams,
     headers: HeaderMap,
 ) -> Response {
+    // Start timing and extract client info
+    let timer = Timer::start();
+    let client_ip = extract_client_ip(&headers);
+    let user_agent = extract_user_agent(&headers);
+
     // Negotiate output format
     let output_format = match negotiate_format(&headers, params.f.as_deref()) {
         Ok(format) => format,
@@ -653,6 +661,21 @@ async fn location_query(
             &cache_key,
             Bytes::from(json.clone()),
             content_type.to_string(),
+        )
+        .await;
+
+    // Record successful request metrics
+    state
+        .metrics
+        .record_request(
+            EndpointType::Locations,
+            Some(&collection_id),
+            &params_to_query,
+            format_from_output(&output_format),
+            timer.elapsed_us(),
+            true,
+            client_ip.as_deref(),
+            user_agent.as_deref(),
         )
         .await;
 

@@ -18,3 +18,11 @@ datasources:
           matcherRegex: '"trace_id":"([^"]+)"'
           name: TraceID
           url: '$${__value.raw}'
+
+  - name: EDR-Heatmap
+    uid: EDR-Heatmap
+    type: marcusolsson-json-datasource
+    access: proxy
+    url: http://edr-api:8083
+    jsonData:
+      queryParams: ""

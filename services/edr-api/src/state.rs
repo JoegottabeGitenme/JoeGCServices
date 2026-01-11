@@ -10,6 +10,7 @@ use storage::Catalog;
 use crate::availability::AvailabilityCache;
 use crate::config::EdrConfig;
 use crate::location_cache::LocationCache;
+use crate::metrics::MetricsCollector;
 
 /// Shared application state.
 pub struct AppState {
@@ -31,6 +32,9 @@ pub struct AppState {
     /// Cache for data availability information.
     /// Used to filter collections/parameters/levels to only advertise what has data.
     pub availability_cache: Arc<AvailabilityCache>,
+
+    /// Metrics collector for monitoring and observability.
+    pub metrics: Arc<MetricsCollector>,
 }
 
 impl AppState {
@@ -102,6 +106,9 @@ impl AppState {
 
         let availability_cache = Arc::new(AvailabilityCache::new(availability_cache_ttl));
 
+        // Create metrics collector
+        let metrics = Arc::new(MetricsCollector::new());
+
         Ok(Self {
             catalog,
             grid_data_service,
@@ -109,6 +116,7 @@ impl AppState {
             base_url,
             location_cache,
             availability_cache,
+            metrics,
         })
     }
 

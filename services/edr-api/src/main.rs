@@ -8,6 +8,7 @@ use std::sync::Arc;
 use axum::http::header::HeaderName;
 use axum::{routing::get, Extension, Router};
 use clap::Parser;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use tower_http::{
     compression::CompressionLayer,
     cors::{Any, CorsLayer},
@@ -74,6 +75,13 @@ async fn run_server(args: Args) {
 
     info!("Starting EDR API server");
 
+    // Initialize Prometheus metrics recorder
+    let prometheus_handle = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("Failed to install Prometheus recorder");
+
+    info!("Prometheus metrics recorder initialized");
+
     // Initialize application state
     let state = match AppState::new().await {
         Ok(state) => Arc::new(state),
@@ -88,6 +96,13 @@ async fn run_server(args: Args) {
         // Landing page
         .route("/edr", get(handlers::landing::landing_handler))
         .route("/edr/", get(handlers::landing::landing_handler))
+        // JSON metrics endpoint (for admin dashboard)
+        .route("/api/metrics", get(handlers::health::json_metrics_handler))
+        // Query heatmap endpoint (for geographic visualization)
+        .route(
+            "/api/metrics/heatmap",
+            get(handlers::health::heatmap_handler),
+        )
         // API definition (OpenAPI) - with trailing slash support
         .route("/edr/api", get(handlers::api::api_handler))
         .route("/edr/api/", get(handlers::api::api_handler))
@@ -205,6 +220,7 @@ async fn run_server(args: Args) {
         )
         // Middleware
         .layer(Extension(state))
+        .layer(Extension(prometheus_handle))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(
