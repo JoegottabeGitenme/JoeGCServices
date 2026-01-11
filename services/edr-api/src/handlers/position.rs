@@ -19,6 +19,9 @@ use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
+use crate::metrics::{
+    extract_client_ip, extract_user_agent, format_from_output, EndpointType, FormatType, Timer,
+};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
@@ -86,6 +89,11 @@ async fn position_query(
     params: PositionQueryParams,
     headers: HeaderMap,
 ) -> Response {
+    // Start timing
+    let timer = Timer::start();
+    let client_ip = extract_client_ip(&headers);
+    let user_agent = extract_user_agent(&headers);
+
     // Debug: log the Accept header
     if let Some(accept) = headers.get(header::ACCEPT) {
         tracing::debug!("Position query Accept header: {:?}", accept);
@@ -98,6 +106,20 @@ async fn position_query(
         Ok(format) => format,
         Err(response) => {
             tracing::debug!("Format negotiation failed");
+            // Record error metrics
+            state
+                .metrics
+                .record_request(
+                    EndpointType::Position,
+                    Some(&collection_id),
+                    &[],
+                    FormatType::CoverageJson,
+                    timer.elapsed_us(),
+                    false,
+                    client_ip.as_deref(),
+                    user_agent.as_deref(),
+                )
+                .await;
             return response;
         }
     };
@@ -439,6 +461,29 @@ async fn position_query(
             }
         };
 
+        // Record successful MULTIPOINT request metrics
+        state
+            .metrics
+            .record_request(
+                EndpointType::Position,
+                Some(&collection_id),
+                &params_to_query,
+                format_from_output(&output_format),
+                timer.elapsed_us(),
+                true,
+                client_ip.as_deref(),
+                user_agent.as_deref(),
+            )
+            .await;
+
+        // Record geographic locations for each point
+        for (pt_lon, pt_lat) in &points {
+            state
+                .metrics
+                .record_point_query(*pt_lon, *pt_lat, &collection_id)
+                .await;
+        }
+
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, content_type)
@@ -661,6 +706,27 @@ async fn position_query(
             unreachable!("PNG format should have been rejected earlier")
         }
     };
+
+    // Record successful request metrics
+    state
+        .metrics
+        .record_request(
+            EndpointType::Position,
+            Some(&collection_id),
+            &params_to_query,
+            format_from_output(&output_format),
+            timer.elapsed_us(),
+            true,
+            client_ip.as_deref(),
+            user_agent.as_deref(),
+        )
+        .await;
+
+    // Record geographic location for heatmap
+    state
+        .metrics
+        .record_point_query(lon, lat, &collection_id)
+        .await;
 
     Response::builder()
         .status(StatusCode::OK)

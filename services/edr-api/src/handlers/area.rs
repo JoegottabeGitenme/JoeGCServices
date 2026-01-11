@@ -19,6 +19,9 @@ use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
+use crate::metrics::{
+    extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
+};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
@@ -157,6 +160,11 @@ async fn area_query(
     params: AreaQueryParams,
     headers: HeaderMap,
 ) -> Response {
+    // Start timing and extract client info
+    let timer = Timer::start();
+    let client_ip = extract_client_ip(&headers);
+    let user_agent = extract_user_agent(&headers);
+
     // Negotiate output format based on Accept header and f parameter
     let output_format = match negotiate_format(&headers, params.f.as_deref()) {
         Ok(format) => format,
@@ -912,6 +920,29 @@ async fn area_query(
             // Build response with metadata headers
             // Use per-model cache policy for PNG responses
             let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
+
+            // Record successful request metrics
+            state
+                .metrics
+                .record_request(
+                    EndpointType::Area,
+                    Some(&collection_id),
+                    &params_to_query,
+                    format_from_output(&output_format),
+                    timer.elapsed_us(),
+                    true,
+                    client_ip.as_deref(),
+                    user_agent.as_deref(),
+                )
+                .await;
+
+            // Record geographic extent for heatmap
+            let bbox = area_query_struct.bbox();
+            state
+                .metrics
+                .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                .await;
+
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/png")
@@ -939,12 +970,36 @@ async fn area_query(
         OutputFormat::GeoJson => {
             let geojson = EdrFeatureCollection::from(&coverage);
             match serde_json::to_string_pretty(&geojson) {
-                Ok(json) => Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, output_format.content_type())
-                    .header(header::CACHE_CONTROL, "max-age=300")
-                    .body(json.into())
-                    .unwrap(),
+                Ok(json) => {
+                    // Record successful request metrics
+                    state
+                        .metrics
+                        .record_request(
+                            EndpointType::Area,
+                            Some(&collection_id),
+                            &params_to_query,
+                            format_from_output(&output_format),
+                            timer.elapsed_us(),
+                            true,
+                            client_ip.as_deref(),
+                            user_agent.as_deref(),
+                        )
+                        .await;
+
+                    // Record geographic extent for heatmap
+                    let bbox = area_query_struct.bbox();
+                    state
+                        .metrics
+                        .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                        .await;
+
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, output_format.content_type())
+                        .header(header::CACHE_CONTROL, "max-age=300")
+                        .body(json.into())
+                        .unwrap()
+                }
                 Err(e) => {
                     tracing::error!("Failed to serialize GeoJSON: {}", e);
                     error_response(
@@ -955,12 +1010,36 @@ async fn area_query(
             }
         }
         OutputFormat::CoverageJson => match serde_json::to_string_pretty(&coverage) {
-            Ok(json) => Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, output_format.content_type())
-                .header(header::CACHE_CONTROL, "max-age=300")
-                .body(json.into())
-                .unwrap(),
+            Ok(json) => {
+                // Record successful request metrics
+                state
+                    .metrics
+                    .record_request(
+                        EndpointType::Area,
+                        Some(&collection_id),
+                        &params_to_query,
+                        format_from_output(&output_format),
+                        timer.elapsed_us(),
+                        true,
+                        client_ip.as_deref(),
+                        user_agent.as_deref(),
+                    )
+                    .await;
+
+                // Record geographic extent for heatmap
+                let bbox = area_query_struct.bbox();
+                state
+                    .metrics
+                    .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                    .await;
+
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, output_format.content_type())
+                    .header(header::CACHE_CONTROL, "max-age=300")
+                    .body(json.into())
+                    .unwrap()
+            }
             Err(e) => {
                 tracing::error!("Failed to serialize CoverageJSON: {}", e);
                 error_response(

@@ -6,6 +6,7 @@ use axum::{
     response::Response,
     Json,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -63,26 +64,61 @@ pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> Respon
         .unwrap()
 }
 
-/// GET /metrics - Prometheus metrics
-pub async fn metrics_handler() -> Response {
-    // TODO: Integrate with metrics-exporter-prometheus
-    let metrics = r#"# HELP edr_requests_total Total EDR API requests
-# TYPE edr_requests_total counter
-edr_requests_total{endpoint="position"} 0
-edr_requests_total{endpoint="collections"} 0
-
-# HELP edr_request_duration_seconds EDR request duration
-# TYPE edr_request_duration_seconds histogram
-edr_request_duration_seconds_bucket{endpoint="position",le="0.01"} 0
-edr_request_duration_seconds_bucket{endpoint="position",le="0.1"} 0
-edr_request_duration_seconds_bucket{endpoint="position",le="1"} 0
-"#;
+/// GET /metrics - Prometheus metrics (for Prometheus scraping)
+pub async fn metrics_handler(
+    Extension(prometheus_handle): Extension<PrometheusHandle>,
+) -> Response {
+    let metrics = prometheus_handle.render();
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/plain; version=0.0.4")
+        .header(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
         .body(metrics.into())
         .unwrap()
+}
+
+/// GET /api/metrics - JSON metrics (for admin dashboard and Grafana)
+pub async fn json_metrics_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
+    let snapshot = state.metrics.snapshot().await;
+
+    match serde_json::to_string_pretty(&snapshot) {
+        Ok(json) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(json.into())
+            .unwrap(),
+        Err(e) => {
+            tracing::error!("Failed to serialize metrics: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(r#"{"error": "Failed to serialize metrics"}"#.into())
+                .unwrap()
+        }
+    }
+}
+
+/// GET /api/metrics/heatmap - Query extent heatmap for geographic visualization
+pub async fn heatmap_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
+    let heatmap = state.metrics.get_query_heatmap().await;
+
+    match serde_json::to_string_pretty(&heatmap) {
+        Ok(json) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(json.into())
+            .unwrap(),
+        Err(e) => {
+            tracing::error!("Failed to serialize heatmap: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(r#"{"error": "Failed to serialize heatmap"}"#.into())
+                .unwrap()
+        }
+    }
 }
 
 #[cfg(test)]

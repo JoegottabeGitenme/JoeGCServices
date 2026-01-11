@@ -29,6 +29,9 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::LevelValue;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
+use crate::metrics::{
+    extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
+};
 
 /// Filter collection parameters to only those with available data.
 fn filter_available_parameters(
@@ -97,6 +100,11 @@ async fn trajectory_query(
     params: TrajectoryQueryParams,
     headers: HeaderMap,
 ) -> Response {
+    // Start timing and extract client info
+    let timer = Timer::start();
+    let client_ip = extract_client_ip(&headers);
+    let user_agent = extract_user_agent(&headers);
+
     // Negotiate output format based on Accept header and f parameter
     let output_format = match negotiate_format(&headers, params.f.as_deref()) {
         Ok(format) => format,
@@ -558,6 +566,21 @@ async fn trajectory_query(
             unreachable!("PNG format should have been rejected earlier")
         }
     };
+
+    // Record successful request metrics
+    state
+        .metrics
+        .record_request(
+            EndpointType::Trajectory,
+            Some(&collection_id),
+            &params_to_query,
+            format_from_output(&output_format),
+            timer.elapsed_us(),
+            true,
+            client_ip.as_deref(),
+            user_agent.as_deref(),
+        )
+        .await;
 
     Response::builder()
         .status(StatusCode::OK)

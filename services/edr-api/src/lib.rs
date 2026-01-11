@@ -9,5 +9,6 @@ pub mod content_negotiation;
 pub mod handlers;
 pub mod limits;
 pub mod location_cache;
+pub mod metrics;
 pub mod state;
 pub mod validation;
