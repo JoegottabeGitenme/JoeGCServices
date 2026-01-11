@@ -19,20 +19,19 @@
   the two outlined in the spec
 - web viewer uses and incredible amount of memory, 1.9G just with one single layer loaded and no zooming or panning
     - it still happens and its still happening after claude 'fixed' the memory leaks
-- see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable
-- ~~need to give the swagger docs a human pass to catch some of the errors~~ DONE: Added missing endpoints, fixed parameter types, added webp format
+- see about adding the 'metocean' compliance stuff in WMS/WMTS if applicable (probs not needed)
 - why are we getting orphaned files constantly?
 - evicting things from chunk cache seems to bring things to a crawl, need to explain how evictions work and how we're
   getting chunk cache entry count
 - downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
   eachother
-- ingester should be able to handle multiple downloads at once, currently it does 1 at a time
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
-- Cache invalidation section in the docs doesn't quite make sense
-- Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
-- System design high level architecture diagram isn't right anymore
-- Minio object storage section is wrong
+- Documentation stuff:
+  - Cache invalidation section in the docs doesn't quite make sense
+  - Cache TTL for weather data isn't the whole picture, could also invalidate when we get new data kinda thing
+  - System design high level architecture diagram isn't right anymore
+  - Minio object storage section is wrong
 - let's try to get registered on the OGC implementation database
 - need to check units and other metadata in all query type outputs
 - lets come up with some kind of visualier for the EDR api that can show off the current collections and some data on a map
@@ -41,8 +40,15 @@
 - need to check units in WMS now that we fixed units being passed into zarr format during ingestion
 - create robots.txt with goodies
 - I think it's worth downsampling MRMS data to a more reasonable resolution even after the pyramid fixes
-- need deploy script to restart nginx towards the end of the script
-- need to see if precaching and cache warming is actually doing anything
+- need to see if precaching and cache warming is actually doing anything, more important after we trim down datasets
 - lets download WMS and WMTS compliance documents and ensure our services adhere
 - need to double check getFeatureInfo for all WMS products within their BBOX's, should be fairly easy to script up
-- downloader pod seems to be holding onto data in prod right now
+- need to greatly reduce the amount of data ingested and figure out exactly what we want as far as app needs so we aren't carrying bloat
+  - radar only need past 30 minutes
+  - sat only past 30 minutes (do we even need satellite?)
+  - hrrr only support 12 hour forecasts so let's do some math on when we can get it, and download only 'future hours'
+  - gfs kinda pointless
+  - NBM/NDFD mayyyybe
+  - various models dont need all these different products right now
+- Downloading and ingesting should not bring services to a crawl so we may want to figure out core usage
+- at this point I wouldn't mind trading out more ram usage to save cpu usage, so let's fill up and increase our caches and make sure memory limits are strict for the various services

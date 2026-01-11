@@ -24,15 +24,186 @@
   "panels": [
     {
       "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 200,
+      "panels": [],
+      "title": "System Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "EDR API container status",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "DOWN" }, "1": { "color": "green", "index": 1, "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
+      "id": 201,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "value", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "up{job=\"edr-api\"}", "legendFormat": "", "refId": "A" }],
+      "title": "API Status",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Time since last successful scrape",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 60 }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 1 },
+      "id": 202,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "time() - max(timestamp(up{job=\"edr-api\"}))", "legendFormat": "", "refId": "A" }],
+      "title": "Last Scrape",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Total requests served since startup",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 1 },
+      "id": 203,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "sum(edr_requests_total)", "legendFormat": "", "refId": "A" }],
+      "title": "Total Requests",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Total errors since startup",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 100 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 1 },
+      "id": 204,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "sum(edr_errors_total) or vector(0)", "legendFormat": "", "refId": "A" }],
+      "title": "Total Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Number of unique collections being served",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 1 },
+      "id": 205,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "count(count by (collection) (edr_requests_total{collection!=\"\"}))", "legendFormat": "", "refId": "A" }],
+      "title": "Active Collections",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Number of unique parameters being queried",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "id": 206,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "count(count by (parameter) (edr_parameter_requests_total{parameter!=\"\"}))", "legendFormat": "", "refId": "A" }],
+      "title": "Active Parameters",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Average request duration",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }] },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 1 },
+      "id": 207,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "sum(rate(edr_request_duration_seconds_sum[5m])) / sum(rate(edr_request_duration_seconds_count[5m])) * 1000", "legendFormat": "", "refId": "A" }],
+      "title": "Avg Latency",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Success rate over last 5 minutes",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 95 }, { "color": "green", "value": 99 }] },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "id": 208,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "pluginVersion": "12.3.0",
+      "targets": [{ "expr": "(1 - (sum(rate(edr_errors_total[5m])) / sum(rate(edr_requests_total[5m])))) * 100 or vector(100)", "legendFormat": "", "refId": "A" }],
+      "title": "Success Rate",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 5
       },
       "id": 100,
       "panels": [],
-      "title": "Overview",
+      "title": "Traffic Overview",
       "type": "row"
     },
     {
@@ -55,7 +226,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 6 },
       "id": 1,
       "options": {
         "colorMode": "value",
@@ -104,7 +275,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 6 },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -153,7 +324,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 6 },
       "id": 3,
       "options": {
         "colorMode": "value",
@@ -172,7 +343,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le)) * 1000",
+          "expr": "avg(edr_request_duration_seconds{quantile=\"0.5\"}) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         }
@@ -202,7 +373,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 6 },
       "id": 4,
       "options": {
         "colorMode": "value",
@@ -221,7 +392,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le)) * 1000",
+          "expr": "avg(edr_request_duration_seconds{quantile=\"0.99\"}) * 1000",
           "legendFormat": "p99",
           "refId": "A"
         }
@@ -235,7 +406,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 11
       },
       "id": 101,
       "panels": [],
@@ -295,7 +466,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "id": 5,
       "options": {
         "legend": {
@@ -341,7 +512,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "id": 6,
       "options": {
         "legend": {
@@ -379,7 +550,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "id": 102,
       "panels": [],
@@ -439,7 +610,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
       "id": 7,
       "options": {
         "legend": {
@@ -457,17 +628,17 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "avg(edr_request_duration_seconds{quantile=\"0.5\"})",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.90, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "avg(edr_request_duration_seconds{quantile=\"0.9\"})",
           "legendFormat": "p90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "avg(edr_request_duration_seconds{quantile=\"0.99\"})",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -528,7 +699,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
       "id": 8,
       "options": {
         "legend": {
@@ -546,7 +717,7 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(edr_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "expr": "edr_request_duration_seconds{quantile=\"0.99\"}",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
@@ -560,7 +731,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 29
       },
       "id": 103,
       "panels": [],
@@ -608,7 +779,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
       "id": 9,
       "options": {
         "barRadius": 0,
@@ -635,10 +806,25 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "topk(10, sum(increase(edr_requests_total[1h])) by (collection))",
-          "format": "time_series",
+          "expr": "topk(10, sum(increase(edr_requests_total{collection!=\"\"}[1h])) by (collection))",
+          "format": "table",
+          "instant": true,
           "legendFormat": "{{collection}}",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "collection": "Collection",
+              "Value": "Requests"
+            }
+          }
         }
       ],
       "title": "Top 10 Collections (1h)",
@@ -685,7 +871,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
       "id": 10,
       "options": {
         "barRadius": 0,
@@ -713,9 +899,24 @@
       "targets": [
         {
           "expr": "topk(10, sum(increase(edr_parameter_requests_total[1h])) by (parameter))",
-          "format": "time_series",
+          "format": "table",
+          "instant": true,
           "legendFormat": "{{parameter}}",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "parameter": "Parameter",
+              "Value": "Requests"
+            }
+          }
         }
       ],
       "title": "Top 10 Parameters (1h)",
@@ -727,7 +928,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 38
       },
       "id": 104,
       "panels": [],
@@ -754,7 +955,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 35 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
       "id": 11,
       "options": {
         "legend": {
@@ -792,64 +993,40 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 47
       },
       "id": 106,
       "panels": [],
-      "title": "Slow Queries (from Logs)",
+      "title": "Errors (from Logs)",
       "type": "row"
     },
     {
       "datasource": {
         "type": "loki"
       },
-      "description": "Slow queries (> 1 second) from EDR API logs",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 44 },
+      "description": "Error logs from EDR API",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
       "id": 15,
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "enablePagination": true,
-          "fields": "",
-          "reducer": ["sum"],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": true,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
       },
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "{container=\"edr-api\"} |= \"ms\" | json | duration_ms > 1000 | line_format \"{{.timestamp}} {{.endpoint}} {{.collection}} {{.duration_ms}}ms\"",
+          "expr": "{compose_service=\"edr-api\"} | json | level=~\"error|ERROR|warn|WARN\"",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Slow Queries (> 1s)",
-      "type": "table"
+      "title": "Recent Errors & Warnings",
+      "type": "logs"
     },
     {
       "collapsed": false,
@@ -857,7 +1034,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 58
       },
       "id": 107,
       "panels": [],
@@ -889,7 +1066,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 53 },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 59 },
       "id": 16,
       "options": {
         "basemap": {

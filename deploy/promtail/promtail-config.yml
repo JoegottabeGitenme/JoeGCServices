@@ -43,32 +43,38 @@ scrape_configs:
             level: level
             target: target
             timestamp: timestamp
-            # Extract the message
-            message: fields.message
-            # Extract span info for tracing context
-            span_name: span.name
-            # Extract common WMS/rendering fields
-            layer: fields.layer
-            style: fields.style
-            model: fields.model
-            parameter: fields.parameter
-            z: fields.z
-            x: fields.x
-            y: fields.y
-            # Extract error details
-            error: fields.error
-            # Extract paths and storage info
-            storage_path: fields.storage_path
-            zarr_path: fields.zarr_path
-            # Extract bbox/coordinate info
-            bbox: fields.bbox
-            # Chunk info for grid-processor debugging
-            chunk_x: fields.chunk_x
-            chunk_y: fields.chunk_y
-            # Performance metrics in logs
-            read_ms: fields.read_ms
-            render_ms: fields.render_ms
-      
+            fields: fields
+            span: span
+
+      # Extract nested fields from 'fields' object
+      - json:
+          source: fields
+          expressions:
+            message: message
+            layer: layer
+            style: style
+            model: model
+            parameter: parameter
+            error: error
+            storage_path: storage_path
+            zarr_path: zarr_path
+            bbox: bbox
+            # Quote single-letter keys to avoid YAML 1.1 boolean interpretation
+            # (y/n are interpreted as yes/no -> true/false in YAML 1.1)
+            "x": "x"
+            "y": "y"
+            "z": "z"
+            chunk_x: chunk_x
+            chunk_y: chunk_y
+            read_ms: read_ms
+            render_ms: render_ms
+
+      # Extract span name if present
+      - json:
+          source: span
+          expressions:
+            span_name: name
+
       # Fallback regex for non-JSON logs (e.g., from postgres, redis)
       - match:
           selector: '{compose_service=~".+"} |~ "^[^{]"'
@@ -98,7 +104,6 @@ scrape_configs:
             - '2006-01-02T15:04:05.999999999Z07:00'
       
       # Format output to include key context fields
-      # This creates a more readable log line while preserving the raw JSON
       - template:
           source: output_line
           template: '{{ if .message }}{{ .message }}{{ if .error }} | error={{ .error }}{{ end }}{{ if .layer }} | layer={{ .layer }}{{ end }}{{ if .model }} | model={{ .model }}{{ end }}{{ if .storage_path }} | path={{ .storage_path }}{{ end }}{{ else }}{{ .__line__ }}{{ end }}'
