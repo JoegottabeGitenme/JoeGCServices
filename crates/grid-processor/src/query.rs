@@ -45,6 +45,11 @@ pub struct DatasetQuery {
 
     /// Time specification for finding the dataset
     pub time_spec: TimeSpecification,
+
+    /// Whether this is observation data (GOES, MRMS) vs forecast data (GFS, HRRR).
+    /// This affects how "latest" queries are resolved.
+    #[serde(default)]
+    pub observation_data: bool,
 }
 
 /// Time specification for finding a dataset.
@@ -102,6 +107,7 @@ impl DatasetQuery {
             parameter: parameter.into(),
             level: None,
             time_spec: TimeSpecification::Latest,
+            observation_data: false,
         }
     }
 
@@ -125,6 +131,7 @@ impl DatasetQuery {
             parameter: parameter.into(),
             level: None,
             time_spec: TimeSpecification::Latest,
+            observation_data: true,
         }
     }
 

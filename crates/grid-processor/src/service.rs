@@ -339,22 +339,39 @@ impl GridDataService {
             }
 
             TimeSpecification::Latest => {
-                // Get latest available data
-                match level {
-                    Some(lev) => self
-                        .catalog
-                        .get_latest_run_earliest_forecast_at_level(
-                            &query.model,
-                            &query.parameter,
-                            lev,
-                        )
-                        .await
-                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
-                    None => self
-                        .catalog
-                        .get_latest_run_earliest_forecast(&query.model, &query.parameter)
-                        .await
-                        .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                // Get latest available data.
+                // For observation data, use valid_time ordering (most recent observation).
+                // For forecast data, use reference_time + forecast_hour ordering (latest run, earliest hour).
+                if query.observation_data {
+                    match level {
+                        Some(lev) => self
+                            .catalog
+                            .get_latest_at_level(&query.model, &query.parameter, lev)
+                            .await
+                            .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                        None => self
+                            .catalog
+                            .get_latest(&query.model, &query.parameter)
+                            .await
+                            .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    }
+                } else {
+                    match level {
+                        Some(lev) => self
+                            .catalog
+                            .get_latest_run_earliest_forecast_at_level(
+                                &query.model,
+                                &query.parameter,
+                                lev,
+                            )
+                            .await
+                            .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                        None => self
+                            .catalog
+                            .get_latest_run_earliest_forecast(&query.model, &query.parameter)
+                            .await
+                            .map_err(|e| GridProcessorError::Catalog(e.to_string())),
+                    }
                 }
             }
         }

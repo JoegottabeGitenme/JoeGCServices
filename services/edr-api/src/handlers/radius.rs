@@ -17,12 +17,12 @@ use edr_protocol::{
     responses::ExceptionResponse, CoverageJson, DistanceUnit, EdrFeatureCollection, ParsedCoords,
     PositionQuery, RadiusQuery,
 };
-use grid_processor::{BoundingBox, DatasetQuery};
+use grid_processor::BoundingBox;
 use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::availability::ModelAvailability;
-use crate::config::LevelValue;
+use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::limits::ResponseSizeEstimate;
 use crate::state::AppState;
@@ -436,8 +436,8 @@ async fn radius_query(
     // Build the level string
     let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
 
-    // Build the DatasetQuery
-    let mut query = DatasetQuery::forecast(&model_config.model, first_param);
+    // Build the DatasetQuery using the appropriate type (forecast vs observation)
+    let mut query = model_config.create_query(first_param);
 
     if let Some(level) = &level_str {
         query = query.at_level(level);
@@ -515,8 +515,8 @@ async fn radius_query(
         // Build the level string
         let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
 
-        // Build the DatasetQuery
-        let mut query = DatasetQuery::forecast(&model_config.model, param_name);
+        // Build the DatasetQuery using the appropriate type (forecast vs observation)
+        let mut query = model_config.create_query(param_name);
 
         if let Some(level) = &level_str {
             query = query.at_level(level);
@@ -665,62 +665,6 @@ fn compute_union_bbox(radius_queries: &[RadiusQuery]) -> edr_protocol::BboxQuery
         south,
         east,
         north,
-    }
-}
-
-/// Build a catalog-compatible level string from EDR config.
-fn build_level_string(
-    level_filter: &crate::config::LevelFilter,
-    param_def: Option<&crate::config::ParameterDefinition>,
-    z_value: Option<f64>,
-) -> Option<String> {
-    // Use z_value if provided, otherwise use the first level from param definition
-    let level_value = z_value.or_else(|| {
-        param_def
-            .and_then(|p| p.levels.first())
-            .and_then(|l| match l {
-                LevelValue::Numeric(n) => Some(*n),
-                LevelValue::Named(_) => None,
-            })
-    });
-
-    match level_filter.level_type.as_str() {
-        "surface" => Some("surface".to_string()),
-        "mean_sea_level" => Some("mean sea level".to_string()),
-        "entire_atmosphere" => Some("entire atmosphere".to_string()),
-        "isobaric" => {
-            // Isobaric levels stored as "XXX mb"
-            level_value.map(|v| format!("{} mb", v as i32))
-        }
-        "height_above_ground" => {
-            // Height above ground stored as "X m above ground"
-            level_value.map(|v| format!("{} m above ground", v as i32))
-        }
-        "cloud_layer" => {
-            // Map cloud layer codes to names
-            // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
-            // (x2=bottom, x3=top, x4=layer; some products use different codes)
-            if let Some(code) = level_filter.level_code {
-                match code {
-                    212 | 213 | 214 => Some("low cloud layer".to_string()),
-                    222 | 223 | 224 => Some("middle cloud layer".to_string()),
-                    232 | 233 | 234 => Some("high cloud layer".to_string()),
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        }
-        _ => {
-            // Unknown level type, try to use named level from param
-            // Convert underscores to spaces (config uses cloud_base, catalog uses "cloud base")
-            param_def
-                .and_then(|p| p.levels.first())
-                .and_then(|l| match l {
-                    LevelValue::Named(name) => Some(name.replace('_', " ")),
-                    LevelValue::Numeric(_) => None,
-                })
-        }
     }
 }
 
