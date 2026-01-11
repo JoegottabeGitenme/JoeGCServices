@@ -940,7 +940,14 @@ async fn area_query(
             let bbox = area_query_struct.bbox();
             state
                 .metrics
-                .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                .record_query_extent(
+                    bbox.west,
+                    bbox.south,
+                    bbox.east,
+                    bbox.north,
+                    "area",
+                    &collection_id,
+                )
                 .await;
 
             Response::builder()
@@ -990,7 +997,14 @@ async fn area_query(
                     let bbox = area_query_struct.bbox();
                     state
                         .metrics
-                        .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                        .record_query_extent(
+                            bbox.west,
+                            bbox.south,
+                            bbox.east,
+                            bbox.north,
+                            "area",
+                            &collection_id,
+                        )
                         .await;
 
                     Response::builder()
@@ -1030,7 +1044,14 @@ async fn area_query(
                 let bbox = area_query_struct.bbox();
                 state
                     .metrics
-                    .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "area", &collection_id)
+                    .record_query_extent(
+                        bbox.west,
+                        bbox.south,
+                        bbox.east,
+                        bbox.north,
+                        "area",
+                        &collection_id,
+                    )
                     .await;
 
                 Response::builder()

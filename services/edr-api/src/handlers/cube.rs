@@ -697,7 +697,14 @@ async fn cube_query(
     // Record geographic extent for heatmap
     state
         .metrics
-        .record_query_extent(bbox.west, bbox.south, bbox.east, bbox.north, "cube", &collection_id)
+        .record_query_extent(
+            bbox.west,
+            bbox.south,
+            bbox.east,
+            bbox.north,
+            "cube",
+            &collection_id,
+        )
         .await;
 
     Response::builder()

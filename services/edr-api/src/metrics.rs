@@ -261,7 +261,10 @@ impl QueryHeatmap {
         let max_lon = (max_lon * 10.0).round() / 10.0;
         let max_lat = (max_lat * 10.0).round() / 10.0;
 
-        let key = format!("{:.1},{:.1},{:.1},{:.1}", min_lon, min_lat, max_lon, max_lat);
+        let key = format!(
+            "{:.1},{:.1},{:.1},{:.1}",
+            min_lon, min_lat, max_lon, max_lat
+        );
 
         if let Some(cell) = self.cells.get_mut(&key) {
             cell.count += 1;
@@ -455,7 +458,8 @@ impl MetricsCollector {
             counter!("edr_requests_total",
                 "endpoint" => endpoint.label().to_string(),
                 "collection" => coll.to_string()
-            ).increment(1);
+            )
+            .increment(1);
 
             let mut stats = self.collection_stats.write().await;
             stats
@@ -467,8 +471,7 @@ impl MetricsCollector {
 
         // Update parameter stats
         for param in parameters {
-            counter!("edr_parameter_requests_total", "parameter" => param.to_string())
-                .increment(1);
+            counter!("edr_parameter_requests_total", "parameter" => param.to_string()).increment(1);
 
             let mut stats = self.parameter_stats.write().await;
             stats
@@ -799,8 +802,12 @@ mod tests {
     async fn test_query_heatmap() {
         let collector = MetricsCollector::new();
 
-        collector.record_point_query(-97.5, 35.2, "gfs_temperature").await;
-        collector.record_point_query(-97.5, 35.2, "gfs_temperature").await;
+        collector
+            .record_point_query(-97.5, 35.2, "gfs_temperature")
+            .await;
+        collector
+            .record_point_query(-97.5, 35.2, "gfs_temperature")
+            .await;
 
         let heatmap = collector.get_query_heatmap().await;
         assert!(!heatmap.is_empty());
