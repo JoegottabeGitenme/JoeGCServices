@@ -7,12 +7,15 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use edr_protocol::{
-    coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
-    responses::ExceptionResponse, CoverageCollection, CoverageJson, EdrFeatureCollection,
-    ParsedCoords, PositionQuery as ParsedPositionQuery,
+    coverage_json::CovJsonParameter,
+    parameters::Unit,
+    queries::{DateTimeQuery, TemporalInterpolationMethod},
+    responses::ExceptionResponse,
+    CoverageCollection, CoverageJson, EdrFeatureCollection, ParsedCoords,
+    PositionQuery as ParsedPositionQuery,
 };
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
@@ -22,6 +25,10 @@ use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, FormatType, Timer,
 };
 use crate::state::AppState;
+use crate::temporal_interpolation::{
+    calculate_weight, expand_interval_with_step, find_bracketing_times, linear_interpolate_f32,
+    parse_iso8601_duration,
+};
 use crate::validation::validate_z_against_vertical_extent;
 
 /// Filter collection parameters to only those with available data.
@@ -58,6 +65,15 @@ pub struct PositionQueryParams {
 
     /// Output format.
     pub f: Option<String>,
+
+    /// Temporal interpolation method (none, nearest, linear).
+    /// Defaults to "none" (no interpolation).
+    pub interpolation: Option<String>,
+
+    /// Step interval for generating times within a datetime range.
+    /// Specified as an ISO 8601 duration (e.g., PT10M for 10 minutes, PT1H for 1 hour).
+    /// Only used when datetime is an interval and interpolation is enabled.
+    pub step: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/position
@@ -273,29 +289,199 @@ async fn position_query(
         requested_params
     };
 
-    // Get the list of times to query
-    // For interval queries (especially open-ended ones), expand against available times
-    let time_strings: Vec<String> = if let Some(ref dq) = datetime_query {
-        if dq.is_interval() {
-            // Fetch available times from catalog to expand the interval
-            let model_name = &model_config.model;
-            let available_times: Vec<String> = state
-                .catalog
-                .get_model_valid_times(model_name)
-                .await
-                .ok()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                .collect();
-
-            dq.expand_against_available_times(&available_times)
-        } else {
-            dq.to_vec()
+    // Parse interpolation method
+    let interpolation_method = if let Some(ref interp_str) = params.interpolation {
+        match TemporalInterpolationMethod::parse(interp_str) {
+            Ok(method) => method,
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "Invalid interpolation parameter: {}",
+                        e
+                    )),
+                );
+            }
         }
     } else {
-        Vec::new()
+        TemporalInterpolationMethod::None
     };
+
+    // Parse step duration if provided
+    let step_duration = if let Some(ref step_str) = params.step {
+        match parse_iso8601_duration(step_str) {
+            Some(duration) => Some(duration),
+            None => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "Invalid step parameter '{}'. Expected ISO 8601 duration (e.g., PT10M, PT1H)",
+                        step_str
+                    )),
+                );
+            }
+        }
+    } else {
+        None
+    };
+
+    // Fetch available times and temporal extent from catalog
+    let model_name = &model_config.model;
+    let available_time_strings: Vec<String> = state
+        .catalog
+        .get_model_valid_times(model_name)
+        .await
+        .ok()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .collect();
+
+    let available_times: Vec<DateTime<Utc>> = available_time_strings
+        .iter()
+        .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .collect();
+
+    // Get temporal extent from catalog for validation
+    let temporal_extent = state
+        .catalog
+        .get_model_temporal_extent(model_name)
+        .await
+        .ok()
+        .flatten();
+
+    // Get the list of target times (times user wants in the response)
+    let mut target_times: Vec<DateTime<Utc>> = Vec::new();
+
+    if let Some(ref dq) = datetime_query {
+        // Check if we need to generate times with step parameter
+        if dq.is_interval()
+            && step_duration.is_some()
+            && interpolation_method.requires_interpolation()
+        {
+            // Generate times at step intervals within the datetime range
+            let interval_bounds = dq.to_vec();
+            if interval_bounds.len() == 2 {
+                let start = DateTime::parse_from_rfc3339(&interval_bounds[0])
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .ok();
+                let end = DateTime::parse_from_rfc3339(&interval_bounds[1])
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .ok();
+
+                if let (Some(start), Some(end)) = (start, end) {
+                    // Validate times are within temporal extent
+                    if let Some((extent_start, extent_end)) = temporal_extent {
+                        if start < extent_start || end > extent_end {
+                            return error_response(
+                                StatusCode::BAD_REQUEST,
+                                ExceptionResponse::bad_request(format!(
+                                    "Requested datetime range {}/{} exceeds collection temporal extent {}/{}",
+                                    interval_bounds[0], interval_bounds[1],
+                                    extent_start.format("%Y-%m-%dT%H:%M:%SZ"),
+                                    extent_end.format("%Y-%m-%dT%H:%M:%SZ")
+                                )),
+                            );
+                        }
+                    }
+
+                    target_times = expand_interval_with_step(start, end, step_duration.unwrap());
+                } else {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        ExceptionResponse::bad_request("Invalid datetime interval format"),
+                    );
+                }
+            } else {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(
+                        "Step parameter requires a datetime interval with start and end",
+                    ),
+                );
+            }
+        } else if dq.is_interval() {
+            // Standard interval expansion without step
+            let expanded = dq.expand_against_available_times(&available_time_strings);
+            target_times = expanded
+                .iter()
+                .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .collect();
+        } else {
+            // Instant or list - parse directly
+            let time_vec = dq.to_vec();
+            target_times = time_vec
+                .iter()
+                .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .collect();
+        }
+    }
+
+    // Build interpolation plan: map each target time to how it should be queried
+    // Each entry: (target_time, query_strategy)
+    enum QueryStrategy {
+        Exact(DateTime<Utc>),                           // Query exact time
+        Interpolate(DateTime<Utc>, DateTime<Utc>, f64), // (before, after, weight)
+        Nearest(DateTime<Utc>),                         // Use nearest time
+    }
+
+    let mut query_plan: Vec<(DateTime<Utc>, QueryStrategy)> = Vec::new();
+
+    for target_time in &target_times {
+        if available_times.contains(target_time) {
+            // Exact match - no interpolation needed
+            query_plan.push((*target_time, QueryStrategy::Exact(*target_time)));
+        } else if interpolation_method.requires_interpolation() {
+            // Need interpolation
+            let (before, after) = find_bracketing_times(*target_time, &available_times);
+
+            match interpolation_method {
+                TemporalInterpolationMethod::Linear => {
+                    if let (Some(before_time), Some(after_time)) = (before, after) {
+                        let weight = calculate_weight(before_time, after_time, *target_time);
+                        query_plan.push((
+                            *target_time,
+                            QueryStrategy::Interpolate(before_time, after_time, weight),
+                        ));
+                    } else if let Some(nearest) = before.or(after) {
+                        // Edge case: target outside range, use nearest
+                        query_plan.push((*target_time, QueryStrategy::Nearest(nearest)));
+                    }
+                }
+                TemporalInterpolationMethod::Nearest => {
+                    // Find nearest time
+                    let nearest = if let (Some(before_time), Some(after_time)) = (before, after) {
+                        let dist_before = (*target_time - before_time).num_seconds().abs();
+                        let dist_after = (after_time - *target_time).num_seconds().abs();
+                        if dist_before <= dist_after {
+                            before_time
+                        } else {
+                            after_time
+                        }
+                    } else {
+                        before.or(after).unwrap_or(available_times[0])
+                    };
+                    query_plan.push((*target_time, QueryStrategy::Nearest(nearest)));
+                }
+                TemporalInterpolationMethod::None => {
+                    // Should not reach here
+                    query_plan.push((*target_time, QueryStrategy::Exact(*target_time)));
+                }
+            }
+        } else {
+            // No interpolation, but time doesn't exist - skip it
+            // (This matches current behavior where non-existent times are silently dropped)
+        }
+    }
+
+    // Legacy time_strings for compatibility with existing code
+    let time_strings: Vec<String> = target_times
+        .iter()
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .collect();
 
     // Check response size limits
     let num_levels = z_values.as_ref().map(|v| v.len()).unwrap_or(1);
@@ -575,45 +761,155 @@ async fn position_query(
 
         if is_multi_time && !parsed_times.is_empty() {
             // Multi-time query: query each time and build an array
-            let mut values: Vec<Option<f32>> = Vec::with_capacity(parsed_times.len());
+            let mut values: Vec<Option<f32>> = Vec::with_capacity(query_plan.len());
             let mut units_str = String::new();
 
-            for valid_time in &parsed_times {
-                // Build the DatasetQuery for this specific valid time (forecast vs observation)
-                let mut query = model_config
-                    .create_query(param_name)
-                    .at_valid_time(*valid_time);
+            // Cache for queried values to avoid duplicate queries when interpolating
+            let mut value_cache: HashMap<DateTime<Utc>, Option<f32>> = HashMap::new();
 
-                if let Some(level) = &level_str {
-                    query = query.at_level(level);
-                }
+            for (_target_time, strategy) in &query_plan {
+                let interpolated_value: Option<f32> = match strategy {
+                    QueryStrategy::Exact(query_time) | QueryStrategy::Nearest(query_time) => {
+                        // Check cache first
+                        if let Some(cached_val) = value_cache.get(query_time) {
+                            *cached_val
+                        } else {
+                            // Build the DatasetQuery
+                            let mut query = model_config
+                                .create_query(param_name)
+                                .at_valid_time(*query_time);
 
-                // Use the reference time if provided (instance query)
-                if let Some(ref_time) = reference_time {
-                    query = query.at_run(ref_time);
-                }
+                            if let Some(level) = &level_str {
+                                query = query.at_level(level);
+                            }
 
-                // Query the data for this time
-                match state.grid_data_service.read_point(&query, lon, lat).await {
-                    Ok(point_value) => {
-                        if units_str.is_empty() {
-                            units_str = point_value.units.clone();
+                            if let Some(ref_time) = reference_time {
+                                query = query.at_run(ref_time);
+                            }
+
+                            // Query the data
+                            let result =
+                                match state.grid_data_service.read_point(&query, lon, lat).await {
+                                    Ok(point_value) => {
+                                        if units_str.is_empty() {
+                                            units_str = point_value.units.clone();
+                                        }
+                                        point_value.value
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to query {}/{} at ({}, {}) for time {}: {}",
+                                            model_config.model,
+                                            param_name,
+                                            lon,
+                                            lat,
+                                            query_time,
+                                            e
+                                        );
+                                        None
+                                    }
+                                };
+
+                            // Cache the result
+                            value_cache.insert(*query_time, result);
+                            result
                         }
-                        values.push(point_value.value);
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to query {}/{} at ({}, {}) for time {}: {}",
-                            model_config.model,
-                            param_name,
-                            lon,
-                            lat,
-                            valid_time,
-                            e
-                        );
-                        values.push(None);
+                    QueryStrategy::Interpolate(before_time, after_time, weight) => {
+                        // Query before and after times
+                        let before_val = if let Some(cached) = value_cache.get(before_time) {
+                            *cached
+                        } else {
+                            let mut query = model_config
+                                .create_query(param_name)
+                                .at_valid_time(*before_time);
+
+                            if let Some(level) = &level_str {
+                                query = query.at_level(level);
+                            }
+
+                            if let Some(ref_time) = reference_time {
+                                query = query.at_run(ref_time);
+                            }
+
+                            let result =
+                                match state.grid_data_service.read_point(&query, lon, lat).await {
+                                    Ok(point_value) => {
+                                        if units_str.is_empty() {
+                                            units_str = point_value.units.clone();
+                                        }
+                                        point_value.value
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to query {}/{} at ({}, {}) for time {}: {}",
+                                            model_config.model,
+                                            param_name,
+                                            lon,
+                                            lat,
+                                            before_time,
+                                            e
+                                        );
+                                        None
+                                    }
+                                };
+
+                            value_cache.insert(*before_time, result);
+                            result
+                        };
+
+                        let after_val = if let Some(cached) = value_cache.get(after_time) {
+                            *cached
+                        } else {
+                            let mut query = model_config
+                                .create_query(param_name)
+                                .at_valid_time(*after_time);
+
+                            if let Some(level) = &level_str {
+                                query = query.at_level(level);
+                            }
+
+                            if let Some(ref_time) = reference_time {
+                                query = query.at_run(ref_time);
+                            }
+
+                            let result =
+                                match state.grid_data_service.read_point(&query, lon, lat).await {
+                                    Ok(point_value) => {
+                                        if units_str.is_empty() {
+                                            units_str = point_value.units.clone();
+                                        }
+                                        point_value.value
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to query {}/{} at ({}, {}) for time {}: {}",
+                                            model_config.model,
+                                            param_name,
+                                            lon,
+                                            lat,
+                                            after_time,
+                                            e
+                                        );
+                                        None
+                                    }
+                                };
+
+                            value_cache.insert(*after_time, result);
+                            result
+                        };
+
+                        // Perform linear interpolation
+                        match (before_val, after_val) {
+                            (Some(b), Some(a)) => Some(linear_interpolate_f32(b, a, *weight)),
+                            (Some(b), None) => Some(b), // Fall back to before value
+                            (None, Some(a)) => Some(a), // Fall back to after value
+                            (None, None) => None,       // No data available
+                        }
                     }
-                }
+                };
+
+                values.push(interpolated_value);
             }
 
             // Add the time series data
