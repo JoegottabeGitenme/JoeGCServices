@@ -1131,6 +1131,14 @@ async function executeTest(testName, collection) {
             return testPositionCrsValid(collection);
         case 'position-f-covjson':
             return testPositionFCovJson(collection);
+        case 'position-interpolation-linear':
+            return testPositionInterpolationLinear(collection);
+        case 'position-interpolation-nearest':
+            return testPositionInterpolationNearest(collection);
+        case 'position-interpolation-step':
+            return testPositionInterpolationStep(collection);
+        case 'position-interpolation-bounds-error':
+            return testPositionInterpolationBoundsError(collection);
         case 'z-single':
             return testZSingle(collection);
         case 'z-multiple':
@@ -1547,6 +1555,15 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`];
         case 'position-f-covjson':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`];
+        case 'position-interpolation-linear':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}&interpolation=linear`];
+        case 'position-interpolation-nearest':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}&interpolation=nearest`];
+        case 'position-interpolation-step':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={start}/{end}&interpolation=linear&step=PT10M`];
+        case 'position-interpolation-bounds-error':
+            // Request time range far in the future, should get 400 error
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime=2099-01-01T00:00:00Z/2099-12-31T23:59:59Z&interpolation=linear&step=PT1H`];
         case 'z-single':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z={z_level}`];
         case 'z-multiple':
@@ -2632,6 +2649,202 @@ async function testPositionFCovJson(collection) {
         passed: checks.every(c => c.passed),
         url,
         coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}) with f=CoverageJSON`,
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
+// TEMPORAL INTERPOLATION TESTS
+// ============================================================
+
+// Test linear interpolation with a datetime that falls between two available times
+async function testPositionInterpolationLinear(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Pick two consecutive times and calculate a time in between
+    const time1 = new Date(times[0]);
+    const time2 = new Date(times[1]);
+    const midTime = new Date((time1.getTime() + time2.getTime()) / 2);
+    const midTimeStr = midTime.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${midTimeStr}&interpolation=linear`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: res.json?.domain != null },
+        { name: 'Has parameters', passed: res.json?.parameters != null },
+        { name: 'Has ranges', passed: res.json?.ranges != null }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), interpolated time: ${midTimeStr}`,
+        checks,
+        response: res
+    };
+}
+
+// Test nearest neighbor interpolation
+async function testPositionInterpolationNearest(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Pick a time between two available times
+    const time1 = new Date(times[0]);
+    const time2 = new Date(times[1]);
+    const midTime = new Date((time1.getTime() + time2.getTime()) / 2);
+    const midTimeStr = midTime.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${midTimeStr}&interpolation=nearest`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: res.json?.domain != null }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), nearest to: ${midTimeStr}`,
+        checks,
+        response: res
+    };
+}
+
+// Test interpolation with step parameter to generate multiple times
+async function testPositionInterpolationStep(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Use first two times as start/end for the interval
+    const startTime = times[0];
+    const endTime = times[Math.min(1, times.length - 1)];
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${startTime}/${endTime}&interpolation=linear&step=PT10M`;
+    const res = await fetchJson(url);
+    
+    const isPointSeries = res.json?.domain?.domainType === 'PointSeries';
+    const hasTimeAxis = res.json?.domain?.axes?.t != null;
+    const timeValues = res.json?.domain?.axes?.t?.values || [];
+    const hasMultipleValues = timeValues.length > 1;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage or CoverageCollection', passed: ['Coverage', 'CoverageCollection'].includes(res.json?.type) },
+        { name: 'Has domain with time axis', passed: hasTimeAxis },
+        { name: 'Generated multiple time values', passed: hasMultipleValues, 
+          detail: hasMultipleValues ? `${timeValues.length} times generated` : 'No time values' }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), interval: ${startTime}/${endTime}, step: PT10M`,
+        checks,
+        response: res
+    };
+}
+
+// Test temporal extent validation (should return 400 for out-of-bounds)
+async function testPositionInterpolationBoundsError(collection) {
+    const col = collection;
+    
+    // Get valid coordinates
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Request a time range far in the future (should be outside temporal extent)
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=2099-01-01T00:00:00Z/2099-12-31T23:59:59Z&interpolation=linear&step=PT1H`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 Bad Request', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json != null },
+        { name: 'Error mentions temporal extent', 
+          passed: res.json?.detail?.includes('temporal extent') || res.json?.detail?.includes('exceeds'), 
+          detail: res.json?.detail || 'No error detail' }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), out-of-bounds datetime`,
         checks,
         response: res
     };

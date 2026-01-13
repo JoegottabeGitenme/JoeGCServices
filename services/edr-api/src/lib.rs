@@ -12,4 +12,5 @@ pub mod location_cache;
 pub mod metrics;
 pub mod resampling;
 pub mod state;
+pub mod temporal_interpolation;
 pub mod validation;

@@ -650,6 +650,40 @@ impl DateTimeQuery {
     }
 }
 
+/// Temporal interpolation method for queries requesting times between available data points.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TemporalInterpolationMethod {
+    /// No interpolation - only return data at exact available times (default).
+    #[default]
+    None,
+
+    /// Nearest neighbor - return data from the closest available time.
+    Nearest,
+
+    /// Linear interpolation - interpolate linearly between bracketing times.
+    Linear,
+}
+
+impl TemporalInterpolationMethod {
+    /// Parse interpolation method from query parameter string.
+    pub fn parse(s: &str) -> Result<Self, CoordinateParseError> {
+        match s.trim().to_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "nearest" => Ok(Self::Nearest),
+            "linear" => Ok(Self::Linear),
+            _ => Err(CoordinateParseError::InvalidWkt(format!(
+                "Invalid interpolation method '{}'. Expected one of: none, nearest, linear",
+                s
+            ))),
+        }
+    }
+
+    /// Check if this method requires interpolation (i.e., not None).
+    pub fn requires_interpolation(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Bounding box query parameters (for area/cube queries).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BboxQuery {
