@@ -129,6 +129,7 @@ impl From<&ZarrMetadata> for GridMetadata {
             num_chunks: zarr.num_chunks,
             fill_value: zarr.fill_value,
             row_origin: zarr.row_origin,
+            projection: zarr.projection,
         }
     }
 }
@@ -177,5 +178,6 @@ mod tests {
         assert_eq!(grid.units, zarr.units);
         assert_eq!(grid.shape, zarr.shape);
         assert_eq!(grid.chunk_shape, zarr.chunk_shape);
+        assert_eq!(grid.projection, zarr.projection);
     }
 }

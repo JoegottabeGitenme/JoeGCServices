@@ -52,3 +52,7 @@
   - various models dont need all these different products right now
 - Downloading and ingesting should not bring services to a crawl so we may want to figure out core usage
 - at this point I wouldn't mind trading out more ram usage to save cpu usage, so let's fill up and increase our caches and make sure memory limits are strict for the various services
+- update response size limits in EDR, a full globe png of GFS isn't actually that much data
+- scope out 'specialized' PNGs for EDR where we encode multiple values
+- scope out 'specialized' enpoints for the various activities and the data required for them
+- add resolution stuff for trajectory and corridor queries 

@@ -4,6 +4,9 @@
 # NOTE: The HRRR surface file (wrfsfc) contains limited isobaric data.
 # To get full upper-air profiles, the pressure file (wrfprs) would need to be downloaded.
 # Current configuration reflects what's available from the surface file.
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: hrrr
 
@@ -18,14 +21,19 @@ collections:
     parameters:
       - name: TMP
         levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 180, max: 340 }  # Kelvin (~-93C to 67C)
       - name: HGT
         levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 0, max: 20000 }  # geopotential meters
       - name: UGRD
         levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: -150, max: 150 }  # m/s
       - name: VGRD
         levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: -150, max: 150 }  # m/s
       - name: RH
         levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   - id: hrrr-surface
@@ -37,16 +45,22 @@ collections:
     parameters:
       - name: PRES
         levels: [surface]
+        valid_range: { min: 50000, max: 110000 }  # Pa (500-1100 hPa)
       - name: CAPE
         levels: [surface]
+        valid_range: { min: 0, max: 10000 }  # J/kg
       - name: CIN
         levels: [surface]
+        valid_range: { min: -2000, max: 0 }  # J/kg (negative)
       - name: APCP
         levels: [surface]
+        valid_range: { min: 0, max: 500 }  # kg/m^2 (mm)
       - name: VIS
         levels: [surface]
+        valid_range: { min: 0, max: 50000 }  # meters (0-50 km)
       - name: GUST
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # m/s
     run_mode: instances
 
   - id: hrrr-height-agl
@@ -58,16 +72,21 @@ collections:
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 180, max: 340 }  # Kelvin
       - name: DPT
         levels: [2]
+        valid_range: { min: 180, max: 320 }  # Kelvin
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }  # percent
       # TODO: 10m wind not working yet - need to investigate level_value template
       # Currently only 2m values are being ingested for UGRD/VGRD
       - name: UGRD
         levels: [2]
+        valid_range: { min: -150, max: 150 }  # m/s
       - name: VGRD
         levels: [2]
+        valid_range: { min: -150, max: 150 }  # m/s
     run_mode: instances
 
   - id: hrrr-atmosphere
@@ -79,11 +98,14 @@ collections:
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }  # kg/m^2 (mm)
       # TODO: REFC and TCDC need GRIB2 parameter code mapping fix
       # - name: REFC
       #   levels: [entire_atmosphere]
+      #   valid_range: { min: -10, max: 80 }  # dBZ
       # - name: TCDC
       #   levels: [entire_atmosphere]
+      #   valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   - id: hrrr-cloud-layers
@@ -97,10 +119,13 @@ collections:
     parameters:
       - name: LCDC
         levels: [low_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: MCDC
         levels: [middle_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: HCDC
         levels: [high_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
 settings:
@@ -111,7 +136,8 @@ settings:
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
-    # TODO: Add EPSG:4326 when axis order handling is implemented
+    - "EPSG:4326"
+    - "EPSG:3857"
   cache_policy:
     png_max_age: 3600  # 1 hour - HRRR updates hourly
 

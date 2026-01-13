@@ -72,6 +72,7 @@ mod tests {
             parameters: vec![ParameterDefinition {
                 name: "TMP".to_string(),
                 levels,
+                valid_range: None,
             }],
             run_mode: RunMode::default(),
         }

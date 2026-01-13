@@ -864,22 +864,22 @@
                         </div>
                     </a>
 
-                    <!-- NDFD Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ndfd_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                    <!-- NBM Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nbm-conus_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
                         <div class="example-img-container">
                             <div class="example-placeholder" id="placeholder-5">
                                 <div class="spinner"></div>
                                 <span>Loading...</span>
                             </div>
                             <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ndfd_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="NDFD Temperature"
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nbm-conus_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="NBM Temperature"
                                  onload="this.classList.add('loaded'); document.getElementById('placeholder-5').style.display='none';"
                                  onerror="document.getElementById('placeholder-5').innerHTML='<span>Data unavailable</span>';">
                         </div>
                         <div class="example-info">
-                            <div class="example-title">NDFD Temperature</div>
-                            <div class="example-desc">National Digital Forecast Database - 2.5km official NWS forecasts</div>
+                            <div class="example-title">NBM Temperature</div>
+                            <div class="example-desc">National Blend of Models - 2.5km blended forecasts for CONUS</div>
                         </div>
                     </a>
                 </div>
@@ -971,6 +971,63 @@
                         <div class="example-info">
                             <div class="example-title">GFS Global Temperature</div>
                             <div class="example-desc">Worldwide coverage in single request</div>
+                        </div>
+                    </a>
+
+                    <!-- NBM Temperature CONUS -->
+                    <a href="/edr/collections/nbm-conus-2m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-5">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/nbm-conus-2m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
+                                 alt="NBM Temperature PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-5').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-5').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NBM Temperature (8-bit PNG)</div>
+                            <div class="example-desc">National Blend of Models - CONUS blend</div>
+                        </div>
+                    </a>
+
+                    <!-- NBM Wind Speed -->
+                    <a href="/edr/collections/nbm-conus-10m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=WIND&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-6">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/nbm-conus-10m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=WIND&f=png&depth=8&width=400&height=200"
+                                 alt="NBM Wind Speed PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-6').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-6').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NBM Wind Speed (8-bit PNG)</div>
+                            <div class="example-desc">10m wind speed from National Blend</div>
+                        </div>
+                    </a>
+
+                    <!-- GOES-19 Infrared PNG -->
+                    <a href="/edr/collections/goes19-infrared/area?coords=POLYGON((-105%2020,-65%2020,-65%2050,-105%2050,-105%2020))&parameter-name=CMI_C13&f=png&depth=8&width=800&height=600" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-edr-7">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/edr/collections/goes19-infrared/area?coords=POLYGON((-105%2020,-65%2020,-65%2050,-105%2050,-105%2020))&parameter-name=CMI_C13&f=png&depth=8&width=400&height=300"
+                                 alt="GOES-19 Infrared PNG"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-7').style.display='none';"
+                                 onerror="document.getElementById('placeholder-edr-7').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GOES-19 Infrared (8-bit PNG)</div>
+                            <div class="example-desc">Satellite imagery as data texture</div>
                         </div>
                     </a>
                 </div>
@@ -1169,10 +1226,10 @@
                 <div class="card">
                     <div class="card-header">
                         <span class="card-icon">&#127777;</span>
-                        <span class="card-title">NDFD - Digital Forecasts</span>
+                        <span class="card-title">NBM - National Blend</span>
                     </div>
                     <p class="card-description">
-                        National Digital Forecast Database with 2.5km resolution. Official NWS gridded forecasts for temperature, wind, precipitation probability, and more.
+                        National Blend of Models with 2.5km resolution. Statistically post-processed blend of multiple models for optimal forecast accuracy. CONUS, Alaska, Hawaii, Puerto Rico, and Guam.
                     </p>
                 </div>
             </div>
