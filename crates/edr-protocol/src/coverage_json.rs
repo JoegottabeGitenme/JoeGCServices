@@ -478,6 +478,77 @@ impl Domain {
         }
     }
 
+    /// Create a grid domain with a specific output CRS.
+    ///
+    /// The x/y values are provided in WGS84 (lon/lat) and will be transformed
+    /// to the target CRS if needed. The domain referencing will use the target CRS.
+    ///
+    /// # Arguments
+    ///
+    /// * `x_values` - Longitude values in WGS84 degrees
+    /// * `y_values` - Latitude values in WGS84 degrees
+    /// * `t_values` - Optional time values
+    /// * `z_values` - Optional vertical level values
+    /// * `output_crs` - Target coordinate reference system for the output
+    pub fn grid_with_crs(
+        x_values: Vec<f64>,
+        y_values: Vec<f64>,
+        t_values: Option<Vec<String>>,
+        z_values: Option<Vec<f64>>,
+        output_crs: crate::crs::OutputCrs,
+    ) -> Self {
+        use crate::crs::{transform_x_values, transform_y_values};
+
+        // Transform coordinates to target CRS
+        let x_transformed = transform_x_values(&x_values, output_crs);
+        let y_transformed = transform_y_values(&y_values, output_crs);
+
+        let mut axes = HashMap::new();
+        axes.insert(
+            "x".to_string(),
+            Axis::Values {
+                values: x_transformed.into_iter().map(AxisValue::Float).collect(),
+            },
+        );
+        axes.insert(
+            "y".to_string(),
+            Axis::Values {
+                values: y_transformed.into_iter().map(AxisValue::Float).collect(),
+            },
+        );
+
+        if let Some(t) = t_values {
+            axes.insert(
+                "t".to_string(),
+                Axis::Values {
+                    values: t.into_iter().map(AxisValue::String).collect(),
+                },
+            );
+        }
+
+        if let Some(z) = z_values {
+            axes.insert(
+                "z".to_string(),
+                Axis::Values {
+                    values: z.into_iter().map(AxisValue::Float).collect(),
+                },
+            );
+        }
+
+        // Use appropriate reference system for the output CRS
+        let referencing = vec![ReferenceSystemConnection {
+            coordinates: vec!["x".to_string(), "y".to_string()],
+            system: ReferenceSystem::from_output_crs(output_crs),
+        }];
+
+        Self {
+            type_: "Domain".to_string(),
+            domain_type: DomainType::Grid,
+            axes,
+            referencing: Some(referencing),
+        }
+    }
+
     /// Create a trajectory domain.
     ///
     /// A trajectory is a path through space (and optionally time and/or vertical levels).
@@ -758,6 +829,14 @@ pub enum ReferenceSystem {
         wkt: Option<String>,
     },
 
+    /// Projected coordinate reference system (e.g., Web Mercator).
+    #[serde(rename = "ProjectedCRS")]
+    Projected {
+        /// CRS identifier URI.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
     /// Temporal reference system.
     #[serde(rename = "TemporalRS")]
     Temporal {
@@ -802,6 +881,13 @@ impl ReferenceSystem {
         }
     }
 
+    /// Create a projected CRS (e.g., Web Mercator EPSG:3857).
+    pub fn projected(id: &str) -> Self {
+        ReferenceSystem::Projected {
+            id: Some(id.to_string()),
+        }
+    }
+
     /// Create a temporal CRS with Gregorian calendar.
     pub fn temporal_gregorian() -> Self {
         ReferenceSystem::Temporal {
@@ -822,6 +908,18 @@ impl ReferenceSystem {
         ReferenceSystem::Vertical {
             id: None,
             cs: Some(cs),
+        }
+    }
+
+    /// Create a spatial reference system for the given output CRS.
+    ///
+    /// Uses Geographic CRS for CRS:84/EPSG:4326, Projected CRS for EPSG:3857.
+    pub fn from_output_crs(crs: crate::crs::OutputCrs) -> Self {
+        match crs {
+            crate::crs::OutputCrs::Crs84 | crate::crs::OutputCrs::Epsg4326 => {
+                ReferenceSystem::geographic(crs.uri())
+            }
+            crate::crs::OutputCrs::Epsg3857 => ReferenceSystem::projected(crs.uri()),
         }
     }
 }

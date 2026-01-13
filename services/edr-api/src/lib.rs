@@ -10,5 +10,6 @@ pub mod handlers;
 pub mod limits;
 pub mod location_cache;
 pub mod metrics;
+pub mod resampling;
 pub mod state;
 pub mod validation;

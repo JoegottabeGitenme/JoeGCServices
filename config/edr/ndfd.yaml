@@ -8,6 +8,9 @@
 # Collections are organized by vertical level type, similar to HRRR/GFS:
 # - ndfd-surface: Surface-level parameters (sky cover, precipitation probability)
 # - ndfd-height-agl: Parameters at height above ground (temperature, humidity, wind)
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: ndfd
 
@@ -25,10 +28,13 @@ collections:
     parameters:
       - name: SKY
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: POP12
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: GUST
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # m/s
     run_mode: latest
 
   # ===========================================================================
@@ -44,23 +50,31 @@ collections:
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 180, max: 340 }  # Kelvin
       - name: DPT
         levels: [2]
+        valid_range: { min: 180, max: 320 }  # Kelvin
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: WSPD
         levels: [2, 10]
+        valid_range: { min: 0, max: 100 }  # m/s
       - name: WDIR
         levels: [2, 10]
+        valid_range: { min: 0, max: 360 }  # degrees
     run_mode: latest
 
 settings:
   output_formats:
     - application/vnd.cov+json
     - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
 
 # Response size limits
 # NDFD is ~2.5km resolution (~0.025°)
@@ -70,4 +84,5 @@ limits:
   max_vertical_levels: 5
   max_response_size_mb: 50
   max_area_sq_degrees: 100        # ~1000km x 1000km
+  max_area_sq_degrees_png: 2500   # PNG queries - full CONUS coverage
   max_radius_km: 500

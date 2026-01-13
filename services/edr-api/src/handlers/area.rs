@@ -10,7 +10,7 @@ use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
-use grid_processor::{BoundingBox, RowOrigin};
+use grid_processor::{BoundingBox, ProjectionType, RowOrigin};
 use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
 };
+use crate::resampling::{extract_prime_meridian_region, resample_to_geographic};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
@@ -95,6 +96,55 @@ fn flip_rows(data: &[Option<f32>], width: usize, height: usize) -> Vec<Option<f3
 
 /// Maximum allowed PNG dimension (width or height)
 const MAX_PNG_DIMENSION: usize = 4096;
+
+/// Small epsilon for floating-point bbox containment checks.
+/// This prevents edge artifacts when checking if pixels are inside a rectangular region.
+const BBOX_EPSILON: f64 = 1e-9;
+
+/// Check if a polygon is a simple axis-aligned rectangle (4 corners + closing point).
+/// Returns the bbox if it is, None otherwise.
+fn is_simple_rectangle(polygon: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
+    // A simple rectangle has 5 points (4 corners + closing point that matches first)
+    if polygon.len() != 5 {
+        return None;
+    }
+
+    // First and last point should be the same (closed polygon)
+    let first = polygon[0];
+    let last = polygon[4];
+    if (first.0 - last.0).abs() > BBOX_EPSILON || (first.1 - last.1).abs() > BBOX_EPSILON {
+        return None;
+    }
+
+    // Extract all unique x and y coordinates
+    let mut x_coords: Vec<f64> = polygon[..4].iter().map(|p| p.0).collect();
+    let mut y_coords: Vec<f64> = polygon[..4].iter().map(|p| p.1).collect();
+    x_coords.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    y_coords.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    x_coords.dedup_by(|a, b| (*a - *b).abs() < BBOX_EPSILON);
+    y_coords.dedup_by(|a, b| (*a - *b).abs() < BBOX_EPSILON);
+
+    // A rectangle should have exactly 2 unique x values and 2 unique y values
+    if x_coords.len() != 2 || y_coords.len() != 2 {
+        return None;
+    }
+
+    Some((x_coords[0], y_coords[0], x_coords[1], y_coords[1]))
+}
+
+/// Check if a point is inside a bbox with epsilon tolerance.
+///
+/// Note: For simple rectangle queries (common case), we skip this check entirely
+/// because read_region already returns data clipped to the requested bbox. This
+/// avoids edge artifacts where grid cell centers fall just outside the requested
+/// polygon due to grid alignment differences.
+#[allow(dead_code)]
+fn bbox_contains_point(west: f64, south: f64, east: f64, north: f64, lon: f64, lat: f64) -> bool {
+    lon >= west - BBOX_EPSILON
+        && lon <= east + BBOX_EPSILON
+        && lat >= south - BBOX_EPSILON
+        && lat <= north + BBOX_EPSILON
+}
 
 /// Query parameters for area endpoint.
 #[derive(Debug, Deserialize)]
@@ -322,6 +372,21 @@ async fn area_query(
         }
     } else {
         None
+    };
+
+    // Parse output CRS (defaults to CRS:84)
+    let output_crs = if let Some(ref crs_str) = params.crs {
+        match edr_protocol::OutputCrs::from_str(crs_str) {
+            Ok(crs) => crs,
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(e.to_string()),
+                );
+            }
+        }
+    } else {
+        edr_protocol::OutputCrs::default() // CRS:84
     };
 
     // Parse parameter names
@@ -552,6 +617,13 @@ async fn area_query(
     // Read the region
     let grid_bbox = BoundingBox::new(bbox.west, bbox.south, bbox.east, bbox.north);
 
+    // Get metadata to determine projection type
+    let first_metadata = state.grid_data_service.get_metadata(&query).await.ok();
+    let projection_type = first_metadata
+        .as_ref()
+        .map(|m| m.projection)
+        .unwrap_or(ProjectionType::Geographic);
+
     let region = match state
         .grid_data_service
         .read_region(&query, &grid_bbox, None)
@@ -567,7 +639,27 @@ async fn area_query(
         }
     };
 
-    // Build x and y coordinate arrays from the grid metadata
+    // If the request crosses the prime meridian on a 0-360 grid (like GFS),
+    // extract just the requested region. The grid reader returns the full grid
+    // in this case, so we need to extract the appropriate columns.
+    let region = extract_prime_meridian_region(&region, &grid_bbox);
+
+    // If the grid uses a projected coordinate system (Lambert, Polar Stereographic, etc.),
+    // resample it to a regular geographic grid. This ensures EDR output coordinates
+    // are uniformly spaced in lat/lon, which is what clients expect.
+    let region = if projection_type.requires_projection_transform() {
+        tracing::debug!(
+            model = model_config.model.as_str(),
+            projection = %projection_type,
+            native_size = format!("{}x{}", region.width, region.height),
+            "Reprojecting grid data to geographic coordinates"
+        );
+        resample_to_geographic(&region, projection_type, &model_config.model, None)
+    } else {
+        region
+    };
+
+    // Build x and y coordinate arrays from the (possibly reprojected) grid
     let x_values: Vec<f64> = (0..region.width)
         .map(|i| region.bbox.min_lon + (i as f64 + 0.5) * region.resolution.0)
         .collect();
@@ -590,9 +682,16 @@ async fn area_query(
     };
 
     // Create CoverageJSON with Grid domain
+    // Transform coordinates to the requested output CRS
     let mut coverage = CoverageJson {
         type_: edr_protocol::coverage_json::CoverageType::Coverage,
-        domain: edr_protocol::Domain::grid(x_values.clone(), y_values.clone(), t_values, z_axis),
+        domain: edr_protocol::Domain::grid_with_crs(
+            x_values.clone(),
+            y_values.clone(),
+            t_values,
+            z_axis,
+            output_crs,
+        ),
         parameters: Some(std::collections::HashMap::new()),
         ranges: Some(std::collections::HashMap::new()),
     };
@@ -637,37 +736,70 @@ async fn area_query(
             .await
         {
             Ok(param_region) => {
+                // Handle prime meridian crossing for 0-360 grids
+                let param_region = extract_prime_meridian_region(&param_region, &grid_bbox);
+
+                // If the grid uses a projected coordinate system, resample to geographic
+                let param_region = if projection_type.requires_projection_transform() {
+                    resample_to_geographic(
+                        &param_region,
+                        projection_type,
+                        &model_config.model,
+                        None,
+                    )
+                } else {
+                    param_region
+                };
+
+                // Check if the polygon is a simple rectangle (common case for bbox queries).
+                // For rectangles, we can skip the expensive polygon containment check entirely
+                // since read_region already returns only data within the requested bbox.
+                let simple_rect = is_simple_rectangle(&polygon);
+
                 // Apply polygon mask - set values outside polygon to null
-                let mut values: Vec<Option<f32>> = Vec::with_capacity(param_region.data.len());
-
-                for (idx, &value) in param_region.data.iter().enumerate() {
-                    let row = idx / param_region.width;
-                    let col = idx % param_region.width;
-
-                    // Calculate lon/lat for this grid cell
-                    let lon =
-                        param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
-                    let lat =
-                        param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1;
-
-                    // Normalize longitude to -180/180 range for polygon comparison
-                    // (grid may use 0-360 convention like GFS)
-                    let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
-
-                    // Check if point is inside any polygon (union of all polygons for MULTIPOLYGON)
-                    let inside_any = all_area_queries
+                let values: Vec<Option<f32>> = if simple_rect.is_some() {
+                    // For simple rectangles, skip containment check - read_region already
+                    // returned data clipped to the bbox. Just convert NaN to None.
+                    param_region
+                        .data
                         .iter()
-                        .any(|aq| aq.contains_point(lon_normalized, lat));
-                    if inside_any {
-                        if value.is_nan() {
-                            values.push(None);
+                        .map(|&value| if value.is_nan() { None } else { Some(value) })
+                        .collect()
+                } else {
+                    // For complex polygons, we need to check each pixel against the polygon
+                    let mut masked = Vec::with_capacity(param_region.data.len());
+
+                    for (idx, &value) in param_region.data.iter().enumerate() {
+                        let row = idx / param_region.width;
+                        let col = idx % param_region.width;
+
+                        // Calculate lon/lat for this grid cell (now uniformly spaced after reprojection)
+                        let lon = param_region.bbox.min_lon
+                            + (col as f64 + 0.5) * param_region.resolution.0;
+                        let lat = param_region.bbox.max_lat
+                            - (row as f64 + 0.5) * param_region.resolution.1;
+
+                        // Normalize longitude to -180/180 range for polygon comparison
+                        // (grid may use 0-360 convention like GFS)
+                        let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
+                        // Check if point is inside the polygon using ray casting algorithm
+                        let inside = all_area_queries
+                            .iter()
+                            .any(|aq| aq.contains_point(lon_normalized, lat));
+
+                        if inside {
+                            if value.is_nan() {
+                                masked.push(None);
+                            } else {
+                                masked.push(Some(value));
+                            }
                         } else {
-                            values.push(Some(value));
+                            masked.push(None);
                         }
-                    } else {
-                        values.push(None);
                     }
-                }
+                    masked
+                };
 
                 let unit = Unit::from_symbol(&units_str);
                 let cov_param = CovJsonParameter::new(param_name).with_unit(unit);
@@ -741,7 +873,7 @@ async fn area_query(
                 query = query.at_run(ref_time);
             }
 
-            // Get metadata for units and row origin
+            // Get metadata for units, row origin, and projection
             let metadata = state.grid_data_service.get_metadata(&query).await.ok();
             let units_str = metadata
                 .as_ref()
@@ -751,6 +883,10 @@ async fn area_query(
                 .as_ref()
                 .map(|m| m.row_origin)
                 .unwrap_or(RowOrigin::North);
+            let png_projection_type = metadata
+                .as_ref()
+                .map(|m| m.projection)
+                .unwrap_or(ProjectionType::Geographic);
 
             // Read the region for this parameter
             let param_region = match state
@@ -780,42 +916,91 @@ async fn area_query(
                 );
             }
 
+            // Handle prime meridian crossing for 0-360 grids (like GFS)
+            let param_region = extract_prime_meridian_region(&param_region, &grid_bbox);
+
+            // If the grid uses a projected coordinate system, resample to geographic.
+            // This ensures the PNG output has uniformly-spaced lat/lon pixels.
+            let param_region = if png_projection_type.requires_projection_transform() {
+                tracing::debug!(
+                    model = model_config.model.as_str(),
+                    projection = %png_projection_type,
+                    native_size = format!("{}x{}", param_region.width, param_region.height),
+                    "Reprojecting grid data to geographic coordinates for PNG"
+                );
+                resample_to_geographic(
+                    &param_region,
+                    png_projection_type,
+                    &model_config.model,
+                    None,
+                )
+            } else {
+                param_region
+            };
+
+            // After reprojection, row_origin is always North (our resampling outputs north-up)
+            let row_origin = if png_projection_type.requires_projection_transform() {
+                RowOrigin::North
+            } else {
+                row_origin
+            };
+
+            // Check if the polygon is a simple rectangle (common case for bbox queries).
+            // For rectangles, we can skip the expensive polygon containment check entirely
+            // since read_region already returns only data within the requested bbox.
+            let simple_rect = is_simple_rectangle(&polygon);
+
             // Apply polygon mask - set values outside polygon to None
-            let mut masked_data: Vec<Option<f32>> = Vec::with_capacity(param_region.data.len());
-
-            for (idx, &value) in param_region.data.iter().enumerate() {
-                let row = idx / param_region.width;
-                let col = idx % param_region.width;
-
-                // Calculate lon/lat for this grid cell
-                // Latitude calculation depends on row_origin:
-                // - RowOrigin::North: row 0 is at max_lat (top), increases going south
-                // - RowOrigin::South: row 0 is at min_lat (bottom), increases going north
-                let lon =
-                    param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
-                let lat = match row_origin {
-                    RowOrigin::North => {
-                        param_region.bbox.max_lat - (row as f64 + 0.5) * param_region.resolution.1
-                    }
-                    RowOrigin::South => {
-                        param_region.bbox.min_lat + (row as f64 + 0.5) * param_region.resolution.1
-                    }
-                };
-
-                // Normalize longitude to -180/180 range for polygon comparison
-                // (grid may use 0-360 convention like GFS)
-                let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
-
-                // Check if point is inside any polygon
-                let inside_any = all_area_queries
+            let masked_data: Vec<Option<f32>> = if simple_rect.is_some() {
+                // For simple rectangles, skip containment check - read_region already
+                // returned data clipped to the bbox. Just convert NaN to None.
+                param_region
+                    .data
                     .iter()
-                    .any(|aq| aq.contains_point(lon_normalized, lat));
-                if inside_any && !value.is_nan() {
-                    masked_data.push(Some(value));
-                } else {
-                    masked_data.push(None);
+                    .map(|&value| if value.is_nan() { None } else { Some(value) })
+                    .collect()
+            } else {
+                // For complex polygons, we need to check each pixel against the polygon
+                let mut masked = Vec::with_capacity(param_region.data.len());
+
+                for (idx, &value) in param_region.data.iter().enumerate() {
+                    let row = idx / param_region.width;
+                    let col = idx % param_region.width;
+
+                    // Calculate lon/lat for this grid cell (uniformly spaced after reprojection)
+                    // Latitude calculation depends on row_origin:
+                    // - RowOrigin::North: row 0 is at max_lat (top), increases going south
+                    // - RowOrigin::South: row 0 is at min_lat (bottom), increases going north
+                    let lon =
+                        param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
+                    let lat = match row_origin {
+                        RowOrigin::North => {
+                            param_region.bbox.max_lat
+                                - (row as f64 + 0.5) * param_region.resolution.1
+                        }
+                        RowOrigin::South => {
+                            param_region.bbox.min_lat
+                                + (row as f64 + 0.5) * param_region.resolution.1
+                        }
+                    };
+
+                    // Normalize longitude to -180/180 range for polygon comparison
+                    // (grid may use 0-360 convention like GFS)
+                    let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
+                    // Check if point is inside the polygon using ray casting algorithm
+                    let inside = all_area_queries
+                        .iter()
+                        .any(|aq| aq.contains_point(lon_normalized, lat));
+
+                    if inside && !value.is_nan() {
+                        masked.push(Some(value));
+                    } else {
+                        masked.push(None);
+                    }
                 }
-            }
+                masked
+            };
 
             // For PNG output, we need north at the top of the image.
             // If row_origin is South (row 0 = south), flip the rows so north is at top.
@@ -825,8 +1010,14 @@ async fn area_query(
                 masked_data
             };
 
-            // Compute value range from the source data (before resampling)
-            let (min_val, max_val) = compute_data_range(&masked_data);
+            // Determine value range for PNG encoding:
+            // - If valid_range is configured, use it for consistent colormap rendering
+            // - Otherwise, compute from the actual data (legacy behavior)
+            let (min_val, max_val) = if let Some(range) = param_def.and_then(|p| p.valid_range) {
+                (range.min, range.max)
+            } else {
+                compute_data_range(&masked_data)
+            };
 
             // Apply resampling if requested dimensions differ from source
             let (output_data, output_width, output_height) =
@@ -861,12 +1052,27 @@ async fn area_query(
                 }
             }
 
-            let png_bbox = [
-                param_region.bbox.min_lon,
-                param_region.bbox.min_lat,
-                param_region.bbox.max_lon,
-                param_region.bbox.max_lat,
-            ];
+            // Transform bbox to the requested output CRS
+            let png_bbox = if output_crs.is_projected() {
+                // Transform WGS84 bbox corners to Web Mercator
+                let (min_x, min_y) = edr_protocol::crs::wgs84_to_mercator(
+                    param_region.bbox.min_lon,
+                    param_region.bbox.min_lat,
+                );
+                let (max_x, max_y) = edr_protocol::crs::wgs84_to_mercator(
+                    param_region.bbox.max_lon,
+                    param_region.bbox.max_lat,
+                );
+                [min_x, min_y, max_x, max_y]
+            } else {
+                // Keep in WGS84 degrees
+                [
+                    param_region.bbox.min_lon,
+                    param_region.bbox.min_lat,
+                    param_region.bbox.max_lon,
+                    param_region.bbox.max_lat,
+                ]
+            };
 
             // Encode to PNG using appropriate encoder
             let (png_bytes, encoding_name) = if use_8bit {
@@ -969,6 +1175,7 @@ async fn area_query(
                         png_bbox[0], png_bbox[1], png_bbox[2], png_bbox[3]
                     ),
                 )
+                .header("X-EDR-CRS", output_crs.code())
                 .header("X-EDR-Width", format!("{}", output_width))
                 .header("X-EDR-Height", format!("{}", output_height))
                 .body(png_bytes.into())
@@ -1335,5 +1542,93 @@ mod tests {
         assert_eq!(result[1], Some(4.0));
         assert_eq!(result[2], Some(1.0));
         assert_eq!(result[3], None);
+    }
+
+    #[test]
+    fn test_is_simple_rectangle() {
+        // Standard rectangle (counterclockwise)
+        let rect = vec![
+            (-10.0, 45.0),
+            (10.0, 45.0),
+            (10.0, 55.0),
+            (-10.0, 55.0),
+            (-10.0, 45.0), // closing point
+        ];
+        let result = is_simple_rectangle(&rect);
+        assert!(result.is_some());
+        let (west, south, east, north) = result.unwrap();
+        assert!((west - (-10.0)).abs() < 1e-6);
+        assert!((south - 45.0).abs() < 1e-6);
+        assert!((east - 10.0).abs() < 1e-6);
+        assert!((north - 55.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_is_simple_rectangle_clockwise() {
+        // Rectangle with clockwise winding
+        let rect = vec![
+            (-10.0, 45.0),
+            (-10.0, 55.0),
+            (10.0, 55.0),
+            (10.0, 45.0),
+            (-10.0, 45.0),
+        ];
+        let result = is_simple_rectangle(&rect);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_is_simple_rectangle_not_closed() {
+        // Not closed (missing closing point)
+        let rect = vec![(-10.0, 45.0), (10.0, 45.0), (10.0, 55.0), (-10.0, 55.0)];
+        let result = is_simple_rectangle(&rect);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_simple_rectangle_triangle() {
+        // Triangle, not rectangle
+        let tri = vec![(0.0, 0.0), (10.0, 0.0), (5.0, 10.0), (0.0, 0.0)];
+        let result = is_simple_rectangle(&tri);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_simple_rectangle_diamond() {
+        // Diamond shape (4 corners but not axis-aligned)
+        let diamond = vec![(0.0, 5.0), (5.0, 0.0), (10.0, 5.0), (5.0, 10.0), (0.0, 5.0)];
+        let result = is_simple_rectangle(&diamond);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_bbox_contains_point_inside() {
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 0.0, 50.0));
+    }
+
+    #[test]
+    fn test_bbox_contains_point_on_edge() {
+        // Points exactly on the edge should be included (with epsilon)
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, -10.0, 50.0)); // west edge
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 10.0, 50.0)); // east edge
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 0.0, 45.0)); // south edge
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 0.0, 55.0)); // north edge
+    }
+
+    #[test]
+    fn test_bbox_contains_point_corners() {
+        // Corners should be included
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, -10.0, 45.0)); // SW
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 10.0, 45.0)); // SE
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, -10.0, 55.0)); // NW
+        assert!(bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 10.0, 55.0)); // NE
+    }
+
+    #[test]
+    fn test_bbox_contains_point_outside() {
+        assert!(!bbox_contains_point(-10.0, 45.0, 10.0, 55.0, -20.0, 50.0)); // west
+        assert!(!bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 20.0, 50.0)); // east
+        assert!(!bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 0.0, 40.0)); // south
+        assert!(!bbox_contains_point(-10.0, 45.0, 10.0, 55.0, 0.0, 60.0)); // north
     }
 }

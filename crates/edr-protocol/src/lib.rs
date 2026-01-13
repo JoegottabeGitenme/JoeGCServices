@@ -27,6 +27,7 @@
 
 pub mod collections;
 pub mod coverage_json;
+pub mod crs;
 pub mod errors;
 pub mod geojson;
 pub mod locations;
@@ -39,7 +40,9 @@ pub mod types;
 pub use collections::{Collection, CollectionList, DataQueries, Instance, InstanceList};
 pub use coverage_json::{
     Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem,
+    ReferenceSystemConnection,
 };
+pub use crs::{CrsError, OutputCrs};
 pub use errors::EdrError;
 pub use geojson::{EdrFeature, EdrFeatureCollection, EdrGeometry, EdrProperties, ParameterValue};
 pub use locations::{Location, LocationFeature, LocationFeatureCollection, LocationsConfig};
