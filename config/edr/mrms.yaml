@@ -89,7 +89,7 @@ settings:
 # These limits are stricter than HRRR to account for the higher resolution
 limits:
   max_parameters_per_request: 4       # Only 4 parameters available
-  max_time_steps: 30                  # ~1 hour of observations at 2-min intervals
+  max_time_steps: 300                  # ~1 hour of observations at 2-min intervals
   max_vertical_levels: 1              # No vertical dimension for radar data
   max_response_size_mb: 50            # Same as HRRR
   max_area_sq_degrees: 250             # ~500km x 500km (stricter due to 1km resolution)

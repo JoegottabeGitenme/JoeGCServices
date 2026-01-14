@@ -469,7 +469,7 @@ fn default_max_params() -> usize {
     10
 }
 fn default_max_time_steps() -> usize {
-    48
+    300
 }
 fn default_max_levels() -> usize {
     20
