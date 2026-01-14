@@ -20,7 +20,7 @@ use edr_protocol::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::astro::{compute_lunar, compute_solar, MoonPhase};
+use crate::astro::{compute_lunar, compute_solar, compute_sunrise_sunset, MoonPhase};
 use crate::content_negotiation::{check_png_not_supported, negotiate_format};
 use crate::metrics::{extract_client_ip, extract_user_agent, EndpointType, FormatType, Timer};
 use crate::state::AppState;
@@ -158,6 +158,14 @@ pub async fn position_handler(
         lunar_data.push(compute_lunar(lat, lon, time));
     }
 
+    // Compute sunrise/sunset once per unique date
+    use std::collections::{HashMap, HashSet};
+    let unique_dates: HashSet<_> = times.iter().map(|dt| dt.date_naive()).collect();
+    let mut sunrise_sunset_by_date: HashMap<_, _> = HashMap::new();
+    for date in unique_dates {
+        sunrise_sunset_by_date.insert(date, compute_sunrise_sunset(lat, lon, date));
+    }
+
     // Build CoverageJSON response
     let coverage = build_coverage_json(
         lon,
@@ -165,6 +173,7 @@ pub async fn position_handler(
         &times,
         &solar_data,
         &lunar_data,
+        &sunrise_sunset_by_date,
         &requested_params,
     );
 
@@ -243,13 +252,11 @@ fn parse_requested_parameters(parameter_name: Option<&str>) -> Vec<String> {
         None => {
             // Return all parameters
             vec![
-                "sunrise".to_string(),
-                "sunset".to_string(),
+                "sunrise_time".to_string(),
+                "sunset_time".to_string(),
                 "solar_noon".to_string(),
                 "sun_altitude".to_string(),
                 "sun_azimuth".to_string(),
-                "moonrise".to_string(),
-                "moonset".to_string(),
                 "moon_phase".to_string(),
                 "moon_illumination".to_string(),
                 "moon_age".to_string(),
@@ -262,13 +269,11 @@ fn parse_requested_parameters(parameter_name: Option<&str>) -> Vec<String> {
 /// Validate that requested parameters are supported.
 fn validate_parameters(params: &[String]) -> Result<(), String> {
     const VALID_PARAMS: &[&str] = &[
-        "sunrise",
-        "sunset",
+        "sunrise_time",
+        "sunset_time",
         "solar_noon",
         "sun_altitude",
         "sun_azimuth",
-        "moonrise",
-        "moonset",
         "moon_phase",
         "moon_illumination",
         "moon_age",
@@ -293,6 +298,10 @@ fn build_coverage_json(
     times: &[DateTime<Utc>],
     solar_data: &[crate::astro::SolarData],
     lunar_data: &[crate::astro::LunarData],
+    sunrise_sunset_by_date: &std::collections::HashMap<
+        chrono::NaiveDate,
+        (Option<i64>, Option<i64>),
+    >,
     requested_params: &[String],
 ) -> CoverageJson {
     let time_strings: Vec<String> = times.iter().map(|t| t.to_rfc3339()).collect();
@@ -310,22 +319,36 @@ fn build_coverage_json(
     // Add each requested parameter
     for param_name in requested_params {
         match param_name.as_str() {
-            "sunrise" => {
+            "sunrise_time" => {
+                let values: Vec<Option<i64>> = times
+                    .iter()
+                    .map(|dt| {
+                        let date = dt.date_naive();
+                        sunrise_sunset_by_date.get(&date).and_then(|(sr, _)| *sr)
+                    })
+                    .collect();
                 coverage = add_timestamp_parameter(
                     coverage,
-                    "sunrise",
+                    "sunrise_time",
                     "Sunrise Time",
-                    "Time of sunrise (Unix timestamp in seconds). Null indicates no sunrise (polar night).",
-                    solar_data.iter().map(|s| s.sunrise).collect(),
+                    "Time of sunrise for this date (Unix timestamp in seconds). Null during polar night.",
+                    values,
                 );
             }
-            "sunset" => {
+            "sunset_time" => {
+                let values: Vec<Option<i64>> = times
+                    .iter()
+                    .map(|dt| {
+                        let date = dt.date_naive();
+                        sunrise_sunset_by_date.get(&date).and_then(|(_, ss)| *ss)
+                    })
+                    .collect();
                 coverage = add_timestamp_parameter(
                     coverage,
-                    "sunset",
+                    "sunset_time",
                     "Sunset Time",
-                    "Time of sunset (Unix timestamp in seconds). Null indicates no sunset (midnight sun).",
-                    solar_data.iter().map(|s| s.sunset).collect(),
+                    "Time of sunset for this date (Unix timestamp in seconds). Null during midnight sun.",
+                    values,
                 );
             }
             "solar_noon" => {
@@ -359,24 +382,7 @@ fn build_coverage_json(
                     solar_data.iter().map(|s| s.azimuth as f32).collect(),
                 );
             }
-            "moonrise" => {
-                coverage = add_timestamp_parameter(
-                    coverage,
-                    "moonrise",
-                    "Moonrise Time",
-                    "Time of moonrise (Unix timestamp in seconds). Null indicates no moonrise.",
-                    lunar_data.iter().map(|l| l.moonrise).collect(),
-                );
-            }
-            "moonset" => {
-                coverage = add_timestamp_parameter(
-                    coverage,
-                    "moonset",
-                    "Moonset Time",
-                    "Time of moonset (Unix timestamp in seconds). Null indicates no moonset.",
-                    lunar_data.iter().map(|l| l.moonset).collect(),
-                );
-            }
+
             "moon_phase" => {
                 coverage = add_phase_parameter(
                     coverage,
