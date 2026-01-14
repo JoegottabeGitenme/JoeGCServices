@@ -79,8 +79,8 @@ schedule:
   max_concurrent: 3 # Allow up to 3 concurrent downloads for this model
 
 retention:
-  hours: 3 # Keep data for 3 hours
-  keep_latest_runs: 3 # Always keep at least 3 recent runs (safeguard)
+  hours: 12 # Keep data for 12 hours (ensures major runs with 48h forecasts available)
+  keep_latest_runs: 4 # Always keep at least 4 recent runs (safeguard for gaps)
 
 # Precaching configuration - disabled for now (focus on observation data first)
 precaching:
