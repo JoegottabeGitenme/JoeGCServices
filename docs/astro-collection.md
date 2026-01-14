@@ -15,20 +15,20 @@ The `astro` collection provides on-demand astronomical data for any location and
 
 | Parameter | Type | Unit | Description |
 |-----------|------|------|-------------|
-| `sunrise` | Unix timestamp | seconds | Time of sunrise. Returns `null` in polar regions during polar night. |
-| `sunset` | Unix timestamp | seconds | Time of sunset. Returns `null` in polar regions during midnight sun. |
+| `sunrise_time` | Unix timestamp | seconds | Time of sunrise for the date. Returns `null` in polar regions during polar night. For time series, returns one value per unique date. |
+| `sunset_time` | Unix timestamp | seconds | Time of sunset for the date. Returns `null` in polar regions during midnight sun. For time series, returns one value per unique date. |
 | `solar_noon` | Unix timestamp | seconds | Time when the sun reaches its highest point in the sky. |
 | `sun_altitude` | Float | degrees | Sun's elevation angle above the horizon (-90° to +90°). |
 | `sun_azimuth` | Float | degrees | Sun's compass direction (0°=North, 90°=East, 180°=South, 270°=West). |
-| `moonrise` | Unix timestamp | seconds | Time of moonrise. Returns `null` when moon doesn't rise. |
-| `moonset` | Unix timestamp | seconds | Time of moonset. Returns `null` when moon doesn't set. |
 | `moon_phase` | Categorical | - | Current moon phase (0-7): new_moon, waxing_crescent, first_quarter, waxing_gibbous, full_moon, waning_gibbous, last_quarter, waning_crescent |
 | `moon_illumination` | Float | fraction | Fraction of moon disk illuminated (0.0 = new moon, 1.0 = full moon). |
 | `moon_age` | Float | days | Days since last new moon (0-29.5 approximately). |
 
 ### Notes on Sunrise/Sunset
 
-⚠️ **Current Limitation**: The `sunrise`, `sunset`, `moonrise`, and `moonset` parameters currently return `null`. Accurate calculation of rise/set times requires complex transit time algorithms that account for atmospheric refraction, observer elevation, and coordinate precession. This is marked as a TODO for future enhancement.
+The `sunrise_time` and `sunset_time` parameters use the NREL Solar Position Algorithm (SPA) for accurate calculations accounting for atmospheric refraction and the observer's location.
+
+For **time series queries** (datetime ranges), sunrise/sunset times are computed once per unique date and repeated for all times on that date. For example, a 48-hour query spanning January 14-15 will return two distinct sunrise values (one for each day), but each will be repeated for all hourly timestamps on that date.
 
 The sun and moon position parameters (`sun_altitude`, `sun_azimuth`) are simplified calculations and will be enhanced in future versions for higher accuracy.
 
@@ -171,7 +171,7 @@ Get just the lunar parameters:
 ```bash
 curl "http://localhost:8083/edr/collections/astro/position?\
 coords=POINT(-122.4 37.8)&\
-parameter-name=moon_phase,moon_illumination,moon_age,moonrise,moonset"
+parameter-name=moon_phase,moon_illumination,moon_age"
 ```
 
 ### 7. Solar Noon Calculations
@@ -231,12 +231,17 @@ The astro collection is unique in the EDR API:
 
 ### Computation Engine
 
-Uses the `astro` crate (v2.0), which implements algorithms from Jean Meeus's "Astronomical Algorithms":
-- Julian Day conversions
-- Sun geocentric ecliptic position
-- Moon geocentric ecliptic position  
-- Lunar illumination fraction
-- Moon age calculation from lunation cycles
+Uses multiple astronomical libraries for accurate calculations:
+- **`astro` crate (v2.0)**: Implements algorithms from Jean Meeus's "Astronomical Algorithms"
+  - Julian Day conversions
+  - Sun geocentric ecliptic position
+  - Moon geocentric ecliptic position  
+  - Lunar illumination fraction
+  - Moon age calculation from lunation cycles
+- **`sunrise-sunset-calculator` crate (v1.0)**: NREL Solar Position Algorithm (SPA)
+  - High-accuracy sunrise/sunset times
+  - Accounts for atmospheric refraction
+  - Accurate to within 1-2 minutes for typical locations
 
 ### Performance
 
@@ -258,9 +263,9 @@ Uses the `astro` crate (v2.0), which implements algorithms from Jean Meeus's "As
 
 1. **Simplified Calculations**
    - Sun/moon positions use basic geocentric ecliptic calculations
-   - No atmospheric refraction correction
-   - No topocentric parallax correction
-   - Rise/set times not yet implemented
+   - Sunrise/sunset use NREL SPA (high accuracy with atmospheric refraction)
+   - No topocentric parallax correction for sun/moon positions
+   - Moonrise/moonset not yet implemented
 
 2. **No Vertical Level Support**
    - Observer elevation not considered
@@ -275,8 +280,8 @@ Uses the `astro` crate (v2.0), which implements algorithms from Jean Meeus's "As
 
 - ✅ Basic sun and moon position
 - ✅ Moon phase and illumination
-- ⏳ Accurate rise/set times (transit calculations)
-- ⏳ Atmospheric refraction corrections
+- ✅ Accurate sunrise/sunset times (using NREL SPA algorithm)
+- ⏳ Moonrise/moonset times (requires lunar transit calculations)
 - ⏳ Observer elevation support
 - ⏳ Topocentric corrections
 - ⏳ Additional solar parameters (equation of time, declination)
