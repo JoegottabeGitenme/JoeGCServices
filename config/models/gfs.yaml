@@ -46,15 +46,15 @@ schedule:
   cycles: [0, 6, 12, 18] # UTC hours (00z, 06z, 12z, 18z)
   forecast_hours:
     start: 0
-    end: 24 # ~24 hours of forecast
+    end: 48 # 48 hours of forecast (Today + Tomorrow coverage)
     step: 1 # Every 1 hour
   poll_interval_secs: 3600 # Check for new data every hour
   delay_hours: 4 # Data typically available 4 hours after cycle time
   max_concurrent: 3 # Allow up to 3 concurrent downloads for this model
 
 retention:
-  hours: 12 # Keep data for 12 hours
-  keep_latest_runs: 2 # Always keep at least 1 complete run (safeguard)
+  hours: 24 # Keep data for 24 hours (ensures at least one complete 48h forecast)
+  keep_latest_runs: 3 # Always keep at least 3 recent runs (safeguard)
 
 # Precaching configuration - disabled for now
 precaching:
