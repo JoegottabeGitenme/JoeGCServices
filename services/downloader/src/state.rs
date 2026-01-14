@@ -358,6 +358,27 @@ impl DownloadState {
         Ok(count.0 > 0)
     }
 
+    /// Expire completed downloads older than the specified duration for a model.
+    /// Used for models with static URLs (like NDFD) that need periodic re-download.
+    /// Returns the number of records deleted.
+    pub async fn expire_completed_downloads(
+        &self,
+        model_id: &str,
+        max_age_hours: u32,
+    ) -> Result<u64> {
+        let cutoff = Utc::now() - chrono::Duration::hours(max_age_hours as i64);
+        let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let result =
+            sqlx::query("DELETE FROM completed_downloads WHERE model = ? AND completed_at < ?")
+                .bind(model_id)
+                .bind(&cutoff_str)
+                .execute(&self.pool)
+                .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Get completed downloads that haven't been ingested yet.
     pub async fn get_pending_ingestion(&self) -> Result<Vec<(String, String)>> {
         let records: Vec<(String, String)> = sqlx::query_as(

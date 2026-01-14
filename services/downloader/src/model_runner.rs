@@ -112,6 +112,27 @@ impl ModelRunner {
     /// Run a single download cycle.
     pub async fn run_cycle(&self) -> Result<()> {
         let model_id = &self.model.model.id;
+        let always_redownload = self.model.source.always_redownload;
+
+        // 0. For models with always_redownload enabled, expire old download records
+        // This allows re-downloading files with static URLs (like NDFD)
+        if always_redownload {
+            let max_age_hours = self.model.retention.hours;
+            if max_age_hours > 0 {
+                let expired = self
+                    .state
+                    .expire_completed_downloads(model_id, max_age_hours)
+                    .await?;
+                if expired > 0 {
+                    info!(
+                        model = %model_id,
+                        expired = expired,
+                        max_age_hours = max_age_hours,
+                        "Expired stale download records for re-download"
+                    );
+                }
+            }
+        }
 
         // 1. Discover available files
         let mut files = if self.model.is_observation() {
@@ -138,9 +159,10 @@ impl ModelRunner {
         // Note: queue_download uses INSERT OR IGNORE, making this idempotent.
         // If another model runner queued the same URL between our check and insert,
         // the duplicate insert is safely ignored.
+        // For always_redownload models, skip the is_already_downloaded check.
         let mut pending = Vec::new();
         for file in files {
-            if self.state.is_already_downloaded(&file.url).await? {
+            if !always_redownload && self.state.is_already_downloaded(&file.url).await? {
                 debug!(url = %file.url, "Already downloaded, skipping");
                 continue;
             }
@@ -188,6 +210,7 @@ impl ModelRunner {
     async fn download_files(&self, files: Vec<DownloadFile>) -> Result<()> {
         let model_id = self.model.model.id.clone();
         let max_concurrent = self.permit.max_concurrent();
+        let skip_size_validation = self.model.source.skip_size_validation;
 
         let results = stream::iter(files)
             .map(|file| {
@@ -204,7 +227,11 @@ impl ModelRunner {
                     let _slot = permit.acquire().await;
 
                     // Perform the download
-                    match manager.download(&file.url, &file.filename, &state).await {
+                    // Note: skip_size_validation is captured from outer scope (self.model.source)
+                    match manager
+                        .download(&file.url, &file.filename, &state, skip_size_validation)
+                        .await
+                    {
                         Ok(path) => {
                             info!(
                                 model = %model_id,

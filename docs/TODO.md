@@ -55,4 +55,5 @@
 - update response size limits in EDR, a full globe png of GFS isn't actually that much data
 - scope out 'specialized' PNGs for EDR where we encode multiple values
 - scope out 'specialized' enpoints for the various activities and the data required for them
-- add resolution stuff for trajectory and corridor queries 
+- add resolution stuff for trajectory and corridor queries
+- figure out how to ingest ensemble data and it's members and then expose pre-computed stuff through WMS/EDR 

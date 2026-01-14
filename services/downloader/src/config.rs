@@ -75,6 +75,15 @@ pub struct SourceConfig {
     /// Data format hint (e.g., "ndfd_grib2" for NDFD files with WMO headers)
     #[serde(default)]
     pub format: Option<String>,
+    /// Skip Content-Length validation after download.
+    /// Useful for sources like NDFD where files are updated in-place during download.
+    #[serde(default)]
+    pub skip_size_validation: bool,
+    /// Always re-download files even if URL was previously downloaded.
+    /// Useful for sources like NDFD where files have static URLs but content changes.
+    /// When enabled, old download records are expired based on retention.hours.
+    #[serde(default)]
+    pub always_redownload: bool,
 }
 
 fn default_region() -> String {

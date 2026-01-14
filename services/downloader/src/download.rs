@@ -106,12 +106,17 @@ impl DownloadManager {
     /// Download a file with automatic retry and resumption.
     ///
     /// Returns the path to the completed download.
+    ///
+    /// # Arguments
+    /// * `skip_size_validation` - If true, skip Content-Length validation after download.
+    ///   Useful for sources like NDFD where files are updated in-place during download.
     #[instrument(skip(self, state), fields(url = %url))]
     pub async fn download(
         &self,
         url: &str,
         filename: &str,
         state: &DownloadState,
+        skip_size_validation: bool,
     ) -> Result<PathBuf> {
         // Ensure directories exist
         fs::create_dir_all(&self.config.temp_dir).await?;
@@ -166,12 +171,20 @@ impl DownloadManager {
                     // Verify and move to final location
                     if let Some(expected) = progress.total_bytes {
                         let actual = fs::metadata(&temp_path).await?.len();
-                        if actual != expected {
+                        if !skip_size_validation && actual != expected {
                             return Err(anyhow!(
                                 "Download size mismatch: expected {} bytes, got {}",
                                 expected,
                                 actual
                             ));
+                        }
+                        // Log if sizes don't match but we're skipping validation
+                        if skip_size_validation && actual != expected {
+                            info!(
+                                expected = expected,
+                                actual = actual,
+                                "Size mismatch ignored (skip_size_validation enabled)"
+                            );
                         }
                     }
 
