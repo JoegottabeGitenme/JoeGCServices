@@ -9653,3 +9653,250 @@ function formatBytes(bytes) {
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
+
+// ============================================================
+// ASTRO COLLECTION TESTS
+// ============================================================
+
+async function testAstroCollectionExists() {
+    const url = `${API_BASE}/collections`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Failed to fetch collections: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Check if astro collection exists
+    const astroCollection = data.collections.find(c => c.id === 'astro');
+    if (!astroCollection) {
+        return fail('Astro collection not found in collections list');
+    }
+    
+    // Verify it has the position query
+    if (!astroCollection.data_queries || !astroCollection.data_queries.position) {
+        return fail('Astro collection missing position query');
+    }
+    
+    return pass('Astro collection exists with position query', {
+        title: astroCollection.title,
+        description: astroCollection.description
+    });
+}
+
+async function testAstroPositionCurrent() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify it's CoverageJSON
+    if (data.type !== 'Coverage') {
+        return fail(`Expected type: Coverage, got: ${data.type}`);
+    }
+    
+    // Verify it has parameters
+    if (!data.parameters || Object.keys(data.parameters).length === 0) {
+        return fail('No parameters in response');
+    }
+    
+    // Verify it has ranges
+    if (!data.ranges || Object.keys(data.ranges).length === 0) {
+        return fail('No ranges in response');
+    }
+    
+    return pass('Returns valid CoverageJSON with astronomical data', {
+        parameterCount: Object.keys(data.parameters).length,
+        parameters: Object.keys(data.parameters).join(', ')
+    });
+}
+
+async function testAstroPositionDatetime() {
+    const datetime = '2026-01-15T12:00:00Z';
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-97.5 35.2)&datetime=${datetime}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify domain has the correct time
+    if (!data.domain || !data.domain.axes || !data.domain.axes.t) {
+        return fail('Missing time axis in domain');
+    }
+    
+    const returnedTime = data.domain.axes.t.values[0];
+    if (!returnedTime.includes('2026-01-15T12:00:00')) {
+        return fail(`Expected time ${datetime}, got ${returnedTime}`);
+    }
+    
+    return pass('Correctly handles specific datetime parameter', {
+        requestedTime: datetime,
+        returnedTime: returnedTime
+    });
+}
+
+async function testAstroPositionTimeseries() {
+    const start = '2026-01-01T00:00:00Z';
+    const end = '2026-01-01T23:59:59Z';
+    const step = 'PT1H'; // Hourly
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-74.0 40.7)&datetime=${start}/${end}&step=${step}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify it's a time series (PointSeries domain type)
+    if (data.domain.domainType !== 'PointSeries') {
+        return fail(`Expected domainType: PointSeries, got: ${data.domain.domainType}`);
+    }
+    
+    // Verify we have multiple time values
+    const timeValues = data.domain.axes.t.values;
+    if (!timeValues || timeValues.length < 24) {
+        return fail(`Expected 24 hourly values, got: ${timeValues ? timeValues.length : 0}`);
+    }
+    
+    // Verify each parameter has corresponding values
+    for (const [paramName, range] of Object.entries(data.ranges)) {
+        if (!range.values || range.values.length !== timeValues.length) {
+            return fail(`Parameter ${paramName} has mismatched value count`);
+        }
+    }
+    
+    return pass('Correctly generates time series with step parameter', {
+        timePoints: timeValues.length,
+        step: step,
+        parameterCount: Object.keys(data.ranges).length
+    });
+}
+
+async function testAstroParametersFilter() {
+    const requestedParams = 'moon_phase,moon_illumination';
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)&parameter-name=${requestedParams}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    const returnedParams = Object.keys(data.parameters);
+    const expected = ['moon_phase', 'moon_illumination'];
+    
+    // Check we got exactly the requested parameters
+    if (returnedParams.length !== expected.length) {
+        return fail(`Expected ${expected.length} parameters, got ${returnedParams.length}`);
+    }
+    
+    for (const param of expected) {
+        if (!returnedParams.includes(param)) {
+            return fail(`Missing requested parameter: ${param}`);
+        }
+    }
+    
+    return pass('Parameter filtering works correctly', {
+        requested: requestedParams,
+        returned: returnedParams.join(', ')
+    });
+}
+
+async function testAstroMoonPhase() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)&parameter-name=moon_phase`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify moon_phase parameter has categories
+    const moonPhaseParam = data.parameters.moon_phase;
+    if (!moonPhaseParam) {
+        return fail('moon_phase parameter not found');
+    }
+    
+    const categories = moonPhaseParam.observedProperty.categories;
+    if (!categories || categories.length !== 8) {
+        return fail(`Expected 8 moon phase categories, got: ${categories ? categories.length : 0}`);
+    }
+    
+    // Verify category labels
+    const expectedPhases = [
+        'new_moon', 'waxing_crescent', 'first_quarter', 'waxing_gibbous',
+        'full_moon', 'waning_gibbous', 'last_quarter', 'waning_crescent'
+    ];
+    
+    for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        if (cat.id !== i.toString()) {
+            return fail(`Category ${i} has wrong ID: ${cat.id}`);
+        }
+        const expectedLabel = expectedPhases[i];
+        const actualLabel = cat.label?.en || cat.label;
+        if (actualLabel !== expectedLabel) {
+            return fail(`Category ${i} has wrong label: expected ${expectedLabel}, got ${actualLabel}`);
+        }
+    }
+    
+    // Verify the value is in valid range (0-7)
+    const phaseValue = data.ranges.moon_phase.values[0];
+    if (phaseValue < 0 || phaseValue > 7) {
+        return fail(`Moon phase value out of range: ${phaseValue}`);
+    }
+    
+    return pass('Moon phase is properly encoded as categorical data', {
+        categoryCount: categories.length,
+        currentPhase: expectedPhases[Math.floor(phaseValue)]
+    });
+}
+
+async function testAstroDataRanges() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    const validations = {
+        moon_illumination: { min: 0, max: 1, name: 'Moon illumination' },
+        moon_age: { min: 0, max: 30, name: 'Moon age' },
+        sun_azimuth: { min: 0, max: 360, name: 'Sun azimuth' },
+        // Note: altitude can be negative (below horizon)
+    };
+    
+    for (const [param, validation] of Object.entries(validations)) {
+        if (!data.ranges[param]) {
+            continue; // Parameter might be filtered
+        }
+        
+        const value = data.ranges[param].values[0];
+        if (value === null || value === undefined) {
+            continue; // Null values are acceptable (e.g., polar regions)
+        }
+        
+        if (value < validation.min || value > validation.max) {
+            return fail(`${validation.name} out of range: ${value} (expected ${validation.min}-${validation.max})`);
+        }
+    }
+    
+    return pass('All parameters have values within valid ranges', {
+        checkedParameters: Object.keys(validations).length
+    });
+}
+
