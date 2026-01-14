@@ -80,7 +80,7 @@ settings:
 # NDFD is ~2.5km resolution (~0.025°)
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 72              # Up to 3 days of hourly data
+  max_time_steps: 300              # Up to 3 days of hourly data
   max_vertical_levels: 5
   max_response_size_mb: 50
   max_area_sq_degrees: 100        # ~1000km x 1000km

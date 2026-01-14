@@ -146,7 +146,7 @@ settings:
 
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 36          # ~3 hours at 5-min intervals
+  max_time_steps: 300          # ~3 hours at 5-min intervals
   max_vertical_levels: 1      # No vertical dimension for satellite data
   max_response_size_mb: 100   # GOES grids are large (~5000x3000)
   max_area_sq_degrees: 50     # Limit area queries due to high resolution

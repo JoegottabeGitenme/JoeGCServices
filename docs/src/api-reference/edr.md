@@ -347,6 +347,7 @@ Returns a linearly interpolated value between the 12:00 and 13:00 GFS timesteps.
 - Requested datetime range must be within the collection's temporal extent
 - Times outside the temporal extent will result in a 400 Bad Request error
 - The `step` parameter requires an interval datetime with both start and end times
+- Maximum 300 time steps per request (e.g., 24 hours at 5-minute intervals = 289 steps)
 - Interpolation only works for scalar values (not applicable to categorical parameters)
 
 ---
