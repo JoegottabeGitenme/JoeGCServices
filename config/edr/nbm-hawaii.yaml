@@ -125,7 +125,7 @@ settings:
 
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 300
+  max_time_steps: 350
   max_vertical_levels: 10
   max_response_size_mb: 50
   max_area_sq_degrees: 50

@@ -115,7 +115,7 @@ settings:
 
 limits:
   max_parameters_per_request: 5
-  max_time_steps: 300           # ~2 hours at 10-min intervals
+  max_time_steps: 350           # ~2 hours at 10-min intervals
   max_vertical_levels: 1       # No vertical dimension for satellite data
   max_response_size_mb: 200    # Full disk grids are large (5424x5424)
   max_area_sq_degrees: 100     # Larger limit for full disk coverage

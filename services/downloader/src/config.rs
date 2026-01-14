@@ -83,10 +83,20 @@ pub struct SourceConfig {
     /// Index file suffix (default: ".idx")
     #[serde(default = "default_index_suffix")]
     pub index_suffix: String,
+    /// Skip Content-Length validation after download.
+    /// Useful for sources like NDFD where files are updated in-place during download.
+    #[serde(default)]
+    pub skip_size_validation: bool,
+    /// Always re-download files even if URL was previously downloaded.
+    /// Useful for sources like NDFD where files have static URLs but content changes.
+    /// When enabled, old download records are expired based on retention.hours.
+    #[serde(default)]
+    pub always_redownload: bool,
 }
 
 fn default_index_suffix() -> String {
     ".idx".to_string()
+
 }
 
 fn default_region() -> String {

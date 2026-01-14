@@ -72,7 +72,7 @@ retention:
 
 # Precaching configuration
 precaching:
-  enabled: false
+  enabled: true
   keep_recent_cycles: 1
   forecast_hours: [1, 6, 12, 24, 48]
   warm_on_ingest: false

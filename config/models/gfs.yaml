@@ -58,7 +58,7 @@ retention:
 
 # Precaching configuration - disabled for now
 precaching:
-  enabled: false
+  enabled: true
   keep_recent_cycles: 1 # Only most recent model cycle
   forecast_hours: [0, 3, 6, 9, 12] # Key forecast hours
   warm_on_ingest: false

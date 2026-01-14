@@ -274,7 +274,7 @@ settings:
 # A 200 sq degree query returns ~3,200 points (vs ~274,000 for HRRR at 3km)
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 300              # 24 hours of forecast data
+  max_time_steps: 350              # 24 hours of forecast data
   max_vertical_levels: 20         # Accommodates all 17 isobaric levels
   max_response_size_mb: 100       # Higher than HRRR due to lower resolution
   max_area_sq_degrees: 500        # ~2000km x 1000km regional area
