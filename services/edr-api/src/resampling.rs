@@ -1,14 +1,14 @@
 //! Grid resampling for EDR area queries.
 //!
 //! This module provides functions for resampling grid data to different
-//! output resolutions. The grid processor extracts data using linear
-//! geographic indexing, so we use the same approach here to ensure
-//! consistent sampling across different bbox sizes.
+//! output resolutions and properly reprojecting from native grid projections
+//! (Lambert Conformal, Polar Stereographic, Mercator) to geographic coordinates.
 //!
-//! Note: For projected grids (Lambert, Polar Stereographic, Mercator),
-//! this means projection distortion is NOT corrected during resampling.
+//! For projected grids, we use the proper projection math (geo_to_grid) to
+//! correctly transform coordinates, matching the approach used in WMS rendering.
 
 use grid_processor::{BoundingBox, GridRegion, ProjectionType};
+use projection::{LambertConformal, Mercator, PolarStereographic};
 
 /// Resample a grid region from its native projection to a regular geographic grid.
 ///
@@ -85,10 +85,9 @@ pub fn resample_to_geographic(
 
 /// Resample from Lambert Conformal grid to geographic output.
 ///
-/// Note: The grid processor extracts data using linear geographic indexing,
-/// so we use the same linear approach here to ensure consistent sampling.
-/// This means projection distortion is NOT corrected - the data retains
-/// the distortion inherent in the Lambert storage approximation.
+/// This uses proper projection math (geo_to_grid) to correctly transform
+/// geographic coordinates to Lambert grid indices, matching the approach
+/// used in WMS rendering. This ensures data alignment is correct.
 ///
 /// Lambert grids (HRRR, NDFD, NBM-CONUS) use RowOrigin::South, meaning
 /// row 0 is at the southern edge of the grid.
@@ -99,17 +98,24 @@ fn resample_lambert_to_geographic(
     output_width: usize,
     output_height: usize,
     bbox: &BoundingBox,
-    _model: &str,
+    model: &str,
 ) -> GridRegion {
     let mut output = vec![f32::NAN; output_width * output_height];
 
     let out_res_lon = bbox.width() / output_width as f64;
     let out_res_lat = bbox.height() / output_height as f64;
 
-    // Calculate the input data resolution (geographic spacing per grid cell)
-    // This matches how the grid processor extracted the data using linear mapping
-    let data_res_lon = bbox.width() / data_width as f64;
-    let data_res_lat = bbox.height() / data_height as f64;
+    // Select the appropriate Lambert projection based on model
+    let proj = match model {
+        "ndfd" => LambertConformal::ndfd(),
+        "nbm-conus" => LambertConformal::nbm_conus(),
+        _ => LambertConformal::hrrr(), // Default to HRRR
+    };
+
+    // Calculate scale factors if data dimensions differ from native projection dimensions.
+    // This handles cases where pyramid levels or partial reads are used.
+    let scale_x = data_width as f64 / proj.nx as f64;
+    let scale_y = data_height as f64 / proj.ny as f64;
 
     // For each output pixel, find the corresponding point in the input data
     for out_y in 0..output_height {
@@ -119,10 +125,13 @@ fn resample_lambert_to_geographic(
             let lon = bbox.min_lon + (out_x as f64 + 0.5) * out_res_lon;
             let lat = bbox.max_lat - (out_y as f64 + 0.5) * out_res_lat;
 
-            // Use linear geographic mapping to find the input data position
-            // Lambert grids use RowOrigin::South: row 0 = south, row increases northward
-            let grid_i = (lon - bbox.min_lon) / data_res_lon;
-            let grid_j = (lat - bbox.min_lat) / data_res_lat; // South-origin: lat increases with row
+            // Convert geographic to Lambert grid indices using proper projection math
+            // proj.geo_to_grid returns indices for the native resolution grid
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+            // Scale indices to match actual data dimensions
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             // Check if within data bounds
             if grid_i < 0.0
@@ -150,7 +159,9 @@ fn resample_lambert_to_geographic(
 
 /// Resample from Polar Stereographic grid to geographic output.
 ///
-/// Note: Uses linear geographic mapping to match grid processor extraction.
+/// This uses proper projection math (geo_to_grid) to correctly transform
+/// geographic coordinates to Polar Stereographic grid indices.
+///
 /// Polar Stereographic grids (NBM-Alaska) use RowOrigin::South.
 fn resample_polar_stereo_to_geographic(
     data: &[f32],
@@ -159,25 +170,34 @@ fn resample_polar_stereo_to_geographic(
     output_width: usize,
     output_height: usize,
     bbox: &BoundingBox,
-    _model: &str,
+    model: &str,
 ) -> GridRegion {
     let mut output = vec![f32::NAN; output_width * output_height];
 
     let out_res_lon = bbox.width() / output_width as f64;
     let out_res_lat = bbox.height() / output_height as f64;
 
-    let data_res_lon = bbox.width() / data_width as f64;
-    let data_res_lat = bbox.height() / data_height as f64;
+    // Select the appropriate Polar Stereographic projection based on model
+    let proj = match model {
+        "nbm-alaska" => PolarStereographic::nbm_alaska(),
+        _ => PolarStereographic::nbm_alaska(), // Default to NBM Alaska
+    };
+
+    // Calculate scale factors if data dimensions differ from native projection dimensions
+    let scale_x = data_width as f64 / proj.nx as f64;
+    let scale_y = data_height as f64 / proj.ny as f64;
 
     for out_y in 0..output_height {
         for out_x in 0..output_width {
             let lon = bbox.min_lon + (out_x as f64 + 0.5) * out_res_lon;
             let lat = bbox.max_lat - (out_y as f64 + 0.5) * out_res_lat;
 
-            // Use linear geographic mapping to match grid processor
-            // RowOrigin::South: row 0 = south, row increases northward
-            let grid_i = (lon - bbox.min_lon) / data_res_lon;
-            let grid_j = (lat - bbox.min_lat) / data_res_lat;
+            // Convert geographic to Polar Stereographic grid indices using proper projection math
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+            // Scale indices to match actual data dimensions
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             if grid_i < 0.0
                 || grid_i >= data_width as f64 - 1.0
@@ -203,7 +223,9 @@ fn resample_polar_stereo_to_geographic(
 
 /// Resample from Mercator grid to geographic output.
 ///
-/// Note: Uses linear geographic mapping to match grid processor extraction.
+/// This uses proper projection math (geo_to_grid) to correctly transform
+/// geographic coordinates to Mercator grid indices.
+///
 /// Mercator grids (NBM-Hawaii, NBM-PuertoRico, NBM-Guam) use RowOrigin::South.
 fn resample_mercator_to_geographic(
     data: &[f32],
@@ -212,25 +234,36 @@ fn resample_mercator_to_geographic(
     output_width: usize,
     output_height: usize,
     bbox: &BoundingBox,
-    _model: &str,
+    model: &str,
 ) -> GridRegion {
     let mut output = vec![f32::NAN; output_width * output_height];
 
     let out_res_lon = bbox.width() / output_width as f64;
     let out_res_lat = bbox.height() / output_height as f64;
 
-    let data_res_lon = bbox.width() / data_width as f64;
-    let data_res_lat = bbox.height() / data_height as f64;
+    // Select the appropriate Mercator projection based on model
+    let proj = match model {
+        "nbm-hawaii" => Mercator::nbm_hawaii(),
+        "nbm-puertorico" => Mercator::nbm_puertorico(),
+        "nbm-guam" => Mercator::nbm_guam(),
+        _ => Mercator::nbm_hawaii(), // Default to NBM Hawaii
+    };
+
+    // Calculate scale factors if data dimensions differ from native projection dimensions
+    let scale_x = data_width as f64 / proj.nx as f64;
+    let scale_y = data_height as f64 / proj.ny as f64;
 
     for out_y in 0..output_height {
         for out_x in 0..output_width {
             let lon = bbox.min_lon + (out_x as f64 + 0.5) * out_res_lon;
             let lat = bbox.max_lat - (out_y as f64 + 0.5) * out_res_lat;
 
-            // Use linear geographic mapping to match grid processor
-            // RowOrigin::South: row 0 = south, row increases northward
-            let grid_i = (lon - bbox.min_lon) / data_res_lon;
-            let grid_j = (lat - bbox.min_lat) / data_res_lat;
+            // Convert geographic to Mercator grid indices using proper projection math
+            let (native_i, native_j) = proj.geo_to_grid(lat, lon);
+
+            // Scale indices to match actual data dimensions
+            let grid_i = native_i * scale_x;
+            let grid_j = native_j * scale_y;
 
             if grid_i < 0.0
                 || grid_i >= data_width as f64 - 1.0
