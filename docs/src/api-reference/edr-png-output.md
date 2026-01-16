@@ -280,6 +280,78 @@ settings:
 | 400 Dimensions too large | width or height > 4096 | Reduce dimensions |
 | 413 Area too large | Exceeds `max_area_sq_degrees_png` | Reduce polygon size |
 
+## Best Practices for Georeferencing
+
+The `X-EDR-BBox` header provides the geographic extent of the returned PNG, which may differ slightly from your request due to grid snapping.
+
+### Understanding X-EDR-BBox
+
+The bbox represents the **outer edges of the pixel grid**, not pixel centers:
+
+```
+X-EDR-BBox: west,south,east,north
+            │     │     │     │
+            │     │     │     └── North edge of top row
+            │     │     └──────── East edge of rightmost column
+            │     └────────────── South edge of bottom row
+            └──────────────────── West edge of leftmost column
+```
+
+### Georeferencing Recommendations
+
+1. **Don't specify width/height** unless you need a specific size
+   - The server returns native grid resolution by default
+   - Specifying dimensions triggers resampling which can affect alignment
+
+2. **Use X-EDR-BBox for placement**, not your request bbox
+   - The returned bbox is snapped to actual grid cell boundaries
+   - Your request may be expanded to include full grid cells
+
+3. **Account for half-pixel offset** when mapping textures
+   ```javascript
+   // First pixel CENTER is 0.5 cells inward from bbox corner
+   const pixelWidth = (bbox.east - bbox.west) / imageWidth;
+   const pixelHeight = (bbox.north - bbox.south) / imageHeight;
+   const firstPixelCenterLon = bbox.west + pixelWidth * 0.5;
+   const firstPixelCenterLat = bbox.north - pixelHeight * 0.5;
+   ```
+
+4. **Match aspect ratio** if specifying dimensions
+   ```javascript
+   // Calculate dimensions that match the geographic aspect ratio
+   const aspectRatio = (east - west) / (north - south);
+   const height = Math.round(desiredWidth / aspectRatio);
+   ```
+
+### Example: WebGL Texture Mapping
+
+```javascript
+// Fetch PNG and extract headers
+const response = await fetch(edrUrl);
+const bbox = response.headers.get('X-EDR-BBox').split(',').map(Number);
+const [west, south, east, north] = bbox;
+
+// Calculate texture coordinates for a geographic point
+function geoToTexCoord(lon, lat) {
+  const u = (lon - west) / (east - west);
+  const v = (north - lat) / (north - south);  // Y is inverted for textures
+  return [u, v];
+}
+```
+
+### Projected Grids (HRRR, NDFD, NBM)
+
+For non-geographic grids, the server reprojects data to CRS:84 (WGS84). Request in geographic coordinates:
+
+```bash
+# HRRR area request - use lat/lon coordinates
+curl ".../edr/collections/hrrr-surface/area?\
+coords=POLYGON((-100 35,-98 35,-98 37,-100 37,-100 35))&\
+parameter-name=TMP&f=png"
+```
+
+The reprojection uses bilinear interpolation for smooth results.
+
 ## See Also
 
 - [EDR Endpoints](./edr.md) - Full EDR API reference

@@ -63,7 +63,7 @@ retention:
   keep_latest_runs: 2
 
 precaching:
-  enabled: true
+  enabled: false
 
 parameters:
   # Surface weather

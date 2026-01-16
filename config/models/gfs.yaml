@@ -35,12 +35,11 @@ grid:
   projection: geographic
   resolution: "0.25deg"
   bbox:
-    min_lon: 0.0
+    min_lon: -180.0
     min_lat: -90.0
-    max_lon: 360.0
+    max_lon: 180.0
     max_lat: 90.0
-  # Longitude convention: 0-360 (data is stored as 0-360, convert for -180 to 180 requests)
-  lon_convention: 0_to_360
+  # Note: GRIB data comes as 0-360, but ingestion converts to -180/180 for storage
 
 schedule:
   cycles: [0, 6, 12, 18] # UTC hours (00z, 06z, 12z, 18z)
@@ -58,7 +57,7 @@ retention:
 
 # Precaching configuration - disabled for now
 precaching:
-  enabled: true
+  enabled: false
   keep_recent_cycles: 1 # Only most recent model cycle
   forecast_hours: [0, 3, 6, 9, 12] # Key forecast hours
   warm_on_ingest: false

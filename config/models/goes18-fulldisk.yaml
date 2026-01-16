@@ -46,7 +46,7 @@ retention:
 
 # Precaching configuration - disabled for full disk (large files)
 precaching:
-  enabled: true
+  enabled: false
 
 parameters:
   # ==========================================================================
