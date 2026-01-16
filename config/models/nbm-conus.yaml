@@ -29,6 +29,9 @@ source:
   prefix_template: "blend.{date}/{cycle:02}/core"
   file_pattern: "blend.t{cycle:02}z.core.f{forecast:03}.co.grib2"
   region: us-east-1
+  # Enable selective download via .idx files to reduce bandwidth
+  # Downloads only configured parameters instead of entire GRIB file (~80% savings)
+  use_index_file: true
 
 grid:
   projection: lambert_conformal

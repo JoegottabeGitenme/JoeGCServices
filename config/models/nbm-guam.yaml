@@ -23,6 +23,8 @@ source:
   prefix_template: "blend.{date}/{cycle:02}/core"
   file_pattern: "blend.t{cycle:02}z.core.f{forecast:03}.gu.grib2"
   region: us-east-1
+  # Enable selective download via .idx files to reduce bandwidth
+  use_index_file: true
 
 grid:
   projection: mercator

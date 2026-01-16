@@ -27,6 +27,9 @@ source:
   prefix_template: "gfs.{date}/{cycle:02}/atmos"
   file_pattern: "gfs.t{cycle:02}z.pgrb2.0p25.f{forecast:03}"
   region: us-east-1
+  # Enable selective download via .idx files to reduce bandwidth
+  # Downloads only configured parameters instead of entire GRIB file (~90% savings)
+  use_index_file: true
 
 grid:
   projection: geographic

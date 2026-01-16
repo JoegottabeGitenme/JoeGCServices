@@ -75,6 +75,18 @@ pub struct SourceConfig {
     /// Data format hint (e.g., "ndfd_grib2" for NDFD files with WMO headers)
     #[serde(default)]
     pub format: Option<String>,
+    /// Enable selective download via .idx index files.
+    /// When enabled, downloads only the GRIB messages for configured parameters
+    /// instead of the entire file. Falls back to full download if index unavailable.
+    #[serde(default)]
+    pub use_index_file: bool,
+    /// Index file suffix (default: ".idx")
+    #[serde(default = "default_index_suffix")]
+    pub index_suffix: String,
+}
+
+fn default_index_suffix() -> String {
+    ".idx".to_string()
 }
 
 fn default_region() -> String {
@@ -204,7 +216,7 @@ pub struct ParameterConfig {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub levels: Vec<serde_yaml::Value>,
+    pub levels: Vec<LevelConfig>,
     #[serde(default)]
     pub units: Option<String>,
     #[serde(default)]
@@ -212,6 +224,25 @@ pub struct ParameterConfig {
     /// File identifier for HTTP sources (e.g., "temp" for ds.temp.bin in NDFD)
     #[serde(default)]
     pub file: Option<String>,
+}
+
+/// Level configuration for a parameter.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct LevelConfig {
+    /// Level type name (e.g., "height_above_ground", "isobaric", "surface")
+    #[serde(rename = "type")]
+    pub level_type: Option<String>,
+    /// GRIB2 level type code
+    pub level_code: Option<u8>,
+    /// Single level value (for height_above_ground, etc.)
+    pub value: Option<u32>,
+    /// Multiple level values (for isobaric levels)
+    pub values: Option<Vec<u32>>,
+    /// Display name (e.g., "2 m above ground")
+    pub display: Option<String>,
+    /// Display template for multiple values (e.g., "{value} mb")
+    pub display_template: Option<String>,
 }
 
 /// Composite layer configuration.
@@ -280,6 +311,83 @@ impl ModelConfig {
             // For forecast models, use the configured lookback_minutes (usually 0)
             self.schedule.lookback_minutes
         }
+    }
+
+    /// Build parameter filters for selective download from .idx files.
+    ///
+    /// Extracts parameter names and level strings from the configuration
+    /// and returns filters suitable for matching against .idx file entries.
+    pub fn build_param_filters(&self) -> Vec<(String, String)> {
+        use crate::grib_index::level_to_idx_string;
+
+        let mut filters = Vec::new();
+
+        for param in &self.parameters {
+            let param_name = &param.name;
+
+            for level in &param.levels {
+                // Try to get the level code
+                let level_code = level.level_code.unwrap_or_else(|| {
+                    // Map level type name to code if not specified
+                    match level.level_type.as_deref() {
+                        Some("surface") => 1,
+                        Some("isobaric") => 100,
+                        Some("mean_sea_level") => 101,
+                        Some("height_above_ground") => 103,
+                        Some("entire_atmosphere") => 200,
+                        Some("cloud_layer") | Some("low_cloud_layer") => 214,
+                        Some("middle_cloud_layer") => 224,
+                        Some("high_cloud_layer") => 234,
+                        _ => 0, // Unknown
+                    }
+                });
+
+                // If we have multiple values (e.g., isobaric levels)
+                if let Some(ref values) = level.values {
+                    for &value in values {
+                        // For isobaric levels, values in config are in mb but .idx uses Pa
+                        // Convert to what level_to_idx_string expects (Pa)
+                        let value_for_idx = if level_code == 100 {
+                            // Config stores mb values, multiply by 100 for Pa
+                            value * 100
+                        } else {
+                            value
+                        };
+
+                        if let Some(level_str) =
+                            level_to_idx_string(level_code, Some(value_for_idx))
+                        {
+                            filters.push((param_name.clone(), level_str));
+                        }
+                    }
+                } else if let Some(value) = level.value {
+                    // Single value
+                    if let Some(level_str) = level_to_idx_string(level_code, Some(value)) {
+                        filters.push((param_name.clone(), level_str));
+                    }
+                } else {
+                    // No value (surface, entire_atmosphere, etc.)
+                    if let Some(level_str) = level_to_idx_string(level_code, None) {
+                        filters.push((param_name.clone(), level_str));
+                    } else if let Some(ref display) = level.display {
+                        // Use display string directly if we can't derive it
+                        filters.push((param_name.clone(), display.clone()));
+                    }
+                }
+            }
+        }
+
+        // Deduplicate filters
+        filters.sort();
+        filters.dedup();
+
+        debug!(
+            model = %self.model.id,
+            filter_count = filters.len(),
+            "Built parameter filters for selective download"
+        );
+
+        filters
     }
 }
 
