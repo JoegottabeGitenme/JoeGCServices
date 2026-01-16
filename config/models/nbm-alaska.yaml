@@ -63,7 +63,7 @@ retention:
   keep_latest_runs: 2
 
 precaching:
-  enabled: true
+  enabled: false
   keep_recent_cycles: 1
   forecast_hours: [1, 6, 12, 24, 48]
   warm_on_ingest: false

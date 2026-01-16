@@ -49,7 +49,7 @@ retention:
 
 # Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
 precaching:
-  enabled: true
+  enabled: false
   keep_recent: 3
   warm_on_ingest: false
   poll_interval_secs: 120

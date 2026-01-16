@@ -51,7 +51,7 @@ retention:
 
 # Precaching configuration - disabled for now
 precaching:
-  enabled: true
+  enabled: false
 
 parameters:
   # ==========================================================================

@@ -56,4 +56,5 @@
 - scope out 'specialized' PNGs for EDR where we encode multiple values
 - scope out 'specialized' enpoints for the various activities and the data required for them
 - add resolution stuff for trajectory and corridor queries
-- figure out how to ingest ensemble data and it's members and then expose pre-computed stuff through WMS/EDR 
+- figure out how to ingest ensemble data and it's members and then expose pre-computed stuff through WMS/EDR
+- use the .idx files in s3 to only download the parameters we want from NOAA so we don't download the entire grib file every time
