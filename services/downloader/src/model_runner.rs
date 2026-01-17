@@ -212,6 +212,7 @@ impl ModelRunner {
         let model_id = self.model.model.id.clone();
         let max_concurrent = self.permit.max_concurrent();
         let skip_size_validation = self.model.source.skip_size_validation;
+        let skip_size_validation = self.model.source.skip_size_validation;
 
         // Build parameter filters for selective download if enabled
         let param_filters: Option<Vec<ParamFilter>> = if self.model.source.use_index_file {
