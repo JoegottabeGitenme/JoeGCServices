@@ -220,6 +220,7 @@ impl GribIndex {
     }
 
     /// Check if index is empty.
+    #[allow(dead_code)] // Used in tests and potentially useful for callers
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -261,6 +262,7 @@ impl GribIndex {
     /// # Arguments
     /// * `filters` - Parameter filters to match
     /// * `gap_threshold` - Maximum gap (bytes) between ranges to merge (0 = only merge adjacent)
+    #[allow(dead_code)] // Useful utility method for future optimizations
     pub fn get_merged_byte_ranges(
         &self,
         filters: &[ParamFilter],
@@ -299,26 +301,41 @@ impl GribIndex {
     ///
     /// This is calculated as the byte before the next message starts,
     /// or the last byte of the file for the final message.
+    ///
+    /// Uses binary search for O(log n) performance since entries are sorted by byte_offset.
     fn get_message_end_byte(&self, entry: &IndexEntry) -> u64 {
-        // Find the next entry by byte offset
-        for other in &self.entries {
-            if other.byte_offset > entry.byte_offset {
-                // End byte is one before the next message
-                return other.byte_offset - 1;
-            }
+        // Binary search for the entry's position
+        let search_result = self
+            .entries
+            .binary_search_by_key(&entry.byte_offset, |e| e.byte_offset);
+
+        let current_idx = match search_result {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1), // Entry not found exactly, use nearest
+        };
+
+        // If there's a next entry, use its offset - 1
+        if current_idx + 1 < self.entries.len() {
+            return self.entries[current_idx + 1].byte_offset.saturating_sub(1);
         }
 
-        // This is the last message - use file size or estimate
+        // This is the last message - use file size if available
         if let Some(size) = self.file_size {
-            size - 1
+            // Use saturating_sub to handle edge case where size is 0
+            size.saturating_sub(1)
         } else {
-            // If we don't know file size, estimate based on typical message size
-            // This is a fallback that may download extra bytes
+            // If we don't know file size, we must estimate. Log a warning since
+            // this could download too much or too little data.
+            warn!(
+                byte_offset = entry.byte_offset,
+                "No file size available for last message, using 10MB estimate"
+            );
             entry.byte_offset + 10_000_000 // 10MB estimate
         }
     }
 
     /// Get all unique parameters in the index.
+    #[allow(dead_code)] // Useful for debugging and introspection
     pub fn parameters(&self) -> Vec<String> {
         let mut params: Vec<String> = self.entries.iter().map(|e| e.parameter.clone()).collect();
         params.sort();
@@ -327,6 +344,7 @@ impl GribIndex {
     }
 
     /// Get all unique levels for a given parameter.
+    #[allow(dead_code)] // Useful for debugging and introspection
     pub fn levels_for_parameter(&self, parameter: &str) -> Vec<String> {
         let mut levels: Vec<String> = self
             .entries
@@ -340,6 +358,7 @@ impl GribIndex {
     }
 
     /// Get entries as a slice.
+    #[allow(dead_code)] // Useful for debugging and introspection
     pub fn entries(&self) -> &[IndexEntry] {
         &self.entries
     }
@@ -573,5 +592,169 @@ mod tests {
 
         let non_match = IndexEntry::parse("1:0:d=2026:TMP:850 mb:anl:").unwrap();
         assert!(!filter.matches(&non_match));
+    }
+
+    // =========================================================================
+    // Edge Case Tests
+    // =========================================================================
+
+    #[test]
+    fn test_empty_index_file() {
+        // Empty content should fail
+        let result = GribIndex::parse("", None);
+        assert!(result.is_err());
+
+        // Whitespace only should fail
+        let result = GribIndex::parse("   \n\n  ", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_single_entry_index() {
+        // Single entry with file size
+        let index = GribIndex::parse("1:0:d=2026:TMP:surface:anl:", Some(5000)).unwrap();
+
+        assert_eq!(index.len(), 1);
+        assert!(!index.is_empty());
+
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("TMP", "surface")]);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[0].end, 4999); // file_size - 1
+    }
+
+    #[test]
+    fn test_single_entry_no_file_size() {
+        // Single entry without file size - should use fallback estimate
+        let index = GribIndex::parse("1:1000:d=2026:TMP:surface:anl:", None).unwrap();
+
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("TMP", "surface")]);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, 1000);
+        // Should use the 10MB fallback estimate
+        assert_eq!(ranges[0].end, 1000 + 10_000_000);
+    }
+
+    #[test]
+    fn test_zero_byte_offset_entry() {
+        // Entry with byte_offset = 0 (first message in file)
+        let index = GribIndex::parse(
+            "1:0:d=2026:TMP:surface:anl:\n2:1000:d=2026:RH:surface:anl:",
+            Some(5000),
+        )
+        .unwrap();
+
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("TMP", "surface")]);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[0].end, 999); // Next message starts at 1000, so end is 999
+    }
+
+    #[test]
+    fn test_adjacent_messages() {
+        // Two adjacent messages (byte offsets are consecutive)
+        let index = GribIndex::parse(
+            "1:0:d=2026:TMP:surface:anl:\n2:100:d=2026:RH:surface:anl:",
+            Some(200),
+        )
+        .unwrap();
+
+        // Get both
+        let filters = vec![
+            ParamFilter::new("TMP", "surface"),
+            ParamFilter::new("RH", "surface"),
+        ];
+        let ranges = index.get_byte_ranges(&filters);
+        assert_eq!(ranges.len(), 2);
+
+        // First: 0-99
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[0].end, 99);
+
+        // Second: 100-199
+        assert_eq!(ranges[1].start, 100);
+        assert_eq!(ranges[1].end, 199);
+
+        // When merged, should become single range
+        let merged = GribIndex::merge_ranges(ranges, 0);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0);
+        assert_eq!(merged[0].end, 199);
+    }
+
+    #[test]
+    fn test_no_matching_filters() {
+        let index = GribIndex::parse(SAMPLE_INDEX, Some(500_000_000)).unwrap();
+
+        let filters = vec![ParamFilter::new("NONEXISTENT", "surface")];
+
+        let matches = index.find_matching_entries(&filters);
+        assert!(matches.is_empty());
+
+        let ranges = index.get_byte_ranges(&filters);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_malformed_lines_skipped() {
+        // Mix of valid and invalid lines - invalid should be skipped
+        let content = r#"
+1:0:d=2026:TMP:surface:anl:
+invalid line here
+2:1000:d=2026:RH:surface:anl:
+also:bad
+3:2000:d=2026:PRES:surface:anl:
+"#;
+        let index = GribIndex::parse(content, Some(5000)).unwrap();
+
+        // Should have parsed 3 valid entries
+        assert_eq!(index.len(), 3);
+    }
+
+    #[test]
+    fn test_saturating_sub_on_zero() {
+        // Verify ByteRange handles edge cases with saturating operations
+        let range = ByteRange::new(0, 0);
+        assert_eq!(range.size(), 1); // 0-0 inclusive is 1 byte
+        assert_eq!(range.to_http_range(), "bytes=0-0");
+    }
+
+    #[test]
+    fn test_file_size_zero() {
+        // Edge case: file_size is 0 (should use saturating_sub)
+        let index = GribIndex::parse("1:0:d=2026:TMP:surface:anl:", Some(0)).unwrap();
+
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("TMP", "surface")]);
+        assert_eq!(ranges.len(), 1);
+        // saturating_sub(1) on 0 should give 0, not underflow
+        assert_eq!(ranges[0].end, 0);
+    }
+
+    #[test]
+    fn test_binary_search_correctness() {
+        // Verify binary search finds correct end bytes for various positions
+        let content = r#"
+1:0:d=2026:A:surface:anl:
+2:1000:d=2026:B:surface:anl:
+3:2000:d=2026:C:surface:anl:
+4:3000:d=2026:D:surface:anl:
+5:4000:d=2026:E:surface:anl:
+"#;
+        let index = GribIndex::parse(content, Some(5000)).unwrap();
+
+        // First entry
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("A", "surface")]);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[0].end, 999);
+
+        // Middle entry
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("C", "surface")]);
+        assert_eq!(ranges[0].start, 2000);
+        assert_eq!(ranges[0].end, 2999);
+
+        // Last entry
+        let ranges = index.get_byte_ranges(&[ParamFilter::new("E", "surface")]);
+        assert_eq!(ranges[0].start, 4000);
+        assert_eq!(ranges[0].end, 4999); // Uses file_size
     }
 }

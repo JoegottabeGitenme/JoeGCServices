@@ -327,20 +327,31 @@ impl ModelConfig {
 
             for level in &param.levels {
                 // Try to get the level code
-                let level_code = level.level_code.unwrap_or_else(|| {
+                let (level_code, level_type_unknown) = if let Some(code) = level.level_code {
+                    (code, false)
+                } else {
                     // Map level type name to code if not specified
                     match level.level_type.as_deref() {
-                        Some("surface") => 1,
-                        Some("isobaric") => 100,
-                        Some("mean_sea_level") => 101,
-                        Some("height_above_ground") => 103,
-                        Some("entire_atmosphere") => 200,
-                        Some("cloud_layer") | Some("low_cloud_layer") => 214,
-                        Some("middle_cloud_layer") => 224,
-                        Some("high_cloud_layer") => 234,
-                        _ => 0, // Unknown
+                        Some("surface") => (1, false),
+                        Some("isobaric") => (100, false),
+                        Some("mean_sea_level") => (101, false),
+                        Some("height_above_ground") => (103, false),
+                        Some("entire_atmosphere") => (200, false),
+                        Some("cloud_layer") | Some("low_cloud_layer") => (214, false),
+                        Some("middle_cloud_layer") => (224, false),
+                        Some("high_cloud_layer") => (234, false),
+                        Some(unknown_type) => {
+                            warn!(
+                                model = %self.model.id,
+                                param = %param_name,
+                                level_type = %unknown_type,
+                                "Unknown level type, parameter may not be included in selective download"
+                            );
+                            (0, true)
+                        }
+                        None => (0, true),
                     }
-                });
+                };
 
                 // If we have multiple values (e.g., isobaric levels)
                 if let Some(ref values) = level.values {
@@ -358,12 +369,30 @@ impl ModelConfig {
                             level_to_idx_string(level_code, Some(value_for_idx))
                         {
                             filters.push((param_name.clone(), level_str));
+                        } else if level_type_unknown {
+                            // Already warned above
+                        } else {
+                            warn!(
+                                model = %self.model.id,
+                                param = %param_name,
+                                level_code = level_code,
+                                value = value,
+                                "Could not convert level to .idx string"
+                            );
                         }
                     }
                 } else if let Some(value) = level.value {
                     // Single value
                     if let Some(level_str) = level_to_idx_string(level_code, Some(value)) {
                         filters.push((param_name.clone(), level_str));
+                    } else if !level_type_unknown {
+                        warn!(
+                            model = %self.model.id,
+                            param = %param_name,
+                            level_code = level_code,
+                            value = value,
+                            "Could not convert level to .idx string"
+                        );
                     }
                 } else {
                     // No value (surface, entire_atmosphere, etc.)
@@ -372,6 +401,13 @@ impl ModelConfig {
                     } else if let Some(ref display) = level.display {
                         // Use display string directly if we can't derive it
                         filters.push((param_name.clone(), display.clone()));
+                    } else if !level_type_unknown {
+                        warn!(
+                            model = %self.model.id,
+                            param = %param_name,
+                            level_code = level_code,
+                            "Could not convert level to .idx string and no display fallback"
+                        );
                     }
                 }
             }

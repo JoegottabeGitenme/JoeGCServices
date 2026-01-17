@@ -580,8 +580,12 @@ impl DownloadManager {
             .await
         {
             Ok(bytes_downloaded) => {
-                // Move to final location
-                if let Err(_) = fs::rename(&temp_path, &final_path).await {
+                // Move to final location (use copy+delete for cross-filesystem support)
+                if let Err(rename_err) = fs::rename(&temp_path, &final_path).await {
+                    debug!(
+                        error = %rename_err,
+                        "rename failed (likely cross-device), falling back to copy"
+                    );
                     fs::copy(&temp_path, &final_path).await?;
                     fs::remove_file(&temp_path).await?;
                 }
@@ -705,15 +709,35 @@ impl DownloadManager {
                 .await
                 .context("Failed to read range data")?;
 
-            // Verify we got approximately the right amount (allow some variance for GRIB alignment)
+            // Verify we got approximately the right amount
+            // Allow 10% variance for potential Content-Range header differences
             let expected = range.size();
             let actual = bytes.len() as u64;
-            if actual < expected / 2 || actual > expected * 2 {
+            let tolerance = expected / 10; // 10% tolerance
+            let min_expected = expected.saturating_sub(tolerance);
+            let max_expected = expected.saturating_add(tolerance);
+
+            if actual < min_expected || actual > max_expected {
+                // More than 10% deviation - this is suspicious
+                if actual < expected / 2 || actual > expected * 2 {
+                    // More than 2x deviation - likely corrupted or wrong data
+                    return Err(anyhow!(
+                        "Range {} size mismatch: expected {} bytes, got {} (>2x deviation)",
+                        i,
+                        expected,
+                        actual
+                    ));
+                }
+                // Between 10% and 2x - warn but continue
                 warn!(
                     range_index = i,
                     expected = expected,
                     actual = actual,
-                    "Range size mismatch"
+                    deviation_percent = format!(
+                        "{:.1}%",
+                        ((actual as f64 / expected as f64) - 1.0).abs() * 100.0
+                    ),
+                    "Range size outside expected tolerance"
                 );
             }
 
@@ -734,6 +758,7 @@ impl DownloadManager {
 
 /// Result of a selective download attempt.
 #[derive(Debug)]
+#[must_use = "SelectiveDownloadResult must be handled - check for Fallback case"]
 pub enum SelectiveDownloadResult {
     /// Download succeeded, contains path to downloaded file
     Success(PathBuf),
