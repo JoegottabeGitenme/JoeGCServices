@@ -211,8 +211,6 @@ impl ModelRunner {
     async fn download_files(&self, files: Vec<DownloadFile>) -> Result<()> {
         let model_id = self.model.model.id.clone();
         let max_concurrent = self.permit.max_concurrent();
-        let skip_size_validation = self.model.source.skip_size_validation;
-        let skip_size_validation = self.model.source.skip_size_validation;
 
         // Build parameter filters for selective download if enabled
         let param_filters: Option<Vec<ParamFilter>> = if self.model.source.use_index_file {
@@ -241,6 +239,7 @@ impl ModelRunner {
         };
 
         let index_suffix = self.model.source.index_suffix.clone();
+        let skip_size_validation = self.model.source.skip_size_validation;
 
         let results = stream::iter(files)
             .map(|file| {
@@ -253,6 +252,7 @@ impl ModelRunner {
                 let model_id = model_id.clone();
                 let param_filters = param_filters.clone();
                 let index_suffix = index_suffix.clone();
+                let skip_size_validation = skip_size_validation;
 
                 async move {
                     // Acquire a download slot (guaranteed or shared)
@@ -262,7 +262,7 @@ impl ModelRunner {
                     let download_result = if let Some(ref filters) = param_filters {
                         // Try selective download first
                         // Note: skip_size_validation is captured from outer scope (self.model.source)
-                    match manager
+                        match manager
                             .download_selective(
                                 &file.url,
                                 &file.filename,
@@ -286,15 +286,23 @@ impl ModelRunner {
                                     url = %file.url,
                                     reason = %reason,
                                     "Falling back to full download"
-                                );manager
-                        .download(&file.url, &file.filename, &state, skip_size_validation)
-                        .await
-                   }
+                                );
+                                manager
+                                    .download(
+                                        &file.url,
+                                        &file.filename,
+                                        &state,
+                                        skip_size_validation,
+                                    )
+                                    .await
+                            }
                             Err(e) => Err(e),
                         }
                     } else {
                         // Full download
-                        manager.download(&file.url, &file.filename, &state).await
+                        manager
+                            .download(&file.url, &file.filename, &state, skip_size_validation)
+                            .await
                     };
 
                     match download_result {

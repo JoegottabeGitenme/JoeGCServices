@@ -153,7 +153,7 @@ pub fn compute_sunrise_sunset(lat: f64, lon: f64, date: NaiveDate) -> (Option<i6
             // If sunset < sunrise, it means we got yesterday's sunset, so we query again
             // from after sunrise to get today's sunset.
 
-            let mut sunrise = if result.rise != 0 {
+            let sunrise = if result.rise != 0 {
                 Some(result.rise)
             } else {
                 None
@@ -240,7 +240,7 @@ pub fn compute_lunar(_lat: f64, _lon: f64, datetime: &DateTime<Utc>) -> LunarDat
     let jd = datetime_to_jd(datetime);
 
     // Get moon's geocentric ecliptic position
-    let (moon_ecl_pos, _radius) = lunar::geocent_ecl_pos(jd);
+    let (_moon_ecl_pos, _radius) = lunar::geocent_ecl_pos(jd);
 
     // Calculate moon age (days since last new moon)
     // Simplified calculation using synodic month
