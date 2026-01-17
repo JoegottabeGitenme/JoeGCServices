@@ -154,10 +154,12 @@ impl TimingStats {
         }
     }
 
+    #[allow(dead_code)] // May be useful for future metrics display
     fn last_ms(&self) -> f64 {
         self.last_us as f64 / 1000.0
     }
 
+    #[allow(dead_code)] // May be useful for future metrics display
     fn min_ms(&self) -> f64 {
         self.min_us as f64 / 1000.0
     }

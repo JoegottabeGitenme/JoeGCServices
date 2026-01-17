@@ -23,6 +23,9 @@ source:
   # Contains: all surface params + full upper-air profiles at standard pressure levels
   file_pattern: "hrrr.t{cycle:02}z.wrfprsf{forecast:02}.grib2"
   region: us-east-1
+  # Enable selective download via .idx files to reduce bandwidth
+  # Downloads only configured parameters instead of entire GRIB file (~90% savings)
+  use_index_file: true
 
 grid:
   projection: lambert_conformal

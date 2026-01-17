@@ -20,7 +20,8 @@ use tracing::{debug, error, info, warn};
 use crate::cleanup::delete_ingested_file;
 use crate::concurrency::ModelDownloadPermit;
 use crate::config::ModelConfig;
-use crate::download::DownloadManager;
+use crate::download::{DownloadManager, SelectiveDownloadResult};
+use crate::grib_index::ParamFilter;
 use crate::state::DownloadState;
 
 /// File to download with optional timestamp for priority sorting.
@@ -189,6 +190,34 @@ impl ModelRunner {
         let model_id = self.model.model.id.clone();
         let max_concurrent = self.permit.max_concurrent();
 
+        // Build parameter filters for selective download if enabled
+        let param_filters: Option<Vec<ParamFilter>> = if self.model.source.use_index_file {
+            let filters = self.model.build_param_filters();
+            if filters.is_empty() {
+                warn!(
+                    model = %model_id,
+                    "use_index_file enabled but no parameter filters could be built, using full download"
+                );
+                None
+            } else {
+                info!(
+                    model = %model_id,
+                    filter_count = filters.len(),
+                    "Selective download enabled"
+                );
+                Some(
+                    filters
+                        .into_iter()
+                        .map(|(p, l)| ParamFilter::new(p, l))
+                        .collect(),
+                )
+            }
+        } else {
+            None
+        };
+
+        let index_suffix = self.model.source.index_suffix.clone();
+
         let results = stream::iter(files)
             .map(|file| {
                 let permit = self.permit.clone();
@@ -198,13 +227,51 @@ impl ModelRunner {
                 let client = self.client.clone();
                 let output_dir = self.output_dir.clone();
                 let model_id = model_id.clone();
+                let param_filters = param_filters.clone();
+                let index_suffix = index_suffix.clone();
 
                 async move {
                     // Acquire a download slot (guaranteed or shared)
                     let _slot = permit.acquire().await;
 
-                    // Perform the download
-                    match manager.download(&file.url, &file.filename, &state).await {
+                    // Perform the download (selective or full)
+                    let download_result = if let Some(ref filters) = param_filters {
+                        // Try selective download first
+                        match manager
+                            .download_selective(
+                                &file.url,
+                                &file.filename,
+                                &index_suffix,
+                                filters,
+                                &state,
+                            )
+                            .await
+                        {
+                            Ok(SelectiveDownloadResult::Success(path)) => {
+                                info!(
+                                    model = %model_id,
+                                    url = %file.url,
+                                    "Selective download complete"
+                                );
+                                Ok(path)
+                            }
+                            Ok(SelectiveDownloadResult::Fallback(reason)) => {
+                                info!(
+                                    model = %model_id,
+                                    url = %file.url,
+                                    reason = %reason,
+                                    "Falling back to full download"
+                                );
+                                manager.download(&file.url, &file.filename, &state).await
+                            }
+                            Err(e) => Err(e),
+                        }
+                    } else {
+                        // Full download
+                        manager.download(&file.url, &file.filename, &state).await
+                    };
+
+                    match download_result {
                         Ok(path) => {
                             info!(
                                 model = %model_id,

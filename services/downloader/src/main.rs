@@ -12,6 +12,7 @@ mod cleanup;
 mod concurrency;
 mod config;
 mod download;
+mod grib_index;
 mod model_runner;
 mod scheduler;
 mod server;
