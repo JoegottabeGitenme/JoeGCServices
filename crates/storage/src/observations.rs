@@ -1017,6 +1017,33 @@ impl ObservationCatalog {
         Ok(count)
     }
 
+    /// Get the time range of observations for a source.
+    ///
+    /// Returns (oldest_time, newest_time) or None if no observations exist.
+    pub async fn get_observation_time_range(
+        &self,
+        source: &str,
+    ) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        #[derive(sqlx::FromRow)]
+        struct TimeRange {
+            min_time: Option<DateTime<Utc>>,
+            max_time: Option<DateTime<Utc>>,
+        }
+
+        let range = sqlx::query_as::<_, TimeRange>(
+            "SELECT MIN(obs_time) as min_time, MAX(obs_time) as max_time FROM observations WHERE source = $1",
+        )
+        .bind(source)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get time range failed: {}", e)))?;
+
+        match (range.min_time, range.max_time) {
+            (Some(min), Some(max)) => Ok(Some((min, max))),
+            _ => Ok(None),
+        }
+    }
+
     /// Delete observations older than a given time.
     ///
     /// Returns the number of rows deleted.

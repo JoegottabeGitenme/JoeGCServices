@@ -13,7 +13,7 @@
 # Note: Position queries are not supported (use radius with small radius instead)
 
 model: metar
-data_type: point_observation
+data_type: pointobservation
 observation_source: metar
 
 collections:
