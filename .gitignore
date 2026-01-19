@@ -118,3 +118,4 @@ compile_commands.json
 
 # Security scan results
 /scripts/security-scan-results/
+/VNL_npp_2024_global_vcmslcfg_v2_c202502261200.average_masked.dat.tif.gz
