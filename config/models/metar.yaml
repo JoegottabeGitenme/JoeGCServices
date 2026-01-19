@@ -1,0 +1,98 @@
+# METAR - Aviation Surface Weather Observations
+# Point observations from airports worldwide
+
+model:
+  id: metar
+  name: "METAR - Surface Weather Observations"
+  description: "Routine aviation surface weather observations from airports"
+  enabled: true
+
+# Source configuration for Aviation Weather API
+source:
+  type: aviation_weather_api
+  # Base URL for the Aviation Weather Center Data API
+  base_url: "https://aviationweather.gov/api/data/metar"
+  # Format to request
+  format: json
+
+# Grid section defines the geographic coverage area
+# For point observations, this is used to filter the API request
+grid:
+  projection: geographic
+  resolution: "point"
+  # Bounding box for CONUS + adjacent areas
+  # API supports bbox parameter: minLon,minLat,maxLon,maxLat
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+
+# Schedule configuration for observations
+schedule:
+  type: observation
+  # METAR updates hourly (routine) with SPECI (special) reports as needed
+  # Poll every 5 minutes to catch updates promptly
+  poll_interval_secs: 300
+  # Not used for observation polling, but retained for config compatibility
+  lookback_minutes: 120
+
+# Retention settings
+retention:
+  hours: 24  # Keep 24 hours of observations
+
+# Parameters captured from METAR observations
+# These are stored in SI units internally
+parameters:
+  - name: temperature
+    description: "Air temperature"
+    units: "K"  # Stored in Kelvin, source is Celsius
+    display_units: "C"
+    
+  - name: dewpoint
+    description: "Dewpoint temperature"
+    units: "K"  # Stored in Kelvin, source is Celsius
+    display_units: "C"
+    
+  - name: wind_direction
+    description: "Wind direction"
+    units: "degrees"
+    display_units: "deg"
+    
+  - name: wind_speed
+    description: "Wind speed"
+    units: "m/s"  # Stored in m/s, source is knots
+    display_units: "kt"
+    
+  - name: wind_gust
+    description: "Wind gust speed"
+    units: "m/s"  # Stored in m/s, source is knots
+    display_units: "kt"
+    
+  - name: visibility
+    description: "Visibility"
+    units: "m"  # Stored in meters, source is statute miles
+    display_units: "SM"
+    
+  - name: altimeter
+    description: "Altimeter setting"
+    units: "Pa"  # Stored in Pascals, source is hPa/mb
+    display_units: "inHg"
+    
+  - name: sea_level_pressure
+    description: "Sea level pressure"
+    units: "Pa"  # Stored in Pascals, source is hPa
+    display_units: "hPa"
+    
+  - name: cloud_base
+    description: "Lowest cloud base height"
+    units: "m"  # Stored in meters, source is feet AGL
+    display_units: "ft"
+    
+  - name: cloud_cover
+    description: "Cloud cover category"
+    units: "category"  # SKC, FEW, SCT, BKN, OVC
+    
+  - name: flight_category
+    description: "Flight category"
+    units: "category"  # VFR, MVFR, IFR, LIFR

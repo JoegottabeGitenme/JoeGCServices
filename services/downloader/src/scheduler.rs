@@ -17,6 +17,7 @@ use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
 use crate::download::DownloadManager;
 use crate::model_runner::ModelRunner;
+use crate::observation_runner::{self, ObservationConfig, ObservationRunner};
 use crate::state::DownloadState;
 
 /// Model schedule info for API display.
@@ -81,6 +82,8 @@ pub struct Scheduler {
     output_dir: PathBuf,
     /// Cached model configs
     model_configs: Vec<ModelConfig>,
+    /// Observation source configs (METAR, etc.)
+    observation_configs: Vec<ObservationConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
 }
@@ -114,6 +117,9 @@ impl Scheduler {
             Self::default_configs()
         });
 
+        // Load observation configs (METAR, etc.)
+        let observation_configs = Self::load_observation_configs(&config_dir, &ingester_url);
+
         // Initialize AWS SDK for S3 listing
         // For NOAA public buckets, we need to explicitly allow anonymous access
         // by providing credentials (they won't be used but SDK requires them)
@@ -135,6 +141,14 @@ impl Scheduler {
             "Scheduler concurrency configuration"
         );
 
+        if !observation_configs.is_empty() {
+            info!(
+                count = observation_configs.len(),
+                sources = ?observation_configs.iter().map(|c| &c.id).collect::<Vec<_>>(),
+                "Loaded observation source configurations"
+            );
+        }
+
         Self {
             download_manager,
             state,
@@ -144,8 +158,52 @@ impl Scheduler {
             config_dir,
             output_dir,
             model_configs,
+            observation_configs,
             s3_client,
         }
+    }
+
+    /// Load observation source configurations from model config files.
+    fn load_observation_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<ObservationConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match observation_runner::load_observation_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(
+                                source = %config.id,
+                                "Loaded observation source config"
+                            );
+                            configs.push(config);
+                        }
+                        Ok(None) => {
+                            // Not an observation source, skip
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load observation config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
     }
 
     /// Get the model schedules for status display.
@@ -257,20 +315,21 @@ impl Scheduler {
             .cloned()
             .collect();
 
-        if enabled_models.is_empty() {
-            warn!("No enabled models to download");
+        if enabled_models.is_empty() && self.observation_configs.is_empty() {
+            warn!("No enabled models or observation sources to download");
             return Ok(());
         }
 
-        // Create concurrency manager
+        // Create concurrency manager for model downloads
         let concurrency_manager =
-            ConcurrencyManager::new(self.total_max_concurrent, enabled_models.len());
+            ConcurrencyManager::new(self.total_max_concurrent, enabled_models.len().max(1));
 
         info!(
             total_max = self.total_max_concurrent,
             num_models = enabled_models.len(),
+            num_observation_sources = self.observation_configs.len(),
             shared_pool = concurrency_manager.shared_pool_size(),
-            "Starting parallel model runners"
+            "Starting parallel runners"
         );
 
         let mut handles = Vec::new();
@@ -305,10 +364,34 @@ impl Scheduler {
             }));
         }
 
+        // Spawn observation runners (METAR, etc.)
+        for obs_config in &self.observation_configs {
+            let runner = match ObservationRunner::new(obs_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %obs_config.id,
+                        error = %e,
+                        "Failed to create observation runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = obs_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "Observation runner failed");
+                }
+            }));
+        }
+
         // Wait for all runners to complete (usually via shutdown signal)
         futures::future::join_all(handles).await;
 
-        info!("All model runners stopped");
+        info!("All runners stopped");
         Ok(())
     }
 
