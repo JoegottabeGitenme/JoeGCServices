@@ -87,12 +87,12 @@ pub async fn locations_list_handler(
     Query(params): Query<LocationsListParams>,
     headers: HeaderMap,
 ) -> Response {
-    // Check if this is a point observation collection
+    // Check if this is a point data collection (METAR observations or TAF forecasts)
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
-            if model_config.data_type.is_point_observation() {
-                // Dispatch to observation handler
+            if model_config.data_type.is_point_data() {
+                // Dispatch to observation handler for both point observations and point forecasts
                 let obs_params = ObsLocationsListParams {
                     f: params.f.clone(),
                     limit: None,
@@ -200,12 +200,12 @@ pub async fn location_query_handler(
     Query(params): Query<LocationQueryParams>,
     headers: HeaderMap,
 ) -> Response {
-    // Check if this is a point observation collection
+    // Check if this is a point data collection (METAR observations or TAF forecasts)
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
-            if model_config.data_type.is_point_observation() {
-                // Dispatch to observation handler
+            if model_config.data_type.is_point_data() {
+                // Dispatch to observation handler for both point observations and point forecasts
                 let obs_params = ObsLocationQueryParams {
                     datetime: params.datetime.clone(),
                     parameter_name: params.parameter_name.clone(),
@@ -747,6 +747,563 @@ fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
         .body(json.into())
         .unwrap()
 }
+
+// =============================================================================
+// Global Locations Endpoints
+// =============================================================================
+//
+// These endpoints provide a unified view of all known locations across both
+// static config (for gridded data) and database (for point observations/forecasts).
+//
+// GET /edr/locations - List all known locations
+// GET /edr/locations/{locationId} - Get all available data at a location
+
+/// Query parameters for global locations list endpoint.
+#[derive(Debug, Deserialize, Default)]
+pub struct GlobalLocationsListParams {
+    /// Output format (json, geojson).
+    pub f: Option<String>,
+    /// Filter to locations with data in these collections (comma-separated).
+    pub collections: Option<String>,
+}
+
+/// Query parameters for global location data endpoint.
+#[derive(Debug, Deserialize, Default)]
+pub struct GlobalLocationDataParams {
+    /// Output format (json, geojson, text).
+    pub f: Option<String>,
+}
+
+/// Response structure for a location feature with available data.
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationFeature {
+    #[serde(rename = "type")]
+    pub feature_type: String,
+    pub id: String,
+    pub geometry: GlobalLocationGeometry,
+    pub properties: GlobalLocationProperties,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<GlobalLocationLink>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationGeometry {
+    #[serde(rename = "type")]
+    pub geom_type: String,
+    pub coordinates: [f64; 2],
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationProperties {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elevation_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub available_collections: Vec<String>,
+    /// Nested data (METAR, TAF, etc.) - only present in single location response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<GlobalLocationData>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metar: Option<MetarData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taf: Option<TafData>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct MetarData {
+    pub obs_time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_k: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dewpoint_k: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_direction_deg: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_speed_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_gust_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub altimeter_pa: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flight_category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_layers: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_observation: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TafData {
+    pub issue_time: String,
+    pub valid_from: String,
+    pub valid_to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_taf: Option<String>,
+    pub periods: Vec<TafPeriodData>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TafPeriodData {
+    pub from: String,
+    pub to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probability: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_direction_deg: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_speed_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_gust_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_layers: Option<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationLink {
+    pub rel: String,
+    pub href: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct GlobalLocationsCollection {
+    #[serde(rename = "type")]
+    pub collection_type: String,
+    pub features: Vec<GlobalLocationFeature>,
+    #[serde(rename = "numberReturned")]
+    pub number_returned: usize,
+    pub links: Vec<GlobalLocationLink>,
+}
+
+/// GET /edr/locations - List all known locations
+///
+/// Returns a merged list of locations from:
+/// - Database (airports with METAR/TAF data)
+/// - Static config (predefined locations for gridded data)
+///
+/// Database locations take precedence for coordinates when IDs overlap.
+pub async fn global_locations_list_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Query(params): Query<GlobalLocationsListParams>,
+) -> Response {
+    let base_url = &state.base_url;
+
+    // Parse collection filter if provided
+    let collection_filter: Option<Vec<String>> = params.collections.as_ref().map(|c| {
+        c.split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+
+    // Get locations from database
+    let db_locations = state
+        .observation_catalog
+        .get_locations(None)
+        .await
+        .unwrap_or_default();
+
+    // Get locations from static config
+    let config = state.edr_config.read().await;
+    let static_locations = &config.locations.locations;
+
+    // Merge locations: database takes precedence for coordinates
+    let mut locations_map: std::collections::HashMap<String, GlobalLocationFeature> =
+        std::collections::HashMap::new();
+
+    // First add static locations
+    for loc in static_locations {
+        let id = loc.id.to_uppercase();
+        let feature = GlobalLocationFeature {
+            feature_type: "Feature".to_string(),
+            id: id.clone(),
+            geometry: GlobalLocationGeometry {
+                geom_type: "Point".to_string(),
+                coordinates: [loc.coords[0], loc.coords[1]],
+            },
+            properties: GlobalLocationProperties {
+                name: loc.name.clone(),
+                description: loc.description.clone(),
+                location_type: loc.properties.get("type").cloned(),
+                elevation_m: None,
+                country: loc.properties.get("country").cloned(),
+                available_collections: Vec::new(), // Not calculated for list view
+                data: None,
+            },
+            links: vec![GlobalLocationLink {
+                rel: "self".to_string(),
+                href: format!("{}/locations/{}", base_url, id),
+                title: None,
+            }],
+        };
+        locations_map.insert(id, feature);
+    }
+
+    // Then add/override with database locations (more accurate coords)
+    for loc in db_locations {
+        let id = loc.id.to_uppercase();
+        let feature = GlobalLocationFeature {
+            feature_type: "Feature".to_string(),
+            id: id.clone(),
+            geometry: GlobalLocationGeometry {
+                geom_type: "Point".to_string(),
+                coordinates: [loc.lon, loc.lat],
+            },
+            properties: GlobalLocationProperties {
+                name: loc.name.clone(),
+                description: loc.description.clone(),
+                location_type: loc.location_type.clone(),
+                elevation_m: loc.elevation_m,
+                country: loc.country.clone(),
+                available_collections: Vec::new(), // Not calculated for list view
+                data: None,
+            },
+            links: vec![GlobalLocationLink {
+                rel: "self".to_string(),
+                href: format!("{}/locations/{}", base_url, id),
+                title: None,
+            }],
+        };
+        locations_map.insert(id, feature);
+    }
+
+    // If collection filter is specified, filter locations
+    let mut features: Vec<GlobalLocationFeature> = if let Some(ref filter) = collection_filter {
+        // For point data collections, check if location has data
+        let mut filtered = Vec::new();
+        for (id, feature) in locations_map {
+            let mut has_matching_collection = false;
+
+            for coll in filter {
+                if coll == "metar" {
+                    // Check if location has METAR data
+                    if let Ok(Some(_)) = state
+                        .observation_catalog
+                        .get_latest_observation(&id, Some("metar"))
+                        .await
+                    {
+                        has_matching_collection = true;
+                        break;
+                    }
+                } else if coll == "taf" {
+                    // Check if location has TAF data
+                    if let Ok(Some(_)) = state.observation_catalog.get_latest_taf(&id).await {
+                        has_matching_collection = true;
+                        break;
+                    }
+                } else {
+                    // For gridded collections, check if location is within bbox
+                    // This is expensive, so for list view we assume static locations
+                    // are valid for gridded collections they were configured for
+                    has_matching_collection = true;
+                    break;
+                }
+            }
+
+            if has_matching_collection {
+                filtered.push(feature);
+            }
+        }
+        filtered
+    } else {
+        locations_map.into_values().collect()
+    };
+
+    // Sort by ID for consistent ordering
+    features.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let response = GlobalLocationsCollection {
+        collection_type: "FeatureCollection".to_string(),
+        number_returned: features.len(),
+        features,
+        links: vec![GlobalLocationLink {
+            rel: "self".to_string(),
+            href: format!("{}/locations", base_url),
+            title: None,
+        }],
+    };
+
+    let json = serde_json::to_string_pretty(&response).unwrap_or_default();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header(header::CACHE_CONTROL, "max-age=60")
+        .body(json.into())
+        .unwrap()
+}
+
+/// GET /edr/locations/{locationId} - Get all available data at a location
+///
+/// Returns the location metadata along with all available data:
+/// - METAR observations (if available)
+/// - TAF forecasts (if available)
+/// - Available collections (both point data and gridded data within bbox)
+pub async fn global_location_data_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(location_id): Path<String>,
+    Query(params): Query<GlobalLocationDataParams>,
+) -> Response {
+    let base_url = &state.base_url;
+    let location_id = location_id.to_uppercase();
+
+    // Try to find location in database first (more accurate coords)
+    let db_location = state
+        .observation_catalog
+        .get_location(&location_id)
+        .await
+        .ok()
+        .flatten();
+
+    // Try static config as fallback
+    let config = state.edr_config.read().await;
+    let static_location = config.locations.find(&location_id);
+
+    // Determine location info (database takes precedence)
+    let (lon, lat, name, description, location_type, elevation_m, country) =
+        if let Some(ref loc) = db_location {
+            (
+                loc.lon,
+                loc.lat,
+                loc.name.clone(),
+                loc.description.clone(),
+                loc.location_type.clone(),
+                loc.elevation_m,
+                loc.country.clone(),
+            )
+        } else if let Some(loc) = static_location {
+            (
+                loc.coords[0],
+                loc.coords[1],
+                loc.name.clone(),
+                loc.description.clone(),
+                loc.properties.get("type").cloned(),
+                None,
+                loc.properties.get("country").cloned(),
+            )
+        } else {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                ExceptionResponse::not_found(format!("Location not found: {}", location_id)),
+            );
+        };
+
+    // Get available data and determine available collections
+    let mut available_collections = Vec::new();
+    let mut metar_data: Option<MetarData> = None;
+    let mut taf_data: Option<TafData> = None;
+    let mut links = vec![GlobalLocationLink {
+        rel: "self".to_string(),
+        href: format!("{}/locations/{}", base_url, location_id),
+        title: None,
+    }];
+
+    // Check for METAR data
+    if let Ok(Some(obs)) = state
+        .observation_catalog
+        .get_latest_observation(&location_id, Some("metar"))
+        .await
+    {
+        available_collections.push("metar".to_string());
+        metar_data = Some(MetarData {
+            obs_time: obs.obs_time.to_rfc3339(),
+            temperature_k: obs.temperature_k,
+            dewpoint_k: obs.dewpoint_k,
+            wind_direction_deg: obs.wind_direction_deg,
+            wind_speed_ms: obs.wind_speed_ms,
+            wind_gust_ms: obs.wind_gust_ms,
+            visibility_m: obs.visibility_m,
+            altimeter_pa: obs.altimeter_pa,
+            flight_category: obs.flight_category.clone(),
+            cloud_layers: obs.cloud_layers.clone(),
+            raw_observation: obs.raw_text.clone(),
+        });
+        links.push(GlobalLocationLink {
+            rel: "collection".to_string(),
+            href: format!("{}/collections/metar/locations/{}", base_url, location_id),
+            title: Some("METAR observations".to_string()),
+        });
+    }
+
+    // Check for TAF data
+    if let Ok(Some(taf)) = state.observation_catalog.get_latest_taf(&location_id).await {
+        available_collections.push("taf".to_string());
+        let periods: Vec<TafPeriodData> = taf
+            .periods
+            .iter()
+            .map(|p| TafPeriodData {
+                from: p.period_from.to_rfc3339(),
+                to: p.period_to.to_rfc3339(),
+                change_type: p.change_indicator.clone(),
+                probability: p.probability,
+                wind_direction_deg: p.wind_direction_deg,
+                wind_speed_ms: p.wind_speed_ms,
+                wind_gust_ms: p.wind_gust_ms,
+                visibility_m: p.visibility_m,
+                cloud_layers: p.cloud_layers.clone(),
+            })
+            .collect();
+
+        taf_data = Some(TafData {
+            issue_time: taf.forecast.issue_time.to_rfc3339(),
+            valid_from: taf.forecast.valid_from.to_rfc3339(),
+            valid_to: taf.forecast.valid_to.to_rfc3339(),
+            raw_taf: taf.forecast.raw_taf.clone(),
+            periods,
+        });
+        links.push(GlobalLocationLink {
+            rel: "collection".to_string(),
+            href: format!("{}/collections/taf/locations/{}", base_url, location_id),
+            title: Some("TAF forecasts".to_string()),
+        });
+    }
+
+    // Check gridded collections - see which have data covering this point
+    // We check the catalog's actual bbox for each model
+    for (model_id, model_config) in &config.models {
+        if model_config.data_type.is_point_data() {
+            continue; // Already handled above
+        }
+
+        // Get the model's actual data extent from catalog
+        if let Ok(bbox) = state.catalog.get_model_bbox(model_id).await {
+            // Check if point is within bbox
+            if lon >= bbox.min_x && lon <= bbox.max_x && lat >= bbox.min_y && lat <= bbox.max_y {
+                // Add all collections from this model
+                for coll in &model_config.collections {
+                    available_collections.push(coll.id.clone());
+                    links.push(GlobalLocationLink {
+                        rel: "collection".to_string(),
+                        href: format!("{}/collections/{}", base_url, coll.id),
+                        title: Some(format!("{} (use position query)", coll.title)),
+                    });
+                }
+            }
+        }
+    }
+
+    // Sort collections for consistent output
+    available_collections.sort();
+    available_collections.dedup();
+
+    // Check for text format output
+    let wants_text = params
+        .f
+        .as_ref()
+        .map(|f| f == "text" || f == "text/plain")
+        .unwrap_or(false);
+
+    if wants_text {
+        // Return plain text format
+        let mut text = format!(
+            "Location: {} - {}\nCoordinates: {:.4}°N, {:.4}°W\n",
+            location_id,
+            name,
+            lat,
+            lon.abs()
+        );
+        if let Some(elev) = elevation_m {
+            text.push_str(&format!("Elevation: {}m\n", elev));
+        }
+        text.push('\n');
+
+        if let Some(ref metar) = metar_data {
+            text.push_str("=== METAR ===\n");
+            if let Some(ref raw) = metar.raw_observation {
+                text.push_str(raw);
+            } else {
+                text.push_str("(no raw METAR available)");
+            }
+            text.push_str("\n\n");
+        }
+
+        if let Some(ref taf) = taf_data {
+            text.push_str("=== TAF ===\n");
+            if let Some(ref raw) = taf.raw_taf {
+                text.push_str(raw);
+            } else {
+                text.push_str("(no raw TAF available)");
+            }
+            text.push('\n');
+        }
+
+        if available_collections.is_empty() {
+            text.push_str("No data available at this location.\n");
+        } else {
+            text.push_str(&format!(
+                "\nAvailable collections: {}\n",
+                available_collections.join(", ")
+            ));
+        }
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(text.into())
+            .unwrap();
+    }
+
+    // Build GeoJSON response
+    let data = if metar_data.is_some() || taf_data.is_some() {
+        Some(GlobalLocationData {
+            metar: metar_data,
+            taf: taf_data,
+        })
+    } else {
+        None
+    };
+
+    let feature = GlobalLocationFeature {
+        feature_type: "Feature".to_string(),
+        id: location_id.clone(),
+        geometry: GlobalLocationGeometry {
+            geom_type: "Point".to_string(),
+            coordinates: [lon, lat],
+        },
+        properties: GlobalLocationProperties {
+            name,
+            description,
+            location_type,
+            elevation_m,
+            country,
+            available_collections,
+            data,
+        },
+        links,
+    };
+
+    let json = serde_json::to_string_pretty(&feature).unwrap_or_default();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header(header::CACHE_CONTROL, "max-age=60")
+        .body(json.into())
+        .unwrap()
+}
+
+// TODO: Add pagination (limit, offset) for /edr/locations when location count grows large
+// TODO: Add spatial filtering (bbox, within) to /edr/locations
+// TODO: Cache collection availability per location with TTL
+// TODO: Add gridded data point extraction at /edr/locations/{id}
 
 #[cfg(test)]
 mod tests {

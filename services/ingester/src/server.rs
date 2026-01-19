@@ -24,7 +24,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use ingestion::{IngestOptions, Ingester, IngestionResult};
-use storage::observations::{Location, Observation, ObservationCatalog};
+use storage::observations::{Location, Observation, ObservationCatalog, TafForecast, TafPeriod};
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -111,6 +111,74 @@ pub struct ObservationIngestResponse {
     pub success: bool,
     pub message: String,
     pub observations_ingested: usize,
+    pub locations_updated: usize,
+}
+
+/// Request body for /ingest/tafs endpoint.
+#[derive(Debug, Deserialize)]
+pub struct TafIngestRequest {
+    /// Source identifier (e.g., "taf")
+    pub source: String,
+    /// List of TAF forecasts
+    pub forecasts: Vec<TafData>,
+}
+
+/// Single TAF forecast from the downloader.
+#[derive(Debug, Deserialize)]
+pub struct TafData {
+    /// Location identifier (ICAO code)
+    pub location_id: String,
+    /// Station name
+    pub name: Option<String>,
+    /// Longitude
+    pub longitude: f64,
+    /// Latitude
+    pub latitude: f64,
+    /// Elevation in meters
+    pub elevation_m: Option<f32>,
+    /// Issue time (ISO 8601)
+    pub issue_time: String,
+    /// Start of validity (ISO 8601)
+    pub valid_from: String,
+    /// End of validity (ISO 8601)
+    pub valid_to: String,
+    /// Raw TAF text
+    pub raw_taf: Option<String>,
+    /// Forecast periods
+    pub periods: Vec<TafPeriodData>,
+}
+
+/// Single TAF period from the downloader.
+#[derive(Debug, Deserialize)]
+pub struct TafPeriodData {
+    /// Start of period (ISO 8601)
+    pub period_from: String,
+    /// End of period (ISO 8601)
+    pub period_to: String,
+    /// Change indicator: null, "FM", "BECMG", "TEMPO"
+    pub change_indicator: Option<String>,
+    /// Probability (30 or 40)
+    pub probability: Option<i16>,
+    /// Wind direction in degrees
+    pub wind_direction_deg: Option<i16>,
+    /// Wind speed in m/s
+    pub wind_speed_ms: Option<f32>,
+    /// Wind gust in m/s
+    pub wind_gust_ms: Option<f32>,
+    /// Visibility in meters
+    pub visibility_m: Option<f32>,
+    /// Weather phenomena string
+    pub wx_string: Option<String>,
+    /// Cloud layers as JSON
+    pub cloud_layers: Option<serde_json::Value>,
+}
+
+/// Response for /ingest/tafs endpoint.
+#[derive(Debug, Serialize)]
+pub struct TafIngestResponse {
+    pub success: bool,
+    pub message: String,
+    pub tafs_ingested: usize,
     pub locations_updated: usize,
 }
 
@@ -475,6 +543,209 @@ async fn ingest_observations_handler(
     )
 }
 
+/// POST /ingest/tafs - Ingest TAF forecast data
+async fn ingest_tafs_handler(
+    Extension(state): Extension<Arc<ServerState>>,
+    Json(request): Json<TafIngestRequest>,
+) -> impl IntoResponse {
+    let catalog = match &state.observation_catalog {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(TafIngestResponse {
+                    success: false,
+                    message: "Observation catalog not configured".to_string(),
+                    tafs_ingested: 0,
+                    locations_updated: 0,
+                }),
+            );
+        }
+    };
+
+    info!(
+        source = %request.source,
+        count = request.forecasts.len(),
+        "Received TAF ingest request"
+    );
+
+    let mut locations_to_upsert = Vec::new();
+    let mut tafs_ingested = 0;
+    let mut errors = Vec::new();
+
+    for taf_data in &request.forecasts {
+        // Parse times
+        let issue_time = match chrono::DateTime::parse_from_rfc3339(&taf_data.issue_time) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(e) => {
+                warn!(
+                    location_id = %taf_data.location_id,
+                    issue_time = %taf_data.issue_time,
+                    error = %e,
+                    "Failed to parse TAF issue time, skipping"
+                );
+                continue;
+            }
+        };
+
+        let valid_from = match chrono::DateTime::parse_from_rfc3339(&taf_data.valid_from) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(e) => {
+                warn!(
+                    location_id = %taf_data.location_id,
+                    valid_from = %taf_data.valid_from,
+                    error = %e,
+                    "Failed to parse TAF valid_from time, skipping"
+                );
+                continue;
+            }
+        };
+
+        let valid_to = match chrono::DateTime::parse_from_rfc3339(&taf_data.valid_to) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(e) => {
+                warn!(
+                    location_id = %taf_data.location_id,
+                    valid_to = %taf_data.valid_to,
+                    error = %e,
+                    "Failed to parse TAF valid_to time, skipping"
+                );
+                continue;
+            }
+        };
+
+        // Build location
+        let name = taf_data
+            .name
+            .clone()
+            .unwrap_or_else(|| taf_data.location_id.clone());
+        let mut location = Location::new(
+            taf_data.location_id.clone(),
+            name,
+            taf_data.longitude,
+            taf_data.latitude,
+        );
+
+        if let Some(elev) = taf_data.elevation_m {
+            location = location.with_elevation(elev);
+        }
+        location = location.with_type("airport");
+
+        locations_to_upsert.push(location);
+
+        // Build TafForecast
+        let forecast = TafForecast {
+            id: None,
+            location_id: taf_data.location_id.clone(),
+            issue_time,
+            valid_from,
+            valid_to,
+            raw_taf: taf_data.raw_taf.clone(),
+            remarks: None,
+        };
+
+        // Build TafPeriods
+        let mut periods = Vec::new();
+        for period_data in &taf_data.periods {
+            let period_from = match chrono::DateTime::parse_from_rfc3339(&period_data.period_from) {
+                Ok(dt) => dt.with_timezone(&Utc),
+                Err(e) => {
+                    warn!(
+                        location_id = %taf_data.location_id,
+                        period_from = %period_data.period_from,
+                        error = %e,
+                        "Failed to parse TAF period_from time, skipping period"
+                    );
+                    continue;
+                }
+            };
+
+            let period_to = match chrono::DateTime::parse_from_rfc3339(&period_data.period_to) {
+                Ok(dt) => dt.with_timezone(&Utc),
+                Err(e) => {
+                    warn!(
+                        location_id = %taf_data.location_id,
+                        period_to = %period_data.period_to,
+                        error = %e,
+                        "Failed to parse TAF period_to time, skipping period"
+                    );
+                    continue;
+                }
+            };
+
+            periods.push(TafPeriod {
+                id: None,
+                period_from,
+                period_to,
+                change_indicator: period_data.change_indicator.clone(),
+                probability: period_data.probability,
+                wind_direction_deg: period_data.wind_direction_deg,
+                wind_speed_ms: period_data.wind_speed_ms,
+                wind_gust_ms: period_data.wind_gust_ms,
+                visibility_m: period_data.visibility_m,
+                wx_string: period_data.wx_string.clone(),
+                cloud_layers: period_data.cloud_layers.clone(),
+            });
+        }
+
+        // Upsert TAF
+        match catalog.upsert_taf(&forecast, &periods).await {
+            Ok(_) => {
+                tafs_ingested += 1;
+            }
+            Err(e) => {
+                warn!(
+                    location_id = %taf_data.location_id,
+                    error = %e,
+                    "Failed to upsert TAF"
+                );
+                errors.push(format!("{}: {}", taf_data.location_id, e));
+            }
+        }
+    }
+
+    // Upsert locations
+    let locations_updated = match catalog.upsert_locations(&locations_to_upsert).await {
+        Ok(count) => count,
+        Err(e) => {
+            error!(error = %e, "Failed to upsert locations");
+            0
+        }
+    };
+
+    let message = if errors.is_empty() {
+        format!(
+            "Ingested {} TAFs, updated {} locations",
+            tafs_ingested, locations_updated
+        )
+    } else {
+        format!(
+            "Ingested {} TAFs, updated {} locations ({} errors)",
+            tafs_ingested,
+            locations_updated,
+            errors.len()
+        )
+    };
+
+    info!(
+        source = %request.source,
+        tafs_ingested = tafs_ingested,
+        locations_updated = locations_updated,
+        errors = errors.len(),
+        "TAF ingestion completed"
+    );
+
+    (
+        StatusCode::OK,
+        Json(TafIngestResponse {
+            success: errors.is_empty(),
+            message,
+            tafs_ingested,
+            locations_updated,
+        }),
+    )
+}
+
 /// GET /status - Get ingestion status
 async fn status_handler(Extension(state): Extension<Arc<ServerState>>) -> impl IntoResponse {
     let status = state.tracker.get_status().await;
@@ -504,6 +775,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/ingest", post(ingest_handler))
         .route("/ingest/observations", post(ingest_observations_handler))
+        .route("/ingest/tafs", post(ingest_tafs_handler))
         .route("/status", get(status_handler))
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))

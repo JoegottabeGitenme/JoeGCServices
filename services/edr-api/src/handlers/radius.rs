@@ -84,11 +84,11 @@ pub async fn radius_handler(
     Query(params): Query<RadiusQueryParams>,
     headers: HeaderMap,
 ) -> Response {
-    // Check if this is a point observation collection
+    // Check if this is a point data collection (METAR observations or TAF forecasts)
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
-            if model_config.data_type.is_point_observation() {
+            if model_config.data_type.is_point_data() {
                 // Convert the coords to format observation handler expects
                 let obs_params = ObsRadiusQueryParams {
                     coords: params.coords.clone().unwrap_or_default(),

@@ -1410,5 +1410,52 @@ CREATE INDEX IF NOT EXISTS idx_observations_location_time
 
 -- Compound index for common query pattern: source + time range
 CREATE INDEX IF NOT EXISTS idx_observations_source_location_time 
-    ON observations(source, location_id, obs_time DESC)
+    ON observations(source, location_id, obs_time DESC);
+
+-- =============================================================================
+-- TAF (Terminal Aerodrome Forecast) tables
+-- =============================================================================
+
+-- TAF forecasts (header/metadata)
+-- Each TAF has an issue time and validity period (typically 24-30 hours)
+CREATE TABLE IF NOT EXISTS taf_forecasts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id VARCHAR(20) NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    issue_time TIMESTAMPTZ NOT NULL,
+    valid_from TIMESTAMPTZ NOT NULL,
+    valid_to TIMESTAMPTZ NOT NULL,
+    raw_taf TEXT,
+    remarks TEXT,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT taf_forecasts_unique UNIQUE (location_id, issue_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_location_valid 
+    ON taf_forecasts(location_id, valid_from DESC);
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_valid_range 
+    ON taf_forecasts(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_issue_time
+    ON taf_forecasts(issue_time DESC);
+
+-- TAF forecast periods (detail)
+-- Each TAF contains multiple periods: base forecast + FM/BECMG/TEMPO changes
+-- All values stored in SI units for consistency with METAR observations
+CREATE TABLE IF NOT EXISTS taf_periods (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    taf_id UUID NOT NULL REFERENCES taf_forecasts(id) ON DELETE CASCADE,
+    period_from TIMESTAMPTZ NOT NULL,
+    period_to TIMESTAMPTZ NOT NULL,
+    change_indicator VARCHAR(10),  -- null (base), FM, BECMG, TEMPO, PROB
+    probability SMALLINT,          -- null, 30, or 40
+    wind_direction_deg SMALLINT,
+    wind_speed_ms REAL,
+    wind_gust_ms REAL,
+    visibility_m REAL,
+    wx_string VARCHAR(100),
+    cloud_layers JSONB,
+    period_order SMALLINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_taf_periods_taf ON taf_periods(taf_id);
+CREATE INDEX IF NOT EXISTS idx_taf_periods_time ON taf_periods(period_from, period_to)
 "#;

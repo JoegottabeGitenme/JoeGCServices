@@ -15,8 +15,10 @@ pub enum DataType {
     Forecast,
     /// Observation data (e.g., GOES, MRMS) - gridded observation data queried by observation time.
     Observation,
-    /// Point observation data (e.g., METAR, TAF) - station-based observations from PostgreSQL.
+    /// Point observation data (e.g., METAR) - station-based observations from PostgreSQL.
     PointObservation,
+    /// Point forecast data (e.g., TAF) - station-based forecasts from PostgreSQL.
+    PointForecast,
 }
 
 impl DataType {
@@ -25,9 +27,19 @@ impl DataType {
         matches!(self, DataType::Observation)
     }
 
-    /// Check if this is point observation data (METAR, TAF, etc.).
+    /// Check if this is point observation data (METAR, etc.).
     pub fn is_point_observation(&self) -> bool {
         matches!(self, DataType::PointObservation)
+    }
+
+    /// Check if this is point forecast data (TAF, etc.).
+    pub fn is_point_forecast(&self) -> bool {
+        matches!(self, DataType::PointForecast)
+    }
+
+    /// Check if this is any kind of point data (observation or forecast).
+    pub fn is_point_data(&self) -> bool {
+        matches!(self, DataType::PointObservation | DataType::PointForecast)
     }
 }
 

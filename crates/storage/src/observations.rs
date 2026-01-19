@@ -1141,6 +1141,575 @@ impl ObservationCatalog {
             })
             .collect())
     }
+
+    // ========== TAF Methods ==========
+
+    /// Upsert a TAF forecast with its periods.
+    ///
+    /// Inserts a new TAF or updates if one already exists for this location/issue_time.
+    /// All periods are replaced on update.
+    pub async fn upsert_taf(
+        &self,
+        forecast: &TafForecast,
+        periods: &[TafPeriod],
+    ) -> WmsResult<Uuid> {
+        // Start a transaction
+        let mut tx =
+            self.pool.begin().await.map_err(|e| {
+                WmsError::DatabaseError(format!("Failed to start transaction: {}", e))
+            })?;
+
+        // Upsert the forecast header
+        let taf_id: Uuid = sqlx::query_scalar(
+            r#"
+            INSERT INTO taf_forecasts (location_id, issue_time, valid_from, valid_to, raw_taf, remarks)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (location_id, issue_time) DO UPDATE SET
+                valid_from = EXCLUDED.valid_from,
+                valid_to = EXCLUDED.valid_to,
+                raw_taf = EXCLUDED.raw_taf,
+                remarks = EXCLUDED.remarks,
+                ingested_at = NOW()
+            RETURNING id
+            "#,
+        )
+        .bind(&forecast.location_id)
+        .bind(forecast.issue_time)
+        .bind(forecast.valid_from)
+        .bind(forecast.valid_to)
+        .bind(&forecast.raw_taf)
+        .bind(&forecast.remarks)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Upsert TAF forecast failed: {}", e)))?;
+
+        // Delete existing periods (in case of update)
+        sqlx::query("DELETE FROM taf_periods WHERE taf_id = $1")
+            .bind(taf_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Delete TAF periods failed: {}", e)))?;
+
+        // Insert all periods
+        for (order, period) in periods.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO taf_periods (
+                    taf_id, period_from, period_to, change_indicator, probability,
+                    wind_direction_deg, wind_speed_ms, wind_gust_ms, visibility_m,
+                    wx_string, cloud_layers, period_order
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                "#,
+            )
+            .bind(taf_id)
+            .bind(period.period_from)
+            .bind(period.period_to)
+            .bind(&period.change_indicator)
+            .bind(period.probability)
+            .bind(period.wind_direction_deg)
+            .bind(period.wind_speed_ms)
+            .bind(period.wind_gust_ms)
+            .bind(period.visibility_m)
+            .bind(&period.wx_string)
+            .bind(&period.cloud_layers)
+            .bind(order as i16)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Insert TAF period failed: {}", e)))?;
+        }
+
+        tx.commit().await.map_err(|e| {
+            WmsError::DatabaseError(format!("Commit TAF transaction failed: {}", e))
+        })?;
+
+        Ok(taf_id)
+    }
+
+    /// Get the latest TAF for a location.
+    pub async fn get_latest_taf(
+        &self,
+        location_id: &str,
+    ) -> WmsResult<Option<TafForecastWithPeriods>> {
+        #[derive(sqlx::FromRow)]
+        struct TafRow {
+            id: Uuid,
+            location_id: String,
+            issue_time: DateTime<Utc>,
+            valid_from: DateTime<Utc>,
+            valid_to: DateTime<Utc>,
+            raw_taf: Option<String>,
+            remarks: Option<String>,
+        }
+
+        let taf_row = sqlx::query_as::<_, TafRow>(
+            r#"
+            SELECT id, location_id, issue_time, valid_from, valid_to, raw_taf, remarks
+            FROM taf_forecasts
+            WHERE location_id = $1
+            ORDER BY issue_time DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(location_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get latest TAF failed: {}", e)))?;
+
+        let Some(row) = taf_row else {
+            return Ok(None);
+        };
+
+        let periods = self.get_taf_periods(row.id).await?;
+
+        Ok(Some(TafForecastWithPeriods {
+            forecast: TafForecast {
+                id: Some(row.id),
+                location_id: row.location_id,
+                issue_time: row.issue_time,
+                valid_from: row.valid_from,
+                valid_to: row.valid_to,
+                raw_taf: row.raw_taf,
+                remarks: row.remarks,
+            },
+            periods,
+        }))
+    }
+
+    /// Get TAFs valid at a specific time for a location.
+    ///
+    /// Returns TAFs where valid_from <= time <= valid_to.
+    pub async fn get_tafs_valid_at(
+        &self,
+        location_id: &str,
+        time: DateTime<Utc>,
+    ) -> WmsResult<Vec<TafForecastWithPeriods>> {
+        #[derive(sqlx::FromRow)]
+        struct TafRow {
+            id: Uuid,
+            location_id: String,
+            issue_time: DateTime<Utc>,
+            valid_from: DateTime<Utc>,
+            valid_to: DateTime<Utc>,
+            raw_taf: Option<String>,
+            remarks: Option<String>,
+        }
+
+        let taf_rows = sqlx::query_as::<_, TafRow>(
+            r#"
+            SELECT id, location_id, issue_time, valid_from, valid_to, raw_taf, remarks
+            FROM taf_forecasts
+            WHERE location_id = $1 AND valid_from <= $2 AND valid_to >= $2
+            ORDER BY issue_time DESC
+            "#,
+        )
+        .bind(location_id)
+        .bind(time)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get TAFs valid at time failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        for row in taf_rows {
+            let periods = self.get_taf_periods(row.id).await?;
+            results.push(TafForecastWithPeriods {
+                forecast: TafForecast {
+                    id: Some(row.id),
+                    location_id: row.location_id,
+                    issue_time: row.issue_time,
+                    valid_from: row.valid_from,
+                    valid_to: row.valid_to,
+                    raw_taf: row.raw_taf,
+                    remarks: row.remarks,
+                },
+                periods,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Get the latest TAF for each location within a radius.
+    pub async fn get_latest_tafs_in_radius(
+        &self,
+        lon: f64,
+        lat: f64,
+        radius_m: f64,
+        limit: Option<i64>,
+    ) -> WmsResult<Vec<(Location, TafForecastWithPeriods)>> {
+        #[derive(sqlx::FromRow)]
+        struct JoinedRow {
+            // Location fields
+            loc_id: String,
+            loc_name: String,
+            loc_description: Option<String>,
+            loc_lon: f64,
+            loc_lat: f64,
+            loc_elevation_m: Option<f32>,
+            loc_type: Option<String>,
+            loc_country: Option<String>,
+            loc_region: Option<String>,
+            loc_properties: serde_json::Value,
+            #[allow(dead_code)]
+            distance_m: f64,
+            // TAF fields
+            taf_id: Uuid,
+            issue_time: DateTime<Utc>,
+            valid_from: DateTime<Utc>,
+            valid_to: DateTime<Utc>,
+            raw_taf: Option<String>,
+            remarks: Option<String>,
+        }
+
+        let effective_limit = limit.unwrap_or(100);
+
+        // Get latest TAF per location using DISTINCT ON
+        let rows = sqlx::query_as::<_, JoinedRow>(
+            r#"
+            SELECT DISTINCT ON (l.id)
+                l.id as loc_id, l.name as loc_name, l.description as loc_description,
+                ST_X(l.location::geometry) as loc_lon, ST_Y(l.location::geometry) as loc_lat,
+                l.elevation_m as loc_elevation_m, l.location_type as loc_type,
+                l.country as loc_country, l.region as loc_region, l.properties as loc_properties,
+                ST_Distance(l.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as distance_m,
+                t.id as taf_id, t.issue_time, t.valid_from, t.valid_to, t.raw_taf, t.remarks
+            FROM locations l
+            JOIN taf_forecasts t ON l.id = t.location_id
+            WHERE ST_DWithin(l.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+            ORDER BY l.id, t.issue_time DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(lon)
+        .bind(lat)
+        .bind(radius_m)
+        .bind(effective_limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get TAFs in radius failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let periods = self.get_taf_periods(row.taf_id).await?;
+            let location = Location {
+                id: row.loc_id.clone(),
+                name: row.loc_name,
+                description: row.loc_description,
+                lon: row.loc_lon,
+                lat: row.loc_lat,
+                elevation_m: row.loc_elevation_m,
+                location_type: row.loc_type,
+                country: row.loc_country,
+                region: row.loc_region,
+                properties: row.loc_properties,
+            };
+            let taf = TafForecastWithPeriods {
+                forecast: TafForecast {
+                    id: Some(row.taf_id),
+                    location_id: row.loc_id,
+                    issue_time: row.issue_time,
+                    valid_from: row.valid_from,
+                    valid_to: row.valid_to,
+                    raw_taf: row.raw_taf,
+                    remarks: row.remarks,
+                },
+                periods,
+            };
+            results.push((location, taf));
+        }
+
+        Ok(results)
+    }
+
+    /// Get the latest TAF for each location within a bounding box.
+    pub async fn get_latest_tafs_in_bbox(
+        &self,
+        min_lon: f64,
+        min_lat: f64,
+        max_lon: f64,
+        max_lat: f64,
+        limit: Option<i64>,
+    ) -> WmsResult<Vec<(Location, TafForecastWithPeriods)>> {
+        #[derive(sqlx::FromRow)]
+        struct JoinedRow {
+            // Location fields
+            loc_id: String,
+            loc_name: String,
+            loc_description: Option<String>,
+            loc_lon: f64,
+            loc_lat: f64,
+            loc_elevation_m: Option<f32>,
+            loc_type: Option<String>,
+            loc_country: Option<String>,
+            loc_region: Option<String>,
+            loc_properties: serde_json::Value,
+            // TAF fields
+            taf_id: Uuid,
+            issue_time: DateTime<Utc>,
+            valid_from: DateTime<Utc>,
+            valid_to: DateTime<Utc>,
+            raw_taf: Option<String>,
+            remarks: Option<String>,
+        }
+
+        let effective_limit = limit.unwrap_or(100);
+
+        let rows = sqlx::query_as::<_, JoinedRow>(
+            r#"
+            SELECT DISTINCT ON (l.id)
+                l.id as loc_id, l.name as loc_name, l.description as loc_description,
+                ST_X(l.location::geometry) as loc_lon, ST_Y(l.location::geometry) as loc_lat,
+                l.elevation_m as loc_elevation_m, l.location_type as loc_type,
+                l.country as loc_country, l.region as loc_region, l.properties as loc_properties,
+                t.id as taf_id, t.issue_time, t.valid_from, t.valid_to, t.raw_taf, t.remarks
+            FROM locations l
+            JOIN taf_forecasts t ON l.id = t.location_id
+            WHERE ST_Within(l.location::geometry, ST_MakeEnvelope($1, $2, $3, $4, 4326))
+            ORDER BY l.id, t.issue_time DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(min_lon)
+        .bind(min_lat)
+        .bind(max_lon)
+        .bind(max_lat)
+        .bind(effective_limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get TAFs in bbox failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let periods = self.get_taf_periods(row.taf_id).await?;
+            let location = Location {
+                id: row.loc_id.clone(),
+                name: row.loc_name,
+                description: row.loc_description,
+                lon: row.loc_lon,
+                lat: row.loc_lat,
+                elevation_m: row.loc_elevation_m,
+                location_type: row.loc_type,
+                country: row.loc_country,
+                region: row.loc_region,
+                properties: row.loc_properties,
+            };
+            let taf = TafForecastWithPeriods {
+                forecast: TafForecast {
+                    id: Some(row.taf_id),
+                    location_id: row.loc_id,
+                    issue_time: row.issue_time,
+                    valid_from: row.valid_from,
+                    valid_to: row.valid_to,
+                    raw_taf: row.raw_taf,
+                    remarks: row.remarks,
+                },
+                periods,
+            };
+            results.push((location, taf));
+        }
+
+        Ok(results)
+    }
+
+    /// Get locations that have TAF forecasts.
+    pub async fn get_locations_with_tafs(&self) -> WmsResult<Vec<Location>> {
+        #[derive(sqlx::FromRow)]
+        struct LocationRow {
+            id: String,
+            name: String,
+            description: Option<String>,
+            lon: f64,
+            lat: f64,
+            elevation_m: Option<f32>,
+            location_type: Option<String>,
+            country: Option<String>,
+            region: Option<String>,
+            properties: serde_json::Value,
+        }
+
+        let rows = sqlx::query_as::<_, LocationRow>(
+            r#"
+            SELECT DISTINCT l.id, l.name, l.description,
+                   ST_X(l.location::geometry) as lon, ST_Y(l.location::geometry) as lat,
+                   l.elevation_m, l.location_type, l.country, l.region, l.properties
+            FROM locations l
+            JOIN taf_forecasts t ON l.id = t.location_id
+            ORDER BY l.id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get locations with TAFs failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Location {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                lon: r.lon,
+                lat: r.lat,
+                elevation_m: r.elevation_m,
+                location_type: r.location_type,
+                country: r.country,
+                region: r.region,
+                properties: r.properties,
+            })
+            .collect())
+    }
+
+    /// Delete TAFs older than a given time.
+    pub async fn delete_tafs_before(&self, before: DateTime<Utc>) -> WmsResult<u64> {
+        let result = sqlx::query("DELETE FROM taf_forecasts WHERE valid_to < $1")
+            .bind(before)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Delete TAFs failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Count total TAF forecasts.
+    pub async fn count_tafs(&self) -> WmsResult<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM taf_forecasts")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Count TAFs failed: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Get the time range of TAF validity periods in the database.
+    pub async fn get_taf_time_range(&self) -> WmsResult<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let result: Option<(DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+            r#"
+            SELECT MIN(valid_from), MAX(valid_to)
+            FROM taf_forecasts
+            WHERE valid_to > NOW()
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get TAF time range failed: {}", e)))?;
+
+        // The query returns (None, None) if no rows, which flatten handles
+        Ok(result.and_then(|(min, max)| Some((min, max))))
+    }
+
+    /// Helper: Get periods for a TAF forecast.
+    async fn get_taf_periods(&self, taf_id: Uuid) -> WmsResult<Vec<TafPeriod>> {
+        #[derive(sqlx::FromRow)]
+        struct PeriodRow {
+            id: Uuid,
+            period_from: DateTime<Utc>,
+            period_to: DateTime<Utc>,
+            change_indicator: Option<String>,
+            probability: Option<i16>,
+            wind_direction_deg: Option<i16>,
+            wind_speed_ms: Option<f32>,
+            wind_gust_ms: Option<f32>,
+            visibility_m: Option<f32>,
+            wx_string: Option<String>,
+            cloud_layers: Option<serde_json::Value>,
+            period_order: i16,
+        }
+
+        let rows = sqlx::query_as::<_, PeriodRow>(
+            r#"
+            SELECT id, period_from, period_to, change_indicator, probability,
+                   wind_direction_deg, wind_speed_ms, wind_gust_ms, visibility_m,
+                   wx_string, cloud_layers, period_order
+            FROM taf_periods
+            WHERE taf_id = $1
+            ORDER BY period_order
+            "#,
+        )
+        .bind(taf_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get TAF periods failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| TafPeriod {
+                id: Some(r.id),
+                period_from: r.period_from,
+                period_to: r.period_to,
+                change_indicator: r.change_indicator,
+                probability: r.probability,
+                wind_direction_deg: r.wind_direction_deg,
+                wind_speed_ms: r.wind_speed_ms,
+                wind_gust_ms: r.wind_gust_ms,
+                visibility_m: r.visibility_m,
+                wx_string: r.wx_string,
+                cloud_layers: r.cloud_layers,
+            })
+            .collect())
+    }
+}
+
+// =============================================================================
+// TAF Data Structures
+// =============================================================================
+
+/// A TAF (Terminal Aerodrome Forecast) header.
+///
+/// Contains metadata about the forecast: when it was issued and its validity period.
+/// The actual forecast data is in the associated `TafPeriod` records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TafForecast {
+    /// Database ID (auto-generated).
+    pub id: Option<Uuid>,
+    /// Location ID (ICAO code, e.g., "KJFK").
+    pub location_id: String,
+    /// When this TAF was issued.
+    pub issue_time: DateTime<Utc>,
+    /// Start of validity period.
+    pub valid_from: DateTime<Utc>,
+    /// End of validity period.
+    pub valid_to: DateTime<Utc>,
+    /// Raw TAF text.
+    pub raw_taf: Option<String>,
+    /// Remarks section.
+    pub remarks: Option<String>,
+}
+
+/// A single forecast period within a TAF.
+///
+/// TAFs consist of a base forecast plus change groups (FM, BECMG, TEMPO, PROB).
+/// All values are in SI units for consistency with METAR observations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TafPeriod {
+    /// Database ID (auto-generated).
+    pub id: Option<Uuid>,
+    /// Start of this period.
+    pub period_from: DateTime<Utc>,
+    /// End of this period.
+    pub period_to: DateTime<Utc>,
+    /// Change indicator: null (base forecast), "FM", "BECMG", "TEMPO", "PROB".
+    pub change_indicator: Option<String>,
+    /// Probability (30 or 40) for PROB groups.
+    pub probability: Option<i16>,
+    /// Wind direction in degrees (0-360).
+    pub wind_direction_deg: Option<i16>,
+    /// Wind speed in meters per second.
+    pub wind_speed_ms: Option<f32>,
+    /// Wind gust in meters per second.
+    pub wind_gust_ms: Option<f32>,
+    /// Visibility in meters.
+    pub visibility_m: Option<f32>,
+    /// Weather phenomena string (e.g., "RA", "BR", "-SHRA").
+    pub wx_string: Option<String>,
+    /// Cloud layers as JSON array.
+    pub cloud_layers: Option<serde_json::Value>,
+}
+
+/// A TAF forecast with all its periods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TafForecastWithPeriods {
+    /// The forecast header.
+    pub forecast: TafForecast,
+    /// Forecast periods in order.
+    pub periods: Vec<TafPeriod>,
 }
 
 #[cfg(test)]

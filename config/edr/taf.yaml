@@ -1,0 +1,62 @@
+# TAF EDR Configuration
+# Terminal Aerodrome Forecasts - 24-30 hour airport weather forecasts
+#
+# This is point forecast data (not gridded), sourced from PostgreSQL.
+# Locations are dynamic (queried from the database), not static config.
+#
+# Supported EDR queries:
+# - /collections/taf/locations - List all stations with recent TAFs
+# - /collections/taf/locations/{id} - Get TAF(s) for a specific station
+# - /collections/taf/radius - Get TAFs within radius of a point
+# - /collections/taf/area - Get TAFs within a bounding box
+#
+# Output formats:
+# - application/geo+json - GeoJSON Feature with periods array (default)
+# - application/vnd.cov+json - CoverageJSON PointSeries (flattened)
+#
+# Note: Raw TAF text is preserved in the response properties.
+
+model: taf
+data_type: pointforecast
+observation_source: taf
+
+collections:
+  # ===========================================================================
+  # Main TAF collection with all parameters
+  # ===========================================================================
+  
+  - id: taf
+    title: "TAF - Terminal Aerodrome Forecasts"
+    description: "24-30 hour aviation weather forecasts for airports"
+    # No level_filter for point forecasts - they have no vertical dimension
+    parameters:
+      - name: wind_speed
+        levels: [surface]
+      - name: wind_direction
+        levels: [surface]
+      - name: wind_gust
+        levels: [surface]
+      - name: visibility
+        levels: [surface]
+      - name: weather
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+    - application/vnd.cov+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 300  # 5 minutes - TAF updates less frequently than METAR
+
+# Response size limits for TAF queries
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 30         # ~30 hours of forecast periods
+  max_vertical_levels: 1     # Surface only
+  max_response_size_mb: 10   # Smaller than gridded data
+  max_radius_km: 500         # 500 km radius queries
+  max_area_sq_degrees: 100   # ~1000km x 1000km bounding box

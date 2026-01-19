@@ -8,6 +8,9 @@
 //! - GET /collections/{id}/locations/{locationId} - Get observations at station
 //! - GET /collections/{id}/radius - Get observations within radius
 //! - GET /collections/{id}/area - Get observations within bounding box
+//!
+//! For TAF (PointForecast) collections, responses include forecast periods
+//! with change indicators (FM, BECMG, TEMPO).
 
 use axum::{
     extract::{Extension, Path, Query},
@@ -24,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use storage::observations::{Location, Observation, ObservationQuery};
+use storage::observations::{Location, Observation, ObservationQuery, TafForecastWithPeriods};
 
 use crate::state::AppState;
 
@@ -137,9 +140,71 @@ pub struct ObservationProperties {
     pub raw_text: Option<String>,
 }
 
-/// GET /edr/collections/:collection_id/locations (for observation collections)
+// =============================================================================
+// TAF (Terminal Aerodrome Forecast) Response Types
+// =============================================================================
+
+/// GeoJSON response for TAF forecast data.
+#[derive(Debug, Serialize)]
+pub struct TafFeatureCollection {
+    #[serde(rename = "type")]
+    pub collection_type: String,
+    pub features: Vec<TafFeature>,
+    #[serde(rename = "numberReturned")]
+    pub number_returned: usize,
+    #[serde(rename = "timeStamp")]
+    pub timestamp: String,
+}
+
+/// Single TAF as a GeoJSON Feature.
+#[derive(Debug, Serialize)]
+pub struct TafFeature {
+    #[serde(rename = "type")]
+    pub feature_type: String,
+    pub id: String,
+    pub geometry: LocationGeometry,
+    pub properties: TafProperties,
+}
+
+/// Properties of a TAF feature.
+#[derive(Debug, Serialize)]
+pub struct TafProperties {
+    pub location_id: String,
+    pub name: Option<String>,
+    pub issue_time: String,
+    pub valid_from: String,
+    pub valid_to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_taf: Option<String>,
+    pub periods: Vec<TafPeriodProperties>,
+}
+
+/// A single TAF forecast period.
+#[derive(Debug, Serialize)]
+pub struct TafPeriodProperties {
+    pub from: String,
+    pub to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probability: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_direction_deg: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_speed_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_gust_ms: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wx_string: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_layers: Option<serde_json::Value>,
+}
+
+/// GET /edr/collections/:collection_id/locations (for point data collections)
 ///
-/// Returns stations that have recent observations.
+/// Returns stations that have recent observations (METAR) or forecasts (TAF).
 pub async fn obs_locations_list_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
@@ -148,7 +213,7 @@ pub async fn obs_locations_list_handler(
 ) -> Response {
     let config = state.edr_config.read().await;
 
-    // Find the collection and verify it's a point observation type
+    // Find the collection and verify it's a point data type
     let Some((model_config, _collection_def)) = config.find_collection(&collection_id) else {
         return error_response(
             StatusCode::NOT_FOUND,
@@ -156,36 +221,51 @@ pub async fn obs_locations_list_handler(
         );
     };
 
-    if !model_config.data_type.is_point_observation() {
+    if !model_config.data_type.is_point_data() {
         return error_response(
             StatusCode::BAD_REQUEST,
             ExceptionResponse::bad_request(format!(
-                "Collection {} is not a point observation collection",
+                "Collection {} is not a point data collection",
                 collection_id
             )),
         );
     }
 
-    let source = model_config
-        .observation_source
-        .clone()
-        .or(params.source.clone())
-        .unwrap_or_else(|| "metar".to_string());
+    // Get locations based on data type
+    let locations = if model_config.data_type.is_point_forecast() {
+        // TAF: Get locations with TAF forecasts
+        match state.observation_catalog.get_locations_with_tafs().await {
+            Ok(locs) => locs,
+            Err(e) => {
+                tracing::error!("Failed to get TAF locations: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query locations"),
+                );
+            }
+        }
+    } else {
+        // METAR: Get locations with recent observations
+        let source = model_config
+            .observation_source
+            .clone()
+            .or(params.source.clone())
+            .unwrap_or_else(|| "metar".to_string());
 
-    // Get locations with recent observations (last 2 hours by default)
-    let since = Some(Utc::now() - Duration::hours(2));
-    let locations = match state
-        .observation_catalog
-        .get_locations_with_observations(&source, since)
-        .await
-    {
-        Ok(locs) => locs,
-        Err(e) => {
-            tracing::error!("Failed to get observation locations: {}", e);
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ExceptionResponse::internal_error("Failed to query locations"),
-            );
+        let since = Some(Utc::now() - Duration::hours(2));
+        match state
+            .observation_catalog
+            .get_locations_with_observations(&source, since)
+            .await
+        {
+            Ok(locs) => locs,
+            Err(e) => {
+                tracing::error!("Failed to get observation locations: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query locations"),
+                );
+            }
         }
     };
 
@@ -224,9 +304,9 @@ pub async fn obs_locations_list_handler(
         .unwrap()
 }
 
-/// GET /edr/collections/:collection_id/locations/:location_id (for observation collections)
+/// GET /edr/collections/:collection_id/locations/:location_id (for point data collections)
 ///
-/// Returns observations at a specific station.
+/// Returns observations (METAR) or forecasts (TAF) at a specific station.
 pub async fn obs_location_query_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, location_id)): Path<(String, String)>,
@@ -243,11 +323,11 @@ pub async fn obs_location_query_handler(
         );
     };
 
-    if !model_config.data_type.is_point_observation() {
+    if !model_config.data_type.is_point_data() {
         return error_response(
             StatusCode::BAD_REQUEST,
             ExceptionResponse::bad_request(format!(
-                "Collection {} is not a point observation collection",
+                "Collection {} is not a point data collection",
                 collection_id
             )),
         );
@@ -271,10 +351,77 @@ pub async fn obs_location_query_handler(
         }
     };
 
-    // Parse datetime range
+    // Handle TAF vs METAR
+    if model_config.data_type.is_point_forecast() {
+        // TAF: Get latest TAF for this location
+        let taf = match state.observation_catalog.get_latest_taf(&location_id).await {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    ExceptionResponse::not_found(format!(
+                        "No TAF found for location: {}",
+                        location_id
+                    )),
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to get TAF: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query TAF"),
+                );
+            }
+        };
+
+        // Check for text/plain format request (raw TAF text)
+        let wants_text = params
+            .f
+            .as_ref()
+            .map(|f| f == "text" || f == "text/plain")
+            .unwrap_or(false);
+
+        if wants_text {
+            // Return raw TAF text
+            let raw_text = taf
+                .forecast
+                .raw_taf
+                .clone()
+                .unwrap_or_else(|| format!("TAF {} (no raw text available)", location_id));
+
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header(header::CACHE_CONTROL, "max-age=300")
+                .body(raw_text.into())
+                .unwrap();
+        }
+
+        // Convert to GeoJSON (default format)
+        let fc = taf_to_geojson(&location, &taf);
+
+        let json = match serde_json::to_string_pretty(&fc) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!("Failed to serialize TAF: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
+            }
+        };
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/geo+json")
+            .header(header::CACHE_CONTROL, "max-age=300") // TAF: 5 min cache
+            .body(json.into())
+            .unwrap();
+    }
+
+    // METAR: Get observations
     let (start_time, end_time) = parse_datetime_range(&params.datetime);
 
-    // Build observation query
     let query = ObservationQuery {
         location_id: Some(location_id.clone()),
         source: model_config.observation_source.clone(),
@@ -284,7 +431,6 @@ pub async fn obs_location_query_handler(
         limit: params.limit.or(Some(100)),
     };
 
-    // Get observations
     let observations = match state.observation_catalog.get_observations(&query).await {
         Ok(obs) => obs,
         Err(e) => {
@@ -318,9 +464,9 @@ pub async fn obs_location_query_handler(
         .unwrap()
 }
 
-/// GET /edr/collections/:collection_id/radius (for observation collections)
+/// GET /edr/collections/:collection_id/radius (for point data collections)
 ///
-/// Returns observations within a radius of a point.
+/// Returns observations (METAR) or forecasts (TAF) within a radius of a point.
 pub async fn obs_radius_query_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
@@ -337,11 +483,11 @@ pub async fn obs_radius_query_handler(
         );
     };
 
-    if !model_config.data_type.is_point_observation() {
+    if !model_config.data_type.is_point_data() {
         return error_response(
             StatusCode::BAD_REQUEST,
             ExceptionResponse::bad_request(format!(
-                "Collection {} is not a point observation collection",
+                "Collection {} is not a point data collection",
                 collection_id
             )),
         );
@@ -363,10 +509,48 @@ pub async fn obs_radius_query_handler(
         }
     };
 
-    // Parse datetime range
+    // Handle TAF vs METAR
+    if model_config.data_type.is_point_forecast() {
+        // TAF: Get latest TAFs in radius
+        let tafs = match state
+            .observation_catalog
+            .get_latest_tafs_in_radius(lon, lat, radius_m, params.limit.or(Some(100)))
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Failed to get TAFs in radius: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query TAFs"),
+                );
+            }
+        };
+
+        let fc = tafs_to_geojson(&tafs);
+
+        let json = match serde_json::to_string_pretty(&fc) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!("Failed to serialize TAFs: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
+            }
+        };
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/geo+json")
+            .header(header::CACHE_CONTROL, "max-age=300")
+            .body(json.into())
+            .unwrap();
+    }
+
+    // METAR: Get observations in radius
     let (start_time, end_time) = parse_datetime_range(&params.datetime);
 
-    // Get observations in radius
     let observations = match state
         .observation_catalog
         .get_observations_in_radius(
@@ -390,7 +574,6 @@ pub async fn obs_radius_query_handler(
         }
     };
 
-    // Convert to GeoJSON (need locations for coordinates)
     let fc = radius_observations_to_geojson(&observations, lon, lat, radius_m);
 
     let json = match serde_json::to_string_pretty(&fc) {
@@ -412,9 +595,9 @@ pub async fn obs_radius_query_handler(
         .unwrap()
 }
 
-/// GET /edr/collections/:collection_id/area (for observation collections)
+/// GET /edr/collections/:collection_id/area (for point data collections)
 ///
-/// Returns observations within a bounding box.
+/// Returns observations (METAR) or forecasts (TAF) within a bounding box.
 pub async fn obs_area_query_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
@@ -431,11 +614,11 @@ pub async fn obs_area_query_handler(
         );
     };
 
-    if !model_config.data_type.is_point_observation() {
+    if !model_config.data_type.is_point_data() {
         return error_response(
             StatusCode::BAD_REQUEST,
             ExceptionResponse::bad_request(format!(
-                "Collection {} is not a point observation collection",
+                "Collection {} is not a point data collection",
                 collection_id
             )),
         );
@@ -449,7 +632,46 @@ pub async fn obs_area_query_handler(
         }
     };
 
-    // Parse datetime range
+    // Handle TAF vs METAR
+    if model_config.data_type.is_point_forecast() {
+        // TAF: Get latest TAFs in bbox
+        let tafs = match state
+            .observation_catalog
+            .get_latest_tafs_in_bbox(bbox.0, bbox.1, bbox.2, bbox.3, params.limit.or(Some(100)))
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Failed to get TAFs in bbox: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query TAFs"),
+                );
+            }
+        };
+
+        let fc = tafs_to_geojson(&tafs);
+
+        let json = match serde_json::to_string_pretty(&fc) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!("Failed to serialize TAFs: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                );
+            }
+        };
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/geo+json")
+            .header(header::CACHE_CONTROL, "max-age=300")
+            .body(json.into())
+            .unwrap();
+    }
+
+    // METAR: Get observations in bbox
     let (start_time, end_time) = parse_datetime_range(&params.datetime);
 
     // Get locations in bbox
@@ -624,6 +846,79 @@ fn radius_observations_to_geojson(
         .collect();
 
     ObservationFeatureCollection {
+        collection_type: "FeatureCollection".to_string(),
+        number_returned: features.len(),
+        features,
+        timestamp: Utc::now().to_rfc3339(),
+    }
+}
+
+// =============================================================================
+// TAF Helper Functions
+// =============================================================================
+
+/// Convert a TAF forecast to a GeoJSON Feature.
+fn taf_to_feature(loc: &Location, taf: &TafForecastWithPeriods) -> TafFeature {
+    let periods: Vec<TafPeriodProperties> = taf
+        .periods
+        .iter()
+        .map(|p| TafPeriodProperties {
+            from: p.period_from.to_rfc3339(),
+            to: p.period_to.to_rfc3339(),
+            change_type: p.change_indicator.clone(),
+            probability: p.probability,
+            wind_direction_deg: p.wind_direction_deg,
+            wind_speed_ms: p.wind_speed_ms,
+            wind_gust_ms: p.wind_gust_ms,
+            visibility_m: p.visibility_m,
+            wx_string: p.wx_string.clone(),
+            cloud_layers: p.cloud_layers.clone(),
+        })
+        .collect();
+
+    TafFeature {
+        feature_type: "Feature".to_string(),
+        id: format!(
+            "{}:{}",
+            taf.forecast.location_id,
+            taf.forecast.issue_time.to_rfc3339()
+        ),
+        geometry: LocationGeometry {
+            geometry_type: "Point".to_string(),
+            coordinates: vec![loc.lon, loc.lat],
+        },
+        properties: TafProperties {
+            location_id: taf.forecast.location_id.clone(),
+            name: Some(loc.name.clone()),
+            issue_time: taf.forecast.issue_time.to_rfc3339(),
+            valid_from: taf.forecast.valid_from.to_rfc3339(),
+            valid_to: taf.forecast.valid_to.to_rfc3339(),
+            raw_taf: taf.forecast.raw_taf.clone(),
+            periods,
+        },
+    }
+}
+
+/// Convert a single TAF to a GeoJSON FeatureCollection.
+fn taf_to_geojson(loc: &Location, taf: &TafForecastWithPeriods) -> TafFeatureCollection {
+    let feature = taf_to_feature(loc, taf);
+
+    TafFeatureCollection {
+        collection_type: "FeatureCollection".to_string(),
+        number_returned: 1,
+        features: vec![feature],
+        timestamp: Utc::now().to_rfc3339(),
+    }
+}
+
+/// Convert multiple TAFs to a GeoJSON FeatureCollection.
+fn tafs_to_geojson(tafs: &[(Location, TafForecastWithPeriods)]) -> TafFeatureCollection {
+    let features: Vec<TafFeature> = tafs
+        .iter()
+        .map(|(loc, taf)| taf_to_feature(loc, taf))
+        .collect();
+
+    TafFeatureCollection {
         collection_type: "FeatureCollection".to_string(),
         number_returned: features.len(),
         features,

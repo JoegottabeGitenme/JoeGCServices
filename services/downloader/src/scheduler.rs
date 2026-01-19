@@ -17,7 +17,7 @@ use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
 use crate::download::DownloadManager;
 use crate::model_runner::ModelRunner;
-use crate::observation_runner::{self, ObservationConfig, ObservationRunner};
+use crate::observation_runner::{self, ObservationConfig, ObservationRunner, TafRunner};
 use crate::state::DownloadState;
 
 /// Model schedule info for API display.
@@ -82,8 +82,10 @@ pub struct Scheduler {
     output_dir: PathBuf,
     /// Cached model configs
     model_configs: Vec<ModelConfig>,
-    /// Observation source configs (METAR, etc.)
+    /// Observation source configs (METAR)
     observation_configs: Vec<ObservationConfig>,
+    /// TAF forecast configs
+    taf_configs: Vec<ObservationConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
 }
@@ -117,8 +119,11 @@ impl Scheduler {
             Self::default_configs()
         });
 
-        // Load observation configs (METAR, etc.)
+        // Load observation configs (METAR)
         let observation_configs = Self::load_observation_configs(&config_dir, &ingester_url);
+
+        // Load TAF forecast configs
+        let taf_configs = Self::load_taf_configs(&config_dir, &ingester_url);
 
         // Initialize AWS SDK for S3 listing
         // For NOAA public buckets, we need to explicitly allow anonymous access
@@ -149,6 +154,14 @@ impl Scheduler {
             );
         }
 
+        if !taf_configs.is_empty() {
+            info!(
+                count = taf_configs.len(),
+                sources = ?taf_configs.iter().map(|c| &c.id).collect::<Vec<_>>(),
+                "Loaded TAF forecast configurations"
+            );
+        }
+
         Self {
             download_manager,
             state,
@@ -159,11 +172,12 @@ impl Scheduler {
             output_dir,
             model_configs,
             observation_configs,
+            taf_configs,
             s3_client,
         }
     }
 
-    /// Load observation source configurations from model config files.
+    /// Load observation source configurations from model config files (METAR).
     fn load_observation_configs(
         config_dir: &std::path::Path,
         ingester_url: &Option<String>,
@@ -196,6 +210,49 @@ impl Scheduler {
                                 path = %path.display(),
                                 error = %e,
                                 "Failed to load observation config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Load TAF forecast configurations from model config files.
+    fn load_taf_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<ObservationConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match observation_runner::load_taf_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(
+                                source = %config.id,
+                                "Loaded TAF forecast config"
+                            );
+                            configs.push(config);
+                        }
+                        Ok(None) => {
+                            // Not a TAF source, skip
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load TAF config"
                             );
                         }
                     }
@@ -364,7 +421,7 @@ impl Scheduler {
             }));
         }
 
-        // Spawn observation runners (METAR, etc.)
+        // Spawn observation runners (METAR)
         for obs_config in &self.observation_configs {
             let runner = match ObservationRunner::new(obs_config.clone()) {
                 Ok(r) => r,
@@ -384,6 +441,30 @@ impl Scheduler {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = runner.run_forever(shutdown_rx).await {
                     error!(source = %source_id, error = %e, "Observation runner failed");
+                }
+            }));
+        }
+
+        // Spawn TAF runners
+        for taf_config in &self.taf_configs {
+            let runner = match TafRunner::new(taf_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %taf_config.id,
+                        error = %e,
+                        "Failed to create TAF runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = taf_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "TAF runner failed");
                 }
             }));
         }
