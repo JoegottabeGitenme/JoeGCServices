@@ -1,0 +1,92 @@
+# VIIRS - Nighttime Lights (Light Pollution)
+# Annual composite for astrophotography planning
+#
+# Data source: Earth Observation Group (EOG)
+# https://eogdata.mines.edu/nighttime_light/annual/v22/
+#
+# The VNL V2.2 product provides annual composites of nighttime lights
+# from the VIIRS Day/Night Band (DNB) sensor on the Suomi NPP satellite.
+#
+# Note: This is a STATIC dataset - updated annually, not continuously polled.
+
+model:
+  id: viirs
+  name: "VIIRS Nighttime Lights"
+  description: "Annual nighttime lights composite for light pollution assessment (Bortle scale)"
+  # Disabled for automatic download - VIIRS data requires manual download and ingestion
+  # Use: ./scripts/deploy-remote.sh --ingest-viirs
+  enabled: false
+
+# WMS/WMTS dimension configuration
+dimensions:
+  type: static       # Static dataset - no time dimension for queries
+  time: false        # No TIME dimension
+  elevation: false   # No vertical levels
+
+# Source configuration
+# Note: VIIRS data requires authentication with EOG
+# Set VIIRS_USERNAME and VIIRS_PASSWORD environment variables
+source:
+  type: http
+  # Latest 2023 annual composite - median masked (background removed)
+  url: "https://eogdata.mines.edu/nighttime_light/annual/v22/2023/VNL_v22_npp_2023_global_vcmslcfg_c202402081600.median_masked.dat.tif.gz"
+  compression: gzip
+  # Authentication (optional - some files may be publicly accessible)
+  # auth:
+  #   type: basic
+  #   username_env: VIIRS_USERNAME
+  #   password_env: VIIRS_PASSWORD
+
+grid:
+  projection: geographic  # EPSG:4326
+  resolution: "15arcsec"  # ~500m at equator
+  bbox:
+    min_lon: -180.0
+    min_lat: -65.0
+    max_lon: 180.0
+    max_lat: 75.0
+  dimensions:
+    x: 86400   # 360 degrees / (15/3600) degrees per pixel
+    y: 33600   # 140 degrees / (15/3600) degrees per pixel
+
+# Schedule configuration for static data
+schedule:
+  type: static           # Download once, no continuous polling
+  # check_for_updates: yearly  # Optional: check annually for new data
+
+# Retention - static data never expires
+retention:
+  static: true           # Never expire
+
+# Precaching disabled for large static datasets
+precaching:
+  enabled: false
+
+# Parameter definitions
+parameters:
+  # Average radiance (background removed)
+  - name: radiance
+    description: "Average nighttime radiance (background removed)"
+    downsample: mean
+    units: "nW/cm^2/sr"
+    display_units: "nW/cm^2/sr"
+    valid_range: [0, 300]  # Filter out fill values and artifacts
+
+  # Median radiance - more robust to outliers
+  - name: radiance_median
+    description: "Median nighttime radiance (background removed)"
+    downsample: mean
+    units: "nW/cm^2/sr"
+    display_units: "nW/cm^2/sr"
+    valid_range: [0, 300]
+
+  # For reference: Bortle scale mapping (approximate)
+  # Bortle 1 (Excellent dark site):  radiance < 0.25 nW/cm^2/sr
+  # Bortle 2 (Typical dark site):    radiance < 0.5
+  # Bortle 3 (Rural sky):            radiance < 1.0
+  # Bortle 4 (Rural/suburban):       radiance < 2.0
+  # Bortle 5 (Suburban sky):         radiance < 4.0
+  # Bortle 6 (Bright suburban):      radiance < 8.0
+  # Bortle 7 (Suburban/urban):       radiance < 20.0
+  # Bortle 8 (City sky):             radiance < 50.0
+  # Bortle 9 (Inner-city sky):       radiance >= 50.0
