@@ -1,0 +1,154 @@
+# US Airport Stations for METAR Reporting
+# Format: ICAO_ID,NAME,LONGITUDE,LATITUDE,ELEVATION_M,STATE
+# Data derived from FAA NASR - airports with ICAO codes likely to report METARs
+# Note: Longitude comes before Latitude (matches GeoJSON convention)
+#
+# Major US Hub Airports
+KATL,Hartsfield Jackson Atlanta Intl,-84.4281,33.6407,313,GA
+KORD,Chicago O Hare Intl,-87.9073,41.9742,201,IL
+KDFW,Dallas Fort Worth Intl,-97.0403,32.8998,184,TX
+KDEN,Denver Intl,-104.6737,39.8561,1655,CO
+KLAX,Los Angeles Intl,-118.4085,33.9416,38,CA
+KJFK,John F Kennedy Intl,-73.7781,40.6413,4,NY
+KSFO,San Francisco Intl,-122.3790,37.6213,4,CA
+KLAS,Harry Reid Intl,-115.1523,36.0840,664,NV
+KSEA,Seattle Tacoma Intl,-122.3088,47.4502,137,WA
+KMCO,Orlando Intl,-81.3089,28.4294,29,FL
+KPHX,Phoenix Sky Harbor Intl,-112.0080,33.4373,346,AZ
+KMIA,Miami Intl,-80.2906,25.7959,3,FL
+KIAH,George Bush Intercontinental,-95.3414,29.9844,29,TX
+KBOS,Gen Edward Lawrence Logan Intl,-71.0096,42.3656,6,MA
+KEWR,Newark Liberty Intl,-74.1687,40.6925,5,NJ
+KMSP,Minneapolis St Paul Intl,-93.2218,44.8820,256,MN
+KDTW,Detroit Metropolitan Wayne County,-83.3534,42.2124,196,MI
+KPHL,Philadelphia Intl,-75.2411,39.8721,11,PA
+KLGA,La Guardia,-73.8740,40.7772,6,NY
+KFLL,Fort Lauderdale Hollywood Intl,-80.1527,26.0726,3,FL
+KBWI,Baltimore Washington Intl,-76.6683,39.1754,47,MD
+KDCA,Ronald Reagan Washington National,-77.0377,38.8521,5,DC
+KSLC,Salt Lake City Intl,-111.9791,40.7884,1288,UT
+KSAN,San Diego Intl,-117.1896,32.7336,5,CA
+KTPA,Tampa Intl,-82.5332,27.9755,8,FL
+KAUS,Austin Bergstrom Intl,-97.6699,30.1945,163,TX
+KPDX,Portland Intl,-122.5975,45.5887,9,OR
+KSTL,St Louis Lambert Intl,-90.3700,38.7487,188,MO
+KBNA,Nashville Intl,-86.6782,36.1245,183,TN
+KMCI,Kansas City Intl,-94.7139,39.2976,313,MO
+KRDU,Raleigh Durham Intl,-78.7875,35.8776,134,NC
+KPIT,Pittsburgh Intl,-80.2329,40.4915,373,PA
+KCLE,Cleveland Hopkins Intl,-81.8498,41.4117,241,OH
+KCLT,Charlotte Douglas Intl,-80.9431,35.2140,228,NC
+KIND,Indianapolis Intl,-86.2944,39.7173,241,IN
+KCVG,Cincinnati Northern Kentucky Intl,-84.6678,39.0488,271,KY
+KSMF,Sacramento Intl,-121.5908,38.6954,8,CA
+KSJC,Norman Y Mineta San Jose Intl,-121.9290,37.3626,19,CA
+KOAK,Metropolitan Oakland Intl,-122.2208,37.7213,3,CA
+KSAT,San Antonio Intl,-98.4698,29.5337,246,TX
+KMKE,General Mitchell Intl,-87.8966,42.9472,220,WI
+KRNO,Reno Tahoe Intl,-119.7681,39.4991,1342,NV
+KSNA,John Wayne Airport Orange County,-117.8682,33.6757,17,CA
+KONT,Ontario Intl,-117.6012,34.0560,287,CA
+KHOU,William P Hobby,-95.2789,29.6454,14,TX
+KMDW,Chicago Midway Intl,-87.7524,41.7860,188,IL
+KDAL,Dallas Love Field,-96.8517,32.8471,149,TX
+# Regional Airports
+KABQ,Albuquerque Intl Sunport,-106.6095,35.0402,1631,NM
+KBUR,Hollywood Burbank,-118.3585,34.2007,236,CA
+KBUF,Buffalo Niagara Intl,-78.7322,42.9405,220,NY
+KPBI,Palm Beach Intl,-80.0956,26.6832,6,FL
+KELP,El Paso Intl,-106.3778,31.8072,1206,TX
+KTUS,Tucson Intl,-110.9410,32.1161,805,AZ
+KOKC,Will Rogers World,-97.6006,35.3931,397,OK
+KTUL,Tulsa Intl,-95.8881,36.1984,206,OK
+KOMA,Eppley Airfield,-95.8941,41.3032,299,NE
+KMEM,Memphis Intl,-89.9767,35.0424,104,TN
+KJAN,Jackson Medgar Wiley Evers Intl,-90.0758,32.3112,105,MS
+KBHM,Birmingham Shuttlesworth Intl,-86.7535,33.5629,196,AL
+KRIC,Richmond Intl,-77.3197,37.5052,50,VA
+KORF,Norfolk Intl,-76.2012,36.8946,8,VA
+KSYR,Syracuse Hancock Intl,-76.1063,43.1112,128,NY
+KPVD,Theodore Francis Green State,-71.4204,41.7241,17,RI
+KBDL,Bradley Intl,-72.6832,41.9389,53,CT
+KALB,Albany Intl,-73.8017,42.7483,87,NY
+KROC,Greater Rochester Intl,-77.6724,43.1189,170,NY
+KGSО,Piedmont Triad Intl,-79.9373,36.0978,283,NC
+KCHS,Charleston Intl,-80.0405,32.8986,14,SC
+KJAX,Jacksonville Intl,-81.6879,30.4941,9,FL
+KRSW,Southwest Florida Intl,-81.7552,26.5362,9,FL
+KPNS,Pensacola Intl,-87.1866,30.4734,36,FL
+KMSY,Louis Armstrong New Orleans Intl,-90.2580,29.9934,1,LA
+KLIT,Bill and Hillary Clinton National,-92.2243,34.7294,80,AR
+KSGF,Springfield Branson National,-93.3886,37.2457,387,MO
+KDSM,Des Moines Intl,-93.6631,41.5340,294,IA
+KFSD,Sioux Falls Regional,-96.7419,43.5820,434,SD
+KBIS,Bismarck Municipal,-100.7467,46.7727,505,ND
+KFAR,Hector Intl,-96.8158,46.9207,274,ND
+KRAP,Rapid City Regional,-103.0574,44.0453,966,SD
+KBIL,Billings Logan Intl,-108.5429,45.8077,1113,MT
+KBZN,Bozeman Yellowstone Intl,-111.1531,45.7775,1361,MT
+KMSO,Missoula Intl,-114.0906,46.9163,972,MT
+KGEG,Spokane Intl,-117.5338,47.6199,719,WA
+KBOI,Boise Air Terminal,-116.2228,43.5644,874,ID
+# Alaska
+PANC,Ted Stevens Anchorage Intl,-149.9963,61.1743,46,AK
+PAFA,Fairbanks Intl,-147.8564,64.8151,132,AK
+PAJN,Juneau Intl,-134.5763,58.3550,7,AK
+# Hawaii
+PHNL,Daniel K Inouye Intl,-157.9224,21.3187,4,HI
+PHOG,Kahului,-156.4305,20.8986,16,HI
+PHKO,Ellison Onizuka Kona Intl At Keahole,-156.0456,19.7388,14,HI
+PHLI,Lihue,-159.3390,21.9760,47,HI
+# Puerto Rico and Virgin Islands
+TJSJ,Luis Munoz Marin Intl,-66.0018,18.4394,3,PR
+TIST,Cyril E King,-64.9734,18.3373,7,VI
+# Other Notable Airports
+KASE,Aspen Pitkin County,-106.8687,39.2232,2350,CO
+KEGE,Eagle County Regional,-106.9177,39.6426,1993,CO
+KSJT,San Angelo Regional,-100.4963,31.3577,582,TX
+KMAF,Midland Intl,-102.2019,31.9425,872,TX
+KAMA,Rick Husband Amarillo Intl,-101.7059,35.2194,1099,TX
+KLBB,Lubbock Preston Smith Intl,-101.8227,33.6636,1002,TX
+KCOS,City of Colorado Springs Municipal,-104.7007,38.8058,1881,CO
+KICT,Wichita Dwight D Eisenhower National,-97.4331,37.6499,407,KS
+KLEX,Blue Grass,-84.6059,38.0365,301,KY
+KSDF,Louisville Muhammad Ali Intl,-85.7364,38.1744,152,KY
+KDAY,James M Cox Dayton Intl,-84.2194,39.9024,306,OH
+KCMH,John Glenn Columbus Intl,-82.8919,39.9980,249,OH
+KPWM,Portland Intl Jetport,-70.3093,43.6462,23,ME
+KMHT,Manchester Boston Regional,-71.4357,42.9326,81,NH
+KBTV,Burlington Intl,-73.1533,44.4720,102,VT
+KGRR,Gerald R Ford Intl,-85.5228,42.8808,242,MI
+KLAN,Capital Region Intl,-84.5874,42.7787,264,MI
+KFNT,Bishop Intl,-83.7436,42.9654,236,MI
+KTYS,McGhee Tyson,-83.9940,35.8111,299,TN
+KCHA,Lovell Field,-85.2038,35.0353,208,TN
+KHSV,Huntsville Intl Carl T Jones Field,-86.7751,34.6372,193,AL
+KMOB,Mobile Regional,-88.2428,30.6912,67,AL
+KGPT,Gulfport Biloxi Intl,-89.0701,30.4073,8,MS
+KSHV,Shreveport Regional,-93.8256,32.4466,77,LA
+KBTL,Battle Creek Executive,-85.2514,42.3073,287,MI
+KVPS,Destin Fort Walton Beach,-86.5254,30.4832,26,FL
+KECP,Northwest Florida Beaches Intl,-85.7954,30.3571,21,FL
+KGNV,Gainesville Regional,-82.2718,29.6901,46,FL
+KTLH,Tallahassee Intl,-84.3504,30.3965,25,FL
+KSAV,Savannah Hilton Head Intl,-81.2021,32.1276,15,GA
+KAGS,Augusta Regional At Bush Field,-81.9645,33.3699,45,GA
+KMCO,Orlando Intl,-81.3089,28.4294,29,FL
+KMLB,Melbourne Intl,-80.6453,28.1028,11,FL
+KDAB,Daytona Beach Intl,-81.0581,29.1799,10,FL
+KSFB,Orlando Sanford Intl,-81.2375,28.7776,17,FL
+KCRW,Yeager,-81.5932,38.3731,299,WV
+KAVP,Wilkes Barre Scranton Intl,-75.7234,41.3385,289,PA
+KMDT,Harrisburg Intl,-76.7633,40.1935,94,PA
+KABE,Lehigh Valley Intl,-75.4408,40.6521,120,PA
+KISP,Long Island Mac Arthur,-73.1002,40.7952,30,NY
+KSWF,New York Stewart Intl,-74.1048,41.5041,151,NY
+KHPN,Westchester County,-73.7076,41.0670,133,NY
+KPOU,Hudson Valley Regional,-73.8842,41.6266,50,NY
+KITH,Ithaca Tompkins Regional,-76.4584,42.4910,335,NY
+KELM,Elmira Corning Regional,-76.8917,42.1599,290,NY
+KBGM,Greater Binghamton,-75.9798,42.2087,499,NY
+KART,Watertown Intl,-76.0217,43.9919,99,NY
+KPLB,Clinton County,-73.5218,44.6895,51,NY
+KOGS,Ogdensburg Intl,-75.4655,44.6819,89,NY
+KMSS,Massena Intl Richards Field,-74.8456,44.9358,65,NY

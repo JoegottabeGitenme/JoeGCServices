@@ -32,7 +32,7 @@ impl Catalog {
         Ok(Self { pool })
     }
 
-    /// Run database migrations.
+    /// Run database migrations for gridded datasets.
     pub async fn migrate(&self) -> WmsResult<()> {
         // Split SQL statements and execute them individually
         for statement in SCHEMA_SQL.split(';') {
@@ -46,6 +46,38 @@ impl Catalog {
         }
 
         Ok(())
+    }
+
+    /// Run database migrations for point observations (requires PostGIS).
+    ///
+    /// This creates the `locations` and `observations` tables with PostGIS
+    /// spatial indexing. Call this after `migrate()` if observation support is needed.
+    pub async fn migrate_observations(&self) -> WmsResult<()> {
+        for statement in OBSERVATIONS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Observations migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get a reference to the underlying connection pool.
+    ///
+    /// This allows creating an `ObservationCatalog` that shares the same pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// Clone the connection pool for use in other components.
+    pub fn pool_clone(&self) -> PgPool {
+        self.pool.clone()
     }
 
     /// Register a new ingested dataset.
@@ -1266,7 +1298,7 @@ pub struct ParameterAvailability {
     pub bbox: BoundingBox,
 }
 
-/// Database schema SQL.
+/// Database schema SQL for gridded datasets.
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS datasets (
     id UUID PRIMARY KEY,
@@ -1302,4 +1334,81 @@ CREATE TABLE IF NOT EXISTS layer_styles (
 
     UNIQUE(layer_id, style_name)
 )
+"#;
+
+/// Database schema SQL for point observations (requires PostGIS).
+/// This is run separately after the main schema to handle PostGIS extension.
+pub const OBSERVATIONS_SCHEMA_SQL: &str = r#"
+-- Enable PostGIS extension (requires superuser or extension already installed)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Observation stations / locations (airports, weather stations, etc.)
+-- This table serves as the canonical location registry for all EDR location queries.
+CREATE TABLE IF NOT EXISTS locations (
+    id VARCHAR(20) PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    location GEOGRAPHY(Point, 4326) NOT NULL,
+    elevation_m REAL,
+    location_type VARCHAR(50),
+    country VARCHAR(10),
+    region VARCHAR(50),
+    properties JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_locations_geo ON locations USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_locations_type ON locations(location_type);
+CREATE INDEX IF NOT EXISTS idx_locations_country ON locations(country);
+
+-- Surface observations (METARs, MADIS surface data, etc.)
+-- All values stored in SI units for consistency.
+CREATE TABLE IF NOT EXISTS observations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id VARCHAR(20) NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    source VARCHAR(50) NOT NULL,
+    obs_time TIMESTAMPTZ NOT NULL,
+    receipt_time TIMESTAMPTZ,
+    
+    -- Core meteorological parameters (SI units)
+    temperature_k REAL,
+    dewpoint_k REAL,
+    wind_direction_deg SMALLINT,
+    wind_speed_ms REAL,
+    wind_gust_ms REAL,
+    altimeter_pa REAL,
+    sea_level_pressure_pa REAL,
+    visibility_m REAL,
+    precip_1hr_mm REAL,
+    relative_humidity_pct REAL,
+    
+    -- Aviation-specific fields
+    raw_text TEXT,
+    flight_category VARCHAR(10),
+    wx_string VARCHAR(100),
+    cloud_layers JSONB,
+    
+    -- QC flags (MADIS convention: V=valid, S=suspect, X=failed, C=coarse)
+    temperature_qc CHAR(1),
+    dewpoint_qc CHAR(1),
+    wind_qc CHAR(1),
+    pressure_qc CHAR(1),
+    
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Unique constraint to prevent duplicate observations
+CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup 
+    ON observations(location_id, source, obs_time);
+
+-- Query indexes
+CREATE INDEX IF NOT EXISTS idx_observations_time ON observations(obs_time DESC);
+CREATE INDEX IF NOT EXISTS idx_observations_source_time ON observations(source, obs_time DESC);
+CREATE INDEX IF NOT EXISTS idx_observations_location_time 
+    ON observations(location_id, obs_time DESC);
+
+-- Compound index for common query pattern: source + time range
+CREATE INDEX IF NOT EXISTS idx_observations_source_location_time 
+    ON observations(source, location_id, obs_time DESC)
 "#;
