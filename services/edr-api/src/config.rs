@@ -13,14 +13,21 @@ pub enum DataType {
     /// Forecast data (e.g., HRRR, GFS, NBM) - queried by reference time + forecast hour.
     #[default]
     Forecast,
-    /// Observation data (e.g., GOES, MRMS) - queried by observation time.
+    /// Observation data (e.g., GOES, MRMS) - gridded observation data queried by observation time.
     Observation,
+    /// Point observation data (e.g., METAR, TAF) - station-based observations from PostgreSQL.
+    PointObservation,
 }
 
 impl DataType {
-    /// Check if this is observation data.
+    /// Check if this is gridded observation data.
     pub fn is_observation(&self) -> bool {
         matches!(self, DataType::Observation)
+    }
+
+    /// Check if this is point observation data (METAR, TAF, etc.).
+    pub fn is_point_observation(&self) -> bool {
+        matches!(self, DataType::PointObservation)
     }
 }
 
@@ -119,9 +126,10 @@ pub struct ModelEdrConfig {
     /// Model identifier (e.g., "hrrr", "gfs").
     pub model: String,
 
-    /// Data type: "forecast" (default) or "observation".
-    /// Observation data (like GOES satellite) is queried by observation time.
-    /// Forecast data (like HRRR, GFS) is queried by reference time + forecast hour.
+    /// Data type: "forecast" (default), "observation", or "point_observation".
+    /// - Forecast data (like HRRR, GFS) is queried by reference time + forecast hour.
+    /// - Observation data (like GOES satellite) is queried by observation time.
+    /// - Point observation data (like METAR) is queried from PostgreSQL stations.
     #[serde(default)]
     pub data_type: DataType,
 
@@ -136,6 +144,11 @@ pub struct ModelEdrConfig {
     /// Response size limits.
     #[serde(default)]
     pub limits: LimitsConfig,
+
+    /// Source identifier for point observation data (e.g., "metar", "madis").
+    /// Only used when data_type is "point_observation".
+    #[serde(default)]
+    pub observation_source: Option<String>,
 }
 
 impl ModelEdrConfig {

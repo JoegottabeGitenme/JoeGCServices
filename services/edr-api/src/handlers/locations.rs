@@ -25,6 +25,10 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
+use crate::handlers::observations::{
+    obs_location_query_handler, obs_locations_list_handler, ObsLocationQueryParams,
+    ObsLocationsListParams,
+};
 use crate::limits::ResponseSizeEstimate;
 use crate::location_cache::LocationCacheKey;
 use crate::metrics::{
@@ -76,12 +80,35 @@ pub struct LocationQueryParams {
 /// GET /edr/collections/:collection_id/locations
 ///
 /// Returns a GeoJSON FeatureCollection of all available named locations.
+/// For point observation collections (METAR, TAF, etc.), dispatches to observation handler.
 pub async fn locations_list_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
     Query(params): Query<LocationsListParams>,
     headers: HeaderMap,
 ) -> Response {
+    // Check if this is a point observation collection
+    {
+        let config = state.edr_config.read().await;
+        if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_point_observation() {
+                // Dispatch to observation handler
+                let obs_params = ObsLocationsListParams {
+                    f: params.f.clone(),
+                    limit: None,
+                    source: None,
+                };
+                return obs_locations_list_handler(
+                    Extension(state.clone()),
+                    Path(collection_id),
+                    Query(obs_params),
+                    headers,
+                )
+                .await;
+            }
+        }
+    }
+
     locations_list(state, collection_id, None, params, headers).await
 }
 
@@ -166,12 +193,36 @@ async fn locations_list(
 /// GET /edr/collections/:collection_id/locations/:location_id
 ///
 /// Query data at a specific named location.
+/// For point observation collections (METAR, TAF, etc.), dispatches to observation handler.
 pub async fn location_query_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, location_id)): Path<(String, String)>,
     Query(params): Query<LocationQueryParams>,
     headers: HeaderMap,
 ) -> Response {
+    // Check if this is a point observation collection
+    {
+        let config = state.edr_config.read().await;
+        if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_point_observation() {
+                // Dispatch to observation handler
+                let obs_params = ObsLocationQueryParams {
+                    datetime: params.datetime.clone(),
+                    parameter_name: params.parameter_name.clone(),
+                    f: params.f.clone(),
+                    limit: None,
+                };
+                return obs_location_query_handler(
+                    Extension(state.clone()),
+                    Path((collection_id, location_id)),
+                    Query(obs_params),
+                    headers,
+                )
+                .await;
+            }
+        }
+    }
+
     location_query(state, collection_id, None, location_id, params, headers).await
 }
 

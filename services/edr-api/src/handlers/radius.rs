@@ -24,6 +24,7 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
+use crate::handlers::observations::{obs_radius_query_handler, ObsRadiusQueryParams};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
@@ -75,12 +76,39 @@ pub struct RadiusQueryParams {
 }
 
 /// GET /edr/collections/:collection_id/radius
+///
+/// For point observation collections (METAR, TAF, etc.), dispatches to observation handler.
 pub async fn radius_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
     Query(params): Query<RadiusQueryParams>,
     headers: HeaderMap,
 ) -> Response {
+    // Check if this is a point observation collection
+    {
+        let config = state.edr_config.read().await;
+        if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_point_observation() {
+                // Convert the coords to format observation handler expects
+                let obs_params = ObsRadiusQueryParams {
+                    coords: params.coords.clone().unwrap_or_default(),
+                    within: params.within.clone(),
+                    datetime: params.datetime.clone(),
+                    parameter_name: params.parameter_name.clone(),
+                    f: params.f.clone(),
+                    limit: None,
+                };
+                return obs_radius_query_handler(
+                    Extension(state.clone()),
+                    Path(collection_id),
+                    Query(obs_params),
+                    headers,
+                )
+                .await;
+            }
+        }
+    }
+
     // Use latest instance
     radius_query(state, collection_id, None, params, headers).await
 }

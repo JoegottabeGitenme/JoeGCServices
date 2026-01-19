@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use grid_processor::{GridDataService, MinioConfig};
+use storage::observations::ObservationCatalog;
 use storage::Catalog;
 
 use crate::availability::AvailabilityCache;
@@ -19,6 +20,9 @@ pub struct AppState {
 
     /// High-level grid data service for data access.
     pub grid_data_service: GridDataService,
+
+    /// Observation catalog for point observation data (METAR, etc.).
+    pub observation_catalog: Arc<ObservationCatalog>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -81,6 +85,9 @@ impl AppState {
         let grid_data_service =
             GridDataService::new(Arc::clone(&catalog), minio_config, chunk_cache_size_mb);
 
+        // Create observation catalog for point data (METAR, TAF, etc.)
+        let observation_catalog = Arc::new(ObservationCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_config = EdrConfig::load_from_dir("config/edr")?;
 
@@ -112,6 +119,7 @@ impl AppState {
         Ok(Self {
             catalog,
             grid_data_service,
+            observation_catalog,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,
