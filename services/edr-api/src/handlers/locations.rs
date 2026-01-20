@@ -772,6 +772,10 @@ pub struct GlobalLocationsListParams {
 pub struct GlobalLocationDataParams {
     /// Output format (json, geojson, text).
     pub f: Option<String>,
+    /// Collections to fetch data from (comma-separated).
+    /// If not specified, returns only location metadata and available_collections.
+    /// Example: ?collections=metar,taf,gfs-temperature
+    pub collections: Option<String>,
 }
 
 /// Response structure for a location feature with available data.
@@ -817,6 +821,35 @@ pub struct GlobalLocationData {
     pub metar: Option<MetarData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub taf: Option<TafData>,
+    /// Gridded data collections (keyed by collection ID).
+    /// Each contains the latest data at this location.
+    #[serde(flatten)]
+    pub gridded: std::collections::HashMap<String, GriddedCollectionData>,
+}
+
+/// Data from a gridded collection at a point location.
+#[derive(Debug, serde::Serialize)]
+pub struct GriddedCollectionData {
+    /// Reference time (model run time) for forecast data, or observation time.
+    pub reference_time: String,
+    /// Valid time (when the forecast/observation is for).
+    pub valid_time: String,
+    /// Forecast hour (0 for observations).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forecast_hour: Option<i32>,
+    /// Parameter values keyed by level (e.g., "surface", "850 mb").
+    /// Structure: { "parameter_name": { "level": value, ... }, ... }
+    pub parameters: std::collections::HashMap<String, GriddedParameterData>,
+}
+
+/// Data for a single parameter at multiple levels.
+#[derive(Debug, serde::Serialize)]
+pub struct GriddedParameterData {
+    /// Unit of measurement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Values at each level.
+    pub values: std::collections::HashMap<String, Option<f32>>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1052,10 +1085,13 @@ pub async fn global_locations_list_handler(
 
 /// GET /edr/locations/{locationId} - Get all available data at a location
 ///
-/// Returns the location metadata along with all available data:
-/// - METAR observations (if available)
-/// - TAF forecasts (if available)
-/// - Available collections (both point data and gridded data within bbox)
+/// Returns the location metadata along with data from requested collections.
+///
+/// If `?collections=` is not specified, returns only location metadata and
+/// the list of available collections (no actual data).
+///
+/// If `?collections=metar,taf,gfs-temperature` is specified, fetches the latest
+/// data from those collections at this location.
 pub async fn global_location_data_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(location_id): Path<String>,
@@ -1105,36 +1141,50 @@ pub async fn global_location_data_handler(
             );
         };
 
-    // Get available data and determine available collections
+    // Parse requested collections from query parameter
+    let requested_collections: Option<Vec<String>> = params.collections.as_ref().map(|c| {
+        c.split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+
+    // Check collection count limit
+    if let Some(ref colls) = requested_collections {
+        let max_collections = config
+            .server
+            .global_limits
+            .max_collections_per_location_request;
+        if colls.len() > max_collections {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "Too many collections requested: {} exceeds limit of {}",
+                    colls.len(),
+                    max_collections
+                )),
+            );
+        }
+    }
+
+    // Determine all available collections at this location
     let mut available_collections = Vec::new();
-    let mut metar_data: Option<MetarData> = None;
-    let mut taf_data: Option<TafData> = None;
     let mut links = vec![GlobalLocationLink {
         rel: "self".to_string(),
         href: format!("{}/locations/{}", base_url, location_id),
         title: None,
     }];
 
-    // Check for METAR data
-    if let Ok(Some(obs)) = state
+    // Check for METAR availability
+    let has_metar = state
         .observation_catalog
         .get_latest_observation(&location_id, Some("metar"))
         .await
-    {
+        .ok()
+        .flatten()
+        .is_some();
+    if has_metar {
         available_collections.push("metar".to_string());
-        metar_data = Some(MetarData {
-            obs_time: obs.obs_time.to_rfc3339(),
-            temperature_k: obs.temperature_k,
-            dewpoint_k: obs.dewpoint_k,
-            wind_direction_deg: obs.wind_direction_deg,
-            wind_speed_ms: obs.wind_speed_ms,
-            wind_gust_ms: obs.wind_gust_ms,
-            visibility_m: obs.visibility_m,
-            altimeter_pa: obs.altimeter_pa,
-            flight_category: obs.flight_category.clone(),
-            cloud_layers: obs.cloud_layers.clone(),
-            raw_observation: obs.raw_text.clone(),
-        });
         links.push(GlobalLocationLink {
             rel: "collection".to_string(),
             href: format!("{}/collections/metar/locations/{}", base_url, location_id),
@@ -1142,32 +1192,16 @@ pub async fn global_location_data_handler(
         });
     }
 
-    // Check for TAF data
-    if let Ok(Some(taf)) = state.observation_catalog.get_latest_taf(&location_id).await {
+    // Check for TAF availability
+    let has_taf = state
+        .observation_catalog
+        .get_latest_taf(&location_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    if has_taf {
         available_collections.push("taf".to_string());
-        let periods: Vec<TafPeriodData> = taf
-            .periods
-            .iter()
-            .map(|p| TafPeriodData {
-                from: p.period_from.to_rfc3339(),
-                to: p.period_to.to_rfc3339(),
-                change_type: p.change_indicator.clone(),
-                probability: p.probability,
-                wind_direction_deg: p.wind_direction_deg,
-                wind_speed_ms: p.wind_speed_ms,
-                wind_gust_ms: p.wind_gust_ms,
-                visibility_m: p.visibility_m,
-                cloud_layers: p.cloud_layers.clone(),
-            })
-            .collect();
-
-        taf_data = Some(TafData {
-            issue_time: taf.forecast.issue_time.to_rfc3339(),
-            valid_from: taf.forecast.valid_from.to_rfc3339(),
-            valid_to: taf.forecast.valid_to.to_rfc3339(),
-            raw_taf: taf.forecast.raw_taf.clone(),
-            periods,
-        });
         links.push(GlobalLocationLink {
             rel: "collection".to_string(),
             href: format!("{}/collections/taf/locations/{}", base_url, location_id),
@@ -1176,7 +1210,6 @@ pub async fn global_location_data_handler(
     }
 
     // Check gridded collections - see which have data covering this point
-    // We check the catalog's actual bbox for each model
     for (model_id, model_config) in &config.models {
         if model_config.data_type.is_point_data() {
             continue; // Already handled above
@@ -1191,8 +1224,11 @@ pub async fn global_location_data_handler(
                     available_collections.push(coll.id.clone());
                     links.push(GlobalLocationLink {
                         rel: "collection".to_string(),
-                        href: format!("{}/collections/{}", base_url, coll.id),
-                        title: Some(format!("{} (use position query)", coll.title)),
+                        href: format!(
+                            "{}/collections/{}/position?coords=POINT({} {})",
+                            base_url, coll.id, lon, lat
+                        ),
+                        title: Some(coll.title.clone()),
                     });
                 }
             }
@@ -1203,6 +1239,103 @@ pub async fn global_location_data_handler(
     available_collections.sort();
     available_collections.dedup();
 
+    // If no collections requested, return metadata only
+    if requested_collections.is_none() {
+        return build_location_metadata_response(
+            &location_id,
+            lon,
+            lat,
+            name,
+            description,
+            location_type,
+            elevation_m,
+            country,
+            available_collections,
+            links,
+            &params,
+        );
+    }
+
+    let requested = requested_collections.unwrap();
+
+    // Validate requested collections exist
+    for coll in &requested {
+        if !available_collections.contains(coll) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "Collection '{}' is not available at this location. Available: {:?}",
+                    coll, available_collections
+                )),
+            );
+        }
+    }
+
+    // Fetch data for requested collections
+    let mut metar_data: Option<MetarData> = None;
+    let mut taf_data: Option<TafData> = None;
+    let mut gridded_data: std::collections::HashMap<String, GriddedCollectionData> =
+        std::collections::HashMap::new();
+
+    for coll_id in &requested {
+        if coll_id == "metar" {
+            // Fetch METAR data
+            if let Ok(Some(obs)) = state
+                .observation_catalog
+                .get_latest_observation(&location_id, Some("metar"))
+                .await
+            {
+                metar_data = Some(MetarData {
+                    obs_time: obs.obs_time.to_rfc3339(),
+                    temperature_k: obs.temperature_k,
+                    dewpoint_k: obs.dewpoint_k,
+                    wind_direction_deg: obs.wind_direction_deg,
+                    wind_speed_ms: obs.wind_speed_ms,
+                    wind_gust_ms: obs.wind_gust_ms,
+                    visibility_m: obs.visibility_m,
+                    altimeter_pa: obs.altimeter_pa,
+                    flight_category: obs.flight_category.clone(),
+                    cloud_layers: obs.cloud_layers.clone(),
+                    raw_observation: obs.raw_text.clone(),
+                });
+            }
+        } else if coll_id == "taf" {
+            // Fetch TAF data
+            if let Ok(Some(taf)) = state.observation_catalog.get_latest_taf(&location_id).await {
+                let periods: Vec<TafPeriodData> = taf
+                    .periods
+                    .iter()
+                    .map(|p| TafPeriodData {
+                        from: p.period_from.to_rfc3339(),
+                        to: p.period_to.to_rfc3339(),
+                        change_type: p.change_indicator.clone(),
+                        probability: p.probability,
+                        wind_direction_deg: p.wind_direction_deg,
+                        wind_speed_ms: p.wind_speed_ms,
+                        wind_gust_ms: p.wind_gust_ms,
+                        visibility_m: p.visibility_m,
+                        cloud_layers: p.cloud_layers.clone(),
+                    })
+                    .collect();
+
+                taf_data = Some(TafData {
+                    issue_time: taf.forecast.issue_time.to_rfc3339(),
+                    valid_from: taf.forecast.valid_from.to_rfc3339(),
+                    valid_to: taf.forecast.valid_to.to_rfc3339(),
+                    raw_taf: taf.forecast.raw_taf.clone(),
+                    periods,
+                });
+            }
+        } else {
+            // Fetch gridded data for this collection
+            if let Some(gridded) =
+                fetch_gridded_collection_data(&state, &config, coll_id, lon, lat).await
+            {
+                gridded_data.insert(coll_id.clone(), gridded);
+            }
+        }
+    }
+
     // Check for text format output
     let wants_text = params
         .f
@@ -1211,64 +1344,24 @@ pub async fn global_location_data_handler(
         .unwrap_or(false);
 
     if wants_text {
-        // Return plain text format
-        let mut text = format!(
-            "Location: {} - {}\nCoordinates: {:.4}°N, {:.4}°W\n",
-            location_id,
-            name,
+        return build_location_text_response(
+            &location_id,
+            lon,
             lat,
-            lon.abs()
+            &name,
+            elevation_m,
+            &available_collections,
+            &metar_data,
+            &taf_data,
+            &gridded_data,
         );
-        if let Some(elev) = elevation_m {
-            text.push_str(&format!("Elevation: {}m\n", elev));
-        }
-        text.push('\n');
-
-        if let Some(ref metar) = metar_data {
-            text.push_str("=== METAR ===\n");
-            if let Some(ref raw) = metar.raw_observation {
-                text.push_str(raw);
-            } else {
-                text.push_str("(no raw METAR available)");
-            }
-            text.push_str("\n\n");
-        }
-
-        if let Some(ref taf) = taf_data {
-            text.push_str("=== TAF ===\n");
-            if let Some(ref raw) = taf.raw_taf {
-                text.push_str(raw);
-            } else {
-                text.push_str("(no raw TAF available)");
-            }
-            text.push('\n');
-        }
-
-        if available_collections.is_empty() {
-            text.push_str("No data available at this location.\n");
-        } else {
-            text.push_str(&format!(
-                "\nAvailable collections: {}\n",
-                available_collections.join(", ")
-            ));
-        }
-
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-            .header(header::CACHE_CONTROL, "max-age=60")
-            .body(text.into())
-            .unwrap();
     }
 
-    // Build GeoJSON response
-    let data = if metar_data.is_some() || taf_data.is_some() {
-        Some(GlobalLocationData {
-            metar: metar_data,
-            taf: taf_data,
-        })
-    } else {
-        None
+    // Build GeoJSON response with data
+    let data = GlobalLocationData {
+        metar: metar_data,
+        taf: taf_data,
+        gridded: gridded_data,
     };
 
     let feature = GlobalLocationFeature {
@@ -1285,7 +1378,7 @@ pub async fn global_location_data_handler(
             elevation_m,
             country,
             available_collections,
-            data,
+            data: Some(data),
         },
         links,
     };
@@ -1298,6 +1391,301 @@ pub async fn global_location_data_handler(
         .header(header::CACHE_CONTROL, "max-age=60")
         .body(json.into())
         .unwrap()
+}
+
+/// Build a metadata-only response (when no collections are requested).
+fn build_location_metadata_response(
+    location_id: &str,
+    lon: f64,
+    lat: f64,
+    name: String,
+    description: Option<String>,
+    location_type: Option<String>,
+    elevation_m: Option<f32>,
+    country: Option<String>,
+    available_collections: Vec<String>,
+    links: Vec<GlobalLocationLink>,
+    params: &GlobalLocationDataParams,
+) -> Response {
+    // Check for text format output
+    let wants_text = params
+        .f
+        .as_ref()
+        .map(|f| f == "text" || f == "text/plain")
+        .unwrap_or(false);
+
+    if wants_text {
+        let mut text = format!(
+            "Location: {} - {}\nCoordinates: {:.4}°N, {:.4}°W\n",
+            location_id,
+            name,
+            lat,
+            lon.abs()
+        );
+        if let Some(elev) = elevation_m {
+            text.push_str(&format!("Elevation: {}m\n", elev));
+        }
+        text.push('\n');
+
+        if available_collections.is_empty() {
+            text.push_str("No data available at this location.\n");
+        } else {
+            text.push_str(&format!(
+                "Available collections: {}\n\n",
+                available_collections.join(", ")
+            ));
+            text.push_str(
+                "Use ?collections=<name>,<name> to fetch data from specific collections.\n",
+            );
+        }
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(text.into())
+            .unwrap();
+    }
+
+    // GeoJSON response without data
+    let feature = GlobalLocationFeature {
+        feature_type: "Feature".to_string(),
+        id: location_id.to_string(),
+        geometry: GlobalLocationGeometry {
+            geom_type: "Point".to_string(),
+            coordinates: [lon, lat],
+        },
+        properties: GlobalLocationProperties {
+            name,
+            description,
+            location_type,
+            elevation_m,
+            country,
+            available_collections,
+            data: None,
+        },
+        links,
+    };
+
+    let json = serde_json::to_string_pretty(&feature).unwrap_or_default();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header(header::CACHE_CONTROL, "max-age=60")
+        .body(json.into())
+        .unwrap()
+}
+
+/// Build a text format response with data.
+fn build_location_text_response(
+    location_id: &str,
+    lon: f64,
+    lat: f64,
+    name: &str,
+    elevation_m: Option<f32>,
+    available_collections: &[String],
+    metar_data: &Option<MetarData>,
+    taf_data: &Option<TafData>,
+    gridded_data: &std::collections::HashMap<String, GriddedCollectionData>,
+) -> Response {
+    let mut text = format!(
+        "Location: {} - {}\nCoordinates: {:.4}°N, {:.4}°W\n",
+        location_id,
+        name,
+        lat,
+        lon.abs()
+    );
+    if let Some(elev) = elevation_m {
+        text.push_str(&format!("Elevation: {}m\n", elev));
+    }
+    text.push('\n');
+
+    if let Some(ref metar) = metar_data {
+        text.push_str("=== METAR ===\n");
+        if let Some(ref raw) = metar.raw_observation {
+            text.push_str(raw);
+        } else {
+            text.push_str(&format!("Time: {}\n", metar.obs_time));
+            if let Some(t) = metar.temperature_k {
+                text.push_str(&format!("Temperature: {:.1}K ({:.1}°C)\n", t, t - 273.15));
+            }
+            if let Some(w) = metar.wind_speed_ms {
+                text.push_str(&format!("Wind: {:.1} m/s", w));
+                if let Some(d) = metar.wind_direction_deg {
+                    text.push_str(&format!(" from {}°", d));
+                }
+                text.push('\n');
+            }
+        }
+        text.push_str("\n\n");
+    }
+
+    if let Some(ref taf) = taf_data {
+        text.push_str("=== TAF ===\n");
+        if let Some(ref raw) = taf.raw_taf {
+            text.push_str(raw);
+        } else {
+            text.push_str(&format!("Issued: {}\n", taf.issue_time));
+            text.push_str(&format!("Valid: {} to {}\n", taf.valid_from, taf.valid_to));
+        }
+        text.push_str("\n\n");
+    }
+
+    // Gridded data
+    for (coll_id, data) in gridded_data {
+        text.push_str(&format!("=== {} ===\n", coll_id.to_uppercase()));
+        text.push_str(&format!("Reference time: {}\n", data.reference_time));
+        text.push_str(&format!("Valid time: {}\n", data.valid_time));
+        if let Some(fh) = data.forecast_hour {
+            text.push_str(&format!("Forecast hour: {}\n", fh));
+        }
+        for (param_name, param_data) in &data.parameters {
+            text.push_str(&format!("  {}:\n", param_name));
+            for (level, value) in &param_data.values {
+                if let Some(v) = value {
+                    let unit_str = param_data.unit.as_deref().unwrap_or("");
+                    text.push_str(&format!("    {}: {:.2} {}\n", level, v, unit_str));
+                } else {
+                    text.push_str(&format!("    {}: null\n", level));
+                }
+            }
+        }
+        text.push('\n');
+    }
+
+    if available_collections.is_empty() {
+        text.push_str("No data available at this location.\n");
+    } else {
+        text.push_str(&format!(
+            "Available collections: {}\n",
+            available_collections.join(", ")
+        ));
+    }
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header(header::CACHE_CONTROL, "max-age=60")
+        .body(text.into())
+        .unwrap()
+}
+
+/// Fetch gridded data for a collection at a specific point.
+///
+/// Returns the latest data (closest to now) with all available levels.
+async fn fetch_gridded_collection_data(
+    state: &Arc<AppState>,
+    config: &crate::config::EdrConfig,
+    collection_id: &str,
+    lon: f64,
+    lat: f64,
+) -> Option<GriddedCollectionData> {
+    // Find the collection definition
+    let (model_config, collection_def) = config.find_collection(collection_id)?;
+
+    let is_observation = model_config.data_type.is_observation();
+    let model_name = &model_config.model;
+
+    let mut parameters: std::collections::HashMap<String, GriddedParameterData> =
+        std::collections::HashMap::new();
+    let mut reference_time: Option<DateTime<Utc>> = None;
+    let mut valid_time: Option<DateTime<Utc>> = None;
+    let mut forecast_hour: Option<i32> = None;
+
+    // Query each parameter in the collection
+    for param_def in &collection_def.parameters {
+        let param_name = &param_def.name;
+
+        // Get all levels for this parameter at the time closest to now
+        let entries = if is_observation {
+            state
+                .catalog
+                .get_all_levels_observation_closest_to_now(model_name, param_name)
+                .await
+                .ok()?
+        } else {
+            state
+                .catalog
+                .get_all_levels_forecast_closest_to_now(model_name, param_name)
+                .await
+                .ok()?
+        };
+
+        if entries.is_empty() {
+            continue;
+        }
+
+        // Use the first entry to set reference/valid times
+        if reference_time.is_none() {
+            let first = &entries[0];
+            reference_time = Some(first.reference_time);
+            forecast_hour = Some(first.forecast_hour as i32);
+            // Calculate valid_time for forecast data
+            valid_time =
+                Some(first.reference_time + chrono::Duration::hours(first.forecast_hour as i64));
+        }
+
+        // Extract values at each level
+        let mut level_values: std::collections::HashMap<String, Option<f32>> =
+            std::collections::HashMap::new();
+        let mut unit_str: Option<String> = None;
+
+        for entry in &entries {
+            // Build query for this specific entry
+            let query = if is_observation {
+                grid_processor::DatasetQuery::observation(model_name, param_name)
+                    .at_level(&entry.level)
+                    .at_time(entry.reference_time)
+            } else {
+                grid_processor::DatasetQuery::forecast(model_name, param_name)
+                    .at_level(&entry.level)
+                    .at_run(entry.reference_time)
+                    .at_forecast_hour(entry.forecast_hour as u32)
+            };
+
+            // Read the point value
+            match state.grid_data_service.read_point(&query, lon, lat).await {
+                Ok(point_value) => {
+                    level_values.insert(entry.level.clone(), point_value.value);
+                    if unit_str.is_none() && !point_value.units.is_empty() {
+                        unit_str = Some(point_value.units.clone());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read point value for {}/{} at level {}: {}",
+                        model_name,
+                        param_name,
+                        entry.level,
+                        e
+                    );
+                    level_values.insert(entry.level.clone(), None);
+                }
+            }
+        }
+
+        if !level_values.is_empty() {
+            parameters.insert(
+                param_name.clone(),
+                GriddedParameterData {
+                    unit: unit_str,
+                    values: level_values,
+                },
+            );
+        }
+    }
+
+    if parameters.is_empty() {
+        return None;
+    }
+
+    Some(GriddedCollectionData {
+        reference_time: reference_time?.to_rfc3339(),
+        valid_time: valid_time?.to_rfc3339(),
+        forecast_hour: if is_observation { None } else { forecast_hour },
+        parameters,
+    })
 }
 
 // TODO: Add pagination (limit, offset) for /edr/locations when location count grows large

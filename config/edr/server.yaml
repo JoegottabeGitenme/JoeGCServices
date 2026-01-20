@@ -1,0 +1,9 @@
+# EDR Server Global Configuration
+# Global limits that apply across all collections
+
+global_limits:
+  # Maximum number of collections that can be requested in a single /edr/locations/{id} request
+  max_collections_per_location_request: 10
+  
+  # Maximum total response size in MB for location data requests
+  max_location_response_size_mb: 50

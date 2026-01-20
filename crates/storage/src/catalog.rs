@@ -732,6 +732,211 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Get the forecast entry from the latest run with valid_time closest to now.
+    ///
+    /// For a given model/parameter/level, this finds:
+    /// 1. The latest available model run (reference_time)
+    /// 2. The forecast hour from that run where reference_time + forecast_hour is closest to now
+    ///
+    /// This is useful for getting the most relevant "current" forecast data.
+    pub async fn get_forecast_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Query that:
+        // 1. Filters to latest reference_time
+        // 2. Computes valid_time = reference_time + forecast_hour * interval '1 hour'
+        // 3. Orders by absolute difference from now
+        // 4. Takes the closest one
+        let row = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH latest_run AS (
+                    SELECT MAX(reference_time) as ref_time
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available'
+                )
+                SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                       d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                       d.storage_path, d.file_size, d.zarr_metadata
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2 AND d.level = $3
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $4)))
+                LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(lvl)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH latest_run AS (
+                    SELECT MAX(reference_time) as ref_time
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2 AND status = 'available'
+                )
+                SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                       d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                       d.storage_path, d.file_size, d.zarr_metadata
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $3)))
+                LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        };
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get all forecast entries from the latest run for a parameter, one per level,
+    /// with forecast hour closest to now for each.
+    ///
+    /// Returns entries for all available levels at the optimal forecast hour.
+    pub async fn get_all_levels_forecast_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Query that:
+        // 1. Finds the latest reference_time
+        // 2. For that run, finds the forecast_hour closest to now
+        // 3. Returns all levels at that reference_time + forecast_hour
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "WITH latest_run AS (
+                SELECT MAX(reference_time) as ref_time
+                FROM datasets
+                WHERE model = $1 AND parameter = $2 AND status = 'available'
+            ),
+            best_forecast AS (
+                SELECT d.forecast_hour
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $3)))
+                LIMIT 1
+            )
+            SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                   d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                   d.storage_path, d.file_size, d.zarr_metadata
+            FROM datasets d, latest_run lr, best_forecast bf
+            WHERE d.model = $1 AND d.parameter = $2
+              AND d.status = 'available'
+              AND d.reference_time = lr.ref_time
+              AND d.forecast_hour = bf.forecast_hour
+            ORDER BY d.level",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get the latest observation entry (for GOES, MRMS, etc.) closest to now.
+    ///
+    /// For observation data, reference_time IS the observation time and forecast_hour is 0.
+    pub async fn get_observation_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let now = Utc::now();
+
+        let row = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
+                 ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $4))) \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(lvl)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND status = 'available' \
+                 ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $3))) \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        };
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get all levels for observation data closest to now.
+    pub async fn get_all_levels_observation_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Find the observation time closest to now, then get all levels at that time
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "WITH best_time AS (
+                SELECT reference_time as obs_time
+                FROM datasets
+                WHERE model = $1 AND parameter = $2 AND status = 'available'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $3)))
+                LIMIT 1
+            )
+            SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                   d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                   d.storage_path, d.file_size, d.zarr_metadata
+            FROM datasets d, best_time bt
+            WHERE d.model = $1 AND d.parameter = $2
+              AND d.status = 'available'
+              AND d.reference_time = bt.obs_time
+            ORDER BY d.level",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     /// Get available runs and forecast hours for all layers of a model.
     /// Returns (runs, forecast_hours) where runs are ISO8601 strings and forecast_hours are integers.
     pub async fn get_model_dimensions(&self, model: &str) -> WmsResult<(Vec<String>, Vec<i32>)> {
