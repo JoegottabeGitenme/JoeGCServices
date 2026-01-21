@@ -34,6 +34,58 @@ This implementation supports the following conformance classes:
 | GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/geojson` | Supported |
 | EDR-GeoJSON | `http://www.opengis.net/spec/ogcapi-edr-1/1.0/conf/edr-geojson` | Supported |
 
+## Data Types
+
+The EDR API provides access to two types of environmental data:
+
+### Gridded Data (Weather Models)
+
+Regular grid coverage from numerical weather models and remote sensing:
+
+| Collection | Description | Resolution | Coverage |
+|------------|-------------|------------|----------|
+| **GFS** | Global Forecast System | 0.25° | Global |
+| **HRRR** | High-Resolution Rapid Refresh | 3km | CONUS |
+| **GOES-18/19** | Geostationary satellite imagery | 2km | Western Hemisphere |
+| **MRMS** | Multi-Radar Multi-Sensor precipitation | 1km | CONUS |
+
+Gridded collections support all query types: position, area, radius, trajectory, corridor, cube, and locations.
+
+### Point Observations
+
+Discrete observations from fixed locations (airports):
+
+| Collection | Description | Update Frequency | Query Types |
+|------------|-------------|------------------|-------------|
+| **metar** | Aviation surface weather observations | ~5 minutes | locations, radius, area |
+| **taf** | Terminal Aerodrome Forecasts | ~6 hours | locations, radius, area |
+
+Point observation collections do **not** support position queries (use `locations/{id}` instead).
+
+#### METAR Parameters
+
+| Parameter | Description | Units |
+|-----------|-------------|-------|
+| temperature | Air temperature | K |
+| dewpoint | Dewpoint temperature | K |
+| wind_speed | Wind speed | m/s |
+| wind_direction | Wind direction | degrees |
+| wind_gust | Wind gust speed | m/s |
+| visibility | Visibility | m |
+| altimeter | Altimeter setting | Pa |
+| sea_level_pressure | Sea level pressure | Pa |
+| flight_category | VFR/MVFR/IFR/LIFR | category |
+
+#### TAF Parameters
+
+| Parameter | Description | Units |
+|-----------|-------------|-------|
+| wind_speed | Forecast wind speed | m/s |
+| wind_direction | Forecast wind direction | degrees |
+| wind_gust | Forecast wind gust | m/s |
+| visibility | Forecast visibility | m |
+| weather | Weather phenomena | text |
+
 ## Landing Page
 
 Returns the API landing page with links to available resources.
@@ -602,16 +654,135 @@ Returns a CoverageCollection with one Coverage per z-level, each containing a gr
 
 ---
 
-## Locations Query
+## Global Locations API
 
-Retrieves data at pre-defined named locations (airports, cities, weather stations).
+The `/edr/locations` endpoints provide cross-collection access to named locations, allowing you to query data from multiple collections (observations + models) at a single location.
 
-### List Locations
+### List All Locations
 
-Returns all available named locations as a GeoJSON FeatureCollection.
+Returns all known locations from the database (airports with observations) and static configuration.
 
 ```http
-GET /edr/collections/{collectionId}/locations
+GET /edr/locations
+GET /edr/locations?collections=metar
+GET /edr/locations?collections=metar,taf
+```
+
+**Parameters:**
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| collections | No | Filter to locations with data in these collections | `metar,taf` |
+
+**Response** (GeoJSON FeatureCollection):
+```json
+{
+  "type": "FeatureCollection",
+  "numberReturned": 4521,
+  "features": [
+    {
+      "type": "Feature",
+      "id": "KDEN",
+      "geometry": {"type": "Point", "coordinates": [-104.6732, 39.8561]},
+      "properties": {
+        "name": "Denver International Airport",
+        "location_type": "airport",
+        "country": "US"
+      },
+      "links": [{"rel": "self", "href": "/edr/locations/KDEN"}]
+    }
+  ]
+}
+```
+
+### Get Location Metadata
+
+Returns location details and lists all available collections at that location.
+
+```http
+GET /edr/locations/KDEN
+```
+
+**Response:**
+```json
+{
+  "type": "Feature",
+  "id": "KDEN",
+  "geometry": {"type": "Point", "coordinates": [-104.6732, 39.8561]},
+  "properties": {
+    "name": "Denver International Airport",
+    "location_type": "airport",
+    "elevation_m": 1655,
+    "country": "US",
+    "available_collections": ["metar", "taf", "gfs-surface", "hrrr-surface", "hrrr-isobaric"]
+  }
+}
+```
+
+### Fetch Data from Multiple Collections
+
+Retrieves the latest data from specified collections at a location. This is ideal for:
+- Pilot briefings (METAR + TAF)
+- Model verification (observations vs model output)
+- Multi-model comparisons at a point
+
+```http
+GET /edr/locations/KDEN?collections=metar
+GET /edr/locations/KDEN?collections=metar,taf
+GET /edr/locations/KDEN?collections=metar,taf,hrrr-surface
+GET /edr/locations/KDEN?collections=metar,gfs-surface,hrrr-surface
+```
+
+**Response** includes a `data` object with results from each requested collection:
+```json
+{
+  "type": "Feature",
+  "id": "KDEN",
+  "geometry": {"type": "Point", "coordinates": [-104.6732, 39.8561]},
+  "properties": {
+    "name": "Denver International Airport",
+    "data": {
+      "metar": {
+        "datetime": "2026-01-20T15:53:00Z",
+        "temperature": 268.15,
+        "dewpoint": 258.15,
+        "wind_speed": 5.1,
+        "wind_direction": 270,
+        "visibility": 16093,
+        "flight_category": "VFR",
+        "raw": "KDEN 201553Z 27010KT 10SM FEW200 M05/M15 A3012"
+      },
+      "taf": {
+        "issue_time": "2026-01-20T12:00:00Z",
+        "valid_from": "2026-01-20T12:00:00Z",
+        "valid_to": "2026-01-21T18:00:00Z",
+        "raw": "TAF KDEN 201130Z 2012/2118 27012KT P6SM SKC..."
+      },
+      "hrrr-surface": {
+        "datetime": "2026-01-20T15:00:00Z",
+        "TMP": 267.8,
+        "UGRD": -4.2,
+        "VGRD": 2.1
+      }
+    }
+  }
+}
+```
+
+---
+
+## Collection Locations Query
+
+Retrieves data at named locations within a specific collection. For observation collections (metar, taf), returns actual observations. For gridded collections, extracts model data at the location's coordinates.
+
+### List Locations for Collection
+
+Returns all locations with data available in the collection.
+
+```http
+GET /edr/collections/metar/locations
+GET /edr/collections/taf/locations
+GET /edr/collections/hrrr-surface/locations
 GET /edr/collections/{collectionId}/instances/{instanceId}/locations
 ```
 
@@ -633,26 +804,12 @@ GET /edr/collections/{collectionId}/instances/{instanceId}/locations
         "type": "airport",
         "country": "US"
       }
-    },
-    {
-      "type": "Feature",
-      "id": "KLAX",
-      "geometry": {
-        "type": "Point",
-        "coordinates": [-118.4085, 33.9416]
-      },
-      "properties": {
-        "name": "Los Angeles International Airport",
-        "description": "Los Angeles, CA",
-        "type": "airport",
-        "country": "US"
-      }
     }
   ]
 }
 ```
 
-### Query at Location
+### Query Data at Location
 
 Retrieves data at a specific named location.
 
@@ -662,20 +819,43 @@ GET /edr/collections/{collectionId}/locations/{locationId}?parameter-name=TMP,UG
 GET /edr/collections/{collectionId}/instances/{instanceId}/locations/{locationId}
 ```
 
+**Observation collection examples:**
+```http
+# Get latest METAR at Denver
+GET /edr/collections/metar/locations/KDEN
+
+# Get last 24 hours of METARs at JFK
+GET /edr/collections/metar/locations/KJFK?datetime=../..&limit=24
+
+# Get TAF at LAX with specific parameters
+GET /edr/collections/taf/locations/KLAX?parameter-name=wind_speed,visibility
+```
+
+**Gridded collection examples:**
+```http
+# Get HRRR surface temperature at Denver
+GET /edr/collections/hrrr-surface/locations/KDEN?parameter-name=TMP
+
+# Get GFS data at JFK
+GET /edr/collections/gfs-surface/locations/KJFK?parameter-name=TMP,UGRD,VGRD
+```
+
 ### Parameters
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
 | locationId | Yes | Location identifier (case-insensitive) | `KJFK`, `kjfk` |
 | z | No | Vertical level(s) | `850` |
-| datetime | No | Time instant or interval | `2024-12-29T12:00:00Z` |
-| parameter-name | No | Parameter(s) to retrieve | `TMP,UGRD,VGRD` |
+| datetime | No | Time instant or interval | `2024-12-29T12:00:00Z` or `../..` |
+| parameter-name | No | Parameter(s) to retrieve | `TMP,UGRD,VGRD` or `temperature,wind_speed` |
 | f | No | Output format | `covjson` or `geojson` |
+| limit | No | Max observations to return (observation collections) | `24` |
 
 ### Available Locations
 
-Locations are configured server-side in `config/edr/locations.yaml`. Common location types include:
+For **observation collections** (metar, taf): Locations are dynamically discovered from the database based on recent data availability. Thousands of airports worldwide may be available.
 
+For **gridded collections**: Locations are configured in `config/edr/locations.yaml`. Common location types include:
 - **Airport codes** (ICAO): `KJFK`, `KLAX`, `KORD`, `KDFW`, `KDEN`, `KSFO`, `KBOS`, `KSEA`, `KMIA`, `KATL`
 - **City identifiers**: `NYC`, `CHI`, `HOU`, `PHX`, `DCA`
 
@@ -715,7 +895,8 @@ Returns CoverageJSON (default) or GeoJSON with data at the location:
 ### Caching
 
 Location query responses include caching headers:
-- `Cache-Control: max-age=300` (5 minutes)
+- `Cache-Control: max-age=300` (5 minutes for gridded data)
+- `Cache-Control: max-age=60` (1 minute for METAR - updates frequently)
 - `X-Cache: HIT` or `X-Cache: MISS` indicates cache status
 
 ---

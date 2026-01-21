@@ -1,0 +1,78 @@
+# TAF - Terminal Aerodrome Forecasts
+# 24-30 hour aviation weather forecasts for airports
+
+model:
+  id: taf
+  name: "TAF - Terminal Aerodrome Forecasts"
+  description: "24-30 hour aviation weather forecasts issued for airports"
+  enabled: true
+
+# Source configuration for Aviation Weather API (TAF endpoint)
+source:
+  type: aviation_weather_api_taf
+  # Base URL for the Aviation Weather Center Data API
+  base_url: "https://aviationweather.gov/api/data/taf"
+  # Format to request
+  format: json
+
+# Grid section defines the geographic coverage area
+# For point forecasts, this is used to filter the API request
+grid:
+  projection: geographic
+  resolution: "point"
+  # Bounding box for CONUS + adjacent areas
+  # API supports bbox parameter: minLon,minLat,maxLon,maxLat
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+
+# Schedule configuration for TAF polling
+schedule:
+  type: observation
+  # TAFs are typically issued every 6 hours (0000, 0600, 1200, 1800 UTC)
+  # with amendments as needed. Poll every 10 minutes to catch updates.
+  poll_interval_secs: 600
+  # Not used for TAF polling, but retained for config compatibility
+  lookback_minutes: 120
+
+# Retention settings
+retention:
+  hours: 48  # Keep 48 hours of TAFs for historical queries
+
+# Parameters captured from TAF forecasts
+# These are stored in SI units internally
+parameters:
+  - name: wind_direction
+    description: "Forecast wind direction"
+    units: "degrees"
+    display_units: "deg"
+    
+  - name: wind_speed
+    description: "Forecast wind speed"
+    units: "m/s"  # Stored in m/s, source is knots
+    display_units: "kt"
+    
+  - name: wind_gust
+    description: "Forecast wind gust speed"
+    units: "m/s"  # Stored in m/s, source is knots
+    display_units: "kt"
+    
+  - name: visibility
+    description: "Forecast visibility"
+    units: "m"  # Stored in meters, source is statute miles
+    display_units: "SM"
+    
+  - name: cloud_base
+    description: "Forecast cloud base height"
+    units: "m"  # Stored in meters, source is feet AGL
+    display_units: "ft"
+    
+  - name: cloud_cover
+    description: "Forecast cloud cover category"
+    units: "category"  # SKC, FEW, SCT, BKN, OVC
+    
+  - name: weather
+    description: "Forecast weather phenomena"
+    units: "string"  # RA, SN, BR, FG, etc.

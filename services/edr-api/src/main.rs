@@ -116,6 +116,19 @@ async fn run_server(args: Args) {
             "/edr/conformance/",
             get(handlers::conformance::conformance_handler),
         )
+        // Global locations (merged view of all known locations)
+        .route(
+            "/edr/locations",
+            get(handlers::locations::global_locations_list_handler),
+        )
+        .route(
+            "/edr/locations/",
+            get(handlers::locations::global_locations_list_handler),
+        )
+        .route(
+            "/edr/locations/:location_id",
+            get(handlers::locations::global_location_data_handler),
+        )
         // Collections (with trailing slash support)
         .route(
             "/edr/collections",

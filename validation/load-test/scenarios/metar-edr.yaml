@@ -1,0 +1,290 @@
+# METAR EDR Load Test Scenarios
+#
+# This file defines EDR API load test scenarios for METAR observation data.
+# Run with: scripts/run_edr_load_test.sh --scenario scenarios/metar-edr.yaml
+#
+# METAR is point observation data from airports. Supported query types:
+# - locations: List stations or query specific station
+# - radius: Find observations within distance of a point
+# - area: Find observations within a bounding box/polygon
+#
+# Note: Position queries are NOT supported for observations (use locations/{id})
+
+name: metar-edr
+description: |
+  METAR surface observation load test scenarios.
+  Tests location queries, radius searches, and area queries for airport weather data.
+
+base_url: http://localhost:8083/edr
+duration_secs: 60
+concurrency: 10
+warmup_secs: 5
+
+# Collection to test
+collections:
+  - metar
+
+# =============================================================================
+# LOCATION LIST QUERIES - GET /collections/metar/locations
+# =============================================================================
+# List all stations with recent METAR observations
+
+location_list_queries:
+  - name: list_all_stations
+    collection: metar
+    weight: 1.0
+    description: "List all METAR stations (GeoJSON)"
+
+  - name: list_stations_geojson
+    collection: metar
+    format: application/geo+json
+    weight: 0.5
+    description: "List stations with explicit GeoJSON format"
+
+# =============================================================================
+# LOCATION QUERIES - GET /collections/metar/locations/{stationId}
+# =============================================================================
+# Query data at specific stations (station IDs discovered dynamically)
+
+location_queries:
+  # Basic query - latest observation
+  - name: query_station_latest
+    collection: metar
+    weight: 3.0
+    description: "Get latest METAR at random station"
+
+  # Query with specific parameters
+  - name: query_station_temp_wind
+    collection: metar
+    parameters: ["temperature", "dewpoint", "wind_speed", "wind_direction"]
+    weight: 2.0
+    description: "Get temp and wind at station"
+
+  - name: query_station_visibility
+    collection: metar
+    parameters: ["visibility", "altimeter", "flight_category"]
+    weight: 1.5
+    description: "Get visibility and flight category"
+
+  # Time series queries (historical observations)
+  - name: query_station_last_6hrs
+    collection: metar
+    datetime: "../.."
+    limit: 6
+    weight: 2.0
+    description: "Get last 6 hours of METARs"
+
+  - name: query_station_last_24hrs
+    collection: metar
+    datetime: "../.."
+    limit: 24
+    weight: 1.5
+    description: "Get last 24 hours of METARs"
+
+  - name: query_station_all_params_timeseries
+    collection: metar
+    parameters: ["temperature", "dewpoint", "wind_speed", "wind_direction", "visibility"]
+    datetime: "../.."
+    limit: 12
+    weight: 1.0
+    description: "12-hour time series with 5 parameters"
+
+# =============================================================================
+# RADIUS QUERIES - GET /collections/metar/radius
+# =============================================================================
+# Find stations within a radius of a point
+
+radius_queries:
+  # Small radius - nearby stations
+  - name: radius_25km
+    collection: metar
+    coords: "POINT(-104.67 39.86)"  # Denver area
+    within: 25
+    within_units: km
+    weight: 1.5
+    description: "METARs within 25km of Denver"
+
+  # Medium radius
+  - name: radius_50km
+    collection: metar
+    coords: "POINT(-118.41 33.94)"  # LA area
+    within: 50
+    within_units: km
+    weight: 2.0
+    description: "METARs within 50km of LAX"
+
+  - name: radius_100km
+    collection: metar
+    coords: "POINT(-73.78 40.64)"  # NYC area
+    within: 100
+    within_units: km
+    weight: 1.5
+    description: "METARs within 100km of JFK"
+
+  # With parameters
+  - name: radius_75km_with_params
+    collection: metar
+    coords: "POINT(-87.90 41.98)"  # Chicago area
+    within: 75
+    within_units: km
+    parameters: ["temperature", "wind_speed", "visibility"]
+    weight: 1.5
+    description: "METARs within 75km with specific params"
+
+  # Random location radius queries
+  - name: radius_50km_random_conus
+    collection: metar
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    within: 50
+    within_units: km
+    weight: 2.5
+    description: "Random 50km radius over CONUS"
+
+  - name: radius_100km_random_conus
+    collection: metar
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    within: 100
+    within_units: km
+    weight: 2.0
+    description: "Random 100km radius over CONUS"
+
+  # With miles units
+  - name: radius_50mi
+    collection: metar
+    coords: "POINT(-97.04 32.90)"  # Dallas area
+    within: 50
+    within_units: mi
+    weight: 1.0
+    description: "METARs within 50 miles of DFW"
+
+# =============================================================================
+# AREA QUERIES - GET /collections/metar/area
+# =============================================================================
+# Find stations within a polygon/bounding box
+
+area_queries:
+  # Regional areas - specific polygons
+  - name: area_colorado_front_range
+    collection: metar
+    coords: "POLYGON((-106 38,-103 38,-103 41,-106 41,-106 38))"
+    weight: 1.5
+    description: "Colorado Front Range region"
+
+  - name: area_socal
+    collection: metar
+    coords: "POLYGON((-120 32,-116 32,-116 35,-120 35,-120 32))"
+    weight: 1.5
+    description: "Southern California"
+
+  - name: area_florida
+    collection: metar
+    coords: "POLYGON((-88 24,-79 24,-79 31,-88 31,-88 24))"
+    weight: 1.5
+    description: "Florida peninsula"
+
+  - name: area_northeast
+    collection: metar
+    coords: "POLYGON((-80 38,-70 38,-70 45,-80 45,-80 38))"
+    weight: 1.5
+    description: "Northeast corridor"
+
+  - name: area_texas
+    collection: metar
+    coords: "POLYGON((-107 25,-93 25,-93 37,-107 37,-107 25))"
+    weight: 1.0
+    description: "Texas region"
+
+  # With parameters
+  - name: area_midwest_with_params
+    collection: metar
+    coords: "POLYGON((-100 35,-90 35,-90 45,-100 45,-100 35))"
+    parameters: ["temperature", "dewpoint", "wind_speed"]
+    weight: 1.0
+    description: "Midwest with specific parameters"
+
+  # Random area queries
+  - name: area_random_2deg
+    collection: metar
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 2.0
+    weight: 2.5
+    description: "Random 2x2 degree area over CONUS"
+
+  - name: area_random_3deg
+    collection: metar
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 3.0
+    weight: 2.0
+    description: "Random 3x3 degree area over CONUS"
+
+  - name: area_random_5deg
+    collection: metar
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 5.0
+    weight: 1.0
+    description: "Random 5x5 degree area over CONUS"
+
+# =============================================================================
+# TEST POINTS - Major airports for fixed location tests
+# =============================================================================
+test_points:
+  - name: denver
+    station_id: KDEN
+    lon: -104.6732
+    lat: 39.8561
+  - name: los_angeles
+    station_id: KLAX
+    lon: -118.4085
+    lat: 33.9416
+  - name: chicago
+    station_id: KORD
+    lon: -87.9048
+    lat: 41.9742
+  - name: new_york_jfk
+    station_id: KJFK
+    lon: -73.7781
+    lat: 40.6413
+  - name: dallas
+    station_id: KDFW
+    lon: -97.0403
+    lat: 32.8998
+  - name: atlanta
+    station_id: KATL
+    lon: -84.4281
+    lat: 33.6407
+  - name: san_francisco
+    station_id: KSFO
+    lon: -122.3750
+    lat: 37.6188
+  - name: seattle
+    station_id: KSEA
+    lon: -122.3088
+    lat: 47.4502
+  - name: miami
+    station_id: KMIA
+    lon: -80.2906
+    lat: 25.7959
+  - name: boston
+    station_id: KBOS
+    lon: -71.0052
+    lat: 42.3656

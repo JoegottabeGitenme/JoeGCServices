@@ -32,7 +32,7 @@ impl Catalog {
         Ok(Self { pool })
     }
 
-    /// Run database migrations.
+    /// Run database migrations for gridded datasets.
     pub async fn migrate(&self) -> WmsResult<()> {
         // Split SQL statements and execute them individually
         for statement in SCHEMA_SQL.split(';') {
@@ -46,6 +46,38 @@ impl Catalog {
         }
 
         Ok(())
+    }
+
+    /// Run database migrations for point observations (requires PostGIS).
+    ///
+    /// This creates the `locations` and `observations` tables with PostGIS
+    /// spatial indexing. Call this after `migrate()` if observation support is needed.
+    pub async fn migrate_observations(&self) -> WmsResult<()> {
+        for statement in OBSERVATIONS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Observations migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get a reference to the underlying connection pool.
+    ///
+    /// This allows creating an `ObservationCatalog` that shares the same pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// Clone the connection pool for use in other components.
+    pub fn pool_clone(&self) -> PgPool {
+        self.pool.clone()
     }
 
     /// Register a new ingested dataset.
@@ -700,6 +732,211 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Get the forecast entry from the latest run with valid_time closest to now.
+    ///
+    /// For a given model/parameter/level, this finds:
+    /// 1. The latest available model run (reference_time)
+    /// 2. The forecast hour from that run where reference_time + forecast_hour is closest to now
+    ///
+    /// This is useful for getting the most relevant "current" forecast data.
+    pub async fn get_forecast_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Query that:
+        // 1. Filters to latest reference_time
+        // 2. Computes valid_time = reference_time + forecast_hour * interval '1 hour'
+        // 3. Orders by absolute difference from now
+        // 4. Takes the closest one
+        let row = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH latest_run AS (
+                    SELECT MAX(reference_time) as ref_time
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available'
+                )
+                SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                       d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                       d.storage_path, d.file_size, d.zarr_metadata
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2 AND d.level = $3
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $4)))
+                LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(lvl)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH latest_run AS (
+                    SELECT MAX(reference_time) as ref_time
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2 AND status = 'available'
+                )
+                SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                       d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                       d.storage_path, d.file_size, d.zarr_metadata
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $3)))
+                LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        };
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get all forecast entries from the latest run for a parameter, one per level,
+    /// with forecast hour closest to now for each.
+    ///
+    /// Returns entries for all available levels at the optimal forecast hour.
+    pub async fn get_all_levels_forecast_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Query that:
+        // 1. Finds the latest reference_time
+        // 2. For that run, finds the forecast_hour closest to now
+        // 3. Returns all levels at that reference_time + forecast_hour
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "WITH latest_run AS (
+                SELECT MAX(reference_time) as ref_time
+                FROM datasets
+                WHERE model = $1 AND parameter = $2 AND status = 'available'
+            ),
+            best_forecast AS (
+                SELECT d.forecast_hour
+                FROM datasets d, latest_run lr
+                WHERE d.model = $1 AND d.parameter = $2
+                  AND d.status = 'available'
+                  AND d.reference_time = lr.ref_time
+                ORDER BY ABS(EXTRACT(EPOCH FROM (d.reference_time + d.forecast_hour * interval '1 hour' - $3)))
+                LIMIT 1
+            )
+            SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                   d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                   d.storage_path, d.file_size, d.zarr_metadata
+            FROM datasets d, latest_run lr, best_forecast bf
+            WHERE d.model = $1 AND d.parameter = $2
+              AND d.status = 'available'
+              AND d.reference_time = lr.ref_time
+              AND d.forecast_hour = bf.forecast_hour
+            ORDER BY d.level",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get the latest observation entry (for GOES, MRMS, etc.) closest to now.
+    ///
+    /// For observation data, reference_time IS the observation time and forecast_hour is 0.
+    pub async fn get_observation_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let now = Utc::now();
+
+        let row = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
+                 ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $4))) \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(lvl)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND status = 'available' \
+                 ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $3))) \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
+        };
+
+        Ok(row.map(|r| r.into()))
+    }
+
+    /// Get all levels for observation data closest to now.
+    pub async fn get_all_levels_observation_closest_to_now(
+        &self,
+        model: &str,
+        parameter: &str,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = Utc::now();
+
+        // Find the observation time closest to now, then get all levels at that time
+        let rows = sqlx::query_as::<_, DatasetRow>(
+            "WITH best_time AS (
+                SELECT reference_time as obs_time
+                FROM datasets
+                WHERE model = $1 AND parameter = $2 AND status = 'available'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (reference_time - $3)))
+                LIMIT 1
+            )
+            SELECT d.model, d.parameter, d.level, d.reference_time, d.forecast_hour,
+                   d.bbox_min_x, d.bbox_min_y, d.bbox_max_x, d.bbox_max_y,
+                   d.storage_path, d.file_size, d.zarr_metadata
+            FROM datasets d, best_time bt
+            WHERE d.model = $1 AND d.parameter = $2
+              AND d.status = 'available'
+              AND d.reference_time = bt.obs_time
+            ORDER BY d.level",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     /// Get available runs and forecast hours for all layers of a model.
     /// Returns (runs, forecast_hours) where runs are ISO8601 strings and forecast_hours are integers.
     pub async fn get_model_dimensions(&self, model: &str) -> WmsResult<(Vec<String>, Vec<i32>)> {
@@ -1266,7 +1503,7 @@ pub struct ParameterAvailability {
     pub bbox: BoundingBox,
 }
 
-/// Database schema SQL.
+/// Database schema SQL for gridded datasets.
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS datasets (
     id UUID PRIMARY KEY,
@@ -1302,4 +1539,128 @@ CREATE TABLE IF NOT EXISTS layer_styles (
 
     UNIQUE(layer_id, style_name)
 )
+"#;
+
+/// Database schema SQL for point observations (requires PostGIS).
+/// This is run separately after the main schema to handle PostGIS extension.
+pub const OBSERVATIONS_SCHEMA_SQL: &str = r#"
+-- Enable PostGIS extension (requires superuser or extension already installed)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Observation stations / locations (airports, weather stations, etc.)
+-- This table serves as the canonical location registry for all EDR location queries.
+CREATE TABLE IF NOT EXISTS locations (
+    id VARCHAR(20) PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    location GEOGRAPHY(Point, 4326) NOT NULL,
+    elevation_m REAL,
+    location_type VARCHAR(50),
+    country VARCHAR(10),
+    region VARCHAR(50),
+    properties JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_locations_geo ON locations USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_locations_type ON locations(location_type);
+CREATE INDEX IF NOT EXISTS idx_locations_country ON locations(country);
+
+-- Surface observations (METARs, MADIS surface data, etc.)
+-- All values stored in SI units for consistency.
+CREATE TABLE IF NOT EXISTS observations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id VARCHAR(20) NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    source VARCHAR(50) NOT NULL,
+    obs_time TIMESTAMPTZ NOT NULL,
+    receipt_time TIMESTAMPTZ,
+
+    -- Core meteorological parameters (SI units)
+    temperature_k REAL,
+    dewpoint_k REAL,
+    wind_direction_deg SMALLINT,
+    wind_speed_ms REAL,
+    wind_gust_ms REAL,
+    altimeter_pa REAL,
+    sea_level_pressure_pa REAL,
+    visibility_m REAL,
+    precip_1hr_mm REAL,
+    relative_humidity_pct REAL,
+
+    -- Aviation-specific fields
+    raw_text TEXT,
+    flight_category VARCHAR(10),
+    wx_string VARCHAR(100),
+    cloud_layers JSONB,
+
+    -- QC flags (MADIS convention: V=valid, S=suspect, X=failed, C=coarse)
+    temperature_qc CHAR(1),
+    dewpoint_qc CHAR(1),
+    wind_qc CHAR(1),
+    pressure_qc CHAR(1),
+
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Unique constraint to prevent duplicate observations
+CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup
+    ON observations(location_id, source, obs_time);
+
+-- Query indexes
+CREATE INDEX IF NOT EXISTS idx_observations_time ON observations(obs_time DESC);
+CREATE INDEX IF NOT EXISTS idx_observations_source_time ON observations(source, obs_time DESC);
+CREATE INDEX IF NOT EXISTS idx_observations_location_time
+    ON observations(location_id, obs_time DESC);
+
+-- Compound index for common query pattern: source + time range
+CREATE INDEX IF NOT EXISTS idx_observations_source_location_time
+    ON observations(source, location_id, obs_time DESC);
+
+-- =============================================================================
+-- TAF (Terminal Aerodrome Forecast) tables
+-- =============================================================================
+
+-- TAF forecasts (header/metadata)
+-- Each TAF has an issue time and validity period (typically 24-30 hours)
+CREATE TABLE IF NOT EXISTS taf_forecasts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id VARCHAR(20) NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    issue_time TIMESTAMPTZ NOT NULL,
+    valid_from TIMESTAMPTZ NOT NULL,
+    valid_to TIMESTAMPTZ NOT NULL,
+    raw_taf TEXT,
+    remarks TEXT,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT taf_forecasts_unique UNIQUE (location_id, issue_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_location_valid
+    ON taf_forecasts(location_id, valid_from DESC);
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_valid_range
+    ON taf_forecasts(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_issue_time
+    ON taf_forecasts(issue_time DESC);
+
+-- TAF forecast periods (detail)
+-- Each TAF contains multiple periods: base forecast + FM/BECMG/TEMPO changes
+-- All values stored in SI units for consistency with METAR observations
+CREATE TABLE IF NOT EXISTS taf_periods (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    taf_id UUID NOT NULL REFERENCES taf_forecasts(id) ON DELETE CASCADE,
+    period_from TIMESTAMPTZ NOT NULL,
+    period_to TIMESTAMPTZ NOT NULL,
+    change_indicator VARCHAR(10),  -- null (base), FM, BECMG, TEMPO, PROB
+    probability SMALLINT,          -- null, 30, or 40
+    wind_direction_deg SMALLINT,
+    wind_speed_ms REAL,
+    wind_gust_ms REAL,
+    visibility_m REAL,
+    wx_string VARCHAR(100),
+    cloud_layers JSONB,
+    period_order SMALLINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_taf_periods_taf ON taf_periods(taf_id);
+CREATE INDEX IF NOT EXISTS idx_taf_periods_time ON taf_periods(period_from, period_to)
 "#;

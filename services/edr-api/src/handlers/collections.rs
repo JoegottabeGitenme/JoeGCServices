@@ -176,6 +176,130 @@ fn has_multiple_available_vertical_levels(
     unique_levels.len() > 1
 }
 
+/// Build a Collection for point observation data (METAR, TAF, etc.).
+async fn build_point_observation_collection(
+    state: &AppState,
+    model_config: &ModelEdrConfig,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+    obs_count: i64,
+) -> Collection {
+    let source = model_config
+        .observation_source
+        .as_deref()
+        .unwrap_or("metar");
+
+    // Build description with observation count
+    let description = format!(
+        "{} ({} observations available)",
+        collection_def.description, obs_count
+    );
+
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&description);
+
+    // Build links
+    collection.build_links(&state.base_url);
+
+    // Point observations support locations, radius, and area queries (not position, trajectory, etc.)
+    // Start with a default and add the queries we support
+    let queries = DataQueries::default()
+        .with_locations(&state.base_url, &collection_def.id)
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+
+    collection = collection.with_data_queries(queries);
+
+    // Get temporal extent from observations
+    let temporal_extent = state
+        .observation_catalog
+        .get_observation_time_range(source)
+        .await
+        .ok()
+        .flatten();
+
+    // CONUS bounding box for US airports
+    let spatial_bbox = [-170.0, 15.0, -60.0, 72.0];
+    let mut extent = Extent::with_spatial(spatial_bbox, None);
+
+    if let Some((start, end)) = temporal_extent {
+        let temporal = TemporalExtent::new(Some(start.to_rfc3339()), Some(end.to_rfc3339()));
+        extent = extent.with_temporal(temporal);
+    }
+
+    collection = collection.with_extent(extent);
+
+    // Add parameters
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        let param = Parameter::new(param_name, param_name);
+        params.insert(param_name.clone(), param);
+    }
+    collection = collection.with_parameters(params);
+
+    collection
+}
+
+/// Build a Collection for point forecast data (TAF).
+async fn build_point_forecast_collection(
+    state: &AppState,
+    _model_config: &ModelEdrConfig,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+    taf_count: i64,
+) -> Collection {
+    // Build description with TAF count
+    let description = format!(
+        "{} ({} forecasts available)",
+        collection_def.description, taf_count
+    );
+
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&description);
+
+    // Build links
+    collection.build_links(&state.base_url);
+
+    // Point forecasts support locations, radius, and area queries (same as observations)
+    let queries = DataQueries::default()
+        .with_locations(&state.base_url, &collection_def.id)
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+
+    collection = collection.with_data_queries(queries);
+
+    // Get temporal extent from TAFs (valid time range)
+    let temporal_extent = state
+        .observation_catalog
+        .get_taf_time_range()
+        .await
+        .ok()
+        .flatten();
+
+    // CONUS + Alaska/Hawaii bounding box for US airports
+    let spatial_bbox = [-170.0, 15.0, -60.0, 72.0];
+    let mut extent = Extent::with_spatial(spatial_bbox, None);
+
+    if let Some((start, end)) = temporal_extent {
+        let temporal = TemporalExtent::new(Some(start.to_rfc3339()), Some(end.to_rfc3339()));
+        extent = extent.with_temporal(temporal);
+    }
+
+    collection = collection.with_extent(extent);
+
+    // Add parameters
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        let param = Parameter::new(param_name, param_name);
+        params.insert(param_name.clone(), param);
+    }
+    collection = collection.with_parameters(params);
+
+    collection
+}
+
 /// GET /edr/collections - List all collections
 ///
 /// Only returns collections that have data available in the catalog.
@@ -199,7 +323,78 @@ pub async fn list_collections_handler(
             continue;
         };
 
-        // Get availability for this model from cache
+        // Point observation collections have different availability checks
+        if model_config.data_type.is_point_observation() {
+            // Check if there are any observations in the database for this source
+            let source = model_config
+                .observation_source
+                .as_deref()
+                .unwrap_or("metar");
+            let obs_count = state
+                .observation_catalog
+                .count_observations(Some(source))
+                .await
+                .unwrap_or(0);
+
+            if obs_count == 0 {
+                tracing::debug!(
+                    "Skipping point observation collection {} - no observations for source {}",
+                    collection_def.id,
+                    source
+                );
+                continue;
+            }
+
+            // For point observations, include all configured parameters
+            let available_params: Vec<String> =
+                coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            // Build the collection for point observations
+            let collection = build_point_observation_collection(
+                &state,
+                model_config,
+                coll_def,
+                &available_params,
+                obs_count,
+            )
+            .await;
+
+            collections.push(collection);
+            continue;
+        }
+
+        // Point forecast collections (TAF) use TAF count from database
+        if model_config.data_type.is_point_forecast() {
+            // Check if there are any TAFs in the database
+            let taf_count = state.observation_catalog.count_tafs().await.unwrap_or(0);
+
+            if taf_count == 0 {
+                tracing::debug!(
+                    "Skipping point forecast collection {} - no TAFs in database",
+                    collection_def.id
+                );
+                continue;
+            }
+
+            // For point forecasts, include all configured parameters
+            let available_params: Vec<String> =
+                coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            // Build the collection for point forecasts (same structure as point observations)
+            let collection = build_point_forecast_collection(
+                &state,
+                model_config,
+                coll_def,
+                &available_params,
+                taf_count,
+            )
+            .await;
+
+            collections.push(collection);
+            continue;
+        }
+
+        // Get availability for this model from cache (for gridded data)
         let availability = state
             .availability_cache
             .get_model_availability(&state.catalog, &model_config.model)
@@ -356,7 +551,97 @@ pub async fn get_collection_handler(
             .unwrap();
     };
 
-    // Get availability for this model
+    // Handle point observation collections differently
+    if model_config.data_type.is_point_observation() {
+        let source = model_config
+            .observation_source
+            .as_deref()
+            .unwrap_or("metar");
+        let obs_count = state
+            .observation_catalog
+            .count_observations(Some(source))
+            .await
+            .unwrap_or(0);
+
+        if obs_count == 0 {
+            let exc = ExceptionResponse::not_found(format!(
+                "Collection {} has no observations",
+                collection_id
+            ));
+            let json = serde_json::to_string(&exc).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap();
+        }
+
+        let available_params: Vec<String> = collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        let collection = build_point_observation_collection(
+            &state,
+            model_config,
+            collection_def,
+            &available_params,
+            obs_count,
+        )
+        .await;
+
+        let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(json.into())
+            .unwrap();
+    }
+
+    // Handle point forecast collections (TAF)
+    if model_config.data_type.is_point_forecast() {
+        let taf_count = state.observation_catalog.count_tafs().await.unwrap_or(0);
+
+        if taf_count == 0 {
+            let exc = ExceptionResponse::not_found(format!(
+                "Collection {} has no TAF forecasts",
+                collection_id
+            ));
+            let json = serde_json::to_string(&exc).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap();
+        }
+
+        let available_params: Vec<String> = collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        let collection = build_point_forecast_collection(
+            &state,
+            model_config,
+            collection_def,
+            &available_params,
+            taf_count,
+        )
+        .await;
+
+        let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(json.into())
+            .unwrap();
+    }
+
+    // Get availability for this model (for gridded data)
     let availability = state
         .availability_cache
         .get_model_availability(&state.catalog, &model_config.model)

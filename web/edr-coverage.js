@@ -2827,4 +2827,245 @@ function copyGapSummary() {
 document.addEventListener('DOMContentLoaded', () => {
     window.validator = new EDRCoverageValidator();
     window.validator.init();
+    
+    // Initialize global locations tests
+    initGlobalLocationsTests();
 });
+
+/**
+ * Global Locations Endpoint Tests
+ * Tests the /edr/locations and /edr/locations/{id}?collections=... endpoints
+ */
+function initGlobalLocationsTests() {
+    // Bind test buttons
+    document.getElementById('test-global-locations-list')?.addEventListener('click', testGlobalLocationsList);
+    document.getElementById('test-global-location-metadata')?.addEventListener('click', testGlobalLocationMetadata);
+    document.getElementById('test-global-location-data')?.addEventListener('click', testGlobalLocationData);
+    document.getElementById('test-global-location-text')?.addEventListener('click', testGlobalLocationText);
+}
+
+/**
+ * Display results in the global locations results panel
+ */
+function displayGlobalLocationsResult(testName, url, result, duration) {
+    const container = document.getElementById('global-locations-results');
+    
+    // Clear placeholder if present
+    const placeholder = container.querySelector('.placeholder');
+    if (placeholder) placeholder.remove();
+    
+    const statusClass = result.success ? 'pass' : 'fail';
+    const statusText = result.success ? 'PASS' : 'FAIL';
+    
+    const resultEl = document.createElement('div');
+    resultEl.className = `test-result ${statusClass}`;
+    resultEl.innerHTML = `
+        <div class="result-header">
+            <span class="test-name">${testName}</span>
+            <span class="status ${statusClass}">${statusText}</span>
+            <span class="duration">${duration}ms</span>
+        </div>
+        <div class="result-url">${url}</div>
+        ${result.message ? `<div class="result-message">${result.message}</div>` : ''}
+        ${result.data ? `<pre class="result-data">${JSON.stringify(result.data, null, 2).substring(0, 2000)}${JSON.stringify(result.data).length > 2000 ? '\n... (truncated)' : ''}</pre>` : ''}
+    `;
+    
+    container.appendChild(resultEl);
+    
+    // Auto-scroll to latest
+    container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * Test GET /edr/locations - list all locations
+ */
+async function testGlobalLocationsList() {
+    const endpoint = window.validator.endpoint;
+    const url = `${endpoint}/locations`;
+    const testName = 'List All Locations';
+    
+    const startTime = Date.now();
+    try {
+        const response = await fetch(url);
+        const duration = Date.now() - startTime;
+        
+        if (!response.ok) {
+            displayGlobalLocationsResult(testName, url, {
+                success: false,
+                message: `HTTP ${response.status}: ${response.statusText}`
+            }, duration);
+            return;
+        }
+        
+        const data = await response.json();
+        const featureCount = data.features?.length || 0;
+        
+        displayGlobalLocationsResult(testName, url, {
+            success: true,
+            message: `Found ${featureCount} locations`,
+            data: {
+                type: data.type,
+                numberReturned: data.numberReturned,
+                sampleLocations: data.features?.slice(0, 5).map(f => ({
+                    id: f.id,
+                    name: f.properties?.name
+                }))
+            }
+        }, duration);
+    } catch (e) {
+        const duration = Date.now() - startTime;
+        displayGlobalLocationsResult(testName, url, {
+            success: false,
+            message: `Error: ${e.message}`
+        }, duration);
+    }
+}
+
+/**
+ * Test GET /edr/locations/{id} - metadata only (no ?collections=)
+ */
+async function testGlobalLocationMetadata() {
+    const endpoint = window.validator.endpoint;
+    const locationId = document.getElementById('global-location-id').value || 'KJFK';
+    const url = `${endpoint}/locations/${locationId}`;
+    const testName = `Location Metadata: ${locationId}`;
+    
+    const startTime = Date.now();
+    try {
+        const response = await fetch(url);
+        const duration = Date.now() - startTime;
+        
+        if (!response.ok) {
+            displayGlobalLocationsResult(testName, url, {
+                success: false,
+                message: `HTTP ${response.status}: ${response.statusText}`
+            }, duration);
+            return;
+        }
+        
+        const data = await response.json();
+        const availableCollections = data.properties?.available_collections || [];
+        const hasData = data.properties?.data !== null && data.properties?.data !== undefined;
+        
+        displayGlobalLocationsResult(testName, url, {
+            success: true,
+            message: `Available collections: ${availableCollections.join(', ') || 'none'}. Data included: ${hasData ? 'yes (unexpected!)' : 'no (correct)'}`,
+            data: {
+                id: data.id,
+                name: data.properties?.name,
+                coordinates: data.geometry?.coordinates,
+                available_collections: availableCollections,
+                data: data.properties?.data
+            }
+        }, duration);
+    } catch (e) {
+        const duration = Date.now() - startTime;
+        displayGlobalLocationsResult(testName, url, {
+            success: false,
+            message: `Error: ${e.message}`
+        }, duration);
+    }
+}
+
+/**
+ * Test GET /edr/locations/{id}?collections=... - with data
+ */
+async function testGlobalLocationData() {
+    const endpoint = window.validator.endpoint;
+    const locationId = document.getElementById('global-location-id').value || 'KJFK';
+    const collections = document.getElementById('global-collections-input').value || 'metar,taf';
+    const url = `${endpoint}/locations/${locationId}?collections=${collections}`;
+    const testName = `Location Data: ${locationId} [${collections}]`;
+    
+    const startTime = Date.now();
+    try {
+        const response = await fetch(url);
+        const duration = Date.now() - startTime;
+        
+        if (!response.ok) {
+            let errorData = null;
+            try {
+                errorData = await response.json();
+            } catch {}
+            
+            displayGlobalLocationsResult(testName, url, {
+                success: false,
+                message: `HTTP ${response.status}: ${response.statusText}`,
+                data: errorData
+            }, duration);
+            return;
+        }
+        
+        const data = await response.json();
+        const returnedData = data.properties?.data || {};
+        const dataKeys = Object.keys(returnedData);
+        
+        // Check which requested collections have data
+        const requestedCollections = collections.split(',').map(c => c.trim());
+        const withData = requestedCollections.filter(c => returnedData[c] !== null && returnedData[c] !== undefined);
+        const nullData = requestedCollections.filter(c => returnedData[c] === null);
+        const missingData = requestedCollections.filter(c => !(c in returnedData));
+        
+        let message = `Returned data for: ${withData.join(', ') || 'none'}`;
+        if (nullData.length > 0) message += `. Null: ${nullData.join(', ')}`;
+        if (missingData.length > 0) message += `. Missing: ${missingData.join(', ')}`;
+        
+        displayGlobalLocationsResult(testName, url, {
+            success: true,
+            message,
+            data: {
+                id: data.id,
+                name: data.properties?.name,
+                coordinates: data.geometry?.coordinates,
+                data: returnedData
+            }
+        }, duration);
+    } catch (e) {
+        const duration = Date.now() - startTime;
+        displayGlobalLocationsResult(testName, url, {
+            success: false,
+            message: `Error: ${e.message}`
+        }, duration);
+    }
+}
+
+/**
+ * Test GET /edr/locations/{id}?collections=...&f=text - text format
+ */
+async function testGlobalLocationText() {
+    const endpoint = window.validator.endpoint;
+    const locationId = document.getElementById('global-location-id').value || 'KJFK';
+    const collections = document.getElementById('global-collections-input').value || 'metar,taf';
+    const url = `${endpoint}/locations/${locationId}?collections=${collections}&f=text`;
+    const testName = `Location Text: ${locationId} [${collections}]`;
+    
+    const startTime = Date.now();
+    try {
+        const response = await fetch(url);
+        const duration = Date.now() - startTime;
+        
+        if (!response.ok) {
+            displayGlobalLocationsResult(testName, url, {
+                success: false,
+                message: `HTTP ${response.status}: ${response.statusText}`
+            }, duration);
+            return;
+        }
+        
+        const contentType = response.headers.get('content-type') || '';
+        const text = await response.text();
+        const isPlainText = contentType.includes('text/plain');
+        
+        displayGlobalLocationsResult(testName, url, {
+            success: isPlainText,
+            message: `Content-Type: ${contentType}. ${isPlainText ? 'Correct plain text response' : 'Warning: expected text/plain'}`,
+            data: text.substring(0, 1500) + (text.length > 1500 ? '\n... (truncated)' : '')
+        }, duration);
+    } catch (e) {
+        const duration = Date.now() - startTime;
+        displayGlobalLocationsResult(testName, url, {
+            success: false,
+            message: `Error: ${e.message}`
+        }, duration);
+    }
+}

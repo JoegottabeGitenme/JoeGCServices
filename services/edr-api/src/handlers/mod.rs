@@ -12,6 +12,7 @@ pub mod health;
 pub mod instances;
 pub mod landing;
 pub mod locations;
+pub mod observations;
 pub mod position;
 pub mod radius;
 pub mod trajectory;
