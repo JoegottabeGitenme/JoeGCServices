@@ -71,7 +71,7 @@ KPVD,Theodore Francis Green State,-71.4204,41.7241,17,RI
 KBDL,Bradley Intl,-72.6832,41.9389,53,CT
 KALB,Albany Intl,-73.8017,42.7483,87,NY
 KROC,Greater Rochester Intl,-77.6724,43.1189,170,NY
-KGSО,Piedmont Triad Intl,-79.9373,36.0978,283,NC
+KGSO,Piedmont Triad Intl,-79.9373,36.0978,283,NC
 KCHS,Charleston Intl,-80.0405,32.8986,14,SC
 KJAX,Jacksonville Intl,-81.6879,30.4941,9,FL
 KRSW,Southwest Florida Intl,-81.7552,26.5362,9,FL
@@ -133,7 +133,6 @@ KGNV,Gainesville Regional,-82.2718,29.6901,46,FL
 KTLH,Tallahassee Intl,-84.3504,30.3965,25,FL
 KSAV,Savannah Hilton Head Intl,-81.2021,32.1276,15,GA
 KAGS,Augusta Regional At Bush Field,-81.9645,33.3699,45,GA
-KMCO,Orlando Intl,-81.3089,28.4294,29,FL
 KMLB,Melbourne Intl,-80.6453,28.1028,11,FL
 KDAB,Daytona Beach Intl,-81.0581,29.1799,10,FL
 KSFB,Orlando Sanford Intl,-81.2375,28.7776,17,FL

@@ -600,45 +600,9 @@ impl ObservationCatalog {
     }
 
     /// Get observations for a location within a time range.
+    ///
+    /// Uses a pattern-matched query approach for type safety rather than dynamic SQL.
     pub async fn get_observations(&self, query: &ObservationQuery) -> WmsResult<Vec<Observation>> {
-        // Build dynamic query based on filters
-        let mut sql = String::from(
-            r#"
-            SELECT id, location_id, source, obs_time, receipt_time,
-                   temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
-                   altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                   raw_text, flight_category, wx_string, cloud_layers,
-                   temperature_qc, dewpoint_qc, wind_qc, pressure_qc
-            FROM observations
-            WHERE 1=1
-            "#,
-        );
-
-        let mut param_idx = 1;
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(ref loc_id) = query.location_id {
-            sql.push_str(&format!(" AND location_id = ${}", param_idx));
-            bindings.push(loc_id.clone());
-            param_idx += 1;
-        }
-
-        if let Some(ref source) = query.source {
-            sql.push_str(&format!(" AND source = ${}", param_idx));
-            bindings.push(source.clone());
-            // param_idx would be incremented here if more conditions were added
-            let _ = param_idx; // suppress unused warning
-        }
-
-        // Note: For simplicity, we'll use a fixed query structure.
-        // A more sophisticated implementation would use a query builder.
-        sql.push_str(" ORDER BY obs_time DESC");
-
-        if let Some(limit) = query.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
-
-        // For now, use a simpler fixed query
         #[derive(sqlx::FromRow)]
         struct ObsRow {
             id: Uuid,
