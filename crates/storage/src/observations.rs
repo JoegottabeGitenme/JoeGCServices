@@ -252,9 +252,9 @@ impl ObservationCatalog {
     pub async fn upsert_location(&self, location: &Location) -> WmsResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO locations (id, name, description, location, elevation_m, 
+            INSERT INTO locations (id, name, description, location, elevation_m,
                                    location_type, country, region, properties, updated_at)
-            VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, 
+            VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography,
                     $6, $7, $8, $9, $10, NOW())
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
@@ -313,7 +313,7 @@ impl ObservationCatalog {
 
         let row = sqlx::query_as::<_, LocationRow>(
             r#"
-            SELECT id, name, description, 
+            SELECT id, name, description,
                    ST_X(location::geometry) as lon, ST_Y(location::geometry) as lat,
                    elevation_m, location_type, country, region, properties
             FROM locations
@@ -870,7 +870,7 @@ impl ObservationCatalog {
             (Some(src), Some(start), Some(end)) => {
                 sqlx::query_as::<_, JoinedRow>(
                     r#"
-                    SELECT 
+                    SELECT
                         l.id as loc_id, l.name as loc_name, l.description as loc_description,
                         ST_X(l.location::geometry) as loc_lon, ST_Y(l.location::geometry) as loc_lat,
                         l.elevation_m as loc_elevation_m, l.location_type as loc_type,
@@ -902,7 +902,7 @@ impl ObservationCatalog {
             (Some(src), None, None) => {
                 sqlx::query_as::<_, JoinedRow>(
                     r#"
-                    SELECT 
+                    SELECT
                         l.id as loc_id, l.name as loc_name, l.description as loc_description,
                         ST_X(l.location::geometry) as loc_lon, ST_Y(l.location::geometry) as loc_lat,
                         l.elevation_m as loc_elevation_m, l.location_type as loc_type,
@@ -931,7 +931,7 @@ impl ObservationCatalog {
             _ => {
                 sqlx::query_as::<_, JoinedRow>(
                     r#"
-                    SELECT 
+                    SELECT
                         l.id as loc_id, l.name as loc_name, l.description as loc_description,
                         ST_X(l.location::geometry) as loc_lon, ST_Y(l.location::geometry) as loc_lat,
                         l.elevation_m as loc_elevation_m, l.location_type as loc_type,

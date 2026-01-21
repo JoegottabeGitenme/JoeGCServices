@@ -1575,7 +1575,7 @@ CREATE TABLE IF NOT EXISTS observations (
     source VARCHAR(50) NOT NULL,
     obs_time TIMESTAMPTZ NOT NULL,
     receipt_time TIMESTAMPTZ,
-    
+
     -- Core meteorological parameters (SI units)
     temperature_k REAL,
     dewpoint_k REAL,
@@ -1587,34 +1587,34 @@ CREATE TABLE IF NOT EXISTS observations (
     visibility_m REAL,
     precip_1hr_mm REAL,
     relative_humidity_pct REAL,
-    
+
     -- Aviation-specific fields
     raw_text TEXT,
     flight_category VARCHAR(10),
     wx_string VARCHAR(100),
     cloud_layers JSONB,
-    
+
     -- QC flags (MADIS convention: V=valid, S=suspect, X=failed, C=coarse)
     temperature_qc CHAR(1),
     dewpoint_qc CHAR(1),
     wind_qc CHAR(1),
     pressure_qc CHAR(1),
-    
+
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Unique constraint to prevent duplicate observations
-CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup
     ON observations(location_id, source, obs_time);
 
 -- Query indexes
 CREATE INDEX IF NOT EXISTS idx_observations_time ON observations(obs_time DESC);
 CREATE INDEX IF NOT EXISTS idx_observations_source_time ON observations(source, obs_time DESC);
-CREATE INDEX IF NOT EXISTS idx_observations_location_time 
+CREATE INDEX IF NOT EXISTS idx_observations_location_time
     ON observations(location_id, obs_time DESC);
 
 -- Compound index for common query pattern: source + time range
-CREATE INDEX IF NOT EXISTS idx_observations_source_location_time 
+CREATE INDEX IF NOT EXISTS idx_observations_source_location_time
     ON observations(source, location_id, obs_time DESC);
 
 -- =============================================================================
@@ -1635,9 +1635,9 @@ CREATE TABLE IF NOT EXISTS taf_forecasts (
     CONSTRAINT taf_forecasts_unique UNIQUE (location_id, issue_time)
 );
 
-CREATE INDEX IF NOT EXISTS idx_taf_forecasts_location_valid 
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_location_valid
     ON taf_forecasts(location_id, valid_from DESC);
-CREATE INDEX IF NOT EXISTS idx_taf_forecasts_valid_range 
+CREATE INDEX IF NOT EXISTS idx_taf_forecasts_valid_range
     ON taf_forecasts(valid_from, valid_to);
 CREATE INDEX IF NOT EXISTS idx_taf_forecasts_issue_time
     ON taf_forecasts(issue_time DESC);
