@@ -13,15 +13,71 @@ pub enum DataType {
     /// Forecast data (e.g., HRRR, GFS, NBM) - queried by reference time + forecast hour.
     #[default]
     Forecast,
-    /// Observation data (e.g., GOES, MRMS) - queried by observation time.
+    /// Observation data (e.g., GOES, MRMS) - gridded observation data queried by observation time.
     Observation,
+    /// Point observation data (e.g., METAR) - station-based observations from PostgreSQL.
+    PointObservation,
+    /// Point forecast data (e.g., TAF) - station-based forecasts from PostgreSQL.
+    PointForecast,
 }
 
 impl DataType {
-    /// Check if this is observation data.
+    /// Check if this is gridded observation data.
     pub fn is_observation(&self) -> bool {
         matches!(self, DataType::Observation)
     }
+
+    /// Check if this is point observation data (METAR, etc.).
+    pub fn is_point_observation(&self) -> bool {
+        matches!(self, DataType::PointObservation)
+    }
+
+    /// Check if this is point forecast data (TAF, etc.).
+    pub fn is_point_forecast(&self) -> bool {
+        matches!(self, DataType::PointForecast)
+    }
+
+    /// Check if this is any kind of point data (observation or forecast).
+    pub fn is_point_data(&self) -> bool {
+        matches!(self, DataType::PointObservation | DataType::PointForecast)
+    }
+}
+
+/// Global limits for the EDR server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalLimitsConfig {
+    /// Maximum number of collections per location data request.
+    #[serde(default = "default_max_collections_per_location")]
+    pub max_collections_per_location_request: usize,
+
+    /// Maximum response size in MB for location data requests.
+    #[serde(default = "default_max_location_response_mb")]
+    pub max_location_response_size_mb: usize,
+}
+
+impl Default for GlobalLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_collections_per_location_request: default_max_collections_per_location(),
+            max_location_response_size_mb: default_max_location_response_mb(),
+        }
+    }
+}
+
+fn default_max_collections_per_location() -> usize {
+    10
+}
+
+fn default_max_location_response_mb() -> usize {
+    50
+}
+
+/// Server configuration loaded from server.yaml.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerConfig {
+    /// Global limits for the EDR server.
+    #[serde(default)]
+    pub global_limits: GlobalLimitsConfig,
 }
 
 /// EDR configuration loaded from YAML files.
@@ -32,6 +88,9 @@ pub struct EdrConfig {
 
     /// Global named locations for EDR queries.
     pub locations: LocationsConfig,
+
+    /// Global server configuration.
+    pub server: ServerConfig,
 }
 
 impl EdrConfig {
@@ -50,6 +109,7 @@ impl EdrConfig {
 
         let mut models = HashMap::new();
         let mut locations = LocationsConfig::default();
+        let mut server = ServerConfig::default();
 
         // Read all YAML files in the directory
         for entry in
@@ -60,7 +120,7 @@ impl EdrConfig {
 
             if let Some(ext) = file_path.extension() {
                 if ext == "yaml" || ext == "yml" {
-                    // Check if this is the locations config file
+                    // Check if this is a special config file
                     let file_name = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
                     if file_name == "locations" {
@@ -77,6 +137,20 @@ impl EdrConfig {
                             locations.locations.len(),
                             file_path
                         );
+                    } else if file_name == "server" {
+                        // Parse as server config
+                        let content = std::fs::read_to_string(&file_path)
+                            .with_context(|| format!("Failed to read: {:?}", file_path))?;
+
+                        server = serde_yaml::from_str(&content).with_context(|| {
+                            format!("Failed to parse server config: {:?}", file_path)
+                        })?;
+
+                        tracing::info!(
+                            "Loaded EDR server config from {:?} (max_collections_per_location: {})",
+                            file_path,
+                            server.global_limits.max_collections_per_location_request
+                        );
                     } else {
                         // Parse as model EDR config
                         let content = std::fs::read_to_string(&file_path)
@@ -91,7 +165,11 @@ impl EdrConfig {
             }
         }
 
-        Ok(Self { models, locations })
+        Ok(Self {
+            models,
+            locations,
+            server,
+        })
     }
 
     /// Get all collection definitions across all models.
@@ -119,9 +197,10 @@ pub struct ModelEdrConfig {
     /// Model identifier (e.g., "hrrr", "gfs").
     pub model: String,
 
-    /// Data type: "forecast" (default) or "observation".
-    /// Observation data (like GOES satellite) is queried by observation time.
-    /// Forecast data (like HRRR, GFS) is queried by reference time + forecast hour.
+    /// Data type: "forecast" (default), "observation", or "point_observation".
+    /// - Forecast data (like HRRR, GFS) is queried by reference time + forecast hour.
+    /// - Observation data (like GOES satellite) is queried by observation time.
+    /// - Point observation data (like METAR) is queried from PostgreSQL stations.
     #[serde(default)]
     pub data_type: DataType,
 
@@ -136,6 +215,11 @@ pub struct ModelEdrConfig {
     /// Response size limits.
     #[serde(default)]
     pub limits: LimitsConfig,
+
+    /// Source identifier for point observation data (e.g., "metar", "madis").
+    /// Only used when data_type is "point_observation".
+    #[serde(default)]
+    pub observation_source: Option<String>,
 }
 
 impl ModelEdrConfig {

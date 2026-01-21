@@ -1,0 +1,66 @@
+# METAR EDR Configuration
+# Aviation surface weather observations from airports
+#
+# This is point observation data (not gridded), sourced from PostgreSQL.
+# Locations are dynamic (queried from the database), not static config.
+#
+# Supported EDR queries:
+# - /collections/metar/locations - List all stations with recent observations
+# - /collections/metar/locations/{id} - Get observations at a specific station
+# - /collections/metar/radius - Get observations within radius of a point
+# - /collections/metar/area - Get observations within a bounding box
+#
+# Note: Position queries are not supported (use radius with small radius instead)
+
+model: metar
+data_type: pointobservation
+observation_source: metar
+
+collections:
+  # ===========================================================================
+  # Main METAR collection with all parameters
+  # ===========================================================================
+  
+  - id: metar
+    title: "METAR - Surface Weather Observations"
+    description: "Aviation routine weather reports from airports worldwide"
+    # No level_filter for point observations - they have no vertical dimension
+    parameters:
+      - name: temperature
+        levels: [surface]
+      - name: dewpoint
+        levels: [surface]
+      - name: wind_speed
+        levels: [surface]
+      - name: wind_direction
+        levels: [surface]
+      - name: wind_gust
+        levels: [surface]
+      - name: visibility
+        levels: [surface]
+      - name: altimeter
+        levels: [surface]
+      - name: sea_level_pressure
+        levels: [surface]
+      - name: flight_category
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+    - application/vnd.cov+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 60  # 1 minute - METAR updates frequently
+
+# Response size limits for observation queries
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 24         # 24 hours of hourly observations
+  max_vertical_levels: 1     # Surface only
+  max_response_size_mb: 10   # Smaller than gridded data
+  max_radius_km: 500         # 500 km radius queries
+  max_area_sq_degrees: 100   # ~1000km x 1000km bounding box

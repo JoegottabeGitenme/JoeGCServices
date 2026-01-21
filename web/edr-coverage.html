@@ -229,6 +229,31 @@
         <div class="gap-content" id="gap-content"></div>
     </section>
 
+    <!-- Global Locations Test Panel -->
+    <section class="global-locations-panel" id="global-locations-panel">
+        <div class="panel-header">
+            <h2>Global Locations Endpoint Tests</h2>
+            <span class="panel-subtitle">Test /edr/locations and /edr/locations/{id}?collections=...</span>
+        </div>
+        <div class="global-locations-config">
+            <div class="config-row">
+                <label for="global-location-id">Location ID:</label>
+                <input type="text" id="global-location-id" value="KJFK" placeholder="e.g., KJFK, KDEN">
+                <label for="global-collections-input">Collections (comma-separated):</label>
+                <input type="text" id="global-collections-input" value="metar,taf" placeholder="e.g., metar,taf,gfs-temperature">
+            </div>
+            <div class="config-row">
+                <button id="test-global-locations-list" class="btn-secondary">Test /locations list</button>
+                <button id="test-global-location-metadata" class="btn-secondary">Test /locations/{id} (metadata only)</button>
+                <button id="test-global-location-data" class="btn-secondary">Test /locations/{id}?collections=...</button>
+                <button id="test-global-location-text" class="btn-secondary">Test /locations/{id}?f=text</button>
+            </div>
+        </div>
+        <div class="global-locations-results" id="global-locations-results">
+            <div class="placeholder">Click a test button to run global location endpoint tests</div>
+        </div>
+    </section>
+
     <script src="edr-coverage.js"></script>
 </body>
 </html>

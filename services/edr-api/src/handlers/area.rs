@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
+use crate::handlers::observations::{obs_area_query_handler, ObsAreaQueryParams};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
@@ -133,12 +134,38 @@ pub struct AreaQueryParams {
 }
 
 /// GET /edr/collections/:collection_id/area
+///
+/// For point observation collections (METAR, TAF, etc.), dispatches to observation handler.
 pub async fn area_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
     Query(params): Query<AreaQueryParams>,
     headers: HeaderMap,
 ) -> Response {
+    // Check if this is a point data collection (METAR observations or TAF forecasts)
+    {
+        let config = state.edr_config.read().await;
+        if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_point_data() {
+                // Convert the coords to format observation handler expects
+                let obs_params = ObsAreaQueryParams {
+                    coords: params.coords.clone().unwrap_or_default(),
+                    datetime: params.datetime.clone(),
+                    parameter_name: params.parameter_name.clone(),
+                    f: params.f.clone(),
+                    limit: None,
+                };
+                return obs_area_query_handler(
+                    Extension(state.clone()),
+                    Path(collection_id),
+                    Query(obs_params),
+                    headers,
+                )
+                .await;
+            }
+        }
+    }
+
     // Use latest instance
     area_query(state, collection_id, None, params, headers).await
 }

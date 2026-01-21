@@ -12,7 +12,7 @@
 #   --url URL         EDR API base URL (default: http://localhost:8083/edr)
 #   --duration SECS   Test duration in seconds (default: 60)
 #   --concurrency N   Number of concurrent requests (default: 10)
-#   --query-type TYPE Only run position, area, radius, trajectory, corridor, cube, locations, or all (default: all)
+#   --query-type TYPE Only run position, area, radius, trajectory, corridor, cube, locations, global_locations, or all (default: all)
 #   --output DIR      Output directory for results (default: ./edr_load_results)
 #   --validate        Validate discovered endpoints before load testing
 #   --verbose         Show detailed output
@@ -231,6 +231,94 @@ PYTHON
     fi
     
     log_info "  Test scenarios: $scenario_count"
+}
+
+# Discover observation stations from /edr/locations for location queries
+# This provides real station IDs for METAR/TAF testing instead of hardcoded ones
+discover_stations() {
+    log_info "Discovering observation stations from /edr/locations..."
+    
+    local stations_file="$STATS_DIR/stations.txt"
+    
+    # Fetch stations with METAR or TAF data (cap at 200 for load testing)
+    curl -sf "$BASE_URL/locations?collections=metar,taf" 2>/dev/null | \
+        python3 -c "
+import json
+import sys
+import random
+
+try:
+    data = json.load(sys.stdin)
+    stations = [f['id'] for f in data.get('features', []) if f.get('id')]
+    random.shuffle(stations)
+    for s in stations[:200]:
+        print(s)
+except Exception as e:
+    # Fallback to common airports if /edr/locations fails
+    fallback = ['KJFK', 'KLAX', 'KORD', 'KDFW', 'KDEN', 'KSFO', 'KBOS', 'KSEA', 'KMIA', 'KATL',
+                'KPHX', 'KLAS', 'KMSP', 'KSTL', 'KSLC', 'KIAD', 'KDCA', 'KEWR', 'KBWI', 'KCLT']
+    for s in fallback:
+        print(s)
+" > "$stations_file" 2>/dev/null
+    
+    local station_count=$(wc -l < "$stations_file" 2>/dev/null || echo "0")
+    
+    if [[ $station_count -eq 0 ]]; then
+        # Fallback if discovery completely failed
+        log_warn "  Station discovery failed, using fallback airports"
+        cat > "$stations_file" << 'EOF'
+KJFK
+KLAX
+KORD
+KDFW
+KDEN
+KSFO
+KBOS
+KSEA
+KMIA
+KATL
+KPHX
+KLAS
+KMSP
+KSTL
+KSLC
+EOF
+        station_count=15
+    fi
+    
+    log_info "  Discovered $station_count stations for location queries"
+}
+
+# Get a random station ID from discovered stations (for observation collections)
+get_random_station() {
+    local stations_file="$STATS_DIR/stations.txt"
+    if [[ -s "$stations_file" ]]; then
+        shuf -n 1 "$stations_file"
+    else
+        # Fallback
+        echo "KDEN"
+    fi
+}
+
+# Pre-configured locations for gridded collections (from config/edr/locations.yaml)
+# These are the only locations that work for GOES, HRRR, GFS, NBM, NDFD, etc.
+GRIDDED_LOCATIONS=("KJFK" "KLAX" "KORD" "KDFW" "KDEN" "KSFO" "KBOS" "KSEA" "KMIA" "KATL" "NYC" "CHI" "HOU" "PHX" "DCA")
+
+# Get a random location ID for gridded collections
+get_random_gridded_location() {
+    echo "${GRIDDED_LOCATIONS[$((RANDOM % ${#GRIDDED_LOCATIONS[@]}))]}"
+}
+
+# Get appropriate location based on collection type
+# Observation collections (metar, taf) use discovered stations
+# Gridded collections use pre-configured locations
+get_location_for_collection() {
+    local coll_id="$1"
+    if [[ "$coll_id" == "metar" || "$coll_id" == "taf" ]]; then
+        get_random_station
+    else
+        get_random_gridded_location
+    fi
 }
 
 # Validate discovered endpoints by making test requests
@@ -570,8 +658,13 @@ run_scenario() {
         local bbox=$(random_bbox "$min_lon" "$max_lon" "$min_lat" "$max_lat" 2.0)
         url="$BASE_URL/collections/$coll_id/cube?bbox=$bbox&parameter-name=$param&z=$level&resolution-x=5&resolution-y=5"
     elif [[ "$query_type" == "locations" ]]; then
+        # Use collection-appropriate locations:
+        # - Observation collections (metar, taf): use discovered METAR/TAF stations
+        # - Gridded collections: use pre-configured locations from config/edr/locations.yaml
+        local loc_id=$(get_location_for_collection "$coll_id")
+        
         # Randomly choose between different location query patterns
-        local choice=$((RANDOM % 4))
+        local choice=$((RANDOM % 5))
         if [[ $choice -eq 0 ]]; then
             # List all locations (GeoJSON)
             url="$BASE_URL/collections/$coll_id/locations?f=application/geo%2Bjson"
@@ -580,16 +673,50 @@ run_scenario() {
             url="$BASE_URL/collections/$coll_id/locations"
         elif [[ $choice -eq 2 ]]; then
             # Query a specific location with the parameter from this scenario
-            # Use location IDs that actually exist in the system
-            local -a known_locations=("KJFK" "KLAX" "KORD" "KDFW" "KDEN" "KSFO" "KBOS" "KSEA" "KMIA" "KATL" "NYC" "CHI" "HOU" "PHX" "DCA")
-            local loc_id=${known_locations[$((RANDOM % ${#known_locations[@]}))]}
             url="$BASE_URL/collections/$coll_id/locations/$loc_id?parameter-name=$param"
             [[ -n "$level" ]] && url+="&z=$level"
-        else
+        elif [[ $choice -eq 3 ]]; then
             # Query a specific location without parameter filter (get all available)
-            local -a known_locations=("KJFK" "KLAX" "KORD" "KDFW" "KDEN" "KSFO" "KBOS" "KSEA" "KMIA" "KATL" "NYC" "CHI" "HOU" "PHX" "DCA")
-            local loc_id=${known_locations[$((RANDOM % ${#known_locations[@]}))]}
             url="$BASE_URL/collections/$coll_id/locations/$loc_id"
+        else
+            # Query with datetime for time series (observation collections only)
+            if [[ "$coll_id" == "metar" || "$coll_id" == "taf" ]]; then
+                url="$BASE_URL/collections/$coll_id/locations/$loc_id?datetime=../..&limit=12"
+            else
+                # Gridded collections don't support datetime=../.. the same way
+                url="$BASE_URL/collections/$coll_id/locations/$loc_id"
+            fi
+        fi
+    elif [[ "$query_type" == "global_locations" ]]; then
+        # Global /edr/locations endpoints (cross-collection queries)
+        local loc_id=$(get_random_station)
+        
+        # Randomly choose between different global location query patterns
+        local choice=$((RANDOM % 8))
+        if [[ $choice -eq 0 ]]; then
+            # List all locations
+            url="$BASE_URL/locations"
+        elif [[ $choice -eq 1 ]]; then
+            # List locations with METAR data
+            url="$BASE_URL/locations?collections=metar"
+        elif [[ $choice -eq 2 ]]; then
+            # Get location metadata only (no data fetch)
+            url="$BASE_URL/locations/$loc_id"
+        elif [[ $choice -eq 3 ]]; then
+            # Fetch METAR at location
+            url="$BASE_URL/locations/$loc_id?collections=metar"
+        elif [[ $choice -eq 4 ]]; then
+            # Fetch TAF at location
+            url="$BASE_URL/locations/$loc_id?collections=taf"
+        elif [[ $choice -eq 5 ]]; then
+            # Fetch METAR + TAF at location
+            url="$BASE_URL/locations/$loc_id?collections=metar,taf"
+        elif [[ $choice -eq 6 ]]; then
+            # Fetch observation + gridded model data (use GFS since it's global, HRRR is CONUS-only)
+            url="$BASE_URL/locations/$loc_id?collections=metar,gfs-surface"
+        else
+            # Fetch multiple collections
+            url="$BASE_URL/locations/$loc_id?collections=metar,taf,gfs-surface"
         fi
     fi
     
@@ -620,6 +747,7 @@ run_tests() {
     local corridor_count=0
     local cube_count=0
     local locations_count=0
+    local global_locations_count=0
     for s in "${scenarios[@]}"; do
         if [[ "$s" == "position|"* ]]; then
             position_count=$((position_count + 1))
@@ -633,11 +761,13 @@ run_tests() {
             corridor_count=$((corridor_count + 1))
         elif [[ "$s" == "cube|"* ]]; then
             cube_count=$((cube_count + 1))
+        elif [[ "$s" == "global_locations|"* ]]; then
+            global_locations_count=$((global_locations_count + 1))
         elif [[ "$s" == "locations|"* ]]; then
             locations_count=$((locations_count + 1))
         fi
     done
-    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor, $cube_count cube, $locations_count locations)"
+    log_info "  Scenarios: $scenario_count total ($position_count position, $area_count area, $radius_count radius, $trajectory_count trajectory, $corridor_count corridor, $cube_count cube, $locations_count locations, $global_locations_count global_locations)"
     echo ""
     
     # Filter by query type if specified
@@ -772,6 +902,19 @@ command -v python3 &>/dev/null || { log_fail "python3 is required"; exit 1; }
 
 # Discover endpoints
 discover_endpoints
+
+# Discover observation stations for location queries
+discover_stations
+
+# Add global_locations scenarios for /edr/locations endpoints
+log_info "Adding global_locations scenarios..."
+# Add scenarios for the global /edr/locations endpoint testing
+# These test cross-collection queries at known locations
+for i in $(seq 1 20); do
+    # Use CONUS bbox for reference (not actually used for global queries)
+    echo "global_locations|global|all||-125|-66|24|50" >> "$SCENARIOS_FILE"
+done
+log_info "  Added 20 global_locations scenarios"
 
 # Optionally validate (or always validate to filter out params without data)
 if [[ "$VALIDATE" == "true" ]] || [[ "$DURATION" -gt 10 ]]; then

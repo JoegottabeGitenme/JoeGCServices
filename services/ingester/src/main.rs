@@ -25,6 +25,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use ingestion::{IngestOptions, Ingester};
 use std::env;
+use storage::observations::ObservationCatalog;
 use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
 
 use server::{start_server, IngestionTracker, ServerState};
@@ -97,6 +98,26 @@ async fn main() -> Result<()> {
     let catalog = Catalog::connect(&database_url).await?;
     catalog.migrate().await?;
 
+    // Migrate observations schema (adds PostGIS tables if not present)
+    catalog.migrate_observations().await?;
+    info!("Observation schema migrated");
+
+    // Create observation catalog using the same connection pool
+    let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
+
+    // Bootstrap locations if needed (loads initial airport data)
+    // Threshold of 100 means: if we have fewer than 100 locations, populate from embedded data
+    match storage::stations_bootstrap::bootstrap_locations(&observation_catalog, 100).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(count = count, "Bootstrapped initial station locations");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to bootstrap stations (continuing anyway)");
+        }
+    }
+
     // Create ingester
     let ingester = Ingester::new(storage, catalog);
 
@@ -108,6 +129,7 @@ async fn main() -> Result<()> {
     // Create server state
     let state = Arc::new(ServerState {
         ingester,
+        observation_catalog: Some(observation_catalog),
         tracker: IngestionTracker::new(),
     });
 

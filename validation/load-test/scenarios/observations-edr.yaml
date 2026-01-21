@@ -1,0 +1,220 @@
+# Observations EDR Load Test Scenarios - Global Locations API
+#
+# This file defines EDR API load test scenarios for the global /edr/locations endpoints.
+# These endpoints provide cross-collection access to observation and forecast data.
+#
+# Run with: scripts/run_edr_load_test.sh --scenario scenarios/observations-edr.yaml
+#
+# Global Location Endpoints:
+# - GET /edr/locations - List all known locations
+# - GET /edr/locations/{id} - Get location metadata + available collections
+# - GET /edr/locations/{id}?collections=metar,taf,... - Fetch data from multiple collections
+
+name: observations-edr
+description: |
+  Global /edr/locations cross-collection load test scenarios.
+  Tests the unified location API that aggregates data from multiple collections.
+
+base_url: http://localhost:8083/edr
+duration_secs: 60
+concurrency: 10
+warmup_secs: 5
+
+# =============================================================================
+# GLOBAL LOCATION LIST QUERIES - GET /edr/locations
+# =============================================================================
+
+global_list_queries:
+  # List all locations (no filter)
+  - name: list_all_locations
+    endpoint: /locations
+    weight: 0.5
+    description: "List all known locations"
+
+  # Filter by collection availability
+  - name: list_locations_metar
+    endpoint: /locations?collections=metar
+    weight: 1.0
+    description: "List locations with METAR data"
+
+  - name: list_locations_taf
+    endpoint: /locations?collections=taf
+    weight: 1.0
+    description: "List locations with TAF data"
+
+  - name: list_locations_metar_and_taf
+    endpoint: /locations?collections=metar,taf
+    weight: 0.5
+    description: "List locations with both METAR and TAF"
+
+# =============================================================================
+# GLOBAL LOCATION METADATA QUERIES - GET /edr/locations/{id}
+# =============================================================================
+# Get location info + list of available collections (no data fetch)
+
+global_metadata_queries:
+  - name: location_metadata_only
+    endpoint: /locations/{station_id}
+    weight: 2.0
+    description: "Get location info + available collections"
+
+# =============================================================================
+# GLOBAL LOCATION DATA QUERIES - GET /edr/locations/{id}?collections=...
+# =============================================================================
+# Fetch data from one or more collections at a location
+
+global_data_queries:
+  # Single observation collection
+  - name: location_metar_only
+    endpoint: /locations/{station_id}?collections=metar
+    weight: 3.0
+    description: "Fetch METAR at location"
+
+  - name: location_taf_only
+    endpoint: /locations/{station_id}?collections=taf
+    weight: 2.5
+    description: "Fetch TAF at location"
+
+  # Multiple observation collections
+  - name: location_metar_and_taf
+    endpoint: /locations/{station_id}?collections=metar,taf
+    weight: 2.5
+    description: "Fetch METAR + TAF at location"
+
+  # Cross-type: observations + gridded surface data
+  - name: location_metar_plus_hrrr_surface
+    endpoint: /locations/{station_id}?collections=metar,hrrr-surface
+    weight: 2.0
+    description: "METAR + HRRR surface at location"
+
+  - name: location_metar_plus_gfs_surface
+    endpoint: /locations/{station_id}?collections=metar,gfs-surface
+    weight: 1.5
+    description: "METAR + GFS surface at location"
+
+  - name: location_taf_plus_hrrr_surface
+    endpoint: /locations/{station_id}?collections=taf,hrrr-surface
+    weight: 1.5
+    description: "TAF + HRRR surface at location"
+
+  # Full observation + model comparison
+  - name: location_obs_plus_models
+    endpoint: /locations/{station_id}?collections=metar,taf,hrrr-surface,gfs-surface
+    weight: 1.5
+    description: "METAR + TAF + HRRR + GFS surface"
+
+  # Heavy: observations + multiple model levels
+  - name: location_obs_plus_hrrr_multi
+    endpoint: /locations/{station_id}?collections=metar,hrrr-surface,hrrr-height-agl
+    weight: 1.0
+    description: "METAR + HRRR surface + height AGL"
+
+  - name: location_full_stack
+    endpoint: /locations/{station_id}?collections=metar,taf,hrrr-surface,hrrr-isobaric,gfs-surface
+    weight: 0.5
+    description: "Heavy: All major collections at once"
+
+# =============================================================================
+# PER-COLLECTION LOCATION QUERIES (for comparison)
+# =============================================================================
+# These test the per-collection /collections/{id}/locations endpoints
+
+collection_location_queries:
+  # METAR collection locations
+  - name: metar_list_locations
+    endpoint: /collections/metar/locations
+    weight: 1.0
+    description: "List METAR stations via collection endpoint"
+
+  - name: metar_query_location
+    endpoint: /collections/metar/locations/{station_id}
+    weight: 2.0
+    description: "Query METAR at station via collection endpoint"
+
+  - name: metar_query_location_timeseries
+    endpoint: /collections/metar/locations/{station_id}?datetime=../..&limit=12
+    weight: 1.5
+    description: "12-hour METAR time series"
+
+  # TAF collection locations
+  - name: taf_list_locations
+    endpoint: /collections/taf/locations
+    weight: 1.0
+    description: "List TAF stations via collection endpoint"
+
+  - name: taf_query_location
+    endpoint: /collections/taf/locations/{station_id}
+    weight: 2.0
+    description: "Query TAF at station via collection endpoint"
+
+  # Gridded collection locations (for comparison)
+  - name: hrrr_surface_query_location
+    endpoint: /collections/hrrr-surface/locations/{station_id}?parameter-name=TMP
+    weight: 1.0
+    description: "HRRR surface temp at location"
+
+  - name: gfs_surface_query_location
+    endpoint: /collections/gfs-surface/locations/{station_id}?parameter-name=TMP,UGRD,VGRD
+    weight: 1.0
+    description: "GFS surface temp + wind at location"
+
+# =============================================================================
+# MIXED QUERY PATTERNS (realistic usage)
+# =============================================================================
+# Simulate realistic user workflows
+
+mixed_queries:
+  # Pilot briefing pattern: get current conditions + forecast
+  - name: pilot_briefing_basic
+    endpoint: /locations/{station_id}?collections=metar,taf
+    weight: 2.0
+    description: "Pilot briefing: current + forecast"
+
+  # Weather comparison: observation vs model
+  - name: model_verification
+    endpoint: /locations/{station_id}?collections=metar,hrrr-surface
+    weight: 1.5
+    description: "Model verification: obs vs HRRR"
+
+  # Multi-model comparison at location
+  - name: multi_model_compare
+    endpoint: /locations/{station_id}?collections=hrrr-surface,gfs-surface
+    weight: 1.0
+    description: "Compare HRRR vs GFS at location"
+
+# =============================================================================
+# TEST STATIONS - Major airports used for fixed queries
+# =============================================================================
+# Station IDs are also discovered dynamically from /edr/locations during test
+
+test_stations:
+  - station_id: KDEN
+    name: Denver International
+  - station_id: KLAX
+    name: Los Angeles International
+  - station_id: KORD
+    name: Chicago O'Hare
+  - station_id: KJFK
+    name: New York JFK
+  - station_id: KDFW
+    name: Dallas/Fort Worth
+  - station_id: KATL
+    name: Atlanta Hartsfield
+  - station_id: KSFO
+    name: San Francisco
+  - station_id: KSEA
+    name: Seattle-Tacoma
+  - station_id: KMIA
+    name: Miami International
+  - station_id: KBOS
+    name: Boston Logan
+  - station_id: KPHX
+    name: Phoenix Sky Harbor
+  - station_id: KLAS
+    name: Las Vegas McCarran
+  - station_id: KMSP
+    name: Minneapolis-St. Paul
+  - station_id: KSTL
+    name: St. Louis Lambert
+  - station_id: KSLC
+    name: Salt Lake City
