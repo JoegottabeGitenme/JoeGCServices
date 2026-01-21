@@ -1217,8 +1217,24 @@ pub async fn global_location_data_handler(
 
         // Get the model's actual data extent from catalog
         if let Ok(bbox) = state.catalog.get_model_bbox(model_id).await {
+            // Normalize longitude for models using 0-360 convention (e.g., GFS)
+            // If bbox extends beyond 180, the model uses 0-360 convention
+            let check_lon = if bbox.max_x > 180.0 {
+                if lon < 0.0 {
+                    lon + 360.0
+                } else {
+                    lon
+                }
+            } else {
+                lon
+            };
+
             // Check if point is within bbox
-            if lon >= bbox.min_x && lon <= bbox.max_x && lat >= bbox.min_y && lat <= bbox.max_y {
+            if check_lon >= bbox.min_x
+                && check_lon <= bbox.max_x
+                && lat >= bbox.min_y
+                && lat <= bbox.max_y
+            {
                 // Add all collections from this model
                 for coll in &model_config.collections {
                     available_collections.push(coll.id.clone());

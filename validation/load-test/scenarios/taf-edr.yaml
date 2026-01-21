@@ -1,0 +1,281 @@
+# TAF EDR Load Test Scenarios
+#
+# This file defines EDR API load test scenarios for TAF forecast data.
+# Run with: scripts/run_edr_load_test.sh --scenario scenarios/taf-edr.yaml
+#
+# TAF is point forecast data from airports (24-30 hour forecasts). Supported query types:
+# - locations: List stations or query specific station
+# - radius: Find forecasts within distance of a point
+# - area: Find forecasts within a bounding box/polygon
+#
+# Note: Position queries are NOT supported for observations (use locations/{id})
+
+name: taf-edr
+description: |
+  TAF (Terminal Aerodrome Forecast) load test scenarios.
+  Tests location queries, radius searches, and area queries for airport weather forecasts.
+
+base_url: http://localhost:8083/edr
+duration_secs: 60
+concurrency: 10
+warmup_secs: 5
+
+# Collection to test
+collections:
+  - taf
+
+# =============================================================================
+# LOCATION LIST QUERIES - GET /collections/taf/locations
+# =============================================================================
+# List all stations with recent TAF forecasts
+
+location_list_queries:
+  - name: list_all_stations
+    collection: taf
+    weight: 1.0
+    description: "List all TAF stations (GeoJSON)"
+
+  - name: list_stations_geojson
+    collection: taf
+    format: application/geo+json
+    weight: 0.5
+    description: "List stations with explicit GeoJSON format"
+
+# =============================================================================
+# LOCATION QUERIES - GET /collections/taf/locations/{stationId}
+# =============================================================================
+# Query data at specific stations (station IDs discovered dynamically)
+
+location_queries:
+  # Basic query - latest TAF
+  - name: query_station_latest
+    collection: taf
+    weight: 3.0
+    description: "Get latest TAF at random station"
+
+  # Query with specific parameters
+  - name: query_station_wind
+    collection: taf
+    parameters: ["wind_speed", "wind_direction", "wind_gust"]
+    weight: 2.0
+    description: "Get wind forecast at station"
+
+  - name: query_station_visibility
+    collection: taf
+    parameters: ["visibility", "weather"]
+    weight: 1.5
+    description: "Get visibility and weather forecast"
+
+  - name: query_station_all_params
+    collection: taf
+    parameters: ["wind_speed", "wind_direction", "wind_gust", "visibility", "weather"]
+    weight: 2.0
+    description: "Get all TAF parameters"
+
+  # Multiple TAFs (if available)
+  - name: query_station_recent_tafs
+    collection: taf
+    datetime: "../.."
+    limit: 3
+    weight: 1.0
+    description: "Get recent TAFs (including amendments)"
+
+# =============================================================================
+# RADIUS QUERIES - GET /collections/taf/radius
+# =============================================================================
+# Find TAFs within a radius of a point
+
+radius_queries:
+  # Small radius - nearby stations
+  - name: radius_25km
+    collection: taf
+    coords: "POINT(-104.67 39.86)"  # Denver area
+    within: 25
+    within_units: km
+    weight: 1.5
+    description: "TAFs within 25km of Denver"
+
+  # Medium radius
+  - name: radius_50km
+    collection: taf
+    coords: "POINT(-118.41 33.94)"  # LA area
+    within: 50
+    within_units: km
+    weight: 2.0
+    description: "TAFs within 50km of LAX"
+
+  - name: radius_100km
+    collection: taf
+    coords: "POINT(-73.78 40.64)"  # NYC area
+    within: 100
+    within_units: km
+    weight: 1.5
+    description: "TAFs within 100km of JFK"
+
+  # With parameters
+  - name: radius_75km_with_params
+    collection: taf
+    coords: "POINT(-87.90 41.98)"  # Chicago area
+    within: 75
+    within_units: km
+    parameters: ["wind_speed", "visibility"]
+    weight: 1.5
+    description: "TAFs within 75km with specific params"
+
+  # Random location radius queries
+  - name: radius_50km_random_conus
+    collection: taf
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    within: 50
+    within_units: km
+    weight: 2.5
+    description: "Random 50km radius over CONUS"
+
+  - name: radius_100km_random_conus
+    collection: taf
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    within: 100
+    within_units: km
+    weight: 2.0
+    description: "Random 100km radius over CONUS"
+
+  # Larger radius for TAF (fewer stations issue TAFs than METARs)
+  - name: radius_150km
+    collection: taf
+    coords: "POINT(-95.34 29.98)"  # Houston area
+    within: 150
+    within_units: km
+    weight: 1.0
+    description: "TAFs within 150km of Houston"
+
+# =============================================================================
+# AREA QUERIES - GET /collections/taf/area
+# =============================================================================
+# Find TAFs within a polygon/bounding box
+
+area_queries:
+  # Regional areas - specific polygons
+  - name: area_colorado_front_range
+    collection: taf
+    coords: "POLYGON((-106 38,-103 38,-103 41,-106 41,-106 38))"
+    weight: 1.5
+    description: "Colorado Front Range region"
+
+  - name: area_socal
+    collection: taf
+    coords: "POLYGON((-120 32,-116 32,-116 35,-120 35,-120 32))"
+    weight: 1.5
+    description: "Southern California"
+
+  - name: area_florida
+    collection: taf
+    coords: "POLYGON((-88 24,-79 24,-79 31,-88 31,-88 24))"
+    weight: 1.5
+    description: "Florida peninsula"
+
+  - name: area_northeast
+    collection: taf
+    coords: "POLYGON((-80 38,-70 38,-70 45,-80 45,-80 38))"
+    weight: 1.5
+    description: "Northeast corridor"
+
+  - name: area_pacific_northwest
+    collection: taf
+    coords: "POLYGON((-125 42,-116 42,-116 49,-125 49,-125 42))"
+    weight: 1.0
+    description: "Pacific Northwest"
+
+  # With parameters
+  - name: area_midwest_with_params
+    collection: taf
+    coords: "POLYGON((-100 35,-90 35,-90 45,-100 45,-100 35))"
+    parameters: ["wind_speed", "visibility", "weather"]
+    weight: 1.0
+    description: "Midwest with specific parameters"
+
+  # Random area queries (larger for TAF since fewer stations)
+  - name: area_random_3deg
+    collection: taf
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 3.0
+    weight: 2.5
+    description: "Random 3x3 degree area over CONUS"
+
+  - name: area_random_5deg
+    collection: taf
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 5.0
+    weight: 2.0
+    description: "Random 5x5 degree area over CONUS"
+
+  - name: area_random_7deg
+    collection: taf
+    random_bbox:
+      min_lon: -125
+      max_lon: -66
+      min_lat: 24
+      max_lat: 50
+    polygon_size: 7.0
+    weight: 1.0
+    description: "Random 7x7 degree area over CONUS"
+
+# =============================================================================
+# TEST POINTS - Major airports for fixed location tests
+# =============================================================================
+test_points:
+  - name: denver
+    station_id: KDEN
+    lon: -104.6732
+    lat: 39.8561
+  - name: los_angeles
+    station_id: KLAX
+    lon: -118.4085
+    lat: 33.9416
+  - name: chicago
+    station_id: KORD
+    lon: -87.9048
+    lat: 41.9742
+  - name: new_york_jfk
+    station_id: KJFK
+    lon: -73.7781
+    lat: 40.6413
+  - name: dallas
+    station_id: KDFW
+    lon: -97.0403
+    lat: 32.8998
+  - name: atlanta
+    station_id: KATL
+    lon: -84.4281
+    lat: 33.6407
+  - name: san_francisco
+    station_id: KSFO
+    lon: -122.3750
+    lat: 37.6188
+  - name: seattle
+    station_id: KSEA
+    lon: -122.3088
+    lat: 47.4502
+  - name: miami
+    station_id: KMIA
+    lon: -80.2906
+    lat: 25.7959
+  - name: boston
+    station_id: KBOS
+    lon: -71.0052
+    lat: 42.3656

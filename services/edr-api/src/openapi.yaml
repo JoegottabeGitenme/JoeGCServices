@@ -10,6 +10,8 @@ info:
     - **HRRR** - High-Resolution Rapid Refresh (3km CONUS coverage)
     - **GOES-18/19** - Geostationary satellite imagery
     - **MRMS** - Multi-Radar Multi-Sensor precipitation
+    - **METAR** - Aviation surface weather observations from airports
+    - **TAF** - Terminal Aerodrome Forecasts (24-30 hour airport forecasts)
     
     ## Query Types
     
@@ -378,6 +380,131 @@ paths:
                 $ref: '#/components/schemas/Instance'
         '404':
           description: Instance not found
+
+  /locations:
+    get:
+      operationId: getGlobalLocations
+      summary: List all locations
+      description: |
+        Returns all known locations from database (airports with observations)
+        and static configuration. Can filter by collection availability.
+        
+        Locations include airports with METAR/TAF data and pre-configured
+        locations for gridded data queries.
+      parameters:
+        - name: collections
+          in: query
+          required: false
+          description: Filter to locations with data in these collections (comma-separated)
+          schema:
+            type: string
+          example: metar,taf
+      responses:
+        '200':
+          description: GeoJSON FeatureCollection of locations
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+
+  /locations/{locationId}:
+    get:
+      operationId: getGlobalLocationData
+      summary: Get location data
+      description: |
+        Returns location metadata and available collections.
+        
+        If `collections` parameter is provided, fetches latest data from those collections.
+        Without the parameter, returns only location info and list of available collections.
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          description: Location identifier (e.g., ICAO code like KDEN, KJFK)
+          schema:
+            type: string
+        - name: collections
+          in: query
+          required: false
+          description: Collections to fetch data from (comma-separated)
+          schema:
+            type: string
+          example: metar,taf,gfs-surface
+      responses:
+        '200':
+          description: Location with data from requested collections
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '404':
+          description: Location not found
+
+  /collections/{collectionId}/locations:
+    get:
+      operationId: getCollectionLocations
+      summary: List locations for collection
+      description: |
+        Returns all locations with data available in this collection.
+        
+        For observation collections (metar, taf), returns stations with recent data.
+        For gridded collections, returns configured named locations.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+      responses:
+        '200':
+          description: GeoJSON FeatureCollection of locations
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/locations/{locationId}:
+    get:
+      operationId: getCollectionLocationData
+      summary: Query data at location
+      description: |
+        Returns data from the collection at the specified location.
+        
+        For observation collections, returns the latest observation(s) at the station.
+        For gridded collections, extracts data at the location's coordinates.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: locationId
+          in: path
+          required: true
+          description: Location identifier (e.g., ICAO code)
+          schema:
+            type: string
+        - $ref: '#/components/parameters/datetime'
+        - $ref: '#/components/parameters/parameter-name'
+        - $ref: '#/components/parameters/z'
+        - $ref: '#/components/parameters/f'
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of observations to return (observation collections only)
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Data at the location
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+            application/prs.coverage+json:
+              schema:
+                $ref: '#/components/schemas/CoverageJSON'
+        '400':
+          description: Invalid request parameters
+        '404':
+          description: Location or collection not found
 
 components:
   parameters:

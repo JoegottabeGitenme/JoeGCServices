@@ -73,7 +73,8 @@ pub async fn bootstrap_locations(
 
 /// Parse station data from CSV format.
 ///
-/// Expected format: ICAO_ID,NAME,LATITUDE,LONGITUDE,ELEVATION_M
+/// Expected format: ICAO_ID,NAME,LONGITUDE,LATITUDE,ELEVATION_M,STATE
+/// Note: Longitude comes before Latitude (matches GeoJSON convention)
 /// Lines starting with # are comments.
 fn parse_stations_csv(csv_data: &str) -> WmsResult<Vec<Location>> {
     let mut locations = Vec::new();
@@ -98,24 +99,25 @@ fn parse_stations_csv(csv_data: &str) -> WmsResult<Vec<Location>> {
 
         let icao = parts[0].trim();
         let name = parts[1].trim();
-        let lat: f64 = match parts[2].trim().parse() {
-            Ok(v) => v,
-            Err(_) => {
-                warn!(
-                    line = line_num + 1,
-                    icao = icao,
-                    "Invalid latitude, skipping"
-                );
-                continue;
-            }
-        };
-        let lon: f64 = match parts[3].trim().parse() {
+        // CSV format is LON,LAT (GeoJSON convention)
+        let lon: f64 = match parts[2].trim().parse() {
             Ok(v) => v,
             Err(_) => {
                 warn!(
                     line = line_num + 1,
                     icao = icao,
                     "Invalid longitude, skipping"
+                );
+                continue;
+            }
+        };
+        let lat: f64 = match parts[3].trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                warn!(
+                    line = line_num + 1,
+                    icao = icao,
+                    "Invalid latitude, skipping"
                 );
                 continue;
             }
