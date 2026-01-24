@@ -210,6 +210,19 @@ async fn run_server(args: Args) {
             "/edr/collections/astro/position",
             get(handlers::astro::position_handler),
         )
+        // Light pollution collection (VIIRS data with Bortle scale)
+        .route(
+            "/edr/light-pollution",
+            get(handlers::light_pollution::position_handler),
+        )
+        .route(
+            "/edr/collections/light-pollution/position",
+            get(handlers::light_pollution::position_handler),
+        )
+        .route(
+            "/edr/collections/light-pollution/area",
+            get(handlers::light_pollution::area_handler),
+        )
         // Locations query
         .route(
             "/edr/collections/:collection_id/locations",

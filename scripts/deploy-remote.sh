@@ -584,8 +584,14 @@ start_services() {
   log_info "Waiting for services to be healthy (this may take a few minutes)..."
   local retries=60
   while [[ $retries -gt 0 ]]; do
-    local healthy=$(ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps --format json 2>/dev/null | grep -c 'healthy'" 2>/dev/null || echo "0")
-    local total=$(ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps --format json 2>/dev/null | wc -l" 2>/dev/null || echo "0")
+    # Use jq if available, fall back to grep
+    local healthy
+    if ssh_cmd "which jq >/dev/null 2>&1"; then
+      healthy=$(ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps --format json 2>/dev/null | jq -s '[.[] | select(.Health == \"healthy\")] | length'" 2>/dev/null || echo "0")
+    else
+      healthy=$(ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps --format json 2>/dev/null | grep -c 'healthy'" 2>/dev/null || echo "0")
+    fi
+    local total=$(ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps -q 2>/dev/null | wc -l" 2>/dev/null || echo "0")
     
     echo -ne "\r  Services healthy: $healthy (waiting... ${retries}s remaining)"
     
@@ -741,7 +747,7 @@ do_update() {
   
   # Restart EDR API to reload config files (e.g., new collections)
   log_info "Restarting EDR API to reload config..."
-  ssh_cmd "docker restart weather-wms-edr-api-1" || true
+  ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml restart edr-api" || true
   
   # Always restart nginx to refresh DNS cache and pick up config changes
   log_info "Restarting nginx to refresh upstream DNS..."

@@ -11,6 +11,7 @@ pub mod cube;
 pub mod health;
 pub mod instances;
 pub mod landing;
+pub mod light_pollution;
 pub mod locations;
 pub mod observations;
 pub mod position;

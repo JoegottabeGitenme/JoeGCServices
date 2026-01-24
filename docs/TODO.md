@@ -53,4 +53,3 @@
 - scope out 'specialized' enpoints for the various activities and the data required for them
 - add resolution stuff for trajectory and corridor queries
 - figure out how to ingest ensemble data and it's members and then expose pre-computed stuff through WMS/EDR
-- BIG TODO FIX VIIRS FOR REMOTE DEPLOY SCRIPT
