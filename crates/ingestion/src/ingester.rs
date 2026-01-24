@@ -8,6 +8,7 @@ use tracing::warn;
 use storage::{Catalog, ObjectStorage};
 
 use crate::error::Result;
+use crate::geotiff;
 use crate::grib2;
 use crate::metadata::{detect_file_type, FileType};
 use crate::netcdf;
@@ -110,6 +111,11 @@ impl Ingester {
             }
             FileType::NetCdf => {
                 netcdf::ingest_netcdf(&self.storage, &self.catalog, data, file_path, &options).await
+            }
+            FileType::GeoTiff | FileType::GeoTiffGz => {
+                // GeoTIFF files (VIIRS light pollution) - handles both compressed and uncompressed
+                geotiff::ingest_geotiff(&self.storage, &self.catalog, data, file_path, &options)
+                    .await
             }
             FileType::Unknown => {
                 // Try to guess based on content or model

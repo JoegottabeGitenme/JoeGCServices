@@ -18,6 +18,10 @@ pub enum FileType {
     NdfdGrib2,
     /// NetCDF format (GOES satellite)
     NetCdf,
+    /// GeoTIFF format (VIIRS light pollution)
+    GeoTiff,
+    /// Gzip-compressed GeoTIFF
+    GeoTiffGz,
     /// Unknown format
     Unknown,
 }
@@ -41,7 +45,11 @@ pub struct GoesFileInfo {
 pub fn detect_file_type(path: &str) -> FileType {
     let lower = path.to_lowercase();
 
-    if lower.ends_with(".grib2.gz") || lower.ends_with(".grb2.gz") {
+    if lower.ends_with(".tif.gz") || lower.ends_with(".tiff.gz") {
+        FileType::GeoTiffGz
+    } else if lower.ends_with(".tif") || lower.ends_with(".tiff") {
+        FileType::GeoTiff
+    } else if lower.ends_with(".grib2.gz") || lower.ends_with(".grb2.gz") {
         FileType::Grib2Gz
     } else if lower.ends_with(".grib2") || lower.ends_with(".grb2") || lower.ends_with(".grib") {
         FileType::Grib2

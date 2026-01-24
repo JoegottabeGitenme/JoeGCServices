@@ -104,3 +104,6 @@ zarrs = "0.18"
 zarrs_storage = "0.3"
 zarrs_filesystem = "0.2"
 zarrs_object_store = "0.3"
+
+# GeoTIFF
+tiff = "0.9"

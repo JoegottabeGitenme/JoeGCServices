@@ -14,6 +14,7 @@
 #   ./scripts/deploy-remote.sh              # Full deployment
 #   ./scripts/deploy-remote.sh --update     # Update config, restart services
 #   ./scripts/deploy-remote.sh --rebuild    # Rebuild images and redeploy
+#   ./scripts/deploy-remote.sh --ingest-viirs # Ingest VIIRS light pollution data
 #   ./scripts/deploy-remote.sh --status     # Check deployment status
 #   ./scripts/deploy-remote.sh --logs [svc] # View remote logs
 #   ./scripts/deploy-remote.sh --ssh        # SSH to remote server
@@ -61,6 +62,7 @@ Commands:
   (none)        Full deployment (first time or complete redeploy)
   --update      Update config files and restart services (no image rebuild)
   --rebuild     Rebuild images locally and redeploy
+  --ingest-viirs  Ingest VIIRS light pollution data (one-time static dataset)
   --status      Check deployment status on remote
   --logs [svc]  View logs (optional: specify service name)
   --ssh         SSH to remote server
@@ -737,6 +739,10 @@ do_update() {
   log_info "Restarting services..."
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d"
   
+  # Restart EDR API to reload config files (e.g., new collections)
+  log_info "Restarting EDR API to reload config..."
+  ssh_cmd "docker restart weather-wms-edr-api-1" || true
+  
   # Always restart nginx to refresh DNS cache and pick up config changes
   log_info "Restarting nginx to refresh upstream DNS..."
   ssh_cmd "docker restart weather-wms-nginx"
@@ -761,6 +767,93 @@ do_rebuild() {
   ssh_cmd "docker restart weather-wms-nginx"
   
   log_success "Rebuild complete!"
+}
+
+do_ingest_viirs() {
+  load_config
+  validate_remote
+  
+  log_step "Ingesting VIIRS light pollution data..."
+  
+  # Find VIIRS file in project root
+  local viirs_file=$(ls "$PROJECT_ROOT"/VNL*.tif.gz 2>/dev/null | head -1)
+  
+  if [[ -z "$viirs_file" ]]; then
+    log_error "VIIRS data file not found!"
+    echo ""
+    echo "Please download the VIIRS nighttime lights data:"
+    echo "  1. Visit: https://eogdata.mines.edu/nighttime_light/annual/v22/"
+    echo "  2. Download the latest VNL_*.tif.gz file"
+    echo "  3. Place it in the project root: $PROJECT_ROOT/"
+    echo ""
+    echo "Example filename: VNL_npp_2024_global_vcmslcfg_v2_c202502261200.average_masked.dat.tif.gz"
+    exit 1
+  fi
+  
+  local viirs_filename=$(basename "$viirs_file")
+  local viirs_size=$(du -h "$viirs_file" | cut -f1)
+  log_info "Found VIIRS file: $viirs_filename ($viirs_size)"
+  
+  # Create static data directory on remote (mounted into ingester container)
+  ssh_cmd "sudo mkdir -p $REMOTE_DIR/data/static/viirs && sudo chown -R \$USER:\$USER $REMOTE_DIR/data"
+  
+  # Check if file already exists on remote
+  if ssh_cmd "test -f $REMOTE_DIR/data/static/viirs/$viirs_filename" 2>/dev/null; then
+    log_info "VIIRS file already exists on remote server"
+  else
+    # Transfer VIIRS file to remote
+    log_info "Transferring VIIRS file to remote server (this may take a while)..."
+    rsync_cmd --progress "$viirs_file" "$REMOTE_HOST:$REMOTE_DIR/data/static/viirs/"
+    log_success "VIIRS file transferred"
+  fi
+  
+  # Restart ingester to pick up the new volume mount (in case it was added)
+  log_info "Restarting ingester to ensure volume mount is active..."
+  ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml restart ingester"
+  
+  # Wait for ingester to be healthy
+  log_info "Waiting for ingester to be ready..."
+  local retries=30
+  while [[ $retries -gt 0 ]]; do
+    if ssh_cmd "curl -s http://localhost:8082/health" 2>/dev/null | grep -q '"status":"ok"'; then
+      break
+    fi
+    sleep 2
+    retries=$((retries - 1))
+  done
+  
+  if [[ $retries -le 0 ]]; then
+    log_error "Ingester did not become healthy"
+    exit 1
+  fi
+  
+  # Ingest the file using the HTTP API
+  # The file is mounted at /data/static/viirs/ in the container
+  log_info "Ingesting VIIRS data into the system (this may take several minutes for a 300MB+ file)..."
+  
+  local ingest_response
+  ingest_response=$(ssh_cmd "curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{\"file_path\": \"/data/static/viirs/$viirs_filename\", \"model\": \"viirs\"}' \
+    http://localhost:8082/ingest" 2>&1)
+  
+  # Check if ingestion succeeded
+  if echo "$ingest_response" | grep -q '"success":true'; then
+    log_success "VIIRS light pollution data ingested successfully!"
+    echo ""
+    echo "Response: $ingest_response"
+    echo ""
+    echo "The light pollution / Bortle scale data is now available via:"
+    echo "  - EDR API: https://$DOMAIN/edr/collections/viirs"
+    echo "  - Light pollution endpoint: https://$DOMAIN/edr/light-pollution?lon=-105&lat=40"
+  else
+    log_error "VIIRS ingestion failed!"
+    echo ""
+    echo "Response: $ingest_response"
+    echo ""
+    echo "Check the ingester logs for more details:"
+    echo "  ./scripts/deploy-remote.sh --logs ingester"
+    exit 1
+  fi
 }
 
 # =============================================================================
@@ -792,6 +885,9 @@ main() {
       ;;
     --rebuild)
       do_rebuild
+      ;;
+    --ingest-viirs)
+      do_ingest_viirs
       ;;
     *)
       # Full deployment
