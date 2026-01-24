@@ -23,7 +23,7 @@ use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
 };
-use crate::resampling::{extract_prime_meridian_region, resample_to_geographic};
+use crate::resampling::{extract_dateline_region, extract_prime_meridian_region, resample_to_geographic};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
@@ -339,6 +339,32 @@ async fn area_query(
             crs: None,
         })
         .collect();
+
+    // Check for crossing notation in any polygon (antimeridian crossing with ambiguous coordinates)
+    // Users should use extended notation (e.g., 170 to 190 instead of 170 to -170)
+    for aq in &all_area_queries {
+        if let Some((from_lon, to_lon)) = aq.uses_crossing_notation() {
+            let suggested_to = if to_lon < 0.0 {
+                to_lon + 360.0
+            } else {
+                to_lon - 360.0
+            };
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "Antimeridian-crossing polygons must use extended notation. \
+                     Your polygon has an edge from {:.1}° to {:.1}° which crosses the antimeridian \
+                     using ambiguous 'crossing notation'. Please use extended notation instead: \
+                     the coordinate {:.1}° should be specified as {:.1}° \
+                     (add 360 to negative longitudes, or subtract 360 from positive longitudes \
+                     that cross the antimeridian). \
+                     Example: POLYGON((170 35, 190 35, 190 45, 170 45, 170 35)) instead of \
+                     POLYGON((170 35, -170 35, -170 45, 170 45, 170 35))",
+                    from_lon, to_lon, to_lon, suggested_to
+                )),
+            );
+        }
+    }
 
     // Check area size limit
     // Use higher limit for PNG queries (typically used for large regional coverage)
@@ -671,6 +697,10 @@ async fn area_query(
     // in this case, so we need to extract the appropriate columns.
     let region = extract_prime_meridian_region(&region, &grid_bbox);
 
+    // If the request uses extended notation crossing the dateline (e.g., 140° to 235°),
+    // convert the output bbox to -180/180 format (e.g., 140° to -125°).
+    let region = extract_dateline_region(&region, &grid_bbox);
+
     // If the grid uses a projected coordinate system (Lambert, Polar Stereographic, etc.),
     // resample it to a regular geographic grid. This ensures EDR output coordinates
     // are uniformly spaced in lat/lon, which is what clients expect.
@@ -945,6 +975,9 @@ async fn area_query(
 
             // Handle prime meridian crossing for 0-360 grids (like GFS)
             let param_region = extract_prime_meridian_region(&param_region, &grid_bbox);
+
+            // Handle dateline crossing for extended notation (e.g., 140° to 235°)
+            let param_region = extract_dateline_region(&param_region, &grid_bbox);
 
             // If the grid uses a projected coordinate system, resample to geographic.
             // This ensures the PNG output has uniformly-spaced lat/lon pixels.

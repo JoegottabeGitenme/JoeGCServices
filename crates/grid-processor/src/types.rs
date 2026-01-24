@@ -153,29 +153,37 @@ impl BoundingBox {
         self.min_lon >= 0.0 && self.max_lon > 180.0
     }
 
-    /// Check if this request bbox would cross the dateline when normalized to a 0-360 grid.
+    /// Check if this request bbox would become inverted when normalized to a 0-360 grid.
+    ///
     /// This happens when the request spans from negative to positive longitude
     /// (e.g., min_lon=-100, max_lon=50 becomes 260 to 50, which is inverted).
+    ///
+    /// Note: This does NOT return true for:
+    /// - Extended notation (140 to 235) - this is contiguous on 0-360 grid
+    /// - Crossing notation (140 to -125) - this should be rejected with an error
     pub fn crosses_dateline_on_360_grid(&self, grid_bbox: &BoundingBox) -> bool {
         if !grid_bbox.uses_0_360_longitude() {
             return false;
         }
-        // Request crosses dateline if min_lon is negative and max_lon is positive
-        // After normalization, min_lon would be > max_lon
+        // Request becomes inverted if min_lon is negative and max_lon is positive
+        // After normalization: min_lon + 360 > max_lon (inverted)
+        // Example: -100 to 50 becomes 260 to 50 (inverted)
         self.min_lon < 0.0 && self.max_lon >= 0.0
     }
 
     /// Normalize a request bbox to match a grid's coordinate system.
-    /// If the grid uses 0-360 longitude and the request uses -180/180,
+    /// If the grid uses 0-360 longitude and the request has any negative longitudes,
     /// convert the request to 0-360.
     ///
-    /// NOTE: This does NOT handle cross-dateline requests properly.
-    /// Use `crosses_dateline_on_360_grid()` to check first, and if true,
-    /// either load the full grid or split into two requests.
+    /// This handles:
+    /// - Standard -180/180 requests (e.g., -100 to -90 → 260 to 270)
+    /// - Extended notation for dateline crossing (e.g., 140 to -125 → 140 to 235)
+    ///
+    /// NOTE: If the result has min_lon > max_lon, the request crosses the prime
+    /// meridian on a 0-360 grid and needs special handling (split read or full grid).
     pub fn normalize_to_grid(&self, grid_bbox: &BoundingBox) -> Self {
-        if grid_bbox.uses_0_360_longitude() && self.min_lon < 0.0 {
-            // Grid uses 0-360, request uses -180/180
-            // Convert request to 0-360 by adding 360 to negative longitudes
+        if grid_bbox.uses_0_360_longitude() {
+            // Grid uses 0-360 - convert ANY negative longitude to 0-360 range
             Self {
                 min_lon: if self.min_lon < 0.0 {
                     self.min_lon + 360.0
@@ -193,6 +201,26 @@ impl BoundingBox {
         } else {
             *self
         }
+    }
+
+    /// Check if this bbox uses "crossing notation" for the antimeridian.
+    ///
+    /// Crossing notation has min_lon > 0 and max_lon < 0 (e.g., 140° to -125°).
+    /// This is ambiguous because it's unclear which direction to go.
+    ///
+    /// Users should instead use "extended notation" where coordinates extend
+    /// beyond 180° (e.g., 140° to 235°) to specify the intended direction.
+    pub fn uses_crossing_notation(&self) -> bool {
+        self.min_lon > 0.0 && self.max_lon < 0.0
+    }
+
+    /// Check if this bbox uses extended notation crossing the dateline.
+    ///
+    /// Extended notation has max_lon > 180° (e.g., 140° to 235°).
+    /// This clearly indicates a region that crosses the antimeridian
+    /// going eastward from Asia to the Americas via the Pacific.
+    pub fn uses_extended_notation_dateline(&self) -> bool {
+        self.min_lon >= 0.0 && self.min_lon <= 180.0 && self.max_lon > 180.0
     }
 
     /// Check if this bounding box crosses the Date Line (180°/-180° longitude).
@@ -705,6 +733,102 @@ mod tests {
         assert!((BoundingBox::normalize_longitude(270.0) - (-90.0)).abs() < 0.01);
         assert!((BoundingBox::normalize_longitude(-270.0) - 90.0).abs() < 0.01);
         assert!((BoundingBox::normalize_longitude(360.0) - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_uses_crossing_notation() {
+        // Crossing notation: positive min_lon, negative max_lon
+        let crossing = BoundingBox::new(140.0, 25.0, -125.0, 55.0);
+        assert!(crossing.uses_crossing_notation());
+
+        // Normal notation (no crossing)
+        let normal = BoundingBox::new(-125.0, 25.0, -100.0, 55.0);
+        assert!(!normal.uses_crossing_notation());
+
+        // Extended notation (not crossing notation)
+        let extended = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        assert!(!extended.uses_crossing_notation());
+
+        // Both negative (not crossing)
+        let both_neg = BoundingBox::new(-170.0, 25.0, -150.0, 55.0);
+        assert!(!both_neg.uses_crossing_notation());
+    }
+
+    #[test]
+    fn test_uses_extended_notation_dateline() {
+        // Extended notation: 140° to 235° (where 235 = -125 + 360)
+        let extended = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        assert!(extended.uses_extended_notation_dateline());
+
+        // Normal notation (max_lon <= 180)
+        let normal = BoundingBox::new(-125.0, 25.0, -100.0, 55.0);
+        assert!(!normal.uses_extended_notation_dateline());
+
+        // Crossing notation (not extended)
+        let crossing = BoundingBox::new(140.0, 25.0, -125.0, 55.0);
+        assert!(!crossing.uses_extended_notation_dateline());
+
+        // Both sides > 180 (not typical dateline crossing pattern)
+        let both_extended = BoundingBox::new(190.0, 25.0, 235.0, 55.0);
+        assert!(!both_extended.uses_extended_notation_dateline());
+    }
+
+    #[test]
+    fn test_normalize_to_grid_extended_notation() {
+        let grid_bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+
+        // Extended notation: Japan (140°) to California (235° = -125° + 360°)
+        // Should remain unchanged (both coords already in 0-360 range)
+        let request = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        let normalized = request.normalize_to_grid(&grid_bbox);
+        assert!((normalized.min_lon - 140.0).abs() < 0.01);
+        assert!((normalized.max_lon - 235.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize_to_grid_negative_max_lon() {
+        let grid_bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+
+        // Crossing notation: 140° to -125° should convert max_lon to 235°
+        let request = BoundingBox::new(140.0, 25.0, -125.0, 55.0);
+        let normalized = request.normalize_to_grid(&grid_bbox);
+        assert!((normalized.min_lon - 140.0).abs() < 0.01);
+        assert!((normalized.max_lon - 235.0).abs() < 0.01); // -125 + 360 = 235
+    }
+
+    #[test]
+    fn test_normalize_to_grid_both_negative() {
+        let grid_bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+
+        // Both negative: -170° to -150° should convert to 190° to 210°
+        let request = BoundingBox::new(-170.0, 25.0, -150.0, 55.0);
+        let normalized = request.normalize_to_grid(&grid_bbox);
+        assert!((normalized.min_lon - 190.0).abs() < 0.01); // -170 + 360 = 190
+        assert!((normalized.max_lon - 210.0).abs() < 0.01); // -150 + 360 = 210
+    }
+
+    #[test]
+    fn test_crosses_dateline_on_360_grid_scenarios() {
+        let grid_bbox = BoundingBox::new(0.0, -90.0, 360.0, 90.0);
+
+        // Scenario A: min_lon negative, max_lon positive
+        // This becomes inverted after normalization (260 to 50)
+        let scenario_a = BoundingBox::new(-100.0, 25.0, 50.0, 55.0);
+        assert!(scenario_a.crosses_dateline_on_360_grid(&grid_bbox));
+
+        // Extended notation: 140 to 235 - NOT inverted, contiguous on 0-360
+        let extended = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        assert!(!extended.crosses_dateline_on_360_grid(&grid_bbox));
+
+        // Crossing notation: 140 to -125 - has negative max but positive min
+        // After normalize_to_grid it becomes 140 to 235, which is fine
+        let crossing = BoundingBox::new(140.0, 25.0, -125.0, 55.0);
+        assert!(!crossing.crosses_dateline_on_360_grid(&grid_bbox));
+
+        // Normal bbox with both negative: -170 to -150
+        // After normalization: 190 to 210 (not inverted)
+        let both_neg = BoundingBox::new(-170.0, 25.0, -150.0, 55.0);
+        assert!(!both_neg.crosses_dateline_on_360_grid(&grid_bbox));
     }
 }
 

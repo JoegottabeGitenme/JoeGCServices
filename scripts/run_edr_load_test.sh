@@ -522,6 +522,32 @@ print(f'POLYGON(({min_x:.4f} {min_y:.4f},{max_x:.4f} {min_y:.4f},{max_x:.4f} {ma
 "
 }
 
+# Generate random polygon crossing the dateline using extended notation
+# This creates polygons that span the Pacific Ocean from Asia to Americas
+# Uses extended notation (e.g., 140° to 235° instead of 140° to -125°)
+random_polygon_dateline() {
+    local size=${1:-20.0}
+    python3 -c "
+import random
+
+size = $size  # Width in degrees
+
+# Random position in the Pacific region
+# West edge: somewhere between 120°E and 170°E
+min_lon = random.uniform(120, 170)
+# East edge: use extended notation (add 360 to negative longitudes)
+# Random between -170°W and -120°W, represented as 190° to 240°
+max_lon = random.uniform(190, 240)
+
+# Random latitude band
+min_lat = random.uniform(10, 45)
+lat_height = random.uniform(10, 25)
+max_lat = min(85, min_lat + lat_height)
+
+print(f'POLYGON(({min_lon:.2f} {min_lat:.2f},{max_lon:.2f} {min_lat:.2f},{max_lon:.2f} {max_lat:.2f},{min_lon:.2f} {max_lat:.2f},{min_lon:.2f} {min_lat:.2f}))')
+"
+}
+
 # Generate random bbox within bounds (for cube queries)
 random_bbox() {
     local min_lon=$1 max_lon=$2 min_lat=$3 max_lat=$4 size=${5:-2.0}
@@ -637,7 +663,15 @@ run_scenario() {
         url="$BASE_URL/collections/$coll_id/position?coords=$(urlencode "$point")&parameter-name=$param"
         [[ -n "$level" ]] && url+="&z=$level"
     elif [[ "$query_type" == "area" ]]; then
-        local polygon=$(random_polygon "$min_lon" "$max_lon" "$min_lat" "$max_lat" 1.0)
+        local polygon
+        # For global collections (bbox spans > 300 degrees), occasionally test dateline crossing
+        local lon_span=$(python3 -c "print(abs($max_lon - $min_lon))")
+        if [[ $(python3 -c "print(1 if $lon_span > 300 else 0)") == "1" ]] && [[ $((RANDOM % 10)) -lt 2 ]]; then
+            # 20% chance to test dateline crossing on global collections
+            polygon=$(random_polygon_dateline 30)
+        else
+            polygon=$(random_polygon "$min_lon" "$max_lon" "$min_lat" "$max_lat" 1.0)
+        fi
         url="$BASE_URL/collections/$coll_id/area?coords=$(urlencode "$polygon")&parameter-name=$param"
         [[ -n "$level" ]] && url+="&z=$level"
     elif [[ "$query_type" == "radius" ]]; then

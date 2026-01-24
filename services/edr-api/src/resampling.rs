@@ -424,6 +424,53 @@ pub fn extract_prime_meridian_region(
     )
 }
 
+/// Extract and convert a region from a 0-360 grid to -180/180 output coordinates
+/// for requests that cross the dateline using extended notation (e.g., 140° to 235°).
+///
+/// This handles the case where:
+/// - The grid uses 0-360 longitude convention (like GFS)
+/// - The request uses extended notation with max_lon > 180° (e.g., 140° to 235°)
+/// - The output should use standard -180/180 coordinates (e.g., 140° to -125°)
+///
+/// # Arguments
+/// * `region` - The grid region (may be a subset or full grid, bbox in 0-360 or mixed)
+/// * `request_bbox` - The original request bbox (may use extended notation)
+///
+/// # Returns
+/// A GridRegion with bbox converted to -180/180 format if needed, otherwise unchanged.
+pub fn extract_dateline_region(region: &GridRegion, request_bbox: &BoundingBox) -> GridRegion {
+    // Check if request uses extended notation crossing dateline (max_lon > 180)
+    if !request_bbox.uses_extended_notation_dateline() {
+        return region.clone();
+    }
+
+    // Check if the region's bbox also uses extended notation (from the grid read)
+    // This happens when the grid read preserved the 0-360 coordinates
+    if region.bbox.max_lon <= 180.0 {
+        // Region bbox is already in -180/180 format, nothing to do
+        return region.clone();
+    }
+
+    // Convert the region's bbox from extended notation to crossing notation
+    // e.g., 140 to 235 becomes 140 to -125 (where -125 = 235 - 360)
+    let output_bbox = BoundingBox::new(
+        region.bbox.min_lon,
+        region.bbox.min_lat,
+        region.bbox.max_lon - 360.0, // Convert 235 → -125
+        region.bbox.max_lat,
+    );
+
+    // Data is already correct (the grid read returned the right columns)
+    // We just need to update the bbox metadata for output
+    GridRegion::new(
+        region.data.clone(),
+        region.width,
+        region.height,
+        output_bbox,
+        region.resolution,
+    )
+}
+
 /// Bilinear interpolation at continuous grid coordinates.
 fn bilinear_interpolate(
     data: &[f32],
@@ -566,5 +613,73 @@ mod tests {
         // Should return unchanged since request doesn't cross prime meridian
         assert_eq!(result.width, region.width);
         assert_eq!(result.height, region.height);
+    }
+
+    #[test]
+    fn test_extract_dateline_region_extended_notation() {
+        // Region from 0-360 grid read, covering 140° to 235° (Japan to California)
+        let region = GridRegion::new(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            4,
+            2,
+            BoundingBox::new(140.0, 25.0, 235.0, 55.0), // Extended notation bbox
+            (23.75, 15.0),
+        );
+
+        // Request using extended notation
+        let request_bbox = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        let result = extract_dateline_region(&region, &request_bbox);
+
+        // Data should be unchanged
+        assert_eq!(result.width, region.width);
+        assert_eq!(result.height, region.height);
+        assert_eq!(result.data, region.data);
+
+        // Bbox should be converted to -180/180 format
+        // 140° stays 140°, 235° becomes -125° (235 - 360 = -125)
+        assert!((result.bbox.min_lon - 140.0).abs() < 0.01);
+        assert!((result.bbox.max_lon - (-125.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_extract_dateline_region_non_extended() {
+        // Region with normal bbox (no dateline crossing)
+        let region = GridRegion::new(
+            vec![1.0, 2.0, 3.0, 4.0],
+            2,
+            2,
+            BoundingBox::new(-100.0, 25.0, -90.0, 55.0),
+            (5.0, 15.0),
+        );
+
+        // Request with normal notation
+        let request_bbox = BoundingBox::new(-100.0, 25.0, -90.0, 55.0);
+        let result = extract_dateline_region(&region, &request_bbox);
+
+        // Should return unchanged (no extended notation)
+        assert_eq!(result.width, region.width);
+        assert_eq!(result.height, region.height);
+        assert_eq!(result.bbox.min_lon, region.bbox.min_lon);
+        assert_eq!(result.bbox.max_lon, region.bbox.max_lon);
+    }
+
+    #[test]
+    fn test_extract_dateline_region_already_normalized() {
+        // Region bbox already in -180/180 format (from some other processing)
+        let region = GridRegion::new(
+            vec![1.0, 2.0, 3.0, 4.0],
+            2,
+            2,
+            BoundingBox::new(140.0, 25.0, -125.0, 55.0), // Already crossing notation
+            (5.0, 15.0),
+        );
+
+        // Request using extended notation
+        let request_bbox = BoundingBox::new(140.0, 25.0, 235.0, 55.0);
+        let result = extract_dateline_region(&region, &request_bbox);
+
+        // Should return unchanged (region bbox already normalized)
+        assert_eq!(result.bbox.min_lon, region.bbox.min_lon);
+        assert_eq!(result.bbox.max_lon, region.bbox.max_lon);
     }
 }

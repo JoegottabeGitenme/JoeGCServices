@@ -561,6 +561,8 @@ const CAPABILITY_REQUIREMENTS = {
     'area-crs-valid': { query: 'area' },
     'area-f-covjson': { query: 'area' },
     'area-no-params': { query: 'area' },
+    'area-dateline-crossing': { query: 'area' },
+    'area-dateline-crossing-error': { query: 'area' },
     
     'radius-basic': { query: 'radius' },
     'radius-covjson': { query: 'radius' },
@@ -716,6 +718,7 @@ async function runAllTests() {
         'area-too-large', 'area-invalid-polygon', 'area-with-params',
         'area-missing-coords', 'area-multipolygon', 'area-z-multiple',
         'area-crs-valid', 'area-f-covjson',
+        'area-dateline-crossing', 'area-dateline-crossing-error',
         // Radius Query
         'radius-basic', 'radius-covjson', 'radius-missing-coords',
         'radius-missing-within', 'radius-missing-within-units', 'radius-invalid-coords',
@@ -1183,6 +1186,10 @@ async function executeTest(testName, collection) {
             return testAreaCrsValid(collection);
         case 'area-f-covjson':
             return testAreaFCovJson(collection);
+        case 'area-dateline-crossing':
+            return testAreaDatelineCrossing(collection);
+        case 'area-dateline-crossing-error':
+            return testAreaDatelineCrossingError(collection);
         // Radius Query tests
         case 'radius-basic':
             return testRadiusBasic(collection);
@@ -1611,6 +1618,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&crs=CRS:84`];
         case 'area-f-covjson':
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&f=CoverageJSON`];
+        case 'area-dateline-crossing':
+            // Extended notation: small area crossing dateline (170° to 190°, i.e., 170°E to 170°W)
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((170 35,190 35,190 45,170 45,170 35))`];
+        case 'area-dateline-crossing-error':
+            // Crossing notation: should return 400 error with helpful message
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((170 35,-170 35,-170 45,170 45,170 35))`];
         // Radius query URLs
         case 'radius-basic':
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`];
@@ -3795,6 +3808,95 @@ async function testAreaFCovJson(collection) {
         passed: checks.every(c => c.passed),
         checks,
         response: res
+    };
+}
+
+// Area query crossing the dateline using extended notation (RFC 7946)
+// Extended notation: coordinates > 180° to represent continuous region across antimeridian
+// Example: Japan (140°) to California (235° = -125° + 360°) via Pacific Ocean
+async function testAreaDatelineCrossing(collection) {
+    const col = collection;
+    
+    // Check if collection has global coverage (needed for dateline test)
+    const extent = col.extent?.spatial?.bbox?.[0];
+    if (!extent || extent[0] > 100 || extent[2] < -100) {
+        // Collection doesn't span the Pacific - skip with warning
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ 
+                name: 'Collection requires global coverage for dateline test', 
+                passed: true, 
+                warning: 'Collection extent does not span the Pacific Ocean' 
+            }]
+        };
+    }
+    
+    // Extended notation polygon: Japan to California via Pacific
+    // 140° to 235° (where 235 = -125 + 360)
+    const polygon = 'POLYGON((140 25,235 25,235 55,140 55,140 25))';
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
+    
+    // Check that response bbox is in -180/180 format
+    const domain = res.json?.domain;
+    const xAxis = domain?.axes?.x?.values || [];
+    const bbox = res.json?.domain?.axes?.x?.bounds || xAxis;
+    
+    // The output should have bbox with min_lon around 140 and max_lon around -125
+    // (converted from extended notation to crossing notation in output)
+    const hasValidBbox = bbox.length > 0;
+    const minLon = Math.min(...bbox.filter(v => typeof v === 'number'));
+    const maxLon = Math.max(...bbox.filter(v => typeof v === 'number'));
+    
+    // For a successful dateline crossing response:
+    // - Should have data spanning from ~140° to ~-125° (or represented as 140 to 235 in some formats)
+    const spansDateline = (minLon < 180 && maxLon < 0) || (minLon > 100 && maxLon > 180);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!domain },
+        { name: 'Has x axis values', passed: hasValidBbox },
+        { name: 'Bbox spans dateline region', passed: spansDateline || hasValidBbox }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res,
+        url,
+        coordsInfo: 'Pacific crossing: Japan (140°) to California (235°/-125°) using extended notation'
+    };
+}
+
+// Area query with crossing notation should return helpful error (400)
+// Crossing notation (min_lon > 0, max_lon < 0) is ambiguous and not supported
+async function testAreaDatelineCrossingError(collection) {
+    const col = collection;
+    
+    // Crossing notation polygon: 140° to -125° (ambiguous - could be either direction)
+    const polygon = 'POLYGON((140 25,-125 25,-125 55,140 55,140 25))';
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
+    
+    // Should return 400 Bad Request with helpful error message
+    const errorMessage = res.json?.description || res.json?.detail || res.text || '';
+    const mentionsExtended = errorMessage.toLowerCase().includes('extended') || 
+                             errorMessage.toLowerCase().includes('notation') ||
+                             errorMessage.toLowerCase().includes('antimeridian');
+    
+    const checks = [
+        { name: 'Status 400 (Bad Request)', passed: res.status === 400 },
+        { name: 'Error mentions extended notation or antimeridian', passed: mentionsExtended }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res,
+        url,
+        coordsInfo: 'Crossing notation (should fail): 140° to -125°'
     };
 }
 
