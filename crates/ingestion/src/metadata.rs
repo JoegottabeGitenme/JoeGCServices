@@ -385,6 +385,33 @@ mod tests {
         // This is intentional - NDFD files from NWS use .bin extension
     }
 
+    #[test]
+    fn test_detect_file_type_geotiff() {
+        // Uncompressed GeoTIFF
+        assert_eq!(detect_file_type("test.tif"), FileType::GeoTiff);
+        assert_eq!(detect_file_type("test.tiff"), FileType::GeoTiff);
+        assert_eq!(detect_file_type("VNL_v22_npp_2023.TIF"), FileType::GeoTiff);
+        assert_eq!(
+            detect_file_type("/data/viirs/nighttime_lights.tiff"),
+            FileType::GeoTiff
+        );
+    }
+
+    #[test]
+    fn test_detect_file_type_geotiff_gz() {
+        // Gzip-compressed GeoTIFF (VIIRS data is distributed this way)
+        assert_eq!(detect_file_type("test.tif.gz"), FileType::GeoTiffGz);
+        assert_eq!(detect_file_type("test.tiff.gz"), FileType::GeoTiffGz);
+        assert_eq!(
+            detect_file_type("VNL_v22_npp_2023_global_vcmslcfg.average_masked.dat.tif.gz"),
+            FileType::GeoTiffGz
+        );
+        assert_eq!(
+            detect_file_type("/data/static/viirs/VNL_data.TIF.GZ"),
+            FileType::GeoTiffGz
+        );
+    }
+
     // ==================== Model Extraction ====================
 
     #[test]

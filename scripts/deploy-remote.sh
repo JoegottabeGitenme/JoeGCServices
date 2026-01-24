@@ -298,6 +298,15 @@ validate_remote() {
   fi
   log_success "rsync is installed"
   
+  # Check jq for better JSON parsing (optional but recommended)
+  log_info "Checking jq..."
+  if ssh_cmd "which jq" &>/dev/null; then
+    log_success "jq is installed (recommended for health checks)"
+  else
+    log_warn "jq not installed - health checks will use fallback grep method"
+    log_info "  For more reliable health checks, install jq: sudo apt install -y jq"
+  fi
+  
   # Check disk space
   log_info "Checking disk space..."
   local disk_free=$(ssh_cmd "df -h $REMOTE_DIR 2>/dev/null | tail -1 | awk '{print \$4}'" || echo "unknown")

@@ -211,16 +211,18 @@ async fn run_server(args: Args) {
             get(handlers::astro::position_handler),
         )
         // Light pollution collection (VIIRS data with Bortle scale)
+        // Note: Collection ID is viirs-light-pollution (matches config/edr/viirs.yaml)
+        // The /edr/light-pollution route is a convenience shortcut
         .route(
             "/edr/light-pollution",
             get(handlers::light_pollution::position_handler),
         )
         .route(
-            "/edr/collections/light-pollution/position",
+            "/edr/collections/viirs-light-pollution/position",
             get(handlers::light_pollution::position_handler),
         )
         .route(
-            "/edr/collections/light-pollution/area",
+            "/edr/collections/viirs-light-pollution/area",
             get(handlers::light_pollution::area_handler),
         )
         // Locations query
