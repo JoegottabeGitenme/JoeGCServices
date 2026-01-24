@@ -23,8 +23,6 @@
 - why are we getting orphaned files constantly?
 - evicting things from chunk cache seems to bring things to a crawl, need to explain how evictions work and how we're
   getting chunk cache entry count
-- downloader should prioritize radar/satellite, perhaps a thread or threadpool for each data type so they don't block
-  eachother
 - Dateline crossing loads the whole grid, this will cause requests over the Pacific to be slow
 - Cache warming should just fill L2 cache
 - Documentation stuff:
@@ -50,5 +48,8 @@
   - gfs kinda pointless
   - NBM/NDFD mayyyybe
   - various models dont need all these different products right now
-- Downloading and ingesting should not bring services to a crawl so we may want to figure out core usage
 - at this point I wouldn't mind trading out more ram usage to save cpu usage, so let's fill up and increase our caches and make sure memory limits are strict for the various services
+- scope out 'specialized' PNGs for EDR where we encode multiple values
+- scope out 'specialized' enpoints for the various activities and the data required for them
+- add resolution stuff for trajectory and corridor queries
+- figure out how to ingest ensemble data and it's members and then expose pre-computed stuff through WMS/EDR

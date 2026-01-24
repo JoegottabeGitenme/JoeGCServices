@@ -153,6 +153,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "astro"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199632e1a87451cf771da7adeba192cab923ede42657ac3de0133ba6f4ae14be"
+
+[[package]]
 name = "async-compression"
 version = "0.4.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1497,6 +1503,7 @@ name = "edr-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astro",
  "axum",
  "bytes",
  "chrono",
@@ -1514,6 +1521,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "storage",
+ "sunrise-sunset-calculator",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -5040,6 +5048,15 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sunrise-sunset-calculator"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "560003b6e679b5f9515cdbfa38fdba8297354ea63ba5907d91a5628f44968585"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "svgtypes"

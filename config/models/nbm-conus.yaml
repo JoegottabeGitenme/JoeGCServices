@@ -67,12 +67,12 @@ schedule:
   max_concurrent: 3 # Allow up to 3 concurrent downloads
 
 retention:
-  hours: 6 # Keep data for 6 hours
-  keep_latest_runs: 2 # Always keep at least 2 recent runs
+  hours: 12 # Keep data for 12 hours (provides backup runs for 48h coverage)
+  keep_latest_runs: 3 # Always keep at least 3 recent runs (safeguard)
 
 # Precaching configuration
 precaching:
-  enabled: false
+  enabled: true
   keep_recent_cycles: 1
   forecast_hours: [1, 6, 12, 24, 48]
   warm_on_ingest: false

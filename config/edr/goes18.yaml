@@ -8,6 +8,9 @@
 # - Updates every ~5 minutes
 #
 # Coverage: Western CONUS, Pacific (-175 to -100 lon, 14.5 to 55.5 lat)
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: goes18
 data_type: observation
@@ -27,10 +30,13 @@ collections:
     parameters:
       - name: CMI_C01
         levels: [visible_blue]
+        valid_range: { min: 0, max: 1.5 }  # reflectance factor
       - name: CMI_C02
         levels: [visible_red]
+        valid_range: { min: 0, max: 1.5 }  # reflectance factor
       - name: CMI_C03
         levels: [visible_veggie]
+        valid_range: { min: 0, max: 1.5 }  # reflectance factor
     run_mode: instances
 
   # Water vapor bands (bands 8, 9, 10)
@@ -43,10 +49,13 @@ collections:
     parameters:
       - name: CMI_C08
         levels: [upper_vapor]
+        valid_range: { min: 180, max: 350 }  # Kelvin
       - name: CMI_C09
         levels: [mid_vapor]
+        valid_range: { min: 180, max: 350 }  # Kelvin
       - name: CMI_C10
         levels: [low_vapor]
+        valid_range: { min: 180, max: 350 }  # Kelvin
     run_mode: instances
 
   # Infrared bands (bands 13, 14)
@@ -59,8 +68,10 @@ collections:
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
+        valid_range: { min: 180, max: 350 }  # Kelvin
       - name: CMI_C14
         levels: [ir]
+        valid_range: { min: 180, max: 350 }  # Kelvin
     run_mode: instances
 
   # ===========================================================================
@@ -78,10 +89,13 @@ collections:
     parameters:
       - name: CMI_C01
         levels: [visible_blue]
+        valid_range: { min: 0, max: 1.5 }
       - name: CMI_C02
         levels: [visible_red]
+        valid_range: { min: 0, max: 1.5 }
       - name: CMI_C03
         levels: [visible_veggie]
+        valid_range: { min: 0, max: 1.5 }
     run_mode: latest
 
   - id: goes18-water-vapor-latest
@@ -93,10 +107,13 @@ collections:
     parameters:
       - name: CMI_C08
         levels: [upper_vapor]
+        valid_range: { min: 180, max: 350 }
       - name: CMI_C09
         levels: [mid_vapor]
+        valid_range: { min: 180, max: 350 }
       - name: CMI_C10
         levels: [low_vapor]
+        valid_range: { min: 180, max: 350 }
     run_mode: latest
 
   - id: goes18-infrared-latest
@@ -108,8 +125,10 @@ collections:
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
+        valid_range: { min: 180, max: 350 }
       - name: CMI_C14
         levels: [ir]
+        valid_range: { min: 180, max: 350 }
     run_mode: latest
 
 settings:
@@ -120,13 +139,16 @@ settings:
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
   cache_policy:
     png_max_age: 300  # 5 minutes - GOES updates every ~5 minutes
 
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 36          # ~3 hours at 5-min intervals
+  max_time_steps: 350          # ~3 hours at 5-min intervals
   max_vertical_levels: 1      # No vertical dimension for satellite data
   max_response_size_mb: 100   # GOES grids are large (~5000x3000)
   max_area_sq_degrees: 50     # Limit area queries due to high resolution
+  max_area_sq_degrees_png: 2500  # PNG queries - larger coverage for visualization
   max_radius_km: 250          # Limit radius queries

@@ -12,6 +12,9 @@
 #
 # NOTE: Only parameters that are currently being ingested are listed here.
 # See config/models/mrms.yaml for the full parameter definitions.
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: mrms
 data_type: observation
@@ -30,12 +33,16 @@ collections:
     parameters:
       - name: REFL
         levels: [0]
+        valid_range: { min: -30, max: 80 }  # dBZ
       - name: PRECIP_RATE
         levels: [0]
+        valid_range: { min: 0, max: 100 }  # mm/hr
       - name: QPE_01H
         levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
       - name: QPE_24H
         levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
     run_mode: instances
 
   # ===========================================================================
@@ -53,21 +60,28 @@ collections:
     parameters:
       - name: REFL
         levels: [0]
+        valid_range: { min: -30, max: 80 }  # dBZ
       - name: PRECIP_RATE
         levels: [0]
+        valid_range: { min: 0, max: 100 }  # mm/hr
       - name: QPE_01H
         levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
       - name: QPE_24H
         levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
     run_mode: latest
 
 settings:
   output_formats:
     - application/vnd.cov+json
     - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
 
 # Response size limits
 # MRMS is ~1km resolution (0.01°), which is 3x finer than HRRR
@@ -75,8 +89,9 @@ settings:
 # These limits are stricter than HRRR to account for the higher resolution
 limits:
   max_parameters_per_request: 4       # Only 4 parameters available
-  max_time_steps: 30                  # ~1 hour of observations at 2-min intervals
+  max_time_steps: 350                  # ~1 hour of observations at 2-min intervals
   max_vertical_levels: 1              # No vertical dimension for radar data
   max_response_size_mb: 50            # Same as HRRR
-  max_area_sq_degrees: 25             # ~500km x 500km (stricter due to 1km resolution)
-  max_radius_km: 250                  # Smaller radius due to very high point density
+  max_area_sq_degrees: 250             # ~500km x 500km (stricter due to 1km resolution)
+  max_area_sq_degrees_png: 2500       # PNG queries - full CONUS coverage
+  max_radius_km: 2500                  # Smaller radius due to very high point density

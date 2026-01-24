@@ -258,6 +258,8 @@ These parameters are supported by all data query types:
 | z | No | Vertical level(s) | `850` or `850,700,500` or `1000/500` or `R5/1000/100` |
 | crs | No | Coordinate reference system | `CRS:84` |
 | f | No | Output format | `covjson` or `geojson` |
+| interpolation | No | Temporal interpolation method | `none` (default), `nearest`, or `linear` |
+| step | No | Time step for interval expansion (ISO 8601 duration) | `PT10M`, `PT30M`, `PT1H` |
 
 ### Output Formats
 
@@ -339,6 +341,66 @@ The `datetime` parameter supports multiple formats:
 | Open start | `../2024-12-30T00:00:00Z` | Up to time |
 | Open end | `2024-12-29T00:00:00Z/..` | From time onward |
 | List | `2024-12-29T12:00:00Z,2024-12-29T13:00:00Z` | Multiple instants |
+
+### Temporal Interpolation
+
+The API supports temporal interpolation to request data at arbitrary times between available timesteps. This is useful when you need higher temporal resolution than the underlying data provides (e.g., requesting 10-minute intervals from hourly data).
+
+#### Interpolation Methods
+
+| Method | Description | Use Case |
+|--------|-------------|----------|
+| `none` | No interpolation (default) - returns only exact matches | Standard EDR behavior |
+| `nearest` | Returns value from closest available time | Simple time snapping |
+| `linear` | Linear interpolation between bracketing times | Smooth transitions, weather parameters |
+
+#### Step Parameter
+
+The `step` parameter works with `interpolation` to automatically generate times at regular intervals within a datetime range.
+
+**Format:** ISO 8601 duration (e.g., `PT10M` = 10 minutes, `PT1H` = 1 hour, `P1D` = 1 day)
+
+#### Examples
+
+**Request 10-minute intervals with linear interpolation:**
+```http
+GET /edr/collections/hrrr-surface/position?coords=POINT(-97.5 35.2)
+  &datetime=2024-12-29T12:00:00Z/2024-12-29T18:00:00Z
+  &interpolation=linear
+  &step=PT10M
+  &parameter-name=TMP
+```
+
+This generates 37 time values (12:00, 12:10, 12:20, ..., 18:00), interpolating between the hourly HRRR data.
+
+**Request specific time with nearest neighbor:**
+```http
+GET /edr/collections/gfs-surface/position?coords=POINT(-97.5 35.2)
+  &datetime=2024-12-29T12:37:00Z
+  &interpolation=nearest
+  &parameter-name=TMP
+```
+
+Returns the value from the closest available GFS time (likely 12:00 or 13:00).
+
+**Request specific time with linear interpolation:**
+```http
+GET /edr/collections/gfs-surface/position?coords=POINT(-97.5 35.2)
+  &datetime=2024-12-29T12:37:00Z
+  &interpolation=linear
+  &parameter-name=TMP
+```
+
+Returns a linearly interpolated value between the 12:00 and 13:00 GFS timesteps.
+
+#### Limitations
+
+- Temporal interpolation is currently supported for **position queries only**
+- Requested datetime range must be within the collection's temporal extent
+- Times outside the temporal extent will result in a 400 Bad Request error
+- The `step` parameter requires an interval datetime with both start and end times
+- Maximum 300 time steps per request (e.g., 24 hours at 5-minute intervals = 289 steps)
+- Interpolation only works for scalar values (not applicable to categorical parameters)
 
 ---
 

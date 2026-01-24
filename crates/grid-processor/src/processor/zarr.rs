@@ -13,7 +13,8 @@ use crate::cache::{hash_path, ChunkCache};
 use crate::config::GridProcessorConfig;
 use crate::error::{GridProcessorError, Result};
 use crate::types::{
-    BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata, RowOrigin,
+    BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata, ProjectionType,
+    RowOrigin,
 };
 
 use super::GridProcessor;
@@ -284,6 +285,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             num_chunks,
             fill_value,
             row_origin,
+            projection: ProjectionType::Geographic, // Default for legacy paths
         })
     }
 
@@ -981,6 +983,7 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
             num_chunks: level.num_chunks(),
             fill_value: f32::NAN,
             row_origin: self.multiscale.row_origin,
+            projection: ProjectionType::Geographic, // Pyramids are typically used for geographic grids
         }
     }
 
@@ -1022,6 +1025,7 @@ mod tests {
             num_chunks: (3, 2),
             fill_value: f32::NAN,
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         // Calculate chunks for a small bbox

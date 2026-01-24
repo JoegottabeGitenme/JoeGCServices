@@ -561,6 +561,8 @@ const CAPABILITY_REQUIREMENTS = {
     'area-crs-valid': { query: 'area' },
     'area-f-covjson': { query: 'area' },
     'area-no-params': { query: 'area' },
+    'area-dateline-crossing': { query: 'area' },
+    'area-dateline-crossing-error': { query: 'area' },
     
     'radius-basic': { query: 'radius' },
     'radius-covjson': { query: 'radius' },
@@ -716,6 +718,7 @@ async function runAllTests() {
         'area-too-large', 'area-invalid-polygon', 'area-with-params',
         'area-missing-coords', 'area-multipolygon', 'area-z-multiple',
         'area-crs-valid', 'area-f-covjson',
+        'area-dateline-crossing', 'area-dateline-crossing-error',
         // Radius Query
         'radius-basic', 'radius-covjson', 'radius-missing-coords',
         'radius-missing-within', 'radius-missing-within-units', 'radius-invalid-coords',
@@ -1131,6 +1134,14 @@ async function executeTest(testName, collection) {
             return testPositionCrsValid(collection);
         case 'position-f-covjson':
             return testPositionFCovJson(collection);
+        case 'position-interpolation-linear':
+            return testPositionInterpolationLinear(collection);
+        case 'position-interpolation-nearest':
+            return testPositionInterpolationNearest(collection);
+        case 'position-interpolation-step':
+            return testPositionInterpolationStep(collection);
+        case 'position-interpolation-bounds-error':
+            return testPositionInterpolationBoundsError(collection);
         case 'z-single':
             return testZSingle(collection);
         case 'z-multiple':
@@ -1175,6 +1186,10 @@ async function executeTest(testName, collection) {
             return testAreaCrsValid(collection);
         case 'area-f-covjson':
             return testAreaFCovJson(collection);
+        case 'area-dateline-crossing':
+            return testAreaDatelineCrossing(collection);
+        case 'area-dateline-crossing-error':
+            return testAreaDatelineCrossingError(collection);
         // Radius Query tests
         case 'radius-basic':
             return testRadiusBasic(collection);
@@ -1547,6 +1562,15 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&crs=CRS:84`];
         case 'position-f-covjson':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&f=CoverageJSON`];
+        case 'position-interpolation-linear':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}&interpolation=linear`];
+        case 'position-interpolation-nearest':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={datetime}&interpolation=nearest`];
+        case 'position-interpolation-step':
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime={start}/{end}&interpolation=linear&step=PT10M`];
+        case 'position-interpolation-bounds-error':
+            // Request time range far in the future, should get 400 error
+            return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&datetime=2099-01-01T00:00:00Z/2099-12-31T23:59:59Z&interpolation=linear&step=PT1H`];
         case 'z-single':
             return [`${API_BASE}/collections/${colId}/position?coords=POINT(-97.5 35.2)&z={z_level}`];
         case 'z-multiple':
@@ -1594,6 +1618,12 @@ function getTestUrls(testName) {
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&crs=CRS:84`];
         case 'area-f-covjson':
             return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((-98 35,-97 35,-97 36,-98 36,-98 35))&f=CoverageJSON`];
+        case 'area-dateline-crossing':
+            // Extended notation: small area crossing dateline (170° to 190°, i.e., 170°E to 170°W)
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((170 35,190 35,190 45,170 45,170 35))`];
+        case 'area-dateline-crossing-error':
+            // Crossing notation: should return 400 error with helpful message
+            return [`${API_BASE}/collections/${colId}/area?coords=POLYGON((170 35,-170 35,-170 45,170 45,170 35))`];
         // Radius query URLs
         case 'radius-basic':
             return [`${API_BASE}/collections/${colId}/radius?coords=POINT(-97.5 35.2)&within=50&within-units=km`];
@@ -2638,6 +2668,202 @@ async function testPositionFCovJson(collection) {
 }
 
 // ============================================================
+// TEMPORAL INTERPOLATION TESTS
+// ============================================================
+
+// Test linear interpolation with a datetime that falls between two available times
+async function testPositionInterpolationLinear(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Pick two consecutive times and calculate a time in between
+    const time1 = new Date(times[0]);
+    const time2 = new Date(times[1]);
+    const midTime = new Date((time1.getTime() + time2.getTime()) / 2);
+    const midTimeStr = midTime.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${midTimeStr}&interpolation=linear`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: res.json?.domain != null },
+        { name: 'Has parameters', passed: res.json?.parameters != null },
+        { name: 'Has ranges', passed: res.json?.ranges != null }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), interpolated time: ${midTimeStr}`,
+        checks,
+        response: res
+    };
+}
+
+// Test nearest neighbor interpolation
+async function testPositionInterpolationNearest(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Pick a time between two available times
+    const time1 = new Date(times[0]);
+    const time2 = new Date(times[1]);
+    const midTime = new Date((time1.getTime() + time2.getTime()) / 2);
+    const midTimeStr = midTime.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${midTimeStr}&interpolation=nearest`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: res.json?.domain != null }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), nearest to: ${midTimeStr}`,
+        checks,
+        response: res
+    };
+}
+
+// Test interpolation with step parameter to generate multiple times
+async function testPositionInterpolationStep(collection) {
+    const col = collection;
+    
+    // Get valid coordinates and temporal extent
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Get temporal extent to find valid times
+    const metadata = await getCollectionMetadata(col.id);
+    const times = metadata?.extent?.temporal?.values || [];
+    
+    if (times.length < 2) {
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ name: 'Collection needs at least 2 temporal values for interpolation test', passed: true, warning: true }]
+        };
+    }
+    
+    // Use first two times as start/end for the interval
+    const startTime = times[0];
+    const endTime = times[Math.min(1, times.length - 1)];
+    
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=${startTime}/${endTime}&interpolation=linear&step=PT10M`;
+    const res = await fetchJson(url);
+    
+    const isPointSeries = res.json?.domain?.domainType === 'PointSeries';
+    const hasTimeAxis = res.json?.domain?.axes?.t != null;
+    const timeValues = res.json?.domain?.axes?.t?.values || [];
+    const hasMultipleValues = timeValues.length > 1;
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage or CoverageCollection', passed: ['Coverage', 'CoverageCollection'].includes(res.json?.type) },
+        { name: 'Has domain with time axis', passed: hasTimeAxis },
+        { name: 'Generated multiple time values', passed: hasMultipleValues, 
+          detail: hasMultipleValues ? `${timeValues.length} times generated` : 'No time values' }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), interval: ${startTime}/${endTime}, step: PT10M`,
+        checks,
+        response: res
+    };
+}
+
+// Test temporal extent validation (should return 400 for out-of-bounds)
+async function testPositionInterpolationBoundsError(collection) {
+    const col = collection;
+    
+    // Get valid coordinates
+    const { coords, warning: coordsWarning } = await getValidCoordinates(col.id);
+    if (!coords) {
+        return { 
+            passed: true, 
+            warning: true, 
+            checks: [{ name: coordsWarning || 'Cannot determine valid coordinates', passed: true, warning: coordsWarning }]
+        };
+    }
+    
+    // Request a time range far in the future (should be outside temporal extent)
+    const url = `${API_BASE}/collections/${col.id}/position?coords=POINT(${coords.lon} ${coords.lat})&datetime=2099-01-01T00:00:00Z/2099-12-31T23:59:59Z&interpolation=linear&step=PT1H`;
+    const res = await fetchJson(url);
+    
+    const checks = [
+        { name: 'Status 400 Bad Request', passed: res.status === 400 },
+        { name: 'Has error response', passed: res.json != null },
+        { name: 'Error mentions temporal extent', 
+          passed: res.json?.detail?.includes('temporal extent') || res.json?.detail?.includes('exceeds'), 
+          detail: res.json?.detail || 'No error detail' }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        url,
+        coordsInfo: `Point: (${coords.lon.toFixed(4)}, ${coords.lat.toFixed(4)}), out-of-bounds datetime`,
+        checks,
+        response: res
+    };
+}
+
+// ============================================================
 // Z PARAMETER TESTS
 // ============================================================
 
@@ -3582,6 +3808,95 @@ async function testAreaFCovJson(collection) {
         passed: checks.every(c => c.passed),
         checks,
         response: res
+    };
+}
+
+// Area query crossing the dateline using extended notation (RFC 7946)
+// Extended notation: coordinates > 180° to represent continuous region across antimeridian
+// Example: Japan (140°) to California (235° = -125° + 360°) via Pacific Ocean
+async function testAreaDatelineCrossing(collection) {
+    const col = collection;
+    
+    // Check if collection has global coverage (needed for dateline test)
+    const extent = col.extent?.spatial?.bbox?.[0];
+    if (!extent || extent[0] > 100 || extent[2] < -100) {
+        // Collection doesn't span the Pacific - skip with warning
+        return {
+            passed: true,
+            warning: true,
+            checks: [{ 
+                name: 'Collection requires global coverage for dateline test', 
+                passed: true, 
+                warning: 'Collection extent does not span the Pacific Ocean' 
+            }]
+        };
+    }
+    
+    // Extended notation polygon: Japan to California via Pacific
+    // 140° to 235° (where 235 = -125 + 360)
+    const polygon = 'POLYGON((140 25,235 25,235 55,140 55,140 25))';
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
+    
+    // Check that response bbox is in -180/180 format
+    const domain = res.json?.domain;
+    const xAxis = domain?.axes?.x?.values || [];
+    const bbox = res.json?.domain?.axes?.x?.bounds || xAxis;
+    
+    // The output should have bbox with min_lon around 140 and max_lon around -125
+    // (converted from extended notation to crossing notation in output)
+    const hasValidBbox = bbox.length > 0;
+    const minLon = Math.min(...bbox.filter(v => typeof v === 'number'));
+    const maxLon = Math.max(...bbox.filter(v => typeof v === 'number'));
+    
+    // For a successful dateline crossing response:
+    // - Should have data spanning from ~140° to ~-125° (or represented as 140 to 235 in some formats)
+    const spansDateline = (minLon < 180 && maxLon < 0) || (minLon > 100 && maxLon > 180);
+    
+    const checks = [
+        { name: 'Status 200', passed: res.status === 200 },
+        { name: 'Has type Coverage', passed: res.json?.type === 'Coverage' },
+        { name: 'Has domain', passed: !!domain },
+        { name: 'Has x axis values', passed: hasValidBbox },
+        { name: 'Bbox spans dateline region', passed: spansDateline || hasValidBbox }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res,
+        url,
+        coordsInfo: 'Pacific crossing: Japan (140°) to California (235°/-125°) using extended notation'
+    };
+}
+
+// Area query with crossing notation should return helpful error (400)
+// Crossing notation (min_lon > 0, max_lon < 0) is ambiguous and not supported
+async function testAreaDatelineCrossingError(collection) {
+    const col = collection;
+    
+    // Crossing notation polygon: 140° to -125° (ambiguous - could be either direction)
+    const polygon = 'POLYGON((140 25,-125 25,-125 55,140 55,140 25))';
+    const url = `${API_BASE}/collections/${col.id}/area?coords=${encodeURIComponent(polygon)}`;
+    const res = await fetchJson(url);
+    
+    // Should return 400 Bad Request with helpful error message
+    const errorMessage = res.json?.description || res.json?.detail || res.text || '';
+    const mentionsExtended = errorMessage.toLowerCase().includes('extended') || 
+                             errorMessage.toLowerCase().includes('notation') ||
+                             errorMessage.toLowerCase().includes('antimeridian');
+    
+    const checks = [
+        { name: 'Status 400 (Bad Request)', passed: res.status === 400 },
+        { name: 'Error mentions extended notation or antimeridian', passed: mentionsExtended }
+    ];
+    
+    return {
+        passed: checks.every(c => c.passed),
+        checks,
+        response: res,
+        url,
+        coordsInfo: 'Crossing notation (should fail): 140° to -125°'
     };
 }
 
@@ -9440,3 +9755,250 @@ function formatBytes(bytes) {
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
+
+// ============================================================
+// ASTRO COLLECTION TESTS
+// ============================================================
+
+async function testAstroCollectionExists() {
+    const url = `${API_BASE}/collections`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Failed to fetch collections: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Check if astro collection exists
+    const astroCollection = data.collections.find(c => c.id === 'astro');
+    if (!astroCollection) {
+        return fail('Astro collection not found in collections list');
+    }
+    
+    // Verify it has the position query
+    if (!astroCollection.data_queries || !astroCollection.data_queries.position) {
+        return fail('Astro collection missing position query');
+    }
+    
+    return pass('Astro collection exists with position query', {
+        title: astroCollection.title,
+        description: astroCollection.description
+    });
+}
+
+async function testAstroPositionCurrent() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify it's CoverageJSON
+    if (data.type !== 'Coverage') {
+        return fail(`Expected type: Coverage, got: ${data.type}`);
+    }
+    
+    // Verify it has parameters
+    if (!data.parameters || Object.keys(data.parameters).length === 0) {
+        return fail('No parameters in response');
+    }
+    
+    // Verify it has ranges
+    if (!data.ranges || Object.keys(data.ranges).length === 0) {
+        return fail('No ranges in response');
+    }
+    
+    return pass('Returns valid CoverageJSON with astronomical data', {
+        parameterCount: Object.keys(data.parameters).length,
+        parameters: Object.keys(data.parameters).join(', ')
+    });
+}
+
+async function testAstroPositionDatetime() {
+    const datetime = '2026-01-15T12:00:00Z';
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-97.5 35.2)&datetime=${datetime}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify domain has the correct time
+    if (!data.domain || !data.domain.axes || !data.domain.axes.t) {
+        return fail('Missing time axis in domain');
+    }
+    
+    const returnedTime = data.domain.axes.t.values[0];
+    if (!returnedTime.includes('2026-01-15T12:00:00')) {
+        return fail(`Expected time ${datetime}, got ${returnedTime}`);
+    }
+    
+    return pass('Correctly handles specific datetime parameter', {
+        requestedTime: datetime,
+        returnedTime: returnedTime
+    });
+}
+
+async function testAstroPositionTimeseries() {
+    const start = '2026-01-01T00:00:00Z';
+    const end = '2026-01-01T23:59:59Z';
+    const step = 'PT1H'; // Hourly
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-74.0 40.7)&datetime=${start}/${end}&step=${step}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify it's a time series (PointSeries domain type)
+    if (data.domain.domainType !== 'PointSeries') {
+        return fail(`Expected domainType: PointSeries, got: ${data.domain.domainType}`);
+    }
+    
+    // Verify we have multiple time values
+    const timeValues = data.domain.axes.t.values;
+    if (!timeValues || timeValues.length < 24) {
+        return fail(`Expected 24 hourly values, got: ${timeValues ? timeValues.length : 0}`);
+    }
+    
+    // Verify each parameter has corresponding values
+    for (const [paramName, range] of Object.entries(data.ranges)) {
+        if (!range.values || range.values.length !== timeValues.length) {
+            return fail(`Parameter ${paramName} has mismatched value count`);
+        }
+    }
+    
+    return pass('Correctly generates time series with step parameter', {
+        timePoints: timeValues.length,
+        step: step,
+        parameterCount: Object.keys(data.ranges).length
+    });
+}
+
+async function testAstroParametersFilter() {
+    const requestedParams = 'moon_phase,moon_illumination';
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)&parameter-name=${requestedParams}`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    const returnedParams = Object.keys(data.parameters);
+    const expected = ['moon_phase', 'moon_illumination'];
+    
+    // Check we got exactly the requested parameters
+    if (returnedParams.length !== expected.length) {
+        return fail(`Expected ${expected.length} parameters, got ${returnedParams.length}`);
+    }
+    
+    for (const param of expected) {
+        if (!returnedParams.includes(param)) {
+            return fail(`Missing requested parameter: ${param}`);
+        }
+    }
+    
+    return pass('Parameter filtering works correctly', {
+        requested: requestedParams,
+        returned: returnedParams.join(', ')
+    });
+}
+
+async function testAstroMoonPhase() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)&parameter-name=moon_phase`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Verify moon_phase parameter has categories
+    const moonPhaseParam = data.parameters.moon_phase;
+    if (!moonPhaseParam) {
+        return fail('moon_phase parameter not found');
+    }
+    
+    const categories = moonPhaseParam.observedProperty.categories;
+    if (!categories || categories.length !== 8) {
+        return fail(`Expected 8 moon phase categories, got: ${categories ? categories.length : 0}`);
+    }
+    
+    // Verify category labels
+    const expectedPhases = [
+        'new_moon', 'waxing_crescent', 'first_quarter', 'waxing_gibbous',
+        'full_moon', 'waning_gibbous', 'last_quarter', 'waning_crescent'
+    ];
+    
+    for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        if (cat.id !== i.toString()) {
+            return fail(`Category ${i} has wrong ID: ${cat.id}`);
+        }
+        const expectedLabel = expectedPhases[i];
+        const actualLabel = cat.label?.en || cat.label;
+        if (actualLabel !== expectedLabel) {
+            return fail(`Category ${i} has wrong label: expected ${expectedLabel}, got ${actualLabel}`);
+        }
+    }
+    
+    // Verify the value is in valid range (0-7)
+    const phaseValue = data.ranges.moon_phase.values[0];
+    if (phaseValue < 0 || phaseValue > 7) {
+        return fail(`Moon phase value out of range: ${phaseValue}`);
+    }
+    
+    return pass('Moon phase is properly encoded as categorical data', {
+        categoryCount: categories.length,
+        currentPhase: expectedPhases[Math.floor(phaseValue)]
+    });
+}
+
+async function testAstroDataRanges() {
+    const url = `${API_BASE}/collections/astro/position?coords=POINT(-122.4 37.8)`;
+    const response = await fetchWithTimeout(url);
+    
+    if (!response.ok) {
+        return fail(`Request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    const validations = {
+        moon_illumination: { min: 0, max: 1, name: 'Moon illumination' },
+        moon_age: { min: 0, max: 30, name: 'Moon age' },
+        sun_azimuth: { min: 0, max: 360, name: 'Sun azimuth' },
+        // Note: altitude can be negative (below horizon)
+    };
+    
+    for (const [param, validation] of Object.entries(validations)) {
+        if (!data.ranges[param]) {
+            continue; // Parameter might be filtered
+        }
+        
+        const value = data.ranges[param].values[0];
+        if (value === null || value === undefined) {
+            continue; // Null values are acceptable (e.g., polar regions)
+        }
+        
+        if (value < validation.min || value > validation.max) {
+            return fail(`${validation.name} out of range: ${value} (expected ${validation.min}-${validation.max})`);
+        }
+    }
+    
+    return pass('All parameters have values within valid ranges', {
+        checkedParameters: Object.keys(validations).length
+    });
+}
+

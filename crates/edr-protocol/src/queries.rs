@@ -650,6 +650,40 @@ impl DateTimeQuery {
     }
 }
 
+/// Temporal interpolation method for queries requesting times between available data points.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TemporalInterpolationMethod {
+    /// No interpolation - only return data at exact available times (default).
+    #[default]
+    None,
+
+    /// Nearest neighbor - return data from the closest available time.
+    Nearest,
+
+    /// Linear interpolation - interpolate linearly between bracketing times.
+    Linear,
+}
+
+impl TemporalInterpolationMethod {
+    /// Parse interpolation method from query parameter string.
+    pub fn parse(s: &str) -> Result<Self, CoordinateParseError> {
+        match s.trim().to_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "nearest" => Ok(Self::Nearest),
+            "linear" => Ok(Self::Linear),
+            _ => Err(CoordinateParseError::InvalidWkt(format!(
+                "Invalid interpolation method '{}'. Expected one of: none, nearest, linear",
+                s
+            ))),
+        }
+    }
+
+    /// Check if this method requires interpolation (i.e., not None).
+    pub fn requires_interpolation(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Bounding box query parameters (for area/cube queries).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BboxQuery {
@@ -893,6 +927,38 @@ impl AreaQuery {
     /// Calculate approximate area of the polygon's bounding box in square degrees.
     pub fn area_sq_degrees(&self) -> f64 {
         self.bbox().area_sq_degrees()
+    }
+
+    /// Check if this polygon uses "crossing notation" for the antimeridian.
+    ///
+    /// Crossing notation is when consecutive vertices jump from positive to negative
+    /// longitude (or vice versa) by more than 180°, indicating an intent to cross
+    /// the antimeridian. This is ambiguous and not supported.
+    ///
+    /// Users should instead use "extended notation" where coordinates extend
+    /// beyond 180° (e.g., 170° to 190° instead of 170° to -170°).
+    ///
+    /// Returns Some((from_lon, to_lon)) with the first crossing edge found, or None.
+    pub fn uses_crossing_notation(&self) -> Option<(f64, f64)> {
+        if self.polygon.len() < 2 {
+            return None;
+        }
+
+        for i in 0..self.polygon.len() - 1 {
+            let (lon1, _) = self.polygon[i];
+            let (lon2, _) = self.polygon[i + 1];
+
+            // Detect crossing: one positive, one negative, and jump > 180°
+            let diff = (lon2 - lon1).abs();
+            if diff > 180.0 {
+                // Large jump suggests crossing intent
+                if (lon1 > 0.0 && lon2 < 0.0) || (lon1 < 0.0 && lon2 > 0.0) {
+                    return Some((lon1, lon2));
+                }
+            }
+        }
+
+        None
     }
 
     /// Check if a point is inside the polygon using ray casting algorithm.
@@ -2740,5 +2806,81 @@ mod tests {
 
         assert!(LineStringType::LineStringZM.has_z());
         assert!(LineStringType::LineStringZM.has_m());
+    }
+
+    #[test]
+    fn test_area_query_uses_crossing_notation() {
+        // Polygon with crossing notation (170 to -170, crossing the dateline)
+        // This should be detected as crossing notation
+        let crossing_polygon = AreaQuery {
+            polygon: vec![
+                (170.0, 35.0),
+                (-170.0, 35.0),
+                (-170.0, 45.0),
+                (170.0, 45.0),
+                (170.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+        let result = crossing_polygon.uses_crossing_notation();
+        assert!(result.is_some());
+        let (from, to) = result.unwrap();
+        assert!((from - 170.0).abs() < 0.01);
+        assert!((to - (-170.0)).abs() < 0.01);
+
+        // Polygon with extended notation (170 to 190, same area but unambiguous)
+        // This should NOT be detected as crossing notation
+        let extended_polygon = AreaQuery {
+            polygon: vec![
+                (170.0, 35.0),
+                (190.0, 35.0),
+                (190.0, 45.0),
+                (170.0, 45.0),
+                (170.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+        assert!(extended_polygon.uses_crossing_notation().is_none());
+
+        // Normal polygon (not crossing dateline)
+        let normal_polygon = AreaQuery {
+            polygon: vec![
+                (-100.0, 35.0),
+                (-95.0, 35.0),
+                (-95.0, 40.0),
+                (-100.0, 40.0),
+                (-100.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+        assert!(normal_polygon.uses_crossing_notation().is_none());
+
+        // Wide polygon that doesn't cross (but is large)
+        let wide_polygon = AreaQuery {
+            polygon: vec![
+                (-150.0, 35.0),
+                (150.0, 35.0),
+                (150.0, 45.0),
+                (-150.0, 45.0),
+                (-150.0, 35.0),
+            ],
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        };
+        // This goes from -150 to 150 (300 degrees the "short way")
+        // The jump is 300 degrees which is > 180, and crosses sign
+        // So this SHOULD be detected as crossing notation
+        assert!(wide_polygon.uses_crossing_notation().is_some());
     }
 }

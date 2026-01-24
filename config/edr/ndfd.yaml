@@ -7,7 +7,11 @@
 #
 # Collections are organized by vertical level type, similar to HRRR/GFS:
 # - ndfd-surface: Surface-level parameters (sky cover, precipitation probability)
-# - ndfd-height-agl: Parameters at height above ground (temperature, humidity, wind)
+# - ndfd-2m: 2-meter parameters (temperature, humidity, wind)
+# - ndfd-wind-2m-10m: Wind at 2m and 10m heights
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: ndfd
 
@@ -25,49 +29,80 @@ collections:
     parameters:
       - name: SKY
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: POP12
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: GUST
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # m/s
     run_mode: latest
 
   # ===========================================================================
-  # Height above ground parameters (2m and 10m)
+  # 2-meter parameters (temperature, humidity, wind)
   # ===========================================================================
 
-  - id: ndfd-height-agl
-    title: "NDFD - Height Above Ground"
-    description: "Forecast parameters at heights above ground (temperature, humidity, wind at 2m)"
+  - id: ndfd-2m
+    title: "NDFD - 2m Above Ground"
+    description: "Temperature, dew point, humidity, and wind at 2 meters above ground"
     level_filter:
       level_type: height_above_ground
       level_code: 103
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 180, max: 340 }  # Kelvin
       - name: DPT
         levels: [2]
+        valid_range: { min: 180, max: 320 }  # Kelvin
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }  # percent
+      - name: WSPD
+        levels: [2]
+        valid_range: { min: 0, max: 100 }  # m/s
+      - name: WDIR
+        levels: [2]
+        valid_range: { min: 0, max: 360 }  # degrees
+    run_mode: latest
+
+  # ===========================================================================
+  # Wind at 2m and 10m
+  # ===========================================================================
+
+  - id: ndfd-wind-2m-10m
+    title: "NDFD - Wind (2m & 10m)"
+    description: "Wind speed and direction at 2m and 10m above ground"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
       - name: WSPD
         levels: [2, 10]
+        valid_range: { min: 0, max: 100 }  # m/s
       - name: WDIR
         levels: [2, 10]
+        valid_range: { min: 0, max: 360 }  # degrees
     run_mode: latest
 
 settings:
   output_formats:
     - application/vnd.cov+json
     - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
 
 # Response size limits
 # NDFD is ~2.5km resolution (~0.025°)
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 72              # Up to 3 days of hourly data
+  max_time_steps: 350              # Up to 3 days of hourly data
   max_vertical_levels: 5
   max_response_size_mb: 50
   max_area_sq_degrees: 100        # ~1000km x 1000km
+  max_area_sq_degrees_png: 2500   # PNG queries - full CONUS coverage
   max_radius_km: 500

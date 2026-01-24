@@ -289,6 +289,16 @@ impl LevelFilter {
     }
 }
 
+/// Valid data range for PNG encoding.
+/// Used to normalize data to consistent 0-1 range for front-end colormapping.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ValidRange {
+    /// Minimum valid value (inclusive).
+    pub min: f32,
+    /// Maximum valid value (inclusive).
+    pub max: f32,
+}
+
 /// Parameter definition within a collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterDefinition {
@@ -298,6 +308,13 @@ pub struct ParameterDefinition {
     /// Specific levels to expose (if not all from filter).
     #[serde(default)]
     pub levels: Vec<LevelValue>,
+
+    /// Valid data range for PNG encoding.
+    /// When set, PNG responses will use this range for normalization instead of
+    /// computing min/max from the data. This ensures consistent colormap rendering
+    /// across different viewport regions.
+    #[serde(default)]
+    pub valid_range: Option<ValidRange>,
 }
 
 /// A level value (can be numeric or string).
@@ -465,10 +482,13 @@ fn default_crs() -> String {
 }
 
 fn default_supported_crs() -> Vec<String> {
-    // Only advertise CRS that are actually implemented
-    // Currently we only support WGS84/CRS:84 (coordinates are always lon/lat)
-    // TODO: Add "EPSG:4326" when axis order handling is implemented (lat/lon vs lon/lat)
-    vec!["CRS:84".to_string()]
+    // Advertise all implemented CRS for area queries using short codes
+    // Per OGC EDR spec, the CRS name "MAY be an EPSG code" - short codes are cleaner
+    // Note: Input coordinates are always WGS84, but output can be transformed
+    edr_protocol::crs::supported_crs_codes()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 /// Response size limit configuration.
@@ -533,7 +553,7 @@ fn default_max_params() -> usize {
     10
 }
 fn default_max_time_steps() -> usize {
-    48
+    300
 }
 fn default_max_levels() -> usize {
     20
@@ -756,5 +776,45 @@ limits:
         let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.limits.max_area_sq_degrees, Some(100.0));
         assert_eq!(config.limits.max_area_sq_degrees_png, None);
+    }
+
+    #[test]
+    fn test_valid_range_parsing() {
+        let yaml = r#"
+model: test
+collections:
+  - id: test
+    title: "Test"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: TMP
+        levels: [surface]
+        valid_range: { min: 180, max: 340 }
+      - name: RH
+        levels: [surface]
+        valid_range: { min: 0, max: 100 }
+      - name: UGRD
+        levels: [surface]
+"#;
+
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        let params = &config.collections[0].parameters;
+
+        // TMP has valid_range
+        assert!(params[0].valid_range.is_some());
+        let tmp_range = params[0].valid_range.unwrap();
+        assert_eq!(tmp_range.min, 180.0);
+        assert_eq!(tmp_range.max, 340.0);
+
+        // RH has valid_range
+        assert!(params[1].valid_range.is_some());
+        let rh_range = params[1].valid_range.unwrap();
+        assert_eq!(rh_range.min, 0.0);
+        assert_eq!(rh_range.max, 100.0);
+
+        // UGRD has no valid_range (should default to None)
+        assert!(params[2].valid_range.is_none());
     }
 }

@@ -205,6 +205,11 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/instances/:instance_id/cube",
             get(handlers::cube::instance_cube_handler),
         )
+        // Astro collection (computed data - no instances)
+        .route(
+            "/edr/collections/astro/position",
+            get(handlers::astro::position_handler),
+        )
         // Locations query
         .route(
             "/edr/collections/:collection_id/locations",

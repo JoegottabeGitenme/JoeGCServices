@@ -295,6 +295,34 @@
                         <button class="copy-url-btn" title="Copy test URL">URL</button>
                         <button class="run-test-btn">Run</button>
                     </div>
+                    <div class="test-item" data-test="position-interpolation-linear">
+                        <span class="test-name">Temporal Interpolation (linear)</span>
+                        <a href="#" target="_blank" class="spec-link" title="Extension: Temporal Interpolation">Ext</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-interpolation-nearest">
+                        <span class="test-name">Temporal Interpolation (nearest)</span>
+                        <a href="#" target="_blank" class="spec-link" title="Extension: Temporal Interpolation">Ext</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-interpolation-step">
+                        <span class="test-name">Temporal Interpolation with Step</span>
+                        <a href="#" target="_blank" class="spec-link" title="Extension: Temporal Interpolation with Step">Ext</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="position-interpolation-bounds-error">
+                        <span class="test-name">Temporal Extent Validation (400)</span>
+                        <a href="#" target="_blank" class="spec-link" title="Extension: Temporal Extent Validation">Ext</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
                 </div>
             </div>
 
@@ -485,6 +513,20 @@
                     <div class="test-item" data-test="area-f-covjson">
                         <span class="test-name">Format Parameter (f=CoverageJSON)</span>
                         <a href="https://docs.ogc.org/is/19-086r6/19-086r6.html#req_edr_rc-f-definition" target="_blank" class="spec-link" title="Abstract Test B.89/B.90: f Definition/Response">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-dateline-crossing">
+                        <span class="test-name">Area Query (Dateline/Pacific Crossing)</span>
+                        <a href="https://www.rfc-editor.org/rfc/rfc7946#section-5.2" target="_blank" class="spec-link" title="RFC 7946: GeoJSON Antimeridian Handling">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="area-dateline-crossing-error">
+                        <span class="test-name">Area Query (Crossing Notation Error)</span>
+                        <a href="https://www.rfc-editor.org/rfc/rfc7946#section-5.2" target="_blank" class="spec-link" title="RFC 7946: Crossing notation should return helpful error">Spec</a>
                         <span class="test-status pending">Pending</span>
                         <button class="copy-url-btn" title="Copy test URL">URL</button>
                         <button class="run-test-btn">Run</button>
@@ -1716,6 +1758,66 @@
                     <div class="test-item" data-test="schema-geojson-position">
                         <span class="test-name">Position GeoJSON Response Validates Against Schema</span>
                         <a href="https://tools.ietf.org/html/rfc7946" target="_blank" class="spec-link" title="RFC 7946: GeoJSON">Spec</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Astro Collection Tests -->
+            <div class="test-section">
+                <h3 class="section-header" data-section="astro">
+                    <span class="toggle">+</span>
+                    Astro Collection (Computed Data)
+                    <span class="section-status" id="astro-status"></span>
+                </h3>
+                <div class="section-content" id="astro-tests">
+                    <div class="test-item" data-test="astro-collection-exists">
+                        <span class="test-name">Astro Collection Exists in Collections List</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-position-current">
+                        <span class="test-name">Position Query Returns Current Astronomical Data</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-position-datetime">
+                        <span class="test-name">Position Query with Specific DateTime</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-position-timeseries">
+                        <span class="test-name">Position Query with Date Range and Step</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-parameters-filter">
+                        <span class="test-name">Parameter Filtering Works</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-moon-phase">
+                        <span class="test-name">Moon Phase is Valid Category</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
+                        <span class="test-status pending">Pending</span>
+                        <button class="copy-url-btn" title="Copy test URL">URL</button>
+                        <button class="run-test-btn">Run</button>
+                    </div>
+                    <div class="test-item" data-test="astro-data-ranges">
+                        <span class="test-name">All Parameters Have Valid Data Ranges</span>
+                        <a href="#" class="spec-link" title="Custom Test">Custom</a>
                         <span class="test-status pending">Pending</span>
                         <button class="copy-url-btn" title="Copy test URL">URL</button>
                         <button class="run-test-btn">Run</button>

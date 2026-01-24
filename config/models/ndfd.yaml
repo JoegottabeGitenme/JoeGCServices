@@ -34,6 +34,10 @@ source:
   file_pattern: "ds.{parameter}.bin"
   # NDFD files have WMO bulletin headers that need to be stripped
   format: ndfd_grib2
+  # Skip Content-Length validation - NDFD files are updated in-place continuously
+  skip_size_validation: true
+  # Always re-download - NDFD files have static URLs but content changes hourly
+  always_redownload: true
 
 # Grid definition - CONUS 2.5km Lambert Conformal
 # Reference: https://vlab.noaa.gov/web/mdl/ndfd-spatial-reference-system

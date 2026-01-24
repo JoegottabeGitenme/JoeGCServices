@@ -1574,14 +1574,13 @@ impl ObservationCatalog {
             visibility_m: Option<f32>,
             wx_string: Option<String>,
             cloud_layers: Option<serde_json::Value>,
-            period_order: i16,
         }
 
         let rows = sqlx::query_as::<_, PeriodRow>(
             r#"
             SELECT id, period_from, period_to, change_indicator, probability,
                    wind_direction_deg, wind_speed_ms, wind_gust_ms, visibility_m,
-                   wx_string, cloud_layers, period_order
+                   wx_string, cloud_layers
             FROM taf_periods
             WHERE taf_id = $1
             ORDER BY period_order

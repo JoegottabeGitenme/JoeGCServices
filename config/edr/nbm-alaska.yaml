@@ -6,6 +6,9 @@
 # - 2m-agl: Temperature/humidity at 2m above ground
 # - 10m-agl: Wind parameters at 10m above ground
 # - cloud: Cloud-related parameters (ceiling, cloud cover)
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: nbm-alaska
 
@@ -23,24 +26,33 @@ collections:
       # Precipitation
       - name: APCP01
         levels: [surface]
+        valid_range: { min: 0, max: 200 }  # mm
       - name: APCP06
         levels: [surface]
+        valid_range: { min: 0, max: 500 }  # mm
       - name: POP06
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: POP12
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       # Visibility
       - name: VIS
         levels: [surface]
+        valid_range: { min: 0, max: 50000 }  # meters
       # Winter weather
       - name: ASNOW06
         levels: [surface]
+        valid_range: { min: 0, max: 2 }  # meters
       - name: PSNOW06
         levels: [surface]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: FZRA06
         levels: [surface]
+        valid_range: { min: 0, max: 0.5 }  # meters
       - name: SNOLEV
         levels: [surface]
+        valid_range: { min: 0, max: 5000 }  # meters
     run_mode: instances
 
   # ==========================================================================
@@ -55,14 +67,19 @@ collections:
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 180, max: 340 }  # Kelvin
       - name: DPT
         levels: [2]
+        valid_range: { min: 180, max: 320 }  # Kelvin
       - name: TMAX
         levels: [2]
+        valid_range: { min: 180, max: 350 }  # Kelvin
       - name: TMIN
         levels: [2]
+        valid_range: { min: 180, max: 340 }  # Kelvin
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   # ==========================================================================
@@ -77,14 +94,19 @@ collections:
     parameters:
       - name: WIND
         levels: [10]
+        valid_range: { min: 0, max: 100 }  # m/s
       - name: UGRD
         levels: [10]
+        valid_range: { min: -100, max: 100 }  # m/s
       - name: VGRD
         levels: [10]
+        valid_range: { min: -100, max: 100 }  # m/s
       - name: WDIR
         levels: [10]
+        valid_range: { min: 0, max: 360 }  # degrees
       - name: GUST
         levels: [10]
+        valid_range: { min: 0, max: 150 }  # m/s
     run_mode: instances
 
   # ==========================================================================
@@ -98,8 +120,10 @@ collections:
     parameters:
       - name: CEIL
         levels: [cloud_base]
+        valid_range: { min: 0, max: 20000 }  # meters
       - name: TCDC
         levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
 settings:
@@ -110,12 +134,14 @@ settings:
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
   cache_policy:
     png_max_age: 3600
 
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 48
+  max_time_steps: 350
   max_vertical_levels: 10
   max_response_size_mb: 50
   max_area_sq_degrees: 100

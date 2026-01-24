@@ -21,13 +21,15 @@ pub struct ObservationConfig {
     pub base_url: String,
     /// Polling interval
     pub poll_interval_secs: u64,
-    /// Geographic bounding box
+    /// Geographic bounding box (for future regional filtering)
+    #[allow(dead_code)]
     pub bbox: BoundingBox,
     /// URL of the ingester service
     pub ingester_url: String,
 }
 
 /// Geographic bounding box.
+#[allow(dead_code)] // Used in config and tests; will be used for regional filtering
 #[derive(Debug, Clone)]
 pub struct BoundingBox {
     pub min_lon: f64,
@@ -38,6 +40,7 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     /// Format as API parameter: minLon,minLat,maxLon,maxLat
+    #[allow(dead_code)]
     pub fn to_api_param(&self) -> String {
         format!(
             "{},{},{},{}",

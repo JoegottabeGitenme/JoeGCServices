@@ -7,6 +7,9 @@
 #
 # NOTE: Only parameters that are currently being ingested are listed here.
 # See config/models/gfs.yaml for the full parameter definitions.
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: gfs
 
@@ -25,14 +28,19 @@ collections:
     parameters:
       - name: TMP
         levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
+        valid_range: { min: 150, max: 350 }  # Kelvin
       - name: HGT
         levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
+        valid_range: { min: -500, max: 35000 }  # geopotential meters
       - name: UGRD
         levels: [1000, 700, 500, 300, 200, 100]
+        valid_range: { min: -200, max: 200 }  # m/s
       - name: VGRD
         levels: [1000, 700, 500, 300, 200, 100]
+        valid_range: { min: -200, max: 200 }  # m/s
       - name: RH
         levels: [1000, 700, 500, 300]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   # Surface-level parameters
@@ -45,14 +53,19 @@ collections:
     parameters:
       - name: GUST
         levels: [surface]
+        valid_range: { min: 0, max: 150 }  # m/s
       - name: APCP
         levels: [surface]
+        valid_range: { min: 0, max: 1000 }  # kg/m^2 (mm)
       - name: CAPE
         levels: [surface]
+        valid_range: { min: 0, max: 10000 }  # J/kg
       - name: CIN
         levels: [surface]
+        valid_range: { min: -1000, max: 0 }  # J/kg
       - name: VIS
         levels: [surface]
+        valid_range: { min: 0, max: 100000 }  # meters
     run_mode: instances
 
   # Parameters at specific heights above ground level
@@ -65,14 +78,19 @@ collections:
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 150, max: 350 }  # Kelvin
       - name: DPT
         levels: [2]
+        valid_range: { min: 150, max: 330 }  # Kelvin
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: UGRD
         levels: [2]
+        valid_range: { min: -200, max: 200 }  # m/s
       - name: VGRD
         levels: [2]
+        valid_range: { min: -200, max: 200 }  # m/s
     run_mode: instances
 
   # Column-integrated atmospheric parameters
@@ -85,6 +103,7 @@ collections:
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }  # kg/m^2 (mm)
     run_mode: instances
 
   # Cloud cover by layer
@@ -97,10 +116,13 @@ collections:
     parameters:
       - name: LCDC
         levels: [low_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: MCDC
         levels: [middle_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
       - name: HCDC
         levels: [high_cloud_layer]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   # Mean sea level pressure
@@ -113,6 +135,7 @@ collections:
     parameters:
       - name: PRMSL
         levels: [mean_sea_level]
+        valid_range: { min: 85000, max: 110000 }  # Pa
     run_mode: instances
 
   # ===========================================================================
@@ -130,14 +153,19 @@ collections:
     parameters:
       - name: TMP
         levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
+        valid_range: { min: 150, max: 350 }
       - name: HGT
         levels: [1000, 700, 500, 300, 200, 100, 70, 20, 10]
+        valid_range: { min: -500, max: 35000 }
       - name: UGRD
         levels: [1000, 700, 500, 300, 200, 100]
+        valid_range: { min: -200, max: 200 }
       - name: VGRD
         levels: [1000, 700, 500, 300, 200, 100]
+        valid_range: { min: -200, max: 200 }
       - name: RH
         levels: [1000, 700, 500, 300]
+        valid_range: { min: 0, max: 100 }
     run_mode: latest
 
   - id: gfs-surface-latest
@@ -149,14 +177,19 @@ collections:
     parameters:
       - name: GUST
         levels: [surface]
+        valid_range: { min: 0, max: 150 }
       - name: APCP
         levels: [surface]
+        valid_range: { min: 0, max: 1000 }
       - name: CAPE
         levels: [surface]
+        valid_range: { min: 0, max: 10000 }
       - name: CIN
         levels: [surface]
+        valid_range: { min: -1000, max: 0 }
       - name: VIS
         levels: [surface]
+        valid_range: { min: 0, max: 100000 }
     run_mode: latest
 
   - id: gfs-height-agl-latest
@@ -168,14 +201,19 @@ collections:
     parameters:
       - name: TMP
         levels: [2]
+        valid_range: { min: 150, max: 350 }
       - name: DPT
         levels: [2]
+        valid_range: { min: 150, max: 330 }
       - name: RH
         levels: [2]
+        valid_range: { min: 0, max: 100 }
       - name: UGRD
         levels: [2]
+        valid_range: { min: -200, max: 200 }
       - name: VGRD
         levels: [2]
+        valid_range: { min: -200, max: 200 }
     run_mode: latest
 
   - id: gfs-atmosphere-latest
@@ -187,6 +225,7 @@ collections:
     parameters:
       - name: PWAT
         levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }
     run_mode: latest
 
   - id: gfs-cloud-layers-latest
@@ -198,10 +237,13 @@ collections:
     parameters:
       - name: LCDC
         levels: [low_cloud_layer]
+        valid_range: { min: 0, max: 100 }
       - name: MCDC
         levels: [middle_cloud_layer]
+        valid_range: { min: 0, max: 100 }
       - name: HCDC
         levels: [high_cloud_layer]
+        valid_range: { min: 0, max: 100 }
     run_mode: latest
 
   - id: gfs-msl-latest
@@ -213,24 +255,28 @@ collections:
     parameters:
       - name: PRMSL
         levels: [mean_sea_level]
+        valid_range: { min: 85000, max: 110000 }
     run_mode: latest
 
 settings:
   output_formats:
     - application/vnd.cov+json
     - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
 
 # Response size limits
 # GFS is 0.25° resolution (~27km), so area queries return fewer points than HRRR
 # A 200 sq degree query returns ~3,200 points (vs ~274,000 for HRRR at 3km)
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 24              # 24 hours of forecast data
+  max_time_steps: 350              # 24 hours of forecast data
   max_vertical_levels: 20         # Accommodates all 17 isobaric levels
   max_response_size_mb: 100       # Higher than HRRR due to lower resolution
-  max_area_sq_degrees: 200        # ~2000km x 1000km regional area
+  max_area_sq_degrees: 500        # ~2000km x 1000km regional area
   max_area_sq_degrees_png: 10000  # PNG queries - global or large regional coverage
   max_radius_km: 750              # Larger radius acceptable at this resolution

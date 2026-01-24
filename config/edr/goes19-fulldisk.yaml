@@ -9,6 +9,9 @@
 #
 # Coverage: Full western hemisphere visible from GOES-East
 # GOES-19 became operational GOES-East on April 4, 2025
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
 
 model: goes19-fulldisk
 data_type: observation
@@ -28,6 +31,7 @@ collections:
     parameters:
       - name: CMI_C02
         levels: [visible_red]
+        valid_range: { min: 0, max: 1.5 }  # reflectance factor
     run_mode: instances
 
   # Water vapor band (band 8)
@@ -40,6 +44,7 @@ collections:
     parameters:
       - name: CMI_C08
         levels: [upper_vapor]
+        valid_range: { min: 180, max: 350 }  # Kelvin
     run_mode: instances
 
   # Infrared band (band 13)
@@ -52,6 +57,7 @@ collections:
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
+        valid_range: { min: 180, max: 350 }  # Kelvin
     run_mode: instances
 
   # ===========================================================================
@@ -67,6 +73,7 @@ collections:
     parameters:
       - name: CMI_C02
         levels: [visible_red]
+        valid_range: { min: 0, max: 1.5 }
     run_mode: latest
 
   - id: goes19fd-water-vapor-latest
@@ -78,6 +85,7 @@ collections:
     parameters:
       - name: CMI_C08
         levels: [upper_vapor]
+        valid_range: { min: 180, max: 350 }
     run_mode: latest
 
   - id: goes19fd-infrared-latest
@@ -89,6 +97,7 @@ collections:
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
+        valid_range: { min: 180, max: 350 }
     run_mode: latest
 
 settings:
@@ -99,13 +108,16 @@ settings:
   default_crs: "CRS:84"
   supported_crs:
     - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
   cache_policy:
     png_max_age: 600  # 10 minutes - Full disk updates every ~10 minutes
 
 limits:
   max_parameters_per_request: 5
-  max_time_steps: 12           # ~2 hours at 10-min intervals
+  max_time_steps: 350           # ~2 hours at 10-min intervals
   max_vertical_levels: 1       # No vertical dimension for satellite data
   max_response_size_mb: 200    # Full disk grids are large (5424x5424)
   max_area_sq_degrees: 100     # Larger limit for full disk coverage
+  max_area_sq_degrees_png: 5000  # PNG queries - hemisphere coverage
   max_radius_km: 500           # Larger radius for full disk queries

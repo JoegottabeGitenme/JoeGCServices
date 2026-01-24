@@ -761,6 +761,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         num_chunks: u_zarr_meta.num_chunks,
         fill_value: u_zarr_meta.fill_value,
         row_origin: u_zarr_meta.row_origin,
+        projection: u_zarr_meta.projection,
     };
 
     // Create U processor
@@ -787,6 +788,7 @@ pub(crate) async fn load_wind_components_from_zarr(
         num_chunks: v_zarr_meta.num_chunks,
         fill_value: v_zarr_meta.fill_value,
         row_origin: v_zarr_meta.row_origin,
+        projection: v_zarr_meta.projection,
     };
 
     // Create V processor
@@ -1233,6 +1235,7 @@ async fn load_wind_speed_direction_from_zarr(
         num_chunks: speed_zarr_meta.num_chunks,
         fill_value: speed_zarr_meta.fill_value,
         row_origin: speed_zarr_meta.row_origin,
+        projection: speed_zarr_meta.projection,
     };
 
     // Create speed processor
@@ -1259,6 +1262,7 @@ async fn load_wind_speed_direction_from_zarr(
         num_chunks: dir_zarr_meta.num_chunks,
         fill_value: dir_zarr_meta.fill_value,
         row_origin: dir_zarr_meta.row_origin,
+        projection: dir_zarr_meta.projection,
     };
 
     // Create direction processor

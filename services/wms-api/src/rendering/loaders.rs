@@ -288,6 +288,7 @@ where
         num_chunks: zarr_meta.num_chunks,
         fill_value: zarr_meta.fill_value,
         row_origin: zarr_meta.row_origin,
+        projection: zarr_meta.projection,
     };
 
     // For native loading, we need to append /0 to get level 0
@@ -433,6 +434,7 @@ pub async fn query_point_from_zarr(
         num_chunks: zarr_meta.num_chunks,
         fill_value: zarr_meta.fill_value,
         row_origin: zarr_meta.row_origin,
+        projection: zarr_meta.projection,
     };
 
     // Create processor with metadata from catalog

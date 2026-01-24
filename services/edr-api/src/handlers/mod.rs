@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod area;
+pub mod astro;
 pub mod catalog_check;
 pub mod collections;
 pub mod conformance;
