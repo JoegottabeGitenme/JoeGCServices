@@ -1,8 +1,12 @@
 # Data Sources
 
-Weather WMS ingests data from four NOAA sources, each providing different types of weather information at various resolutions and update frequencies.
+Weather WMS ingests data from multiple NOAA and research sources, each providing different types of weather and environmental information at various resolutions and update frequencies.
 
 ## Source Comparison
+
+### Continuously Updated Sources
+
+These sources are automatically downloaded and ingested on a schedule:
 
 | Source | Type | Coverage | Resolution | Update | Parameters | Format |
 |--------|------|----------|------------|--------|------------|--------|
@@ -10,6 +14,19 @@ Weather WMS ingests data from four NOAA sources, each providing different types 
 | [HRRR](./hrrr.md) | Model | CONUS | 3 km | 1 hour | 49 | GRIB2 |
 | [MRMS](./mrms.md) | Radar | CONUS | 1 km | 2 min | 2 | GRIB2 |
 | [GOES](./goes.md) | Satellite | Hemisphere | 0.5-2 km | 5-10 min | 16 | NetCDF |
+
+### Static Data Sources
+
+These sources require manual download and ingestion:
+
+| Source | Type | Coverage | Resolution | Update | Parameters | Format |
+|--------|------|----------|------------|--------|------------|--------|
+| [VIIRS](./viirs.md) | Light Pollution | Global | 500 m | Annual | 1 | GeoTIFF |
+
+Static data differs from continuously updated sources:
+- **Manual ingestion**: Use `./scripts/deploy-remote.sh --ingest-viirs`
+- **No time dimension**: Always returns the latest annual composite
+- **Large file size**: VIIRS is ~300-400 MB compressed
 
 ## Data Types
 
@@ -81,3 +98,4 @@ Explore individual data sources:
 - [HRRR (High-Resolution Rapid Refresh)](./hrrr.md)
 - [MRMS (Multi-Radar Multi-Sensor)](./mrms.md)
 - [GOES (Geostationary Satellites)](./goes.md)
+- [VIIRS (Nighttime Lights / Light Pollution)](./viirs.md)

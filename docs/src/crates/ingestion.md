@@ -1,12 +1,12 @@
 # Ingestion Crate
 
-The `ingestion` crate provides core logic for parsing weather data files (GRIB2 and NetCDF), converting them to Zarr V3 format with multi-resolution pyramids, and storing them in object storage.
+The `ingestion` crate provides core logic for parsing weather data files (GRIB2, NetCDF, and GeoTIFF), converting them to Zarr V3 format with multi-resolution pyramids, and storing them in object storage.
 
 ## Overview
 
 **Location**: `crates/ingestion/`  
 **Purpose**: Reusable ingestion logic shared between services  
-**Dependencies**: grib2-parser, netcdf-parser, grid-processor, storage, projection
+**Dependencies**: grib2-parser, netcdf-parser, grid-processor, storage, projection, tiff, zarrs
 
 ## Architecture
 
@@ -16,6 +16,7 @@ graph TB
         Ingester["Ingester"]
         GRIB["grib2.rs"]
         NetCDF["netcdf.rs"]
+        GeoTIFF["geotiff.rs"]
         Metadata["metadata.rs"]
         Config["config.rs"]
         Tables["tables.rs"]
@@ -25,6 +26,7 @@ graph TB
     subgraph "External Crates"
         GP[grib2-parser]
         NP[netcdf-parser]
+        TIFF[tiff]
         GridProc[grid-processor]
         Storage[storage]
     end
@@ -35,16 +37,20 @@ graph TB
     
     Ingester --> GRIB
     Ingester --> NetCDF
+    Ingester --> GeoTIFF
     GRIB --> Metadata
     GRIB --> Config
     GRIB --> Tables
     NetCDF --> Metadata
+    GeoTIFF --> Metadata
     Tables --> YAML
     
     GRIB --> GP
     NetCDF --> NP
+    GeoTIFF --> TIFF
     GRIB --> GridProc
     NetCDF --> GridProc
+    GeoTIFF --> Upload
     GRIB --> Upload
     NetCDF --> Upload
     Upload --> Storage
@@ -206,6 +212,57 @@ pub async fn ingest_netcdf(
 - Maps band numbers to parameter names
 - Reprojects from geostationary to lat/lon grid
 
+### geotiff.rs - GeoTIFF Ingestion
+
+Handles GeoTIFF file ingestion for VIIRS nighttime lights data:
+
+```rust
+pub async fn ingest_geotiff(
+    storage: &ObjectStorage,
+    catalog: &Catalog,
+    data: Bytes,
+    file_path: &str,
+    options: &IngestOptions,
+) -> Result<IngestionResult, IngestionError>
+```
+
+**Features**:
+- Parses GeoTIFF files using the `tiff` crate
+- Handles gzip-compressed files (`.tif.gz`)
+- Streaming ingestion for large files (>50MB) to avoid memory pressure
+- Extracts geographic metadata (bounding box, pixel scale) from GeoTIFF tags
+- Converts to Zarr format with chunking optimized for spatial queries
+- Automatic model detection from filename (e.g., "VNL" -> "viirs")
+
+**Supported Files**:
+- `.tif` - Uncompressed GeoTIFF
+- `.tiff` - Uncompressed GeoTIFF
+- `.tif.gz` - Gzip-compressed GeoTIFF
+- `.tiff.gz` - Gzip-compressed GeoTIFF
+
+**GeoTIFF Tags Used**:
+| Tag | Description |
+|-----|-------------|
+| `ModelPixelScaleTag` (33550) | Pixel size in degrees |
+| `ModelTiepointTag` (33922) | Geographic tie point |
+| `GDALNoData` (42113) | NoData value |
+
+**Example Usage**:
+```rust
+// Ingest VIIRS light pollution data
+let options = IngestOptions {
+    model: Some("viirs".to_string()),
+    forecast_hour: None,
+};
+
+let result = ingester.ingest_file(
+    "/data/VNL_npp_2024_global.tif.gz",
+    options
+).await?;
+
+// Result: model="viirs", parameter="radiance_average"
+```
+
 ### metadata.rs - File Metadata Extraction
 
 Utilities for extracting metadata from filenames:
@@ -233,6 +290,20 @@ gfs_20241217_12z_f003.grib2     → model="gfs", forecast_hour=3
 hrrr_conus_20241217_12z_f001.grib2 → model="hrrr", forecast_hour=1
 MRMS_SeamlessHSR_00.00_20241217-120000.grib2.gz → model="mrms", param="REFL"
 OR_ABI-L2-CMIPF-M6C13_G18_s20251190001170.nc → model="goes18", band=13
+VNL_npp_2024_global_vcmslcfg.tif.gz → model="viirs"
+```
+
+**FileType enum**:
+```rust
+pub enum FileType {
+    Grib2,       // .grib2, .grb2, .grib
+    Grib2Gz,     // .grib2.gz, .grb2.gz
+    NdfdGrib2,   // NDFD files (ds.*.bin)
+    NetCdf,      // .nc, .nc4, .netcdf
+    GeoTiff,     // .tif, .tiff
+    GeoTiffGz,   // .tif.gz, .tiff.gz
+    Unknown,
+}
 ```
 
 ### Parameter Filtering (Config-Driven)
@@ -314,6 +385,9 @@ pub enum IngestionError {
     
     #[error("Parse error: {0}")]
     ParseError(String),
+    
+    #[error("Failed to parse GeoTIFF data: {0}")]
+    GeoTiffParse(String),
     
     #[error("Storage error: {0}")]
     StorageError(#[from] storage::Error),

@@ -116,6 +116,46 @@ All query endpoints also support instance-specific versions:
 - `/edr/collections/{id}/instances/{instId}/locations`
 - `/edr/collections/{id}/instances/{instId}/locations/{locId}`
 
+### Special Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/edr/light-pollution` | GET | Light pollution query with Bortle scale interpretation |
+| `/edr/collections/astro/position` | GET | Astronomical data (sunrise, sunset, moon phase) |
+
+#### Light Pollution Endpoint
+
+A convenience endpoint for querying VIIRS nighttime lights data with Bortle scale interpretation:
+
+```bash
+GET /edr/light-pollution?lon=-105&lat=40
+```
+
+**Parameters**:
+- `lon` (required): Longitude in decimal degrees
+- `lat` (required): Latitude in decimal degrees
+
+**Response**:
+```json
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-105.0, 40.0]
+  },
+  "properties": {
+    "radiance_nw_cm2_sr": 18.09,
+    "bortle_class": 7,
+    "bortle_description": "Suburban/urban transition",
+    "sky_quality": "Poor",
+    "milky_way_visible": false,
+    "recommended_for": ["Planetary imaging", "Moon photography"]
+  }
+}
+```
+
+This endpoint requires VIIRS data to be ingested. See [VIIRS Data Source](../data-sources/viirs.md) for details.
+
 ### Diagnostic Endpoints
 
 | Endpoint | Method | Description |
