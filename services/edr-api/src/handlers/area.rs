@@ -23,7 +23,9 @@ use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
 };
-use crate::resampling::{extract_dateline_region, extract_prime_meridian_region, resample_to_geographic};
+use crate::resampling::{
+    extract_dateline_region, extract_prime_meridian_region, resample_to_geographic,
+};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
