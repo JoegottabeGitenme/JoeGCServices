@@ -106,7 +106,7 @@ pub fn datetime_to_jd(dt: &DateTime<Utc>) -> f64 {
     astro_time::julian_day(&date)
 }
 
-/// Convert Julian Day Number back to DateTime<Utc>.
+/// Convert Julian Day Number back to `DateTime<Utc>`.
 pub fn jd_to_datetime(jd: f64) -> DateTime<Utc> {
     // JD to Unix timestamp conversion
     // Unix epoch (1970-01-01 00:00:00) = JD 2440587.5
