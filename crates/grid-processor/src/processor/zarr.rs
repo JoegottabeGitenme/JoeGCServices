@@ -610,9 +610,25 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 #[async_trait]
 impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGridProcessor<S> {
     async fn read_region(&self, bbox: &BoundingBox) -> Result<GridRegion> {
-        // Check if this request crosses the dateline on a 0-360 grid
-        // If so, we need to read the FULL grid and let the caller handle resampling
-        let effective_bbox = if bbox.crosses_dateline_on_360_grid(&self.metadata.bbox) {
+        // For projected coordinate systems (Lambert, Polar Stereographic, Mercator),
+        // lat/lon cannot be linearly mapped to grid indices. We must read the FULL
+        // native grid and let the caller's resampling handle geographic cropping.
+        //
+        // The resampling code (resample_to_geographic) uses proper projection math
+        // (geo_to_grid) to correctly transform coordinates.
+        let effective_bbox = if self.metadata.projection.requires_projection_transform() {
+            tracing::debug!(
+                path = %self.path,
+                request_bbox = ?bbox,
+                projection = ?self.metadata.projection,
+                grid_bbox = ?self.metadata.bbox,
+                "Projected grid requires full read - cannot subset by lat/lon"
+            );
+            // Use the full grid bbox for projected grids
+            self.metadata.bbox.clone()
+        } else if bbox.crosses_dateline_on_360_grid(&self.metadata.bbox) {
+            // Check if this request crosses the dateline on a 0-360 grid
+            // If so, we need to read the FULL grid and let the caller handle resampling
             tracing::debug!(
                 path = %self.path,
                 request_bbox = ?bbox,
@@ -983,7 +999,7 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
             num_chunks: level.num_chunks(),
             fill_value: f32::NAN,
             row_origin: self.multiscale.row_origin,
-            projection: ProjectionType::Geographic, // Pyramids are typically used for geographic grids
+            projection: self.multiscale.projection,
         }
     }
 
