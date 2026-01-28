@@ -1210,7 +1210,10 @@ retention:
 
         // Skip test if config directory doesn't exist (CI environment)
         if !Path::new(&config_path).join("models/viirs.yaml").exists() {
-            eprintln!("Skipping test: viirs.yaml not found at {}/models/viirs.yaml", config_path);
+            eprintln!(
+                "Skipping test: viirs.yaml not found at {}/models/viirs.yaml",
+                config_path
+            );
             return;
         }
 
