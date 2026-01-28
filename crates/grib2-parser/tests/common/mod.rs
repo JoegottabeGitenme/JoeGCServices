@@ -17,6 +17,7 @@ pub fn testdata_dir() -> PathBuf {
 }
 
 /// Returns the path to a test file, checking multiple locations
+#[allow(dead_code)] // Used by require_test_file! and require_test_files! macros
 pub fn find_test_file(name: &str) -> Option<PathBuf> {
     let candidates = [
         // Primary: testdata/ in crate root

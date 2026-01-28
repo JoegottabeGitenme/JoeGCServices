@@ -1,0 +1,63 @@
+# VIIRS EDR Configuration
+# Nighttime Lights - Light Pollution / Bortle Scale
+#
+# Coverage: Global (-180 to 180 lon, -65 to 75 lat)
+# Resolution: ~500m (15 arcsec)
+# Update frequency: Static (annual composite)
+#
+# This is static observation data:
+# - No time dimension (single annual composite)
+# - No vertical levels
+# - Single parameter: radiance (nW/cm^2/sr)
+#
+# The radiance values can be mapped to Bortle scale:
+#   Bortle 1 (Excellent dark):  < 0.25 nW/cm^2/sr
+#   Bortle 2 (Typical dark):    < 0.5
+#   Bortle 3 (Rural sky):       < 1.0
+#   Bortle 4 (Rural/suburban):  < 2.0
+#   Bortle 5 (Suburban):        < 4.0
+#   Bortle 6 (Bright suburban): < 8.0
+#   Bortle 7 (Suburban/urban):  < 20.0
+#   Bortle 8 (City sky):        < 50.0
+#   Bortle 9 (Inner-city):      >= 50.0
+
+model: viirs
+data_type: observation
+
+collections:
+  # ===========================================================================
+  # Static collection - single annual composite
+  # ===========================================================================
+  
+  - id: viirs-light-pollution
+    title: "VIIRS Nighttime Lights"
+    description: "Annual nighttime radiance composite for light pollution assessment (Bortle scale)"
+    # No level_filter - matches all levels (data is registered with level="surface")
+    parameters:
+      - name: radiance_average
+        levels: [surface]
+        valid_range: { min: 0, max: 300 }  # nW/cm^2/sr
+    run_mode: latest  # Static data, always returns the single available dataset
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+
+# Response size limits
+# VIIRS is ~500m resolution (15 arcsec = 0.00417°)
+# Very high resolution, so stricter limits needed
+limits:
+  max_parameters_per_request: 1        # Only 1 parameter
+  max_time_steps: 1                    # Static data
+  max_vertical_levels: 1               # Surface only
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100             # ~300km x 300km at this resolution
+  max_area_sq_degrees_png: 2500        # PNG queries can be larger
+  max_radius_km: 500                   # Limited due to high resolution

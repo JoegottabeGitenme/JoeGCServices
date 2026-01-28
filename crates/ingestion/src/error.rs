@@ -14,6 +14,9 @@ pub enum IngestionError {
     #[error("Failed to parse NetCDF data: {0}")]
     NetcdfParse(String),
 
+    #[error("Failed to parse GeoTIFF data: {0}")]
+    GeoTiffParse(String),
+
     #[error("Failed to write Zarr data: {0}")]
     ZarrWrite(String),
 

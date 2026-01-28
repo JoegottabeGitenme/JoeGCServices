@@ -2634,11 +2634,13 @@ dependencies = [
  "storage",
  "tempfile",
  "thiserror 1.0.69",
+ "tiff",
  "tokio",
  "tokio-test",
  "tracing",
  "walkdir",
  "wms-common",
+ "zarrs",
  "zarrs_filesystem",
 ]
 

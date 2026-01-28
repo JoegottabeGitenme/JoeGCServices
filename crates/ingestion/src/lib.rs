@@ -1,6 +1,6 @@
 //! Weather data ingestion library.
 //!
-//! Provides core logic for ingesting weather data (GRIB2, NetCDF) into
+//! Provides core logic for ingesting weather data (GRIB2, NetCDF, GeoTIFF) into
 //! Zarr format with multi-resolution pyramids.
 //!
 //! # Architecture
@@ -10,6 +10,7 @@
 //!
 //! - GRIB2 parsing and parameter extraction (GFS, HRRR, MRMS)
 //! - NetCDF parsing and reprojection (GOES satellite)
+//! - GeoTIFF parsing (VIIRS light pollution)
 //! - Zarr pyramid generation
 //! - Upload to object storage (MinIO/S3)
 //! - Catalog registration (PostgreSQL)
@@ -20,6 +21,7 @@
 //! in `config/models/`. See [`tables::IngestionFilter`] for details.
 
 pub mod error;
+mod geotiff;
 mod grib2;
 mod ingester;
 pub mod metadata;

@@ -23,6 +23,52 @@ Utility scripts for managing Weather WMS located in the `scripts/` directory.
 
 ---
 
+### deploy-remote.sh
+
+**Purpose**: Deploy Weather WMS to a remote production server
+
+```bash
+./scripts/deploy-remote.sh [command]
+```
+
+**Commands**:
+
+| Command | Description |
+|---------|-------------|
+| *(none)* | Full deployment (build, transfer, start) |
+| `--update` | Sync config files and restart services |
+| `--rebuild` | Rebuild images locally and redeploy |
+| `--ingest-viirs` | Ingest VIIRS light pollution data |
+| `--status` | Show deployment status |
+| `--logs [service]` | View service logs |
+| `--ssh` | SSH to remote server |
+| `--help` | Show help |
+
+**Configuration**: Requires `.env.nuc` file (copy from `.env.nuc.example`)
+
+**Examples**:
+
+```bash
+# First-time deployment
+./scripts/deploy-remote.sh
+
+# Update after config changes
+./scripts/deploy-remote.sh --update
+
+# Rebuild after code changes
+./scripts/deploy-remote.sh --rebuild
+
+# Ingest VIIRS light pollution data
+./scripts/deploy-remote.sh --ingest-viirs
+
+# View WMS API logs
+./scripts/deploy-remote.sh --logs wms-api
+```
+
+See [Production Deployment](../deployment/production.md) for detailed documentation.
+
+---
+
 ## Data Download Scripts
 
 ### download_gfs.sh

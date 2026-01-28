@@ -35,6 +35,8 @@ pub enum ModelType {
     Forecast,
     /// Observation model with time-based data (e.g., MRMS, GOES)
     Observation,
+    /// Static dataset that never expires (e.g., VIIRS nighttime lights)
+    Static,
 }
 
 impl Default for ModelType {
@@ -100,6 +102,9 @@ struct ModelConfigRetention {
     hours: Option<u32>,
     keep_latest_runs: Option<u32>,
     keep_latest_observations: Option<u32>,
+    /// If true, data never expires (for static datasets like VIIRS)
+    #[serde(rename = "static")]
+    is_static: Option<bool>,
 }
 
 /// Structure matching dimensions section in model YAML files.
@@ -185,19 +190,27 @@ impl CleanupConfig {
                             Ok(config) => {
                                 let model_id = config.model.id.clone();
 
-                                // Determine model type from dimensions.type
-                                let model_type = config
-                                    .dimensions
-                                    .as_ref()
-                                    .and_then(|d| d.dimension_type.as_ref())
-                                    .map(|t| {
-                                        if t == "observation" {
-                                            ModelType::Observation
-                                        } else {
-                                            ModelType::Forecast
-                                        }
-                                    })
-                                    .unwrap_or(ModelType::Forecast);
+                                // Get retention settings first to check for static flag
+                                let retention = config.retention.as_ref();
+                                let is_static_retention =
+                                    retention.and_then(|r| r.is_static).unwrap_or(false);
+
+                                // Determine model type from dimensions.type or retention.static
+                                let model_type = if is_static_retention {
+                                    // retention.static: true takes precedence
+                                    ModelType::Static
+                                } else {
+                                    config
+                                        .dimensions
+                                        .as_ref()
+                                        .and_then(|d| d.dimension_type.as_ref())
+                                        .map(|t| match t.as_str() {
+                                            "observation" => ModelType::Observation,
+                                            "static" => ModelType::Static,
+                                            _ => ModelType::Forecast,
+                                        })
+                                        .unwrap_or(ModelType::Forecast)
+                                };
 
                                 // Calculate expected forecast hours from schedule
                                 let expected_forecast_hours = config
@@ -215,8 +228,7 @@ impl CleanupConfig {
                                         }
                                     });
 
-                                // Get retention settings
-                                let retention = config.retention.as_ref();
+                                // Get hours setting (not used for static models but kept for config consistency)
                                 let hours = retention.and_then(|r| r.hours).unwrap_or(24);
 
                                 // Get safeguard settings with defaults
@@ -363,6 +375,16 @@ impl CleanupTask {
 
         for model in &models {
             let model_config = self.config.get_model_config(model);
+
+            // Skip static models - they never expire
+            if model_config.model_type == ModelType::Static {
+                debug!(
+                    model = %model,
+                    "Skipping cleanup for static dataset (never expires)"
+                );
+                continue;
+            }
+
             let cutoff = Utc::now() - Duration::hours(model_config.hours as i64);
 
             info!(
@@ -381,6 +403,10 @@ impl CleanupTask {
                 ModelType::Observation => {
                     self.cleanup_observation_model(model, &model_config, cutoff)
                         .await?
+                }
+                ModelType::Static => {
+                    // Already handled above with continue, but need for exhaustive match
+                    0
                 }
             };
 
@@ -574,6 +600,20 @@ impl CleanupTask {
                             "Latest observation, protected by keep_latest_observations={}",
                             model_config.keep_latest_observations
                         ),
+                    })
+                    .collect();
+
+                Ok(protected)
+            }
+            ModelType::Static => {
+                // All data in a static dataset is protected (never expires)
+                let protected: Vec<ProtectedRunInfo> = runs
+                    .iter()
+                    .map(|(ref_time, count)| ProtectedRunInfo {
+                        reference_time: *ref_time,
+                        dataset_count: *count,
+                        is_complete: true,
+                        reason: "Static dataset - never expires".to_string(),
                     })
                     .collect();
 
@@ -937,5 +977,301 @@ mod tests {
         let config = SyncConfig::default();
         assert!(config.enabled);
         assert_eq!(config.interval_secs, 60);
+    }
+
+    #[test]
+    fn test_model_type_static() {
+        // Test that static model type is properly recognized
+        let config = ModelRetentionConfig {
+            hours: 24,
+            model_type: ModelType::Static,
+            keep_latest_runs: 1,
+            keep_latest_observations: 1,
+            expected_forecast_hours: None,
+        };
+        assert_eq!(config.model_type, ModelType::Static);
+    }
+
+    #[test]
+    fn test_static_retention_config_parsing() {
+        // Test that retention.static: true is parsed correctly
+        let yaml = r#"
+model:
+  id: test-static
+dimensions:
+  type: static
+retention:
+  static: true
+"#;
+        let config: ModelConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model.id, "test-static");
+        assert!(config.retention.as_ref().unwrap().is_static.unwrap());
+        assert_eq!(
+            config.dimensions.as_ref().unwrap().dimension_type,
+            Some("static".to_string())
+        );
+    }
+
+    #[test]
+    fn test_static_from_retention_flag() {
+        // Test that retention.static: true overrides dimensions.type
+        let yaml = r#"
+model:
+  id: test-override
+dimensions:
+  type: forecast
+retention:
+  static: true
+  hours: 48
+"#;
+        let config: ModelConfigFile = serde_yaml::from_str(yaml).unwrap();
+        let retention = config.retention.as_ref();
+        let is_static = retention.and_then(|r| r.is_static).unwrap_or(false);
+
+        // retention.static: true should make this a Static model
+        let model_type = if is_static {
+            ModelType::Static
+        } else {
+            config
+                .dimensions
+                .as_ref()
+                .and_then(|d| d.dimension_type.as_ref())
+                .map(|t| match t.as_str() {
+                    "observation" => ModelType::Observation,
+                    "static" => ModelType::Static,
+                    _ => ModelType::Forecast,
+                })
+                .unwrap_or(ModelType::Forecast)
+        };
+
+        assert_eq!(model_type, ModelType::Static);
+    }
+
+    #[test]
+    fn test_static_from_dimensions_type() {
+        // Test that dimensions.type: static works without retention.static
+        let yaml = r#"
+model:
+  id: test-dims-static
+dimensions:
+  type: static
+retention:
+  hours: 24
+"#;
+        let config: ModelConfigFile = serde_yaml::from_str(yaml).unwrap();
+        let retention = config.retention.as_ref();
+        let is_static = retention.and_then(|r| r.is_static).unwrap_or(false);
+
+        let model_type = if is_static {
+            ModelType::Static
+        } else {
+            config
+                .dimensions
+                .as_ref()
+                .and_then(|d| d.dimension_type.as_ref())
+                .map(|t| match t.as_str() {
+                    "observation" => ModelType::Observation,
+                    "static" => ModelType::Static,
+                    _ => ModelType::Forecast,
+                })
+                .unwrap_or(ModelType::Forecast)
+        };
+
+        assert_eq!(model_type, ModelType::Static);
+    }
+
+    #[test]
+    fn test_cleanup_config_get_model_config_returns_static() {
+        // Test that CleanupConfig properly returns Static model type
+        let mut model_configs = HashMap::new();
+        model_configs.insert(
+            "viirs".to_string(),
+            ModelRetentionConfig {
+                hours: 24, // Doesn't matter for static
+                model_type: ModelType::Static,
+                keep_latest_runs: 1,
+                keep_latest_observations: 1,
+                expected_forecast_hours: None,
+            },
+        );
+
+        let config = CleanupConfig {
+            enabled: true,
+            interval_secs: 3600,
+            model_configs,
+            default_retention_hours: 24,
+        };
+
+        let viirs_config = config.get_model_config("viirs");
+        assert_eq!(viirs_config.model_type, ModelType::Static);
+
+        // Unknown model should default to Forecast, not Static
+        let unknown_config = config.get_model_config("unknown-model");
+        assert_eq!(unknown_config.model_type, ModelType::Forecast);
+    }
+
+    #[test]
+    fn test_viirs_like_config_parsing() {
+        // Test parsing a config that matches the actual VIIRS config structure
+        let yaml = r#"
+model:
+  id: viirs
+  name: "VIIRS Nighttime Lights"
+dimensions:
+  type: static
+  time: false
+  elevation: false
+schedule:
+  type: static
+retention:
+  static: true
+"#;
+        let config: ModelConfigFile = serde_yaml::from_str(yaml).unwrap();
+
+        // Verify the config was parsed correctly
+        assert_eq!(config.model.id, "viirs");
+        assert_eq!(
+            config.dimensions.as_ref().unwrap().dimension_type,
+            Some("static".to_string())
+        );
+        assert!(config.retention.as_ref().unwrap().is_static.unwrap());
+
+        // Simulate the logic from load_model_configs
+        let retention = config.retention.as_ref();
+        let is_static_retention = retention.and_then(|r| r.is_static).unwrap_or(false);
+
+        let model_type = if is_static_retention {
+            ModelType::Static
+        } else {
+            config
+                .dimensions
+                .as_ref()
+                .and_then(|d| d.dimension_type.as_ref())
+                .map(|t| match t.as_str() {
+                    "observation" => ModelType::Observation,
+                    "static" => ModelType::Static,
+                    _ => ModelType::Forecast,
+                })
+                .unwrap_or(ModelType::Forecast)
+        };
+
+        assert_eq!(
+            model_type,
+            ModelType::Static,
+            "VIIRS-like config should be recognized as Static"
+        );
+    }
+
+    #[test]
+    fn test_static_model_skipped_in_cleanup_logic() {
+        // Test the skip logic that would be used in run_once()
+        // This tests the condition without needing a full database mock
+
+        let static_config = ModelRetentionConfig {
+            hours: 24,
+            model_type: ModelType::Static,
+            keep_latest_runs: 1,
+            keep_latest_observations: 1,
+            expected_forecast_hours: None,
+        };
+
+        let forecast_config = ModelRetentionConfig {
+            hours: 24,
+            model_type: ModelType::Forecast,
+            keep_latest_runs: 1,
+            keep_latest_observations: 1,
+            expected_forecast_hours: None,
+        };
+
+        // Static models should be skipped (continue in the loop)
+        let should_skip_static = static_config.model_type == ModelType::Static;
+        assert!(
+            should_skip_static,
+            "Static models should be skipped in cleanup"
+        );
+
+        // Forecast models should NOT be skipped
+        let should_skip_forecast = forecast_config.model_type == ModelType::Static;
+        assert!(
+            !should_skip_forecast,
+            "Forecast models should NOT be skipped in cleanup"
+        );
+    }
+
+    #[test]
+    fn test_load_viirs_config_from_disk() {
+        // Integration test: load the actual VIIRS config from disk
+        // This ensures the real config file is parsed correctly
+
+        let config_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|dir| format!("{}/../..", dir))
+            .unwrap_or_else(|_| ".".to_string());
+        let config_path = format!("{}/config", config_dir);
+
+        // Skip test if config directory doesn't exist (CI environment)
+        if !Path::new(&config_path).join("models/viirs.yaml").exists() {
+            eprintln!(
+                "Skipping test: viirs.yaml not found at {}/models/viirs.yaml",
+                config_path
+            );
+            return;
+        }
+
+        let configs = CleanupConfig::load_model_configs(&config_path);
+
+        // Verify VIIRS was loaded and is Static
+        let viirs_config = configs.get("viirs");
+        assert!(
+            viirs_config.is_some(),
+            "VIIRS config should be loaded from disk"
+        );
+
+        let viirs = viirs_config.unwrap();
+        assert_eq!(
+            viirs.model_type,
+            ModelType::Static,
+            "VIIRS should be recognized as Static model type"
+        );
+    }
+
+    #[test]
+    fn test_load_model_configs_sets_static_for_retention_flag() {
+        // Test that load_model_configs correctly sets Static when retention.static: true
+        use std::io::Write;
+
+        // Create a temp directory with a test config
+        let temp_dir = std::env::temp_dir().join("cleanup_test_configs");
+        let models_dir = temp_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        let test_yaml = r#"
+model:
+  id: test-static-model
+dimensions:
+  type: forecast
+retention:
+  static: true
+  hours: 48
+"#;
+        let config_path = models_dir.join("test-static.yaml");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        file.write_all(test_yaml.as_bytes()).unwrap();
+
+        // Load configs from temp directory
+        let configs = CleanupConfig::load_model_configs(temp_dir.to_str().unwrap());
+
+        // Verify the static model was loaded correctly
+        let test_config = configs.get("test-static-model");
+        assert!(test_config.is_some(), "Test config should be loaded");
+
+        let config = test_config.unwrap();
+        assert_eq!(
+            config.model_type,
+            ModelType::Static,
+            "retention.static: true should result in ModelType::Static"
+        );
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }

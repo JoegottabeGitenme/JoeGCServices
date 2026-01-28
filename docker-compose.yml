@@ -287,6 +287,7 @@ services:
       RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
     volumes:
       - ./config:/app/config:ro
+      - ./data/static:/data/static:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -329,6 +330,7 @@ services:
     volumes:
       - downloader_data:/data/downloads:ro
       - ./config:/app/config:ro
+      - ./data/static:/data/static:ro
     depends_on:
       postgres:
         condition: service_healthy

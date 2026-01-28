@@ -46,8 +46,8 @@ impl OutputCrs {
     /// - "CRS:84", "crs:84"
     /// - "EPSG:4326", "epsg:4326"
     /// - "EPSG:3857", "epsg:3857"
-    /// - OGC URIs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
-    /// - OGC URIs: "http://www.opengis.net/def/crs/EPSG/0/4326"
+    /// - OGC URIs: "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
+    /// - OGC URIs: "<http://www.opengis.net/def/crs/EPSG/0/4326>"
     pub fn from_str(s: &str) -> Result<Self, CrsError> {
         let normalized = s.trim().to_uppercase();
 

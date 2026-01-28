@@ -36,8 +36,12 @@ anyhow.workspace = true
 # Logging
 tracing.workspace = true
 
-# Zarr filesystem
+# Zarr
+zarrs.workspace = true
 zarrs_filesystem.workspace = true
+
+# GeoTIFF
+tiff.workspace = true
 
 # File utilities
 walkdir.workspace = true

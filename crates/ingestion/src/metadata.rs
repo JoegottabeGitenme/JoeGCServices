@@ -18,6 +18,10 @@ pub enum FileType {
     NdfdGrib2,
     /// NetCDF format (GOES satellite)
     NetCdf,
+    /// GeoTIFF format (VIIRS light pollution)
+    GeoTiff,
+    /// Gzip-compressed GeoTIFF
+    GeoTiffGz,
     /// Unknown format
     Unknown,
 }
@@ -41,7 +45,11 @@ pub struct GoesFileInfo {
 pub fn detect_file_type(path: &str) -> FileType {
     let lower = path.to_lowercase();
 
-    if lower.ends_with(".grib2.gz") || lower.ends_with(".grb2.gz") {
+    if lower.ends_with(".tif.gz") || lower.ends_with(".tiff.gz") {
+        FileType::GeoTiffGz
+    } else if lower.ends_with(".tif") || lower.ends_with(".tiff") {
+        FileType::GeoTiff
+    } else if lower.ends_with(".grib2.gz") || lower.ends_with(".grb2.gz") {
         FileType::Grib2Gz
     } else if lower.ends_with(".grib2") || lower.ends_with(".grb2") || lower.ends_with(".grib") {
         FileType::Grib2
@@ -375,6 +383,33 @@ mod tests {
         assert_eq!(detect_file_type("ndfd_conus_temp.bin"), FileType::NdfdGrib2);
         // Note: files with .grib2 extension are detected as Grib2, not NdfdGrib2
         // This is intentional - NDFD files from NWS use .bin extension
+    }
+
+    #[test]
+    fn test_detect_file_type_geotiff() {
+        // Uncompressed GeoTIFF
+        assert_eq!(detect_file_type("test.tif"), FileType::GeoTiff);
+        assert_eq!(detect_file_type("test.tiff"), FileType::GeoTiff);
+        assert_eq!(detect_file_type("VNL_v22_npp_2023.TIF"), FileType::GeoTiff);
+        assert_eq!(
+            detect_file_type("/data/viirs/nighttime_lights.tiff"),
+            FileType::GeoTiff
+        );
+    }
+
+    #[test]
+    fn test_detect_file_type_geotiff_gz() {
+        // Gzip-compressed GeoTIFF (VIIRS data is distributed this way)
+        assert_eq!(detect_file_type("test.tif.gz"), FileType::GeoTiffGz);
+        assert_eq!(detect_file_type("test.tiff.gz"), FileType::GeoTiffGz);
+        assert_eq!(
+            detect_file_type("VNL_v22_npp_2023_global_vcmslcfg.average_masked.dat.tif.gz"),
+            FileType::GeoTiffGz
+        );
+        assert_eq!(
+            detect_file_type("/data/static/viirs/VNL_data.TIF.GZ"),
+            FileType::GeoTiffGz
+        );
     }
 
     // ==================== Model Extraction ====================

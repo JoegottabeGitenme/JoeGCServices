@@ -57,6 +57,7 @@
   - [HRRR (High-Resolution Rapid Refresh)](./data-sources/hrrr.md)
   - [MRMS (Radar)](./data-sources/mrms.md)
   - [GOES (Satellite)](./data-sources/goes.md)
+  - [VIIRS (Light Pollution)](./data-sources/viirs.md)
 
 # Configuration
 

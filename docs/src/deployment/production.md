@@ -232,6 +232,52 @@ Shows running containers and their health status.
 
 Opens an SSH session to the remote server.
 
+### Ingest VIIRS Light Pollution Data
+
+```bash
+./scripts/deploy-remote.sh --ingest-viirs
+```
+
+Ingests VIIRS nighttime lights data for light pollution / Bortle scale queries. This is a one-time operation for static annual data.
+
+**Prerequisites**:
+1. Download the VIIRS VNL file from [EOG](https://eogdata.mines.edu/nighttime_light/annual/v22/)
+2. Place in the project root (e.g., `VNL_npp_2024_global_vcmslcfg_v2_c202502261200.average_masked.dat.tif.gz`)
+
+**What it does**:
+1. Creates the static data directory on the remote server
+2. Transfers the ~300MB file via rsync
+3. Restarts the ingester to mount the volume
+4. Triggers ingestion via the HTTP API
+5. Registers the dataset in the catalog
+
+After ingestion, the data is available at:
+- EDR Collection: `/edr/collections/viirs-light-pollution`
+- Light Pollution Endpoint: `/edr/light-pollution?lon=-105&lat=40`
+
+See [VIIRS Data Source](../data-sources/viirs.md) for detailed documentation.
+
+## Static Data Management
+
+Unlike continuously-updated data sources (GFS, HRRR, MRMS, GOES), some data sources are static and require manual management:
+
+| Data Source | Update Frequency | Ingestion Command |
+|-------------|------------------|-------------------|
+| VIIRS Nighttime Lights | Annual | `--ingest-viirs` |
+
+### Adding New Static Data
+
+When new annual VIIRS data is released:
+
+1. Download the new file from EOG
+2. Replace the old file in the project root
+3. Re-run ingestion:
+   ```bash
+   ./scripts/deploy-remote.sh --ingest-viirs
+   ```
+
+The new data will replace the existing dataset in the catalog.
+
 ## File Structure
 
 ```

@@ -694,8 +694,8 @@ fn test_ndfd_east_west_coordinates() {
     assert!(ny_i >= 0.0 && ny_i < 2145.0, "NY i out of bounds: {}", ny_i);
 
     // Verify grid corners make sense
-    let (sw_lat, sw_lon) = proj.grid_to_geo(0.0, 0.0);
-    let (se_lat, se_lon) = proj.grid_to_geo(2144.0, 0.0);
+    let (_sw_lat, sw_lon) = proj.grid_to_geo(0.0, 0.0);
+    let (_se_lat, se_lon) = proj.grid_to_geo(2144.0, 0.0);
     println!("SW corner (i=0): lon={:.2}°", sw_lon);
     println!("SE corner (i=2144): lon={:.2}°", se_lon);
 
