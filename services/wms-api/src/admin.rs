@@ -1414,6 +1414,7 @@ pub async fn cleanup_status_handler(
         let model_type_str = match model_config.model_type {
             crate::cleanup::ModelType::Forecast => "forecast",
             crate::cleanup::ModelType::Observation => "observation",
+            crate::cleanup::ModelType::Static => "static",
         };
 
         model_retentions.push(ModelRetentionInfo {
@@ -1482,6 +1483,7 @@ pub async fn cleanup_status_handler(
             let model_type_str = match model_config.model_type {
                 crate::cleanup::ModelType::Forecast => "forecast",
                 crate::cleanup::ModelType::Observation => "observation",
+                crate::cleanup::ModelType::Static => "static",
             };
 
             model_retentions.push(ModelRetentionInfo {
