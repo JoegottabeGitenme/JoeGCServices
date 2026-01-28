@@ -604,6 +604,7 @@ impl ZarrWriter {
             native_resolution,
             bbox: *bbox,
             row_origin,
+            projection,
         };
 
         // Create ZarrMetadata for backward compatibility with existing catalog code

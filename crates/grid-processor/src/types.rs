@@ -936,6 +936,11 @@ pub struct MultiscaleMetadata {
     /// - `South`: Row 0 at min_lat (Lambert Conformal grids like HRRR, NDFD)
     #[serde(default)]
     pub row_origin: RowOrigin,
+    /// The map projection type used by this grid.
+    /// This determines how geographic coordinates map to grid indices.
+    /// Important for Lambert Conformal (HRRR, NDFD), Polar Stereographic, etc.
+    #[serde(default)]
+    pub projection: ProjectionType,
 }
 
 impl MultiscaleMetadata {

@@ -717,6 +717,7 @@ mod tests {
             native_resolution: (0.01, 0.01),
             bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         // Simulate the JSON-building logic from write_and_upload_zarr
@@ -810,6 +811,7 @@ mod tests {
             native_resolution: (0.01, 0.01),
             bbox: BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
             row_origin: RowOrigin::North,
+            projection: ProjectionType::Geographic,
         };
 
         // Build zarr_json with multiscale (same as write_and_upload_zarr)
