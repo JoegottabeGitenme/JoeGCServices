@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Vertical Velocity Styles",
+    "description": "Vertical velocity (omega) visualization styles for atmospheric motion"
+  },
+  "styles": {
+    "vvel_default": {
+      "default": true,
+      "name": "Vertical Velocity (Pa/s)",
+      "description": "Diverging color scale: blue=rising air (negative omega), red=sinking air (positive omega)",
+      "type": "gradient",
+      "units": "Pa/s",
+      "range": {
+        "min": -5,
+        "max": 5
+      },
+      "stops": [
+        { "value": -5, "color": "#0000AA", "label": "-5 (strong rising)" },
+        { "value": -3, "color": "#0055FF", "label": "-3" },
+        { "value": -2, "color": "#0088FF", "label": "-2" },
+        { "value": -1, "color": "#00BBFF", "label": "-1" },
+        { "value": -0.5, "color": "#88DDFF", "label": "-0.5" },
+        { "value": -0.1, "color": "#CCEEFF", "label": "-0.1" },
+        { "value": 0, "color": "#FFFFFF", "label": "0 (neutral)" },
+        { "value": 0.1, "color": "#FFEECC", "label": "0.1" },
+        { "value": 0.5, "color": "#FFDD88", "label": "0.5" },
+        { "value": 1, "color": "#FFBB00", "label": "1" },
+        { "value": 2, "color": "#FF8800", "label": "2" },
+        { "value": 3, "color": "#FF5500", "label": "3" },
+        { "value": 5, "color": "#AA0000", "label": "5 (strong sinking)" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Vertical Velocity (Pa/s)",
+        "labels": ["-5", "-2", "-1", "0", "1", "2", "5"]
+      }
+    },
+    "vvel_extended": {
+      "name": "Vertical Velocity Extended (Pa/s)",
+      "description": "Extended range for strong vertical motion events",
+      "type": "gradient",
+      "units": "Pa/s",
+      "range": {
+        "min": -10,
+        "max": 10
+      },
+      "stops": [
+        { "value": -10, "color": "#000066", "label": "-10 (extreme rising)" },
+        { "value": -5, "color": "#0000AA", "label": "-5" },
+        { "value": -3, "color": "#0055FF", "label": "-3" },
+        { "value": -1, "color": "#00BBFF", "label": "-1" },
+        { "value": -0.5, "color": "#88DDFF", "label": "-0.5" },
+        { "value": 0, "color": "#FFFFFF", "label": "0" },
+        { "value": 0.5, "color": "#FFDD88", "label": "0.5" },
+        { "value": 1, "color": "#FFBB00", "label": "1" },
+        { "value": 3, "color": "#FF5500", "label": "3" },
+        { "value": 5, "color": "#AA0000", "label": "5" },
+        { "value": 10, "color": "#660000", "label": "10 (extreme sinking)" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Vertical Velocity (Pa/s)",
+        "labels": ["-10", "-5", "-1", "0", "1", "5", "10"]
+      }
+    }
+  }
+}

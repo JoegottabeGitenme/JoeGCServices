@@ -72,6 +72,11 @@ pub struct SourceConfig {
     /// GOES-specific: band numbers to download
     #[serde(default)]
     pub bands: Option<Vec<u32>>,
+    /// File types to expand in the pattern (e.g., ["pres", "sfc"] for AIGFS).
+    /// When set, {file_type} in file_pattern is replaced with each value,
+    /// generating multiple files per forecast hour.
+    #[serde(default)]
+    pub file_types: Option<Vec<String>>,
     /// Data format hint (e.g., "ndfd_grib2" for NDFD files with WMO headers)
     #[serde(default)]
     pub format: Option<String>,

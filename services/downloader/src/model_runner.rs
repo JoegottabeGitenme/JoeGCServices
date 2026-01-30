@@ -396,7 +396,13 @@ impl ModelRunner {
     // File Discovery Methods
     // ========================================================================
 
-    /// Discover forecast files available for download (GFS, HRRR, etc.).
+    /// Discover forecast files available for download (GFS, HRRR, AIGFS, etc.).
+    ///
+    /// Supports both S3 and HTTP sources. For HTTP sources, set `source.type: http`
+    /// or provide a `source.base_url`.
+    ///
+    /// Also supports `file_types` expansion for models like AIGFS that have multiple
+    /// file types per forecast hour (e.g., "pres" and "sfc" files).
     async fn discover_forecast_files(&self) -> Result<Vec<DownloadFile>> {
         let mut files = Vec::new();
         let model = &self.model;
@@ -405,57 +411,94 @@ impl ModelRunner {
         let (date, cycle) =
             self.latest_available_cycle(&model.schedule.cycles, model.schedule.delay_hours);
 
+        // Determine if this is an HTTP source (vs S3)
+        let is_http_source =
+            model.source.source_type == "http" || model.source.base_url.is_some();
+
+        // Get file types to expand (default to single empty string for no expansion)
+        // This allows models like AIGFS to specify ["pres", "sfc"] to download
+        // multiple file types per forecast hour
+        let file_types: Vec<String> = model
+            .source
+            .file_types
+            .clone()
+            .unwrap_or_else(|| vec![String::new()]);
+
         info!(
             model = %model.model.id,
             date = %date,
             cycle = cycle,
+            is_http = is_http_source,
+            file_types = ?file_types,
             "Checking for available forecast files"
         );
 
         // For forecast models, we want files in forecast hour order (f000 first)
         // since they represent the same model run, ordered by lead time
         for forecast_hour in model.forecast_hours() {
-            let filename = model
-                .source
-                .file_pattern
-                .replace("{cycle:02}", &format!("{:02}", cycle))
-                .replace("{forecast:03}", &format!("{:03}", forecast_hour))
-                .replace("{forecast:02}", &format!("{:02}", forecast_hour));
+            // Expand file_types if configured (e.g., ["pres", "sfc"] for AIGFS)
+            for file_type in &file_types {
+                let filename = model
+                    .source
+                    .file_pattern
+                    .replace("{file_type}", file_type)
+                    .replace("{cycle:02}", &format!("{:02}", cycle))
+                    .replace("{forecast:03}", &format!("{:03}", forecast_hour))
+                    .replace("{forecast:02}", &format!("{:02}", forecast_hour));
 
-            let prefix = model
-                .source
-                .prefix_template
-                .replace("{date}", &date)
-                .replace("{cycle:02}", &format!("{:02}", cycle));
+                let prefix = model
+                    .source
+                    .prefix_template
+                    .replace("{date}", &date)
+                    .replace("{cycle:02}", &format!("{:02}", cycle));
 
-            let url = format!(
-                "https://{}.s3.amazonaws.com/{}/{}",
-                model.source.bucket, prefix, filename
-            );
+                // Build URL based on source type
+                let url = if is_http_source {
+                    let base_url = model
+                        .source
+                        .base_url
+                        .as_deref()
+                        .unwrap_or("https://nomads.ncep.noaa.gov");
+                    format!("{}/{}/{}", base_url, prefix, filename)
+                } else {
+                    format!(
+                        "https://{}.s3.amazonaws.com/{}/{}",
+                        model.source.bucket, prefix, filename
+                    )
+                };
 
-            // Check if file exists (HEAD request)
-            match self.check_file_exists(&url).await {
-                Ok(true) => {
-                    let output_filename = format!(
-                        "{}_{}_{:02}z_f{:03}.grib2",
-                        model.model.id, date, cycle, forecast_hour
-                    );
+                // Check if file exists (HEAD request)
+                match self.check_file_exists(&url).await {
+                    Ok(true) => {
+                        // Include file_type in output filename if present
+                        let output_filename = if file_type.is_empty() {
+                            format!(
+                                "{}_{}_{:02}z_f{:03}.grib2",
+                                model.model.id, date, cycle, forecast_hour
+                            )
+                        } else {
+                            format!(
+                                "{}_{}_{}_{:02}z_f{:03}.grib2",
+                                model.model.id, file_type, date, cycle, forecast_hour
+                            )
+                        };
 
-                    // For forecast files, we don't use timestamps for priority sorting.
-                    // Files are discovered in forecast hour order (f000, f001, f002, ...)
-                    // which is the desired download order (earliest forecasts first).
-                    // The sort_by_priority function preserves order for files without timestamps.
-                    files.push(DownloadFile {
-                        url,
-                        filename: output_filename,
-                        timestamp: None,
-                    });
-                }
-                Ok(false) => {
-                    debug!(url = %url, "File not yet available");
-                }
-                Err(e) => {
-                    debug!(url = %url, error = %e, "Error checking file");
+                        // For forecast files, we don't use timestamps for priority sorting.
+                        // Files are discovered in forecast hour order (f000, f001, f002, ...)
+                        // which is the desired download order (earliest forecasts first).
+                        // The sort_by_priority function preserves order for files without timestamps.
+                        files.push(DownloadFile {
+                            url,
+                            filename: output_filename,
+                            timestamp: None,
+                        });
+                    }
+                    Ok(false) => {
+                        debug!(url = %url, "File not yet available");
+                    }
+                    Err(e) => {
+                        debug!(url = %url, error = %e, "Error checking file");
+                    }
                 }
             }
         }
