@@ -9,7 +9,7 @@ model:
   id: nbm-alaska
   name: "NBM - National Blend of Models (Alaska)"
   description: "NOAA/MDL National Blend of Models for Alaska, ~3km resolution"
-  enabled: false  # Disabled for minimal OGC compliance testing
+  enabled: true
 
 # WMS/WMTS dimension configuration
 dimensions:

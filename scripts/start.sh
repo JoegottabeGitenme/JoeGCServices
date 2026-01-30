@@ -63,6 +63,18 @@ load_env_file() {
   if [ "$ENABLE_CITE_DATA" = "true" ]; then
     log_info "CITE test data enabled (cite:Lakes, cite:Ponds, etc.)"
   fi
+  
+  # Local development data limits - reduces data volume for faster startup
+  # Set to empty string to use full production values from config files
+  # These defaults provide minimal data for testing (6h forecast, 2h retention, 1 cycle)
+  export DEV_MAX_FORECAST_HOURS="${DEV_MAX_FORECAST_HOURS:-6}"
+  export DEV_MAX_RETENTION_HOURS="${DEV_MAX_RETENTION_HOURS:-2}"
+  export DEV_MAX_CYCLES="${DEV_MAX_CYCLES:-1}"
+  
+  if [ -n "$DEV_MAX_FORECAST_HOURS" ] || [ -n "$DEV_MAX_RETENTION_HOURS" ] || [ -n "$DEV_MAX_CYCLES" ]; then
+    log_info "Local dev limits: ${DEV_MAX_FORECAST_HOURS:-unlimited}h forecast, ${DEV_MAX_RETENTION_HOURS:-unlimited}h retention, ${DEV_MAX_CYCLES:-all} cycle(s)"
+    log_info "Set DEV_MAX_* to empty in .env to use full production values"
+  fi
 }
 
 #------------------------------------------------------------------------------

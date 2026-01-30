@@ -9,7 +9,7 @@ model:
   id: nbm-hawaii
   name: "NBM - National Blend of Models (Hawaii)"
   description: "NOAA/MDL National Blend of Models for Hawaii, ~2.5km resolution"
-  enabled: false  # Disabled for minimal OGC compliance testing
+  enabled: true
 
 dimensions:
   type: forecast

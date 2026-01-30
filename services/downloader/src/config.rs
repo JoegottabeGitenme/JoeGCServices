@@ -436,6 +436,93 @@ impl ModelConfig {
     }
 }
 
+/// Development environment limits for local testing.
+/// These environment variables cap the forecast hours, retention, and cycles
+/// to reduce data volume during local development.
+#[derive(Debug, Default)]
+struct DevLimits {
+    /// Maximum forecast hours (caps forecast_hours.end)
+    max_forecast_hours: Option<u32>,
+    /// Maximum retention hours (caps retention.hours)
+    max_retention_hours: Option<u32>,
+    /// Maximum number of cycles (truncates cycles list)
+    max_cycles: Option<usize>,
+}
+
+impl DevLimits {
+    /// Load development limits from environment variables.
+    fn from_env() -> Self {
+        let max_forecast_hours = std::env::var("DEV_MAX_FORECAST_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let max_retention_hours = std::env::var("DEV_MAX_RETENTION_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let max_cycles = std::env::var("DEV_MAX_CYCLES")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        Self {
+            max_forecast_hours,
+            max_retention_hours,
+            max_cycles,
+        }
+    }
+
+    /// Check if any limits are configured.
+    fn is_active(&self) -> bool {
+        self.max_forecast_hours.is_some()
+            || self.max_retention_hours.is_some()
+            || self.max_cycles.is_some()
+    }
+
+    /// Apply limits to a model configuration.
+    fn apply(&self, config: &mut ModelConfig) {
+        // Cap forecast hours
+        if let Some(max_hours) = self.max_forecast_hours {
+            if let Some(ref mut fh) = config.schedule.forecast_hours {
+                if fh.end > max_hours {
+                    debug!(
+                        model = %config.model.id,
+                        original = fh.end,
+                        capped = max_hours,
+                        "Capping forecast_hours.end due to DEV_MAX_FORECAST_HOURS"
+                    );
+                    fh.end = max_hours;
+                }
+            }
+        }
+
+        // Cap retention hours
+        if let Some(max_hours) = self.max_retention_hours {
+            if config.retention.hours > max_hours {
+                debug!(
+                    model = %config.model.id,
+                    original = config.retention.hours,
+                    capped = max_hours,
+                    "Capping retention.hours due to DEV_MAX_RETENTION_HOURS"
+                );
+                config.retention.hours = max_hours;
+            }
+        }
+
+        // Truncate cycles list
+        if let Some(max_cycles) = self.max_cycles {
+            if config.schedule.cycles.len() > max_cycles {
+                debug!(
+                    model = %config.model.id,
+                    original = config.schedule.cycles.len(),
+                    capped = max_cycles,
+                    "Truncating cycles list due to DEV_MAX_CYCLES"
+                );
+                config.schedule.cycles.truncate(max_cycles);
+            }
+        }
+    }
+}
+
 /// Load all enabled model configurations from a directory.
 pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
     let models_dir = config_dir.join("models");
@@ -443,6 +530,17 @@ pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
     if !models_dir.exists() {
         warn!(path = %models_dir.display(), "Models config directory not found");
         return Ok(Vec::new());
+    }
+
+    // Load development limits from environment
+    let dev_limits = DevLimits::from_env();
+    if dev_limits.is_active() {
+        info!(
+            max_forecast_hours = ?dev_limits.max_forecast_hours,
+            max_retention_hours = ?dev_limits.max_retention_hours,
+            max_cycles = ?dev_limits.max_cycles,
+            "Development limits active - capping config values"
+        );
     }
 
     let mut configs = Vec::new();
@@ -456,11 +554,19 @@ pub fn load_model_configs(config_dir: &Path) -> Result<Vec<ModelConfig>> {
             .is_some_and(|ext| ext == "yaml" || ext == "yml")
         {
             match ModelConfig::load(&path) {
-                Ok(config) => {
+                Ok(mut config) => {
                     if config.model.enabled {
+                        // Apply dev limits if configured
+                        if dev_limits.is_active() {
+                            dev_limits.apply(&mut config);
+                        }
+
                         info!(
                             model = %config.model.id,
                             name = %config.model.name,
+                            cycles = ?config.schedule.cycles.len(),
+                            forecast_hours = ?config.forecast_hours().len(),
+                            retention_hours = config.retention.hours,
                             "Loaded model configuration"
                         );
                         configs.push(config);

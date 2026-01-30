@@ -6,7 +6,7 @@ model:
   id: goes19
   name: "GOES-19 - GOES East"
   description: "GOES-19 (GOES East) satellite imagery, ABI CONUS product"
-  enabled: false  # Disabled for minimal OGC compliance testing
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # Defines which dimensions are exposed in capabilities and accepted in requests
@@ -46,8 +46,8 @@ schedule:
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 2                              # Keep 2 hours of imagery
-  keep_latest_observations: 24          # Always keep ~2 hours of observations (updates every ~5 min)
+  hours: 3 # Keep 3 hours of imagery for animation loops
+  keep_latest_observations: 36 # ~3 hours of observations (updates every ~5 min)
 
 # Precaching configuration - disabled for now
 precaching:

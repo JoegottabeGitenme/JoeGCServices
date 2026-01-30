@@ -12,7 +12,7 @@ model:
   id: nbm-conus
   name: "NBM - National Blend of Models (CONUS)"
   description: "NOAA/MDL National Blend of Models for CONUS, 2.5km resolution"
-  enabled: false  # Disabled for minimal OGC compliance testing
+  enabled: true
 
 # WMS/WMTS dimension configuration
 dimensions:

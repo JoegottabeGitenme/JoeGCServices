@@ -42,8 +42,8 @@ schedule:
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 0.25 # Reduced for testing: 15 minutes (was: 2 hours)
-  keep_latest_observations: 8 # Reduced for testing (was: 120)
+  hours: 2 # Keep 2 hours of radar data for animation loops
+  keep_latest_observations: 60 # ~2 hours of observations (updates every ~2 min)
 
 # Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
 precaching:

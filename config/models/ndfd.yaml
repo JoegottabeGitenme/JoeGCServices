@@ -10,7 +10,7 @@ model:
   id: ndfd
   name: "NDFD - National Digital Forecast Database"
   description: "NWS official digital gridded forecasts for CONUS, 2.5km resolution"
-  enabled: false  # Disabled for minimal OGC compliance testing
+  enabled: true
 
 # WMS/WMTS dimension configuration
 # NDFD uses TIME dimension only (like observations) since there's no run/cycle concept
