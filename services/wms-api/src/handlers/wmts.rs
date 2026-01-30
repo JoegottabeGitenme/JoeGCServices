@@ -325,10 +325,13 @@ pub async fn wmts_kvp_handler(
             let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
 
             // Validate dimension values against advertised values
+            // Per WMTS 1.0.0 spec, "default" means use the advertised default value
+            use super::common::is_default_dimension_value;
+            
             if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
-                // Validate elevation if provided
+                // Validate elevation if provided (skip if "default")
                 if let Some(ref elev) = params.elevation {
-                    if !availability.levels.is_empty() {
+                    if !is_default_dimension_value(elev) && !availability.levels.is_empty() {
                         let elev_normalized = elev.replace("_", " ");
                         let is_valid = availability.levels.iter().any(|l| {
                             l.eq_ignore_ascii_case(&elev_normalized) || l.eq_ignore_ascii_case(elev)
@@ -345,9 +348,9 @@ pub async fn wmts_kvp_handler(
                     }
                 }
 
-                // Validate forecast hour if provided (for forecast models)
+                // Validate forecast hour if provided (skip if "default")
                 if let Some(ref forecast) = params.forecast {
-                    if !availability.forecast_hours.is_empty() {
+                    if !is_default_dimension_value(forecast) && !availability.forecast_hours.is_empty() {
                         if let Ok(fh) = forecast.parse::<i32>() {
                             if !availability.forecast_hours.contains(&fh) {
                                 return wmts_exception_with_locator(
@@ -362,9 +365,9 @@ pub async fn wmts_kvp_handler(
                     }
                 }
 
-                // Validate run/time if provided
+                // Validate run/time if provided (skip if "default" or "latest")
                 if let Some(ref run) = params.run {
-                    if run != "latest" && !availability.times.is_empty() {
+                    if run != "latest" && !is_default_dimension_value(run) && !availability.times.is_empty() {
                         let is_valid = availability.times.iter().any(|t| t == run);
                         if !is_valid {
                             return wmts_exception_with_locator(
@@ -377,7 +380,7 @@ pub async fn wmts_kvp_handler(
                     }
                 }
                 if let Some(ref time) = params.time {
-                    if time != "latest" && !availability.times.is_empty() {
+                    if time != "latest" && !is_default_dimension_value(time) && !availability.times.is_empty() {
                         let is_valid = availability.times.iter().any(|t| t == time);
                         if !is_valid {
                             return wmts_exception_with_locator(
@@ -404,7 +407,7 @@ pub async fn wmts_kvp_handler(
                 tile_row,
                 forecast_hour,
                 observation_time,
-                dimensions.elevation.as_deref(),
+                dimensions.effective_elevation(),
                 format,
             )
             .await
@@ -467,10 +470,13 @@ pub async fn wmts_rest_handler(
     let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
 
     // Validate dimension values against advertised values
+    // Per WMTS 1.0.0 spec, "default" means use the advertised default value
+    use super::common::is_default_dimension_value;
+    
     if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
-        // Validate elevation if provided
+        // Validate elevation if provided (skip if "default")
         if let Some(ref elev) = params.elevation {
-            if !availability.levels.is_empty() {
+            if !is_default_dimension_value(elev) && !availability.levels.is_empty() {
                 let elev_normalized = elev.replace("_", " ");
                 let is_valid = availability.levels.iter().any(|l| {
                     l.eq_ignore_ascii_case(&elev_normalized) || l.eq_ignore_ascii_case(elev)
@@ -487,9 +493,9 @@ pub async fn wmts_rest_handler(
             }
         }
 
-        // Validate forecast hour if provided (for forecast models)
+        // Validate forecast hour if provided (skip if "default")
         if let Some(ref forecast) = params.forecast {
-            if !availability.forecast_hours.is_empty() {
+            if !is_default_dimension_value(forecast) && !availability.forecast_hours.is_empty() {
                 if let Ok(fh) = forecast.parse::<i32>() {
                     if !availability.forecast_hours.contains(&fh) {
                         return wmts_exception_with_locator(
@@ -504,9 +510,9 @@ pub async fn wmts_rest_handler(
             }
         }
 
-        // Validate run/time if provided
+        // Validate run/time if provided (skip if "default" or "latest")
         if let Some(ref run) = params.run {
-            if run != "latest" && !availability.times.is_empty() {
+            if run != "latest" && !is_default_dimension_value(run) && !availability.times.is_empty() {
                 let is_valid = availability.times.iter().any(|t| t == run);
                 if !is_valid {
                     return wmts_exception_with_locator(
@@ -519,7 +525,7 @@ pub async fn wmts_rest_handler(
             }
         }
         if let Some(ref time) = params.time {
-            if time != "latest" && !availability.times.is_empty() {
+            if time != "latest" && !is_default_dimension_value(time) && !availability.times.is_empty() {
                 let is_valid = availability.times.iter().any(|t| t == time);
                 if !is_valid {
                     return wmts_exception_with_locator(
@@ -1440,13 +1446,14 @@ fn build_wmts_capabilities_xml_v2(
         <TileMatrixSet>WorldCRS84Quad</TileMatrixSet>
       </TileMatrixSetLink>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/jpeg" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.jpg"/>
       <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
                 layer_title, layer_id,
                 west, south, east, north,
                 styles,
                 time_dimensions, elevation_dim,
-                layer_id, layer_id
+                layer_id, layer_id, layer_id
             ));
         }
 
@@ -1525,12 +1532,13 @@ fn build_wmts_capabilities_xml_v2(
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
       <TileMatrixSetLink><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></TileMatrixSetLink>
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
+      <ResourceURL format="image/jpeg" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.jpg"/>
       <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
                     model_config.display_name, layer_id,
                     west, south, east, north,
                     time_dimensions, elevation_dim,
-                    layer_id, layer_id
+                    layer_id, layer_id, layer_id
                 ));
             }
         }

@@ -114,23 +114,56 @@ impl DimensionParams {
 
         if is_observational {
             // Observation layers use TIME dimension (ISO8601)
-            let observation_time = self.time.as_ref().and_then(|t| parse_iso8601_timestamp(t));
+            // "default" means use the advertised default value (i.e., None here triggers default behavior)
+            let observation_time = self.time.as_ref().and_then(|t| {
+                if is_default_dimension_value(t) {
+                    None
+                } else {
+                    parse_iso8601_timestamp(t)
+                }
+            });
             (None, observation_time, None)
         } else {
             // Forecast models use RUN + FORECAST dimensions
+            // "default" or "latest" means use the default/latest run
             let reference_time = self.run.as_ref().and_then(|r| {
-                if r == "latest" {
-                    None // Will use latest run
+                if r == "latest" || is_default_dimension_value(r) {
+                    None // Will use latest/default run
                 } else {
                     parse_iso8601_timestamp(r)
                 }
             });
 
-            let forecast_hour = self.forecast.as_ref().and_then(|f| f.parse::<u32>().ok());
+            // "default" for forecast hour means use the default (typically 0 or first available)
+            let forecast_hour = self.forecast.as_ref().and_then(|f| {
+                if is_default_dimension_value(f) {
+                    None // Use default forecast hour
+                } else {
+                    f.parse::<u32>().ok()
+                }
+            });
 
             (forecast_hour, None, reference_time)
         }
     }
+
+    /// Get the effective elevation value, treating "default" as None.
+    /// Per WMTS 1.0.0 spec, "default" means use the advertised default value.
+    pub fn effective_elevation(&self) -> Option<&str> {
+        self.elevation.as_ref().and_then(|e| {
+            if is_default_dimension_value(e) {
+                None
+            } else {
+                Some(e.as_str())
+            }
+        })
+    }
+}
+
+/// Check if a dimension value means "use the default value"
+/// Per WMTS 1.0.0 spec, clients can send "default" to request the advertised default value.
+pub fn is_default_dimension_value(value: &str) -> bool {
+    value.eq_ignore_ascii_case("default")
 }
 
 /// Parse an ISO8601 timestamp string

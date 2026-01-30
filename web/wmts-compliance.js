@@ -1479,13 +1479,26 @@ function setTestUrl(testId, url, autoExpand = false) {
     }
 }
 
-// Toggle OGC section
-function toggleOgcSection(sectionId, event) {
+// Map old category keys to new HTML section IDs
+const CATEGORY_TO_SECTION = {
+    commonoperations: 'common',
+    getcapabilities: 'getcapabilities',
+    gettile: 'gettile',
+    dimensions: 'dimensions',
+    tilematrixset: 'tilematrixset'
+};
+
+// Toggle CITE section (supports both cite- and ogc- prefixes)
+function toggleCiteSection(sectionId, event) {
     if (event) event.stopPropagation();
     
     const section = document.getElementById(sectionId);
+    if (!section) return;
+    
     const content = section.querySelector('.ogc-content');
     const toggle = section.querySelector('.ogc-toggle');
+    
+    if (!content || !toggle) return;
     
     const isExpanded = content.style.display === 'block';
     
@@ -1498,10 +1511,20 @@ function toggleOgcSection(sectionId, event) {
     }
 }
 
-// Initialize OGC test UI
-function initOgcTests() {
+// Alias for backwards compatibility
+function toggleOgcSection(sectionId, event) {
+    toggleCiteSection(sectionId, event);
+}
+
+// Initialize CITE test UI
+function initCiteTests() {
     Object.entries(OGC_TESTS).forEach(([categoryKey, category]) => {
-        const contentEl = document.getElementById(`ogc-${categoryKey}-content`);
+        // Try new cite- prefix first, then fall back to ogc- prefix
+        const sectionKey = CATEGORY_TO_SECTION[categoryKey] || categoryKey;
+        let contentEl = document.getElementById(`cite-${sectionKey}-content`);
+        if (!contentEl) {
+            contentEl = document.getElementById(`ogc-${categoryKey}-content`);
+        }
         if (!contentEl) return;
 
         ogcTestResults[categoryKey] = {};
@@ -1510,8 +1533,11 @@ function initOgcTests() {
         });
 
         contentEl.style.display = 'none';
-        const section = document.getElementById(`ogc-${categoryKey}`);
-        const toggle = section.querySelector('.ogc-toggle');
+        let section = document.getElementById(`cite-${sectionKey}`);
+        if (!section) {
+            section = document.getElementById(`ogc-${categoryKey}`);
+        }
+        const toggle = section?.querySelector('.ogc-toggle');
         if (toggle) toggle.textContent = '▶';
 
         contentEl.innerHTML = `
@@ -1525,6 +1551,7 @@ function initOgcTests() {
                     <div class="ogc-test" id="ogc-test-${test.id}">
                         <div class="ogc-test-left">
                             <div class="ogc-test-id">
+                                <span class="req-badge req-mandatory">M</span>
                                 ${test.id}
                                 <button class="ogc-test-toggle-url" onclick="toggleTestUrl('${test.id}', event)" title="Show/hide request URL">URL</button>
                             </div>
@@ -1551,7 +1578,88 @@ function initOgcTests() {
         `;
     });
 
-    updateOgcSummary();
+    // Initialize conformance table
+    initConformanceTable();
+    
+    // Initialize manual checklist
+    initManualChecklist();
+
+    updateCiteSummary();
+}
+
+// Alias for backwards compatibility
+function initOgcTests() {
+    initCiteTests();
+}
+
+// Initialize conformance summary table
+function initConformanceTable() {
+    const tbody = document.getElementById('conformance-table-body');
+    if (!tbody) return;
+    
+    const modules = [
+        { key: 'commonoperations', name: 'Common Operations' },
+        { key: 'getcapabilities', name: 'GetCapabilities' },
+        { key: 'gettile', name: 'GetTile' },
+        { key: 'dimensions', name: 'Dimensions' },
+        { key: 'tilematrixset', name: 'TileMatrixSet' }
+    ];
+    
+    tbody.innerHTML = modules.map(mod => {
+        const tests = OGC_TESTS[mod.key]?.tests || [];
+        const total = tests.length;
+        return `
+            <tr>
+                <td>${mod.name}</td>
+                <td id="conf-${mod.key}-mandatory">--</td>
+                <td id="conf-${mod.key}-optional">--</td>
+                <td id="conf-${mod.key}-recommendation">--</td>
+                <td id="conf-${mod.key}-total">${total}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Initialize manual verification checklist
+function initManualChecklist() {
+    const container = document.getElementById('manual-checklist-content');
+    if (!container) return;
+    
+    const manualTests = [
+        { id: 'manual-tile-visual', name: 'Tile Visual Quality', desc: 'Verify tile images render correctly with expected visual appearance' },
+        { id: 'manual-dimension-behavior', name: 'Dimension Behavior', desc: 'Verify TIME/ELEVATION/RUN/FORECAST dimensions produce different outputs' },
+        { id: 'manual-boundary-tiles', name: 'Boundary Tiles', desc: 'Verify tiles at layer boundaries handle edge cases correctly' }
+    ];
+    
+    container.innerHTML = manualTests.map(test => `
+        <div class="manual-item" id="manual-${test.id}">
+            <div class="manual-item-left">
+                <span class="req-badge req-manual">Man</span>
+                <span class="manual-item-name">${test.name}</span>
+                <span class="manual-item-desc">${test.desc}</span>
+            </div>
+            <div class="manual-item-actions">
+                <button class="manual-btn pass" onclick="markManualTest('${test.id}', 'pass')">Pass</button>
+                <button class="manual-btn fail" onclick="markManualTest('${test.id}', 'fail')">Fail</button>
+                <button class="manual-btn skip" onclick="markManualTest('${test.id}', 'skip')">Skip</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Mark manual test result
+function markManualTest(testId, status) {
+    const item = document.getElementById(`manual-${testId}`);
+    if (!item) return;
+    
+    item.classList.remove('pass', 'fail', 'skip');
+    item.classList.add(status);
+    
+    // Update buttons
+    item.querySelectorAll('.manual-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    item.querySelector(`.manual-btn.${status}`)?.classList.add('active');
 }
 
 // Build test context from loaded layers
@@ -1717,19 +1825,23 @@ async function runOgcCategory(categoryKey) {
     }
 }
 
-// Run all OGC tests
-async function runAllOgcTests() {
-    const btn = document.getElementById('run-all-ogc-btn');
-    btn.disabled = true;
-    btn.textContent = 'Running...';
+// Run all CITE tests
+async function runAllCiteTests() {
+    // Try cite- prefix first, then ogc-
+    const btn = document.getElementById('run-all-cite-btn') || document.getElementById('run-all-ogc-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+    }
 
     buildOgcTestContext();
 
     const categoryKeys = Object.keys(OGC_TESTS);
     for (let i = 0; i < categoryKeys.length; i++) {
         const categoryKey = categoryKeys[i];
-        const section = document.getElementById(`ogc-${categoryKey}`);
-        section.classList.add('expanded');
+        const sectionKey = CATEGORY_TO_SECTION[categoryKey] || categoryKey;
+        const section = document.getElementById(`cite-${sectionKey}`) || document.getElementById(`ogc-${categoryKey}`);
+        if (section) section.classList.add('expanded');
 
         await runOgcCategory(categoryKey);
 
@@ -1738,8 +1850,15 @@ async function runAllOgcTests() {
         }
     }
 
-    btn.disabled = false;
-    btn.textContent = 'Run All OGC Tests';
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Run All CITE Tests';
+    }
+}
+
+// Alias for backwards compatibility
+async function runAllOgcTests() {
+    return runAllCiteTests();
 }
 
 // Update category status
@@ -1752,7 +1871,12 @@ function updateOgcCategoryStatus(categoryKey) {
     const skipped = tests.filter(t => t.status === 'skipped').length;
     const total = tests.length;
 
-    const scoreEl = document.getElementById(`ogc-${categoryKey}-score`);
+    // Try cite- prefix first, then ogc- prefix
+    const sectionKey = CATEGORY_TO_SECTION[categoryKey] || categoryKey;
+    let scoreEl = document.getElementById(`cite-${sectionKey}-score`);
+    if (!scoreEl) {
+        scoreEl = document.getElementById(`ogc-${categoryKey}-score`);
+    }
     if (!scoreEl) return;
 
     if (pass + fail + skipped === 0) {
@@ -1777,7 +1901,7 @@ function updateOgcCategoryStatus(categoryKey) {
 }
 
 // Update overall summary
-function updateOgcSummary() {
+function updateCiteSummary() {
     let totalPass = 0;
     let totalFail = 0;
     let totalPending = 0;
@@ -1790,9 +1914,25 @@ function updateOgcSummary() {
         });
     });
 
-    document.getElementById('ogc-pass-count').textContent = totalPass;
-    document.getElementById('ogc-fail-count').textContent = totalFail;
-    document.getElementById('ogc-pending-count').textContent = totalPending;
+    // Update with cite- prefix first, fall back to ogc-
+    const passEl = document.getElementById('cite-pass-count') || document.getElementById('ogc-pass-count');
+    const failEl = document.getElementById('cite-fail-count') || document.getElementById('ogc-fail-count');
+    const pendingEl = document.getElementById('cite-pending-count') || document.getElementById('ogc-pending-count');
+    
+    if (passEl) passEl.textContent = totalPass;
+    if (failEl) failEl.textContent = totalFail;
+    if (pendingEl) pendingEl.textContent = totalPending;
+    
+    // Update conformance class indicators
+    const kvpConf = document.getElementById('kvp-conformance');
+    const restConf = document.getElementById('rest-conformance');
+    if (kvpConf) kvpConf.textContent = `${totalPass}/${totalPass + totalFail + totalPending}`;
+    if (restConf) restConf.textContent = '--/--'; // REST tests not yet implemented
+}
+
+// Alias for backwards compatibility  
+function updateOgcSummary() {
+    updateCiteSummary();
 }
 
 // ============================================================
@@ -2389,8 +2529,12 @@ function escapeHtml(text) {
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    initOgcTests();
-    document.getElementById('run-all-ogc-btn').addEventListener('click', runAllOgcTests);
+    initCiteTests();
+    // Try both button IDs for compatibility
+    const runAllBtn = document.getElementById('run-all-cite-btn') || document.getElementById('run-all-ogc-btn');
+    if (runAllBtn) {
+        runAllBtn.addEventListener('click', runAllCiteTests);
+    }
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
