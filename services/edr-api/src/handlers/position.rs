@@ -20,7 +20,9 @@ use std::{collections::HashMap, sync::Arc};
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
-use crate::handlers::forecast_params::{ForecastParams, ForecastQueryStrategy, validate_not_observation_data};
+use crate::handlers::forecast_params::{
+    validate_not_observation_data, ForecastParams, ForecastQueryStrategy,
+};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, FormatType, Timer,
@@ -196,15 +198,13 @@ async fn position_query(
     }
 
     // Parse and validate forecast parameters (run, forecast-hour)
-    let forecast_params = match ForecastParams::parse(
-        params.run.as_deref(),
-        params.forecast_hour.as_deref(),
-    ) {
-        Ok(fp) => fp,
-        Err(e) => {
-            return error_response(StatusCode::BAD_REQUEST, e);
-        }
-    };
+    let forecast_params =
+        match ForecastParams::parse(params.run.as_deref(), params.forecast_hour.as_deref()) {
+            Ok(fp) => fp,
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, e);
+            }
+        };
 
     // Validate that forecast params are not used with observation data
     // (observation_data flag is set in ModelEdrConfig)
@@ -385,7 +385,7 @@ async fn position_query(
 
     // Get the list of target times (times user wants in the response)
     let mut target_times: Vec<DateTime<Utc>> = Vec::new();
-    
+
     // Track if we're using forecast-based time resolution (run + forecast-hour)
     // In this mode, we store (reference_time, forecast_hour) pairs for later query building
     let mut forecast_hour_queries: Vec<(DateTime<Utc>, i32)> = Vec::new();
@@ -398,7 +398,8 @@ async fn position_query(
     match &forecast_strategy {
         ForecastQueryStrategy::StrictRunHours { run, hours } => {
             // Get available forecast hours for this run
-            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await {
+            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await
+            {
                 Ok(h) => h,
                 Err(e) => {
                     return error_response(
@@ -445,7 +446,8 @@ async fn position_query(
         }
         ForecastQueryStrategy::AllHoursForRun(run) => {
             // Get all available forecast hours for this run
-            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await {
+            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await
+            {
                 Ok(h) => h,
                 Err(e) => {
                     return error_response(
@@ -482,27 +484,27 @@ async fn position_query(
 
     // If not using forecast hours, use datetime parameter
     if !use_forecast_hours {
-    if let Some(ref dq) = datetime_query {
-        // Check if we need to generate times with step parameter
-        if dq.is_interval()
-            && step_duration.is_some()
-            && interpolation_method.requires_interpolation()
-        {
-            // Generate times at step intervals within the datetime range
-            let interval_bounds = dq.to_vec();
-            if interval_bounds.len() == 2 {
-                let start = DateTime::parse_from_rfc3339(&interval_bounds[0])
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .ok();
-                let end = DateTime::parse_from_rfc3339(&interval_bounds[1])
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .ok();
+        if let Some(ref dq) = datetime_query {
+            // Check if we need to generate times with step parameter
+            if dq.is_interval()
+                && step_duration.is_some()
+                && interpolation_method.requires_interpolation()
+            {
+                // Generate times at step intervals within the datetime range
+                let interval_bounds = dq.to_vec();
+                if interval_bounds.len() == 2 {
+                    let start = DateTime::parse_from_rfc3339(&interval_bounds[0])
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok();
+                    let end = DateTime::parse_from_rfc3339(&interval_bounds[1])
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok();
 
-                if let (Some(start), Some(end)) = (start, end) {
-                    // Validate times are within temporal extent
-                    if let Some((extent_start, extent_end)) = temporal_extent {
-                        if start < extent_start || end > extent_end {
-                            return error_response(
+                    if let (Some(start), Some(end)) = (start, end) {
+                        // Validate times are within temporal extent
+                        if let Some((extent_start, extent_end)) = temporal_extent {
+                            if start < extent_start || end > extent_end {
+                                return error_response(
                                 StatusCode::BAD_REQUEST,
                                 ExceptionResponse::bad_request(format!(
                                     "Requested datetime range {}/{} exceeds collection temporal extent {}/{}",
@@ -511,42 +513,43 @@ async fn position_query(
                                     extent_end.format("%Y-%m-%dT%H:%M:%SZ")
                                 )),
                             );
+                            }
                         }
-                    }
 
-                    target_times = expand_interval_with_step(start, end, step_duration.unwrap());
+                        target_times =
+                            expand_interval_with_step(start, end, step_duration.unwrap());
+                    } else {
+                        return error_response(
+                            StatusCode::BAD_REQUEST,
+                            ExceptionResponse::bad_request("Invalid datetime interval format"),
+                        );
+                    }
                 } else {
                     return error_response(
                         StatusCode::BAD_REQUEST,
-                        ExceptionResponse::bad_request("Invalid datetime interval format"),
+                        ExceptionResponse::bad_request(
+                            "Step parameter requires a datetime interval with start and end",
+                        ),
                     );
                 }
+            } else if dq.is_interval() {
+                // Standard interval expansion without step
+                let expanded = dq.expand_against_available_times(&available_time_strings);
+                target_times = expanded
+                    .iter()
+                    .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .collect();
             } else {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    ExceptionResponse::bad_request(
-                        "Step parameter requires a datetime interval with start and end",
-                    ),
-                );
+                // Instant or list - parse directly
+                let time_vec = dq.to_vec();
+                target_times = time_vec
+                    .iter()
+                    .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .collect();
             }
-        } else if dq.is_interval() {
-            // Standard interval expansion without step
-            let expanded = dq.expand_against_available_times(&available_time_strings);
-            target_times = expanded
-                .iter()
-                .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .collect();
-        } else {
-            // Instant or list - parse directly
-            let time_vec = dq.to_vec();
-            target_times = time_vec
-                .iter()
-                .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .collect();
         }
-    }
     } // End of !use_forecast_hours block
 
     // Build interpolation plan: map each target time to how it should be queried

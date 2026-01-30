@@ -68,20 +68,26 @@ impl WmtsKvpParams {
             .filter_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 let key = parts.next()?.to_uppercase();
-                let value = parts.next().map(|v| {
-                    // Simple percent-decoding for common cases
-                    v.replace("%2F", "/")
-                        .replace("%3A", ":")
-                        .replace("%20", " ")
-                        .replace("+", " ")
-                }).unwrap_or_default();
+                let value = parts
+                    .next()
+                    .map(|v| {
+                        // Simple percent-decoding for common cases
+                        v.replace("%2F", "/")
+                            .replace("%3A", ":")
+                            .replace("%20", " ")
+                            .replace("+", " ")
+                    })
+                    .unwrap_or_default();
                 Some((key, value))
             })
             .collect();
 
         params.service = map.get("SERVICE").cloned();
         params.request = map.get("REQUEST").cloned();
-        params.version = map.get("VERSION").or_else(|| map.get("ACCEPTVERSIONS")).cloned();
+        params.version = map
+            .get("VERSION")
+            .or_else(|| map.get("ACCEPTVERSIONS"))
+            .cloned();
         params.layer = map.get("LAYER").cloned();
         params.style = map.get("STYLE").cloned();
         params.tile_matrix_set = map.get("TILEMATRIXSET").cloned();
@@ -322,13 +328,22 @@ pub async fn wmts_kvp_handler(
             };
 
             let model = layer.split('_').next().unwrap_or("");
-            let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
+            let parameter = layer
+                .split('_')
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join("_")
+                .to_uppercase();
 
             // Validate dimension values against advertised values
             // Per WMTS 1.0.0 spec, "default" means use the advertised default value
             use super::common::is_default_dimension_value;
-            
-            if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
+
+            if let Ok(Some(availability)) = state
+                .catalog
+                .get_parameter_availability(model, &parameter)
+                .await
+            {
                 // Validate elevation if provided (skip if "default")
                 if let Some(ref elev) = params.elevation {
                     if !is_default_dimension_value(elev) && !availability.levels.is_empty() {
@@ -339,8 +354,12 @@ pub async fn wmts_kvp_handler(
                         if !is_valid {
                             return wmts_exception_with_locator(
                                 "InvalidParameterValue",
-                                &format!("ELEVATION '{}' is not valid for layer '{}'. Valid values: {}", 
-                                    elev, layer, availability.levels.join(", ")),
+                                &format!(
+                                    "ELEVATION '{}' is not valid for layer '{}'. Valid values: {}",
+                                    elev,
+                                    layer,
+                                    availability.levels.join(", ")
+                                ),
                                 Some("elevation"),
                                 StatusCode::BAD_REQUEST,
                             );
@@ -350,7 +369,9 @@ pub async fn wmts_kvp_handler(
 
                 // Validate forecast hour if provided (skip if "default")
                 if let Some(ref forecast) = params.forecast {
-                    if !is_default_dimension_value(forecast) && !availability.forecast_hours.is_empty() {
+                    if !is_default_dimension_value(forecast)
+                        && !availability.forecast_hours.is_empty()
+                    {
                         if let Ok(fh) = forecast.parse::<i32>() {
                             if !availability.forecast_hours.contains(&fh) {
                                 return wmts_exception_with_locator(
@@ -367,7 +388,10 @@ pub async fn wmts_kvp_handler(
 
                 // Validate run/time if provided (skip if "default" or "latest")
                 if let Some(ref run) = params.run {
-                    if run != "latest" && !is_default_dimension_value(run) && !availability.times.is_empty() {
+                    if run != "latest"
+                        && !is_default_dimension_value(run)
+                        && !availability.times.is_empty()
+                    {
                         let is_valid = availability.times.iter().any(|t| t == run);
                         if !is_valid {
                             return wmts_exception_with_locator(
@@ -380,7 +404,10 @@ pub async fn wmts_kvp_handler(
                     }
                 }
                 if let Some(ref time) = params.time {
-                    if time != "latest" && !is_default_dimension_value(time) && !availability.times.is_empty() {
+                    if time != "latest"
+                        && !is_default_dimension_value(time)
+                        && !availability.times.is_empty()
+                    {
                         let is_valid = availability.times.iter().any(|t| t == time);
                         if !is_valid {
                             return wmts_exception_with_locator(
@@ -414,7 +441,10 @@ pub async fn wmts_kvp_handler(
         }
         _ => wmts_exception_with_locator(
             "InvalidParameterValue",
-            &format!("REQUEST '{}' is not supported. Supported: GetCapabilities, GetTile", request),
+            &format!(
+                "REQUEST '{}' is not supported. Supported: GetCapabilities, GetTile",
+                request
+            ),
             Some("request"),
             StatusCode::BAD_REQUEST,
         ),
@@ -467,13 +497,22 @@ pub async fn wmts_rest_handler(
     };
 
     let model = layer.split('_').next().unwrap_or("");
-    let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
+    let parameter = layer
+        .split('_')
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("_")
+        .to_uppercase();
 
     // Validate dimension values against advertised values
     // Per WMTS 1.0.0 spec, "default" means use the advertised default value
     use super::common::is_default_dimension_value;
-    
-    if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
+
+    if let Ok(Some(availability)) = state
+        .catalog
+        .get_parameter_availability(model, &parameter)
+        .await
+    {
         // Validate elevation if provided (skip if "default")
         if let Some(ref elev) = params.elevation {
             if !is_default_dimension_value(elev) && !availability.levels.is_empty() {
@@ -484,8 +523,12 @@ pub async fn wmts_rest_handler(
                 if !is_valid {
                     return wmts_exception_with_locator(
                         "InvalidParameterValue",
-                        &format!("ELEVATION '{}' is not valid for layer '{}'. Valid values: {}", 
-                            elev, layer, availability.levels.join(", ")),
+                        &format!(
+                            "ELEVATION '{}' is not valid for layer '{}'. Valid values: {}",
+                            elev,
+                            layer,
+                            availability.levels.join(", ")
+                        ),
                         Some("elevation"),
                         StatusCode::BAD_REQUEST,
                     );
@@ -500,8 +543,10 @@ pub async fn wmts_rest_handler(
                     if !availability.forecast_hours.contains(&fh) {
                         return wmts_exception_with_locator(
                             "InvalidParameterValue",
-                            &format!("FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}", 
-                                forecast, layer, availability.forecast_hours),
+                            &format!(
+                                "FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}",
+                                forecast, layer, availability.forecast_hours
+                            ),
                             Some("forecast"),
                             StatusCode::BAD_REQUEST,
                         );
@@ -512,7 +557,8 @@ pub async fn wmts_rest_handler(
 
         // Validate run/time if provided (skip if "default" or "latest")
         if let Some(ref run) = params.run {
-            if run != "latest" && !is_default_dimension_value(run) && !availability.times.is_empty() {
+            if run != "latest" && !is_default_dimension_value(run) && !availability.times.is_empty()
+            {
                 let is_valid = availability.times.iter().any(|t| t == run);
                 if !is_valid {
                     return wmts_exception_with_locator(
@@ -525,7 +571,10 @@ pub async fn wmts_rest_handler(
             }
         }
         if let Some(ref time) = params.time {
-            if time != "latest" && !is_default_dimension_value(time) && !availability.times.is_empty() {
+            if time != "latest"
+                && !is_default_dimension_value(time)
+                && !availability.times.is_empty()
+            {
                 let is_valid = availability.times.iter().any(|t| t == time);
                 if !is_valid {
                     return wmts_exception_with_locator(
@@ -896,17 +945,21 @@ async fn wmts_get_tile(
                 // Get valid styles from the layer's style configuration
                 let style_path = configs.get_style_path(lc);
                 let valid_styles = get_valid_styles_from_file(&style_path);
-                
+
                 // Check if requested style is valid (case-insensitive)
                 let style_lower = style.to_lowercase();
-                let is_valid_style = style_lower == "default" 
+                let is_valid_style = style_lower == "default"
                     || valid_styles.iter().any(|s| s.to_lowercase() == style_lower);
-                
+
                 if !is_valid_style {
                     return wmts_exception_with_locator(
                         "InvalidParameterValue",
-                        &format!("Style '{}' is not defined for layer '{}'. Valid styles: {}", 
-                            style, layer, valid_styles.join(", ")),
+                        &format!(
+                            "Style '{}' is not defined for layer '{}'. Valid styles: {}",
+                            style,
+                            layer,
+                            valid_styles.join(", ")
+                        ),
                         Some("style"),
                         StatusCode::BAD_REQUEST,
                     );

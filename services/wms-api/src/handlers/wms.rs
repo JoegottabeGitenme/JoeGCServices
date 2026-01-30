@@ -208,13 +208,13 @@ fn validate_bbox(bbox: Option<&str>, crs: Option<&str>) -> Result<(), WmsError> 
     // Check for zero-size bounding box (min == max)
     if (min_x - max_x).abs() < f64::EPSILON {
         return Err(WmsError::InvalidBBox(
-            "Invalid BBOX: minX equals maxX (zero width)".to_string()
+            "Invalid BBOX: minX equals maxX (zero width)".to_string(),
         ));
     }
 
     if (min_y - max_y).abs() < f64::EPSILON {
         return Err(WmsError::InvalidBBox(
-            "Invalid BBOX: minY equals maxY (zero height)".to_string()
+            "Invalid BBOX: minY equals maxY (zero height)".to_string(),
         ));
     }
 
@@ -285,18 +285,12 @@ impl WmsParams {
     /// This complies with OGC WMS 1.3.0 spec section 6.8.1.
     pub fn from_query_map(query: &HashMap<String, String>) -> Self {
         // Create a case-insensitive lookup map (keys are uppercase)
-        let ci_map: HashMap<String, &String> = query
-            .iter()
-            .map(|(k, v)| (k.to_uppercase(), v))
-            .collect();
+        let ci_map: HashMap<String, &String> =
+            query.iter().map(|(k, v)| (k.to_uppercase(), v)).collect();
 
-        let get_str = |key: &str| -> Option<String> {
-            ci_map.get(key).map(|s| (*s).clone())
-        };
+        let get_str = |key: &str| -> Option<String> { ci_map.get(key).map(|s| (*s).clone()) };
 
-        let get_u32 = |key: &str| -> Option<u32> {
-            ci_map.get(key).and_then(|s| s.parse().ok())
-        };
+        let get_u32 = |key: &str| -> Option<u32> { ci_map.get(key).and_then(|s| s.parse().ok()) };
 
         WmsParams {
             service: get_str("SERVICE"),
@@ -348,7 +342,7 @@ pub async fn wms_handler(
     // - If provided, must be "WMS"
     let service = params.service.as_deref().map(|s| s.to_uppercase());
     let service_required = matches!(request.as_deref(), Some("GETCAPABILITIES"));
-    
+
     match (service.as_deref(), service_required) {
         (Some("WMS"), _) => {} // Valid SERVICE=WMS
         (Some(_), _) => {
@@ -498,7 +492,9 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
     let width = params.width.unwrap_or(256);
     let height = params.height.unwrap_or(256);
     // Per OGC WMS 1.3.0 spec 7.3.3.4: Empty STYLES parameter means use default style
-    let styles_param = params.styles.as_deref()
+    let styles_param = params
+        .styles
+        .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or("default");
     let bbox = params.bbox.as_deref();
@@ -583,19 +579,22 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                     if !style.is_empty() && *style != "default" {
                         return wms_exception(
                             "StyleNotDefined",
-                            &format!("Style '{}' is not defined for CITE layer '{}'", style, layer_name),
+                            &format!(
+                                "Style '{}' is not defined for CITE layer '{}'",
+                                style, layer_name
+                            ),
                             StatusCode::BAD_REQUEST,
                         );
                     }
                 }
                 continue;
             }
-            
+
             // Parse layer name (format: model_parameter)
             if let Some(underscore_pos) = layer_name.find('_') {
                 let model = &layer_name[..underscore_pos];
                 let param = &layer_name[underscore_pos + 1..];
-                
+
                 if !layer_configs.has_layer(model, param) {
                     return wms_exception(
                         "LayerNotDefined",
@@ -603,7 +602,7 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                         StatusCode::BAD_REQUEST,
                     );
                 }
-                
+
                 // Validate style if specified
                 if let Some(style) = style_names.get(idx) {
                     if !style.is_empty() && *style != "default" {
@@ -611,13 +610,22 @@ async fn wms_get_map(state: Arc<AppState>, params: WmsParams) -> Response {
                         if let Some(layer_config) = layer_configs.get_layer_by_param(model, param) {
                             let style_file = &layer_config.style_file;
                             // Load style file and check if style exists
-                            if let Ok(content) = std::fs::read_to_string(format!("config/styles/{}", style_file)) {
-                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                                    if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+                            if let Ok(content) =
+                                std::fs::read_to_string(format!("config/styles/{}", style_file))
+                            {
+                                if let Ok(json) =
+                                    serde_json::from_str::<serde_json::Value>(&content)
+                                {
+                                    if let Some(styles) =
+                                        json.get("styles").and_then(|s| s.as_object())
+                                    {
                                         if !styles.contains_key(*style) {
                                             return wms_exception(
                                                 "StyleNotDefined",
-                                                &format!("Style '{}' is not defined for layer '{}'", style, layer_name),
+                                                &format!(
+                                                    "Style '{}' is not defined for layer '{}'",
+                                                    style, layer_name
+                                                ),
                                                 StatusCode::BAD_REQUEST,
                                             );
                                         }
@@ -994,7 +1002,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
                 }
             }
         }
-        
+
         let parts: Vec<&str> = layer.split('_').collect();
         if parts.len() < 2 {
             return wms_exception(
@@ -1029,9 +1037,17 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             match cite::get_cite_feature_info(layer, i, j, width, height, bbox_array) {
                 Ok(attrs) if !attrs.is_empty() => {
                     // Extract location from attributes
-                    let lon: f64 = attrs.iter().find(|(k, _)| k == "x").map(|(_, v)| v.parse().unwrap_or(0.0)).unwrap_or(0.0);
-                    let lat: f64 = attrs.iter().find(|(k, _)| k == "y").map(|(_, v)| v.parse().unwrap_or(0.0)).unwrap_or(0.0);
-                    
+                    let lon: f64 = attrs
+                        .iter()
+                        .find(|(k, _)| k == "x")
+                        .map(|(_, v)| v.parse().unwrap_or(0.0))
+                        .unwrap_or(0.0);
+                    let lat: f64 = attrs
+                        .iter()
+                        .find(|(k, _)| k == "y")
+                        .map(|(_, v)| v.parse().unwrap_or(0.0))
+                        .unwrap_or(0.0);
+
                     // Create FeatureInfo for CITE layer
                     let feature = wms_protocol::FeatureInfo {
                         layer_name: layer.to_string(),
@@ -1057,7 +1073,7 @@ async fn wms_get_feature_info(state: Arc<AppState>, params: WmsParams) -> Respon
             }
             continue;
         }
-        
+
         // Get effective elevation (use default if not specified)
         let effective_elevation: Option<String> = match &elevation {
             Some(elev) => Some(elev.clone()),
@@ -1153,9 +1169,18 @@ async fn render_weather_data(
 ) -> Result<Vec<u8>, WmsError> {
     // Check for CITE test layers (cite:Lakes, cite:Ponds, etc.)
     if cite::is_cite_layer(layer) {
-        return render_cite_layer(layer, width, height, bbox, crs, version, transparent, bgcolor);
+        return render_cite_layer(
+            layer,
+            width,
+            height,
+            bbox,
+            crs,
+            version,
+            transparent,
+            bgcolor,
+        );
     }
-    
+
     // Parse layer name (format: "model_parameter" or "model_WIND_BARBS")
     let parts: Vec<&str> = layer.split('_').collect();
     if parts.len() < 2 {
@@ -1427,7 +1452,7 @@ async fn render_multi_layer(
 }
 
 /// Apply background color to a transparent PNG
-/// 
+///
 /// Per WMS 1.3.0 spec, when TRANSPARENT=FALSE, transparent areas should be
 /// filled with BGCOLOR (default white 0xFFFFFF).
 fn apply_bgcolor(
@@ -1468,9 +1493,9 @@ fn apply_bgcolor(
     let mut png_bytes: Vec<u8> = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(Cursor::new(&mut png_bytes));
 
-    result
-        .write_with_encoder(encoder)
-        .map_err(|e| WmsError::RenderingError(format!("Failed to encode PNG with bgcolor: {}", e)))?;
+    result.write_with_encoder(encoder).map_err(|e| {
+        WmsError::RenderingError(format!("Failed to encode PNG with bgcolor: {}", e))
+    })?;
 
     Ok(png_bytes)
 }
@@ -1637,10 +1662,10 @@ fn build_wms_capabilities_xml_v2(
                 east,
                 south,
                 north,
-                south,  // minx = south latitude (WMS 1.3.0 EPSG:4326 uses lat/lon order)
-                west,   // miny = west longitude
-                north,  // maxx = north latitude
-                east,   // maxy = east longitude
+                south, // minx = south latitude (WMS 1.3.0 EPSG:4326 uses lat/lon order)
+                west,  // miny = west longitude
+                north, // maxx = north latitude
+                east,  // maxy = east longitude
                 styles_xml,
                 dimensions_xml
             );
@@ -1712,10 +1737,10 @@ fn build_wms_capabilities_xml_v2(
                     east,
                     south,
                     north,
-                    south,  // minx = south latitude (WMS 1.3.0 EPSG:4326 uses lat/lon order)
-                    west,   // miny = west longitude
-                    north,  // maxx = north latitude
-                    east,   // maxy = east longitude
+                    south, // minx = south latitude (WMS 1.3.0 EPSG:4326 uses lat/lon order)
+                    west,  // miny = west longitude
+                    north, // maxx = north latitude
+                    east,  // maxy = east longitude
                     dimensions_xml
                 );
                 layer_xml_parts.push(wind_layer_xml);

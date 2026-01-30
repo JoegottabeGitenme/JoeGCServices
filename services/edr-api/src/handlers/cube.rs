@@ -30,7 +30,7 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::{build_level_string, LevelValue};
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
-use crate::handlers::forecast_params::{ForecastParams, validate_not_observation_data};
+use crate::handlers::forecast_params::{validate_not_observation_data, ForecastParams};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
@@ -179,15 +179,13 @@ async fn cube_query(
     }
 
     // Parse and validate forecast parameters (run, forecast-hour)
-    let forecast_params = match ForecastParams::parse(
-        params.run.as_deref(),
-        params.forecast_hour.as_deref(),
-    ) {
-        Ok(fp) => fp,
-        Err(e) => {
-            return error_response(StatusCode::BAD_REQUEST, e);
-        }
-    };
+    let forecast_params =
+        match ForecastParams::parse(params.run.as_deref(), params.forecast_hour.as_deref()) {
+            Ok(fp) => fp,
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, e);
+            }
+        };
 
     // Validate that forecast params are not used with observation data
     let is_observation_model = model_config.create_query("dummy").observation_data;
