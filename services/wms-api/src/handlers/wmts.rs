@@ -376,7 +376,7 @@ pub async fn wmts_kvp_handler(
                             if !availability.forecast_hours.contains(&fh) {
                                 return wmts_exception_with_locator(
                                     "InvalidParameterValue",
-                                    &format!("FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}", 
+                                    &format!("FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}",
                                         forecast, layer, availability.forecast_hours),
                                     Some("forecast"),
                                     StatusCode::BAD_REQUEST,
