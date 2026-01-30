@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WMS 1.3.0 OGC Compliance Tests</title>
+    <title>WMS 1.3.0 CITE Compliance Tests</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="wms-compliance.css">
 </head>
@@ -13,7 +13,7 @@
     <div class="header">
         <div class="header-left">
             <a href="index.html" class="back-link">← Back to Map</a>
-            <h1>WMS 1.3.0 OGC Compliance Tests</h1>
+            <h1>WMS 1.3.0 CITE Compliance Tests</h1>
         </div>
         <span class="header-badge">OGC TEAM ENGINE</span>
     </div>
@@ -38,88 +38,259 @@
         </div>
     </div>
 
-    <!-- OGC Protocol Compliance Overall Summary -->
+    <!-- Conformance Summary -->
+    <div class="conformance-summary">
+        <div class="conformance-header">
+            <div class="conformance-title">
+                <h2>WMS 1.3.0 Conformance Summary</h2>
+                <span class="conformance-subtitle">OGC 06-042 Implementation Specification</span>
+            </div>
+            <div class="conformance-classes">
+                <div class="conformance-class">
+                    <span class="conformance-label">Basic WMS</span>
+                    <span class="conformance-value" id="basic-conformance">--/--</span>
+                </div>
+                <div class="conformance-class">
+                    <span class="conformance-label">Queryable WMS</span>
+                    <span class="conformance-value" id="queryable-conformance">--/--</span>
+                </div>
+            </div>
+        </div>
+        <table class="conformance-table">
+            <thead>
+                <tr>
+                    <th>Module</th>
+                    <th>Mandatory</th>
+                    <th>Optional</th>
+                    <th>Recommendation</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody id="conformance-table-body">
+                <!-- Populated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- CITE Protocol Compliance Overall Summary -->
     <div class="ogc-overall">
         <div class="ogc-overall-left">
-            <span class="ogc-overall-title">OGC Protocol Compliance</span>
+            <span class="ogc-overall-title">CITE Test Results</span>
             <div class="ogc-overall-stats">
                 <div class="ogc-stat">
-                    <span class="ogc-stat-value pass" id="ogc-pass-count">0</span>
+                    <span class="ogc-stat-value pass" id="cite-pass-count">0</span>
                     <span class="ogc-stat-label">Pass</span>
                 </div>
                 <div class="ogc-stat">
-                    <span class="ogc-stat-value fail" id="ogc-fail-count">0</span>
+                    <span class="ogc-stat-value fail" id="cite-fail-count">0</span>
                     <span class="ogc-stat-label">Fail</span>
                 </div>
                 <div class="ogc-stat">
-                    <span class="ogc-stat-value pending" id="ogc-pending-count">0</span>
+                    <span class="ogc-stat-value pending" id="cite-pending-count">0</span>
                     <span class="ogc-stat-label">Pending</span>
                 </div>
             </div>
         </div>
         <div class="ogc-overall-right">
-            <button class="ogc-run-all-btn" id="run-all-ogc-btn">Run All OGC Tests</button>
+            <div class="req-legend">
+                <span class="req-badge req-mandatory">M</span> Mandatory
+                <span class="req-badge req-optional">O</span> Optional
+                <span class="req-badge req-recommendation">R</span> Recommendation
+                <span class="req-badge req-manual">Man</span> Manual
+            </div>
+            <button class="ogc-run-all-btn" id="run-all-cite-btn">Run All CITE Tests</button>
         </div>
     </div>
 
-    <!-- OGC GetCapabilities Tests -->
-    <div class="ogc-section" id="ogc-getcapabilities">
-        <div class="ogc-header" onclick="toggleOgcSection('ogc-getcapabilities', event)">
+    <!-- CITE Main Entry Point Tests -->
+    <div class="ogc-section" id="cite-main">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-main', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Main Entry Point</span>
+                <span class="ogc-subtitle">Overall compliance verification (3 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-main-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-main-content"></div>
+    </div>
+
+    <!-- CITE Basic WMS Tests -->
+    <div class="ogc-section" id="cite-basic">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-basic', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Basic WMS</span>
+                <span class="ogc-subtitle">Core WMS functionality (14 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-basic-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-basic-content"></div>
+    </div>
+
+    <!-- CITE Basic Elements Tests -->
+    <div class="ogc-section" id="cite-basic_elements">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-basic_elements', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Basic Elements</span>
+                <span class="ogc-subtitle">HTTP protocol and request formatting (10 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-basic_elements-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-basic_elements-content"></div>
+    </div>
+
+    <!-- CITE GetCapabilities Tests -->
+    <div class="ogc-section" id="cite-getcapabilities">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-getcapabilities', event)">
             <div class="ogc-header-left">
                 <span class="ogc-toggle">▶</span>
                 <span class="ogc-title">GetCapabilities</span>
-                <span class="ogc-subtitle">Version negotiation, XML validation, metadata</span>
+                <span class="ogc-subtitle">Service metadata validation (34 tests)</span>
             </div>
             <div class="ogc-header-right">
-                <span class="ogc-score pending" id="ogc-getcapabilities-score">-- / --</span>
+                <span class="ogc-score pending" id="cite-getcapabilities-score">-- / --</span>
             </div>
         </div>
-        <div class="ogc-content" id="ogc-getcapabilities-content"></div>
+        <div class="ogc-content" id="cite-getcapabilities-content"></div>
     </div>
 
-    <!-- OGC GetMap Tests -->
-    <div class="ogc-section" id="ogc-getmap">
-        <div class="ogc-header" onclick="toggleOgcSection('ogc-getmap', event)">
+    <!-- CITE GetMap Tests -->
+    <div class="ogc-section" id="cite-getmap">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-getmap', event)">
             <div class="ogc-header-left">
                 <span class="ogc-toggle">▶</span>
                 <span class="ogc-title">GetMap</span>
-                <span class="ogc-subtitle">BBOX, CRS, FORMAT, STYLES, TRANSPARENT, Exceptions</span>
+                <span class="ogc-subtitle">Map rendering request validation (49 tests)</span>
             </div>
             <div class="ogc-header-right">
-                <span class="ogc-score pending" id="ogc-getmap-score">-- / --</span>
+                <span class="ogc-score pending" id="cite-getmap-score">-- / --</span>
             </div>
         </div>
-        <div class="ogc-content" id="ogc-getmap-content"></div>
+        <div class="ogc-content" id="cite-getmap-content"></div>
     </div>
 
-    <!-- OGC GetFeatureInfo Tests -->
-    <div class="ogc-section" id="ogc-getfeatureinfo">
-        <div class="ogc-header" onclick="toggleOgcSection('ogc-getfeatureinfo', event)">
+    <!-- CITE GetFeatureInfo Tests -->
+    <div class="ogc-section" id="cite-getfeatureinfo">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-getfeatureinfo', event)">
             <div class="ogc-header-left">
                 <span class="ogc-toggle">▶</span>
                 <span class="ogc-title">GetFeatureInfo</span>
-                <span class="ogc-subtitle">Query parameters, exceptions, formats</span>
+                <span class="ogc-subtitle">Feature information query validation (18 tests)</span>
             </div>
             <div class="ogc-header-right">
-                <span class="ogc-score pending" id="ogc-getfeatureinfo-score">-- / --</span>
+                <span class="ogc-score pending" id="cite-getfeatureinfo-score">-- / --</span>
             </div>
         </div>
-        <div class="ogc-content" id="ogc-getfeatureinfo-content"></div>
+        <div class="ogc-content" id="cite-getfeatureinfo-content"></div>
     </div>
 
-    <!-- OGC Dimensions Tests -->
-    <div class="ogc-section" id="ogc-dimensions">
-        <div class="ogc-header" onclick="toggleOgcSection('ogc-dimensions', event)">
+    <!-- CITE Queryable WMS Tests -->
+    <div class="ogc-section" id="cite-queryable">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-queryable', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Queryable WMS</span>
+                <span class="ogc-subtitle">Queryable layer support (8 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-queryable-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-queryable-content"></div>
+    </div>
+
+    <!-- CITE Dimensions Tests -->
+    <div class="ogc-section" id="cite-dimensions">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-dimensions', event)">
             <div class="ogc-header-left">
                 <span class="ogc-toggle">▶</span>
                 <span class="ogc-title">Dimensions</span>
-                <span class="ogc-subtitle">TIME, ELEVATION, custom dimensions</span>
+                <span class="ogc-subtitle">Multi-dimensional data handling (2 tests)</span>
             </div>
             <div class="ogc-header-right">
-                <span class="ogc-score pending" id="ogc-dimensions-score">-- / --</span>
+                <span class="ogc-score pending" id="cite-dimensions-score">-- / --</span>
             </div>
         </div>
-        <div class="ogc-content" id="ogc-dimensions-content"></div>
+        <div class="ogc-content" id="cite-dimensions-content"></div>
+    </div>
+
+    <!-- CITE Time Dimension Tests -->
+    <div class="ogc-section" id="cite-time">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-time', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Time Dimension</span>
+                <span class="ogc-subtitle">TIME dimension support (14 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-time-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-time-content"></div>
+    </div>
+
+    <!-- CITE Raster Elevation Tests -->
+    <div class="ogc-section" id="cite-raster_elevation">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-raster_elevation', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Raster Elevation</span>
+                <span class="ogc-subtitle">Raster elevation dimension (13 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-raster_elevation-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-raster_elevation-content"></div>
+    </div>
+
+    <!-- CITE Vector Elevation Tests -->
+    <div class="ogc-section" id="cite-vector_elevation">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-vector_elevation', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Vector Elevation</span>
+                <span class="ogc-subtitle">Vector elevation dimension (12 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-vector_elevation-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-vector_elevation-content"></div>
+    </div>
+
+    <!-- CITE Recommendations Tests -->
+    <div class="ogc-section" id="cite-recommendations">
+        <div class="ogc-header" onclick="toggleCiteSection('cite-recommendations', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">Recommendations</span>
+                <span class="ogc-subtitle">Optional recommended features (8 tests)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="cite-recommendations-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="cite-recommendations-content"></div>
+    </div>
+
+    <!-- Manual Verification Checklist -->
+    <div class="manual-section">
+        <div class="manual-header">
+            <h2>Manual Verification Checklist</h2>
+            <span class="manual-subtitle">Tests requiring human inspection</span>
+        </div>
+        <div class="manual-checklist" id="manual-checklist-content">
+            <!-- Populated by JavaScript -->
+        </div>
     </div>
 
     <!-- Section Divider -->

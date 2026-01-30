@@ -8,6 +8,7 @@ pub mod collections;
 pub mod conformance;
 pub mod corridor;
 pub mod cube;
+pub mod forecast_params;
 pub mod health;
 pub mod instances;
 pub mod landing;

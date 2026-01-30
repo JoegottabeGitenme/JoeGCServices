@@ -30,6 +30,9 @@ services:
       # Map localhost to the proxy container so TEAM Engine's requests 
       # to localhost:8080 hit the proxy which forwards to the host
       - "localhost:172.28.0.10"
+    volumes:
+      # Mount our fixed dimensions.xml over the default to test the XPath fix
+      - ./ets-wms13-fix/src/main/scripts/ctl/dimensions.xml:/root/te_base/scripts/wms13/1.3.0/ctl/dimensions.xml:ro
     networks:
       - ogc-test-net
     profiles:

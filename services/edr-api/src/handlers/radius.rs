@@ -24,6 +24,7 @@ use std::sync::Arc;
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
+use crate::handlers::forecast_params::{validate_not_observation_data, ForecastParams};
 use crate::handlers::observations::{obs_radius_query_handler, ObsRadiusQueryParams};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
@@ -73,6 +74,16 @@ pub struct RadiusQueryParams {
 
     /// Output format.
     pub f: Option<String>,
+
+    /// Model run time (ISO8601). Required if forecast-hour is specified.
+    /// Only applicable to forecast models (GFS, HRRR, etc.), not observation data.
+    pub run: Option<String>,
+
+    /// Forecast hour(s) from the model run.
+    /// Formats: single (6), list (0,6,12), range (0/24), range+step (0/24/6).
+    /// Requires 'run' to be specified.
+    #[serde(rename = "forecast-hour")]
+    pub forecast_hour: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/radius
@@ -185,6 +196,24 @@ async fn radius_query(
             )),
         );
     }
+
+    // Parse and validate forecast parameters (run, forecast-hour)
+    let forecast_params =
+        match ForecastParams::parse(params.run.as_deref(), params.forecast_hour.as_deref()) {
+            Ok(fp) => fp,
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, e);
+            }
+        };
+
+    // Validate that forecast params are not used with observation data
+    let is_observation_model = model_config.create_query("dummy").observation_data;
+    if let Err(e) = validate_not_observation_data(&forecast_params, is_observation_model) {
+        return error_response(StatusCode::BAD_REQUEST, e);
+    }
+
+    // Determine forecast query strategy
+    let _forecast_strategy = forecast_params.strategy();
 
     // Check for required coords parameter
     let coords_str = match &params.coords {

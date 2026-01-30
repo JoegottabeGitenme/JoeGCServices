@@ -183,10 +183,10 @@ layers:
       native: gpm
       display: m
     levels:
-      - value: "500 mb"
-        default: true
-      # Lower troposphere
+      # Lower troposphere (1000 mb is the only level currently ingested)
       - value: "1000 mb"
+        default: true
+      - value: "500 mb"
       - value: "925 mb"
       - value: "850 mb"
       - value: "700 mb"

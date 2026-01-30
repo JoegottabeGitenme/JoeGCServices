@@ -5,7 +5,7 @@ model:
   id: goes18-fulldisk
   name: "GOES-18 Full Disk - GOES West"
   description: "GOES-18 (GOES West) satellite imagery, ABI Full Disk product"
-  enabled: true
+  enabled: false  # Disabled for minimal OGC compliance testing
 
 # WMS/WMTS dimension configuration
 dimensions:

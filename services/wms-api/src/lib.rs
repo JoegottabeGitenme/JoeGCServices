@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod capabilities_cache;
 pub mod chunk_warming;
+pub mod cite;
 pub mod cleanup;
 pub mod handlers;
 pub mod layer_config;

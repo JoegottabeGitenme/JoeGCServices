@@ -105,6 +105,11 @@ pub struct Extent {
     /// The vertical extent of the collection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vertical: Option<VerticalExtent>,
+
+    /// Custom dimensions beyond spatial/temporal/vertical (OGC EDR 1.1 compliant).
+    /// Used for model-specific dimensions like run time and forecast hour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom: Option<Vec<CustomDimension>>,
 }
 
 impl Extent {
@@ -114,6 +119,7 @@ impl Extent {
             spatial: None,
             temporal: None,
             vertical: None,
+            custom: None,
         }
     }
 
@@ -126,6 +132,7 @@ impl Extent {
             }),
             temporal: None,
             vertical: None,
+            custom: None,
         }
     }
 
@@ -138,6 +145,12 @@ impl Extent {
     /// Add vertical extent to this extent (builder pattern).
     pub fn with_vertical(mut self, vertical: VerticalExtent) -> Self {
         self.vertical = Some(vertical);
+        self
+    }
+
+    /// Add custom dimensions to this extent (builder pattern).
+    pub fn with_custom(mut self, custom: Vec<CustomDimension>) -> Self {
+        self.custom = Some(custom);
         self
     }
 
@@ -273,6 +286,125 @@ impl VerticalExtent {
     }
 }
 
+/// A custom dimension for the extent (OGC EDR 1.1 compliant).
+///
+/// Custom dimensions allow collections to expose additional queryable axes
+/// beyond the standard spatial, temporal, and vertical dimensions.
+/// Common use cases include:
+/// - Model run time (`run`) for forecast models
+/// - Forecast hour (`forecast-hour`) for forecast lead times
+/// - Ensemble member for ensemble forecasts
+///
+/// Per OGC EDR spec Section 8.2.7, custom dimensions can be used as
+/// query parameters following the same syntax as datetime and z parameters.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CustomDimension {
+    /// The unique identifier for this dimension.
+    /// This becomes the query parameter name (e.g., "run", "forecast-hour").
+    pub id: String,
+
+    /// The min/max range of this dimension: [[min, max]].
+    /// Values can be strings (for datetime-like dimensions) or numbers.
+    pub interval: Vec<Vec<Option<serde_json::Value>>>,
+
+    /// All available discrete values for this dimension.
+    /// If present, queries are constrained to these values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<serde_json::Value>>,
+
+    /// A reference URI or description explaining this dimension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+impl CustomDimension {
+    /// Create a new custom dimension with the given ID and interval.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            interval: vec![],
+            values: None,
+            reference: None,
+        }
+    }
+
+    /// Create a custom dimension for model run times (ISO8601 datetime strings).
+    ///
+    /// # Arguments
+    /// * `runs` - Available run times as ISO8601 strings, most recent first
+    pub fn for_runs(runs: Vec<String>) -> Self {
+        let interval = if runs.is_empty() {
+            vec![]
+        } else {
+            // runs are typically newest first, so last is oldest, first is newest
+            let oldest = runs.last().cloned().unwrap_or_default();
+            let newest = runs.first().cloned().unwrap_or_default();
+            vec![vec![
+                Some(serde_json::Value::String(oldest)),
+                Some(serde_json::Value::String(newest)),
+            ]]
+        };
+
+        let values = Some(runs.into_iter().map(serde_json::Value::String).collect());
+
+        Self {
+            id: "run".to_string(),
+            interval,
+            values,
+            reference: Some("Model initialization time (ISO8601 UTC)".to_string()),
+        }
+    }
+
+    /// Create a custom dimension for forecast hours (integer hours from model run).
+    ///
+    /// # Arguments
+    /// * `hours` - Available forecast hours, sorted ascending
+    pub fn for_forecast_hours(hours: Vec<i32>) -> Self {
+        let interval = if hours.is_empty() {
+            vec![]
+        } else {
+            let min = hours.first().copied().unwrap_or(0);
+            let max = hours.last().copied().unwrap_or(0);
+            vec![vec![
+                Some(serde_json::Value::Number(min.into())),
+                Some(serde_json::Value::Number(max.into())),
+            ]]
+        };
+
+        let values = Some(
+            hours
+                .into_iter()
+                .map(|h| serde_json::Value::Number(h.into()))
+                .collect(),
+        );
+
+        Self {
+            id: "forecast-hour".to_string(),
+            interval,
+            values,
+            reference: Some("Hours from model initialization".to_string()),
+        }
+    }
+
+    /// Set the interval (builder pattern).
+    pub fn with_interval(mut self, min: serde_json::Value, max: serde_json::Value) -> Self {
+        self.interval = vec![vec![Some(min), Some(max)]];
+        self
+    }
+
+    /// Set the values (builder pattern).
+    pub fn with_values(mut self, values: Vec<serde_json::Value>) -> Self {
+        self.values = Some(values);
+        self
+    }
+
+    /// Set the reference (builder pattern).
+    pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
+        self.reference = Some(reference.into());
+        self
+    }
+}
+
 /// Coordinate Reference System identifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Crs {
@@ -357,6 +489,7 @@ mod tests {
         assert!(extent.spatial.is_none());
         assert!(extent.temporal.is_none());
         assert!(extent.vertical.is_none());
+        assert!(extent.custom.is_none());
     }
 
     #[test]
@@ -463,11 +596,88 @@ mod tests {
                 None,
             )),
             vertical: Some(VerticalExtent::new(1000.0, 250.0)),
+            custom: None,
         };
 
         let json = serde_json::to_string_pretty(&extent).unwrap();
         assert!(json.contains("\"bbox\""));
         assert!(json.contains("\"interval\""));
         assert!(json.contains("-125"));
+        // custom should not appear when None
+        assert!(!json.contains("\"custom\""));
+    }
+
+    #[test]
+    fn test_custom_dimension_for_runs() {
+        let runs = vec![
+            "2024-12-29T12:00:00Z".to_string(),
+            "2024-12-29T06:00:00Z".to_string(),
+            "2024-12-29T00:00:00Z".to_string(),
+        ];
+        let dim = CustomDimension::for_runs(runs);
+
+        assert_eq!(dim.id, "run");
+        assert_eq!(dim.interval.len(), 1);
+        // Oldest is last in input, newest is first
+        assert_eq!(
+            dim.interval[0][0],
+            Some(serde_json::Value::String(
+                "2024-12-29T00:00:00Z".to_string()
+            ))
+        );
+        assert_eq!(
+            dim.interval[0][1],
+            Some(serde_json::Value::String(
+                "2024-12-29T12:00:00Z".to_string()
+            ))
+        );
+        assert!(dim.values.is_some());
+        assert_eq!(dim.values.unwrap().len(), 3);
+        assert!(dim.reference.is_some());
+    }
+
+    #[test]
+    fn test_custom_dimension_for_forecast_hours() {
+        let hours = vec![0, 1, 2, 3, 6, 12, 24, 48];
+        let dim = CustomDimension::for_forecast_hours(hours);
+
+        assert_eq!(dim.id, "forecast-hour");
+        assert_eq!(dim.interval.len(), 1);
+        assert_eq!(
+            dim.interval[0][0],
+            Some(serde_json::Value::Number(0.into()))
+        );
+        assert_eq!(
+            dim.interval[0][1],
+            Some(serde_json::Value::Number(48.into()))
+        );
+        assert!(dim.values.is_some());
+        assert_eq!(dim.values.unwrap().len(), 8);
+        assert!(dim.reference.is_some());
+    }
+
+    #[test]
+    fn test_custom_dimension_serialization() {
+        let dim = CustomDimension::for_forecast_hours(vec![0, 6, 12]);
+        let json = serde_json::to_string(&dim).unwrap();
+
+        assert!(json.contains("\"id\":\"forecast-hour\""));
+        assert!(json.contains("\"interval\""));
+        assert!(json.contains("\"values\""));
+        assert!(json.contains("\"reference\""));
+    }
+
+    #[test]
+    fn test_extent_with_custom_dimensions() {
+        let extent = Extent::with_spatial([-180.0, -90.0, 180.0, 90.0], None).with_custom(vec![
+            CustomDimension::for_runs(vec!["2024-12-29T12:00:00Z".to_string()]),
+            CustomDimension::for_forecast_hours(vec![0, 6, 12]),
+        ]);
+
+        assert!(extent.custom.is_some());
+        let custom = extent.custom.unwrap();
+        assert_eq!(custom.len(), 2);
+        assert_eq!(custom[0].id, "run");
+        assert_eq!(custom[1].id, "forecast-hour");
     }
 }

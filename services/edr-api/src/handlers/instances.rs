@@ -6,7 +6,8 @@ use axum::{
     response::Response,
 };
 use edr_protocol::{
-    responses::ExceptionResponse, DataQueries, Extent, Instance, InstanceList, TemporalExtent,
+    responses::ExceptionResponse, CustomDimension, DataQueries, Extent, Instance, InstanceList,
+    TemporalExtent,
 };
 use std::sync::Arc;
 
@@ -99,8 +100,15 @@ pub async fn list_instances_handler(
             None => (run_id.clone(), None),
         };
 
-        // Build extent with spatial bbox and temporal range
-        let extent = if let Some(bbox) = spatial_bbox {
+        // Get available forecast hours for this run
+        let forecast_hours = state
+            .catalog
+            .get_run_forecast_hours(model_name, reference_time)
+            .await
+            .ok();
+
+        // Build extent with spatial bbox, temporal range, and forecast-hour custom dimension
+        let mut extent = if let Some(bbox) = spatial_bbox {
             Extent::with_spatial(bbox, None)
                 .with_temporal(TemporalExtent::new(Some(start_str), end_str))
         } else {
@@ -108,8 +116,17 @@ pub async fn list_instances_handler(
                 spatial: None,
                 temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
                 vertical: None,
+                custom: None,
             }
         };
+
+        // Add forecast-hour custom dimension for this instance
+        if let Some(hours) = forecast_hours {
+            if !hours.is_empty() {
+                extent = extent.with_custom(vec![CustomDimension::for_forecast_hours(hours)]);
+            }
+        }
+
         instance = instance.with_extent(extent);
 
         instances.push(instance);
@@ -240,8 +257,15 @@ pub async fn get_instance_handler(
         None => (instance_id.clone(), None),
     };
 
-    // Build extent with spatial bbox and temporal range
-    let extent = if let Some(bbox) = spatial_bbox {
+    // Get available forecast hours for this run
+    let forecast_hours = state
+        .catalog
+        .get_run_forecast_hours(model_name, reference_time)
+        .await
+        .ok();
+
+    // Build extent with spatial bbox, temporal range, and forecast-hour custom dimension
+    let mut extent = if let Some(bbox) = spatial_bbox {
         Extent::with_spatial(bbox, None)
             .with_temporal(TemporalExtent::new(Some(start_str), end_str))
     } else {
@@ -249,8 +273,17 @@ pub async fn get_instance_handler(
             spatial: None,
             temporal: Some(TemporalExtent::new(Some(start_str), end_str)),
             vertical: None,
+            custom: None,
         }
     };
+
+    // Add forecast-hour custom dimension for this instance
+    if let Some(hours) = forecast_hours {
+        if !hours.is_empty() {
+            extent = extent.with_custom(vec![CustomDimension::for_forecast_hours(hours)]);
+        }
+    }
+
     instance = instance.with_extent(extent);
 
     let json = serde_json::to_string_pretty(&instance).unwrap_or_default();

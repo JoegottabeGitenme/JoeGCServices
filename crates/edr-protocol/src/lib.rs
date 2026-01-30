@@ -49,11 +49,14 @@ pub use locations::{Location, LocationFeature, LocationFeatureCollection, Locati
 pub use parameters::{ObservedProperty, Parameter, Unit};
 pub use queries::{
     AreaQuery, BboxQuery, CoordinateParseError, CorridorQuery, DateTimeQuery, DistanceUnit,
-    LineStringType, ParsedCoords, ParsedPolygons, ParsedTrajectory, PositionQuery, RadiusQuery,
-    TrajectoryQuery, TrajectoryWaypoint, VerticalUnit,
+    ForecastHourQuery, LineStringType, ParsedCoords, ParsedPolygons, ParsedTrajectory,
+    PositionQuery, RadiusQuery, TrajectoryQuery, TrajectoryWaypoint, VerticalUnit,
 };
 pub use responses::{ConformanceClasses, LandingPage};
-pub use types::{Crs, Extent, Link, LinkVariables, SpatialExtent, TemporalExtent, VerticalExtent};
+pub use types::{
+    Crs, CustomDimension, Extent, Link, LinkVariables, SpatialExtent, TemporalExtent,
+    VerticalExtent,
+};
 
 /// EDR API conformance class URIs (OGC API - EDR v1.0)
 pub mod conformance {

@@ -13,24 +13,49 @@ use crate::model_config::ModelDimensionRegistry;
 // Exception Helpers
 // ============================================================================
 
-/// Generate a WMS-formatted exception response
+/// Generate a WMS-formatted exception response per OGC WMS 1.3.0 spec
 pub fn wms_exception(code: &str, msg: &str, status: StatusCode) -> Response {
+    // OGC WMS 1.3.0 exception format with proper namespace declarations
     let xml = format!(
-        r#"<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="{}">{}</ServiceException></ServiceExceptionReport>"#,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ServiceExceptionReport version="1.3.0" xmlns="http://www.opengis.net/ogc" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/ogc http://schemas.opengis.net/wms/1.3.0/exceptions_1_3_0.xsd">
+<ServiceException code="{}">{}</ServiceException>
+</ServiceExceptionReport>"#,
         code, msg
     );
     Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, "application/xml")
+        // WMS 1.3.0 spec requires text/xml for exceptions
+        .header(header::CONTENT_TYPE, "text/xml")
         .body(xml.into())
         .unwrap()
 }
 
-/// Generate a WMTS-formatted exception response
+/// Generate a WMTS-formatted exception response per OGC OWS Common 1.1.0 spec
+/// The `locator` parameter identifies which parameter caused the error.
 pub fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
+    wmts_exception_with_locator(code, msg, None, status)
+}
+
+/// Generate a WMTS-formatted exception response with locator attribute
+/// per OGC OWS Common 1.1.0 (OGC 06-121r3) and WMTS 1.0.0 (OGC 07-057r7)
+pub fn wmts_exception_with_locator(
+    code: &str,
+    msg: &str,
+    locator: Option<&str>,
+    status: StatusCode,
+) -> Response {
+    let locator_attr = locator
+        .map(|l| format!(r#" locator="{}""#, l))
+        .unwrap_or_default();
     let xml = format!(
-        r#"<?xml version="1.0"?><ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1"><ows:Exception exceptionCode="{}"><ows:ExceptionText>{}</ows:ExceptionText></ows:Exception></ows:ExceptionReport>"#,
-        code, msg
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/ows/1.1 http://schemas.opengis.net/ows/1.1.0/owsExceptionReport.xsd" version="1.1.0">
+  <ows:Exception exceptionCode="{}"{}>
+    <ows:ExceptionText>{}</ows:ExceptionText>
+  </ows:Exception>
+</ows:ExceptionReport>"#,
+        code, locator_attr, msg
     );
     Response::builder()
         .status(status)
@@ -89,23 +114,56 @@ impl DimensionParams {
 
         if is_observational {
             // Observation layers use TIME dimension (ISO8601)
-            let observation_time = self.time.as_ref().and_then(|t| parse_iso8601_timestamp(t));
+            // "default" means use the advertised default value (i.e., None here triggers default behavior)
+            let observation_time = self.time.as_ref().and_then(|t| {
+                if is_default_dimension_value(t) {
+                    None
+                } else {
+                    parse_iso8601_timestamp(t)
+                }
+            });
             (None, observation_time, None)
         } else {
             // Forecast models use RUN + FORECAST dimensions
+            // "default" or "latest" means use the default/latest run
             let reference_time = self.run.as_ref().and_then(|r| {
-                if r == "latest" {
-                    None // Will use latest run
+                if r == "latest" || is_default_dimension_value(r) {
+                    None // Will use latest/default run
                 } else {
                     parse_iso8601_timestamp(r)
                 }
             });
 
-            let forecast_hour = self.forecast.as_ref().and_then(|f| f.parse::<u32>().ok());
+            // "default" for forecast hour means use the default (typically 0 or first available)
+            let forecast_hour = self.forecast.as_ref().and_then(|f| {
+                if is_default_dimension_value(f) {
+                    None // Use default forecast hour
+                } else {
+                    f.parse::<u32>().ok()
+                }
+            });
 
             (forecast_hour, None, reference_time)
         }
     }
+
+    /// Get the effective elevation value, treating "default" as None.
+    /// Per WMTS 1.0.0 spec, "default" means use the advertised default value.
+    pub fn effective_elevation(&self) -> Option<&str> {
+        self.elevation.as_ref().and_then(|e| {
+            if is_default_dimension_value(e) {
+                None
+            } else {
+                Some(e.as_str())
+            }
+        })
+    }
+}
+
+/// Check if a dimension value means "use the default value"
+/// Per WMTS 1.0.0 spec, clients can send "default" to request the advertised default value.
+pub fn is_default_dimension_value(value: &str) -> bool {
+    value.eq_ignore_ascii_case("default")
 }
 
 /// Parse an ISO8601 timestamp string
@@ -223,9 +281,11 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
                         ""
                     };
 
+                    // Per WMTS schema (wmtsGetCapabilities_response.xsd), Style children order:
+                    // ows:Title, ows:Abstract, ows:Keywords, ows:Identifier, LegendURL
                     xml_parts.push(format!(
-                        r#"<Style{}><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Style>"#,
-                        default_attr, identifier, title
+                        r#"<Style{}><ows:Title>{}</ows:Title><ows:Identifier>{}</ows:Identifier></Style>"#,
+                        default_attr, title, identifier
                     ));
                 }
 
@@ -237,7 +297,22 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
     }
 
     // Fallback to just default style if file can't be read
-    r#"<Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>"#.to_string()
+    // Per WMTS schema, ows:Title comes before ows:Identifier
+    r#"<Style isDefault="true"><ows:Title>Default</ows:Title><ows:Identifier>default</ows:Identifier></Style>"#.to_string()
+}
+
+/// Get list of valid style names from a style JSON file
+/// Returns style identifiers that can be used in GetMap/GetTile requests
+pub fn get_valid_styles_from_file(style_file: &str) -> Vec<String> {
+    if let Ok(content) = std::fs::read_to_string(style_file) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+                return styles.keys().map(|s| s.to_string()).collect();
+            }
+        }
+    }
+    // Fallback to just default if file can't be read
+    vec!["default".to_string()]
 }
 
 // ============================================================================

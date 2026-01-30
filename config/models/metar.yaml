@@ -5,7 +5,7 @@ model:
   id: metar
   name: "METAR - Surface Weather Observations"
   description: "Routine aviation surface weather observations from airports"
-  enabled: true
+  enabled: false  # Disabled for minimal OGC compliance testing
 
 # Source configuration for Aviation Weather API
 source:

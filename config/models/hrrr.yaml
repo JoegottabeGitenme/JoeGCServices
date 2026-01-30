@@ -47,43 +47,18 @@ grid:
     ny: 1059
 
 schedule:
-  cycles: [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15,
-      16,
-      17,
-      18,
-      19,
-      20,
-      21,
-      22,
-      23,
-    ] # Hourly
+  cycles: [0] # Minimal: single cycle for testing (was: hourly 0-23)
   forecast_hours:
     start: 0
-    end: 48 # 48 hours
+    end: 2 # Minimal: 3 forecast hours (0,1,2) for testing (was: 48)
     step: 1 # Every hour
   poll_interval_secs: 3600 # Check every hour
   delay_hours: 1 # Data typically available 2 hours after cycle
-  max_concurrent: 3 # Allow up to 3 concurrent downloads for this model
+  max_concurrent: 1 # Reduced for testing (was: 3)
 
 retention:
-  hours: 12 # Keep data for 12 hours (ensures major runs with 48h forecasts available)
-  keep_latest_runs: 4 # Always keep at least 4 recent runs (safeguard for gaps)
+  hours: 6 # Reduced for testing (was: 12)
+  keep_latest_runs: 1 # Minimal for testing (was: 4)
 
 # Precaching configuration - disabled for now (focus on observation data first)
 precaching:

@@ -6,8 +6,8 @@ use axum::{
     response::Response,
 };
 use edr_protocol::{
-    parameters::Parameter, responses::ExceptionResponse, Collection, CollectionList, DataQueries,
-    Extent, TemporalExtent, VerticalExtent,
+    parameters::Parameter, responses::ExceptionResponse, Collection, CollectionList,
+    CustomDimension, DataQueries, Extent, TemporalExtent, VerticalExtent,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +19,9 @@ use crate::state::AppState;
 use storage::Catalog;
 
 /// Build extent from catalog data for a collection, filtering to only available levels.
+///
+/// For forecast models (not observations), this also populates custom dimensions
+/// for `run` (available model runs) and `forecast-hour` (available forecast hours).
 async fn build_extent_from_catalog_filtered(
     catalog: &Catalog,
     model_config: &ModelEdrConfig,
@@ -26,6 +29,7 @@ async fn build_extent_from_catalog_filtered(
     availability: &ModelAvailability,
 ) -> Extent {
     let model_name = &model_config.model;
+    let is_forecast_model = matches!(model_config.data_type, crate::config::DataType::Forecast);
 
     // Get bounding box from catalog
     let bbox = catalog.get_model_bbox(model_name).await.ok();
@@ -122,6 +126,35 @@ async fn build_extent_from_catalog_filtered(
 
         let vertical = VerticalExtent::with_levels(level_values, vrs);
         extent = extent.with_vertical(vertical);
+    }
+
+    // Add custom dimensions for forecast models (run and forecast-hour)
+    if is_forecast_model {
+        let mut custom_dims = Vec::new();
+
+        // Get all available runs for this model
+        if let Ok(runs) = catalog.get_all_model_runs(model_name).await {
+            if !runs.is_empty() {
+                let run_values: Vec<String> = runs
+                    .iter()
+                    .map(|r| r.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                    .collect();
+                custom_dims.push(CustomDimension::for_runs(run_values));
+            }
+        }
+
+        // Get forecast hours from the latest run
+        if let Ok(Some(latest_run)) = catalog.get_latest_run_info(model_name).await {
+            if !latest_run.forecast_hours.is_empty() {
+                custom_dims.push(CustomDimension::for_forecast_hours(
+                    latest_run.forecast_hours.clone(),
+                ));
+            }
+        }
+
+        if !custom_dims.is_empty() {
+            extent = extent.with_custom(custom_dims);
+        }
     }
 
     extent
@@ -798,6 +831,7 @@ fn build_astro_collection(base_url: &str) -> Collection {
             trs: "http://www.opengis.net/def/trs/BIPM/0/UTC".to_string(),
         }),
         vertical: None,
+        custom: None,
     };
 
     // Build data queries - only position is supported

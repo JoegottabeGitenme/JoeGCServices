@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OGC CITE Test Layers</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 {
+            text-align: center;
+            color: #00d4ff;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .layer-card {
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .layer-card h3 {
+            margin: 0;
+            padding: 12px 15px;
+            background: #0f3460;
+            color: #00d4ff;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .layer-card h3 .badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #e94560;
+            color: white;
+        }
+        .layer-card h3 .badge.queryable {
+            background: #00d4ff;
+            color: #1a1a2e;
+        }
+        .layer-card h3 .badge.opaque {
+            background: #ffa500;
+            color: #1a1a2e;
+        }
+        .layer-card h3 .badge.dimension {
+            background: #9b59b6;
+        }
+        .image-container {
+            position: relative;
+            background: #fff;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        .image-container.loading::after {
+            content: 'Loading...';
+            position: absolute;
+            color: #666;
+        }
+        .layer-info {
+            padding: 10px 15px;
+            font-size: 12px;
+            color: #aaa;
+            background: #1a1a2e;
+        }
+        .layer-info code {
+            display: block;
+            background: #0d1117;
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: nowrap;
+            font-size: 10px;
+            margin-top: 5px;
+        }
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #16213e;
+            border-radius: 8px;
+            max-width: 800px;
+            margin: 0 auto 30px auto;
+        }
+        .controls label {
+            margin-right: 15px;
+        }
+        .controls select, .controls input {
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #0f3460;
+            background: #1a1a2e;
+            color: #eee;
+            margin-right: 10px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .controls button:hover {
+            background: #00b8e6;
+        }
+        .all-layers {
+            max-width: 1200px;
+            margin: 30px auto;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .all-layers h2 {
+            color: #00d4ff;
+            margin-top: 0;
+        }
+        .all-layers .image-container {
+            border-radius: 8px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <h1>OGC CITE Test Layers</h1>
+    <p class="subtitle">WMS 1.3.0 Compliance Test Data Visualization</p>
+
+    <div class="controls">
+        <label>
+            Size:
+            <select id="size">
+                <option value="200">200x200</option>
+                <option value="300" selected>300x300</option>
+                <option value="400">400x400</option>
+                <option value="500">500x500</option>
+            </select>
+        </label>
+        <label>
+            Format:
+            <select id="format">
+                <option value="image/png" selected>PNG</option>
+                <option value="image/jpeg">JPEG</option>
+                <option value="image/webp">WebP</option>
+            </select>
+        </label>
+        <label>
+            Transparent:
+            <select id="transparent">
+                <option value="TRUE" selected>Yes</option>
+                <option value="FALSE">No</option>
+            </select>
+        </label>
+        <label>
+            BgColor:
+            <input type="color" id="bgcolor" value="#ffffff">
+        </label>
+        <button onclick="refreshAll()">Refresh All</button>
+    </div>
+
+    <div class="all-layers">
+        <h2>All Layers Combined</h2>
+        <div class="image-container" id="combined-container">
+            <img id="combined-img" alt="All CITE Layers">
+        </div>
+        <div class="layer-info">
+            <strong>All CITE layers composited together</strong>
+            <code id="combined-url"></code>
+        </div>
+    </div>
+
+    <div class="grid" id="layers-grid">
+        <!-- Layers will be inserted here by JavaScript -->
+    </div>
+
+    <script>
+        const WMS_BASE = 'http://localhost:8080/wms';
+        
+        // CITE layer definitions with their bounding boxes and properties
+        const CITE_LAYERS = [
+            { name: 'cite:MapNeatline', title: 'Map Neatline', bbox: [-0.0045,-0.0041,0.0045,0.0041], queryable: false, opaque: true },
+            { name: 'cite:Lakes', title: 'Lakes', bbox: [0.0005,-0.0022,0.0032,0.0003], queryable: true },
+            { name: 'cite:lakesWithElevation', title: 'Lakes with Elevation', bbox: [0.0005,-0.0022,0.0032,0.0003], queryable: true, dimension: 'elevation' },
+            { name: 'cite:Ponds', title: 'Ponds', bbox: [-0.0011,-0.0025,0.0015,0.0003], queryable: true },
+            { name: 'cite:Forests', title: 'Forests', bbox: [0.0005,-0.0011,0.0025,0.0009], queryable: true },
+            { name: 'cite:Buildings', title: 'Buildings', bbox: [0.0007,-0.0001,0.0025,0.0016], queryable: true },
+            { name: 'cite:BuildingCenters', title: 'Building Centers', bbox: [0.0009,0.0001,0.0023,0.0014], queryable: false },
+            { name: 'cite:BasicPolygons', title: 'Basic Polygons', bbox: [-0.0011,-0.0011,0.0011,0.0011], queryable: true },
+            { name: 'cite:NamedPlaces', title: 'Named Places', bbox: [0.0007,-0.0012,0.0049,0.0025], queryable: true },
+            { name: 'cite:RoadSegments', title: 'Road Segments', bbox: [-0.0045,-0.0041,0.0045,0.0041], queryable: false },
+            { name: 'cite:DividedRoutes', title: 'Divided Routes', bbox: [-0.0005,-0.0008,0.0006,0.0008], queryable: false },
+            { name: 'cite:Bridges', title: 'Bridges', bbox: [-0.0005,0.0001,0.0009,0.0013], queryable: false },
+            { name: 'cite:Streams', title: 'Streams', bbox: [-0.0003,-0.0025,0.0002,0.0004], queryable: false },
+            { name: 'cite:Autos', title: 'Autos', bbox: [-0.0034,-0.003,0.0031,0.003], queryable: false, dimension: 'time' },
+        ];
+
+        // Full extent covering all layers
+        const FULL_BBOX = [-0.0045, -0.0041, 0.0049, 0.0041];
+
+        function getParams() {
+            const size = document.getElementById('size').value;
+            const format = document.getElementById('format').value;
+            const transparent = document.getElementById('transparent').value;
+            const bgcolor = document.getElementById('bgcolor').value.replace('#', '0x');
+            return { size, format, transparent, bgcolor };
+        }
+
+        function buildWmsUrl(layers, bbox, params, extraParams = '') {
+            const { size, format, transparent, bgcolor } = params;
+            let url = `${WMS_BASE}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap`;
+            url += `&LAYERS=${encodeURIComponent(layers)}`;
+            url += `&STYLES=`;
+            url += `&CRS=CRS:84`;
+            url += `&BBOX=${bbox.join(',')}`;
+            url += `&WIDTH=${size}&HEIGHT=${size}`;
+            url += `&FORMAT=${encodeURIComponent(format)}`;
+            url += `&TRANSPARENT=${transparent}`;
+            if (transparent === 'FALSE') {
+                url += `&BGCOLOR=${bgcolor}`;
+            }
+            url += extraParams;
+            return url;
+        }
+
+        function createLayerCard(layer) {
+            const params = getParams();
+            let extraParams = '';
+            
+            // Add dimension parameter if required
+            if (layer.dimension === 'elevation') {
+                extraParams = '&ELEVATION=500';
+            } else if (layer.dimension === 'time') {
+                extraParams = '&TIME=2000-01-01T00:00:00Z';
+            }
+            
+            const url = buildWmsUrl(layer.name, layer.bbox, params, extraParams);
+            
+            let badges = '';
+            if (layer.queryable) badges += '<span class="badge queryable">queryable</span> ';
+            if (layer.opaque) badges += '<span class="badge opaque">opaque</span> ';
+            if (layer.dimension) badges += `<span class="badge dimension">${layer.dimension}</span>`;
+
+            return `
+                <div class="layer-card">
+                    <h3>
+                        ${layer.title}
+                        <span>${badges}</span>
+                    </h3>
+                    <div class="image-container loading" id="container-${layer.name.replace(':', '-')}">
+                        <img src="${url}" alt="${layer.title}" 
+                             onload="this.parentElement.classList.remove('loading')"
+                             onerror="this.parentElement.innerHTML='<span style=\\'color:#e94560\\'>Error loading layer</span>'">
+                    </div>
+                    <div class="layer-info">
+                        <strong>${layer.name}</strong>
+                        ${layer.dimension ? `<br>Dimension: ${layer.dimension}` : ''}
+                        <code>${url}</code>
+                    </div>
+                </div>
+            `;
+        }
+
+        function refreshAll() {
+            const params = getParams();
+            const grid = document.getElementById('layers-grid');
+            
+            // Refresh individual layers
+            grid.innerHTML = CITE_LAYERS.map(createLayerCard).join('');
+            
+            // Refresh combined image (exclude lakesWithElevation since it requires elevation param)
+            const combinableLayers = CITE_LAYERS
+                .filter(l => !l.dimension)
+                .map(l => l.name)
+                .join(',');
+            
+            const combinedUrl = buildWmsUrl(combinableLayers, FULL_BBOX, { ...params, size: 600 });
+            document.getElementById('combined-img').src = combinedUrl;
+            document.getElementById('combined-url').textContent = combinedUrl;
+            document.getElementById('combined-container').classList.add('loading');
+            document.getElementById('combined-img').onload = () => {
+                document.getElementById('combined-container').classList.remove('loading');
+            };
+        }
+
+        // Initial load
+        refreshAll();
+    </script>
+</body>
+</html>
