@@ -42,10 +42,8 @@ schedule:
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 2 # Keep 2 hours to capture hourly QPE products
-  keep_latest_observations: 120 # ~2 hours of observations (updates every ~2 min)
-  # TODO: Consider splitting QPE products into separate model config with different
-  # retention settings, since they update hourly vs REFL/PRECIP_RATE every 2 minutes
+  hours: 0.25 # Reduced for testing: 15 minutes (was: 2 hours)
+  keep_latest_observations: 8 # Reduced for testing (was: 120)
 
 # Precaching configuration - disabled for now (large memory footprint ~98MB/grid)
 precaching:

@@ -13,24 +13,49 @@ use crate::model_config::ModelDimensionRegistry;
 // Exception Helpers
 // ============================================================================
 
-/// Generate a WMS-formatted exception response
+/// Generate a WMS-formatted exception response per OGC WMS 1.3.0 spec
 pub fn wms_exception(code: &str, msg: &str, status: StatusCode) -> Response {
+    // OGC WMS 1.3.0 exception format with proper namespace declarations
     let xml = format!(
-        r#"<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="{}">{}</ServiceException></ServiceExceptionReport>"#,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ServiceExceptionReport version="1.3.0" xmlns="http://www.opengis.net/ogc" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/ogc http://schemas.opengis.net/wms/1.3.0/exceptions_1_3_0.xsd">
+<ServiceException code="{}">{}</ServiceException>
+</ServiceExceptionReport>"#,
         code, msg
     );
     Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, "application/xml")
+        // WMS 1.3.0 spec requires text/xml for exceptions
+        .header(header::CONTENT_TYPE, "text/xml")
         .body(xml.into())
         .unwrap()
 }
 
-/// Generate a WMTS-formatted exception response
+/// Generate a WMTS-formatted exception response per OGC OWS Common 1.1.0 spec
+/// The `locator` parameter identifies which parameter caused the error.
 pub fn wmts_exception(code: &str, msg: &str, status: StatusCode) -> Response {
+    wmts_exception_with_locator(code, msg, None, status)
+}
+
+/// Generate a WMTS-formatted exception response with locator attribute
+/// per OGC OWS Common 1.1.0 (OGC 06-121r3) and WMTS 1.0.0 (OGC 07-057r7)
+pub fn wmts_exception_with_locator(
+    code: &str,
+    msg: &str,
+    locator: Option<&str>,
+    status: StatusCode,
+) -> Response {
+    let locator_attr = locator
+        .map(|l| format!(r#" locator="{}""#, l))
+        .unwrap_or_default();
     let xml = format!(
-        r#"<?xml version="1.0"?><ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1"><ows:Exception exceptionCode="{}"><ows:ExceptionText>{}</ows:ExceptionText></ows:Exception></ows:ExceptionReport>"#,
-        code, msg
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/ows/1.1 http://schemas.opengis.net/ows/1.1.0/owsExceptionReport.xsd" version="1.1.0">
+  <ows:Exception exceptionCode="{}"{}>
+    <ows:ExceptionText>{}</ows:ExceptionText>
+  </ows:Exception>
+</ows:ExceptionReport>"#,
+        code, locator_attr, msg
     );
     Response::builder()
         .status(status)
@@ -223,9 +248,11 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
                         ""
                     };
 
+                    // Per WMTS schema (wmtsGetCapabilities_response.xsd), Style children order:
+                    // ows:Title, ows:Abstract, ows:Keywords, ows:Identifier, LegendURL
                     xml_parts.push(format!(
-                        r#"<Style{}><ows:Identifier>{}</ows:Identifier><ows:Title>{}</ows:Title></Style>"#,
-                        default_attr, identifier, title
+                        r#"<Style{}><ows:Title>{}</ows:Title><ows:Identifier>{}</ows:Identifier></Style>"#,
+                        default_attr, title, identifier
                     ));
                 }
 
@@ -237,7 +264,22 @@ pub fn get_wmts_styles_xml_from_file(style_file: &str) -> String {
     }
 
     // Fallback to just default style if file can't be read
-    r#"<Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>"#.to_string()
+    // Per WMTS schema, ows:Title comes before ows:Identifier
+    r#"<Style isDefault="true"><ows:Title>Default</ows:Title><ows:Identifier>default</ows:Identifier></Style>"#.to_string()
+}
+
+/// Get list of valid style names from a style JSON file
+/// Returns style identifiers that can be used in GetMap/GetTile requests
+pub fn get_valid_styles_from_file(style_file: &str) -> Vec<String> {
+    if let Ok(content) = std::fs::read_to_string(style_file) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(styles) = json.get("styles").and_then(|s| s.as_object()) {
+                return styles.keys().map(|s| s.to_string()).collect();
+            }
+        }
+    }
+    // Fallback to just default if file can't be read
+    vec!["default".to_string()]
 }
 
 // ============================================================================

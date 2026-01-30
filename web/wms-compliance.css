@@ -1148,3 +1148,298 @@ kbd {
     padding: 0.4rem 0.6rem;
     font-size: 0.75rem;
 }
+
+/* ============================================================
+   CITE CONFORMANCE SUMMARY
+   ============================================================ */
+
+.conformance-summary {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    padding: 1rem;
+}
+
+.conformance-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.conformance-title h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #f3f4f6;
+    margin: 0;
+}
+
+.conformance-subtitle {
+    color: #9ca3af;
+    font-size: 0.8rem;
+}
+
+.conformance-classes {
+    display: flex;
+    gap: 1.5rem;
+}
+
+.conformance-class {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    min-width: 140px;
+}
+
+.conformance-label {
+    color: #9ca3af;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+}
+
+.conformance-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #9ca3af;
+}
+
+.conformance-value.conformance-pass {
+    color: #4ade80;
+}
+
+.conformance-value.conformance-partial {
+    color: #fbbf24;
+}
+
+.conformance-value.conformance-fail {
+    color: #f87171;
+}
+
+.conformance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.conformance-table th,
+.conformance-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.conformance-table th {
+    color: #9ca3af;
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.conformance-table td {
+    color: #d1d5db;
+}
+
+.conformance-table tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.conformance-table td:not(:first-child) {
+    text-align: center;
+    font-family: monospace;
+}
+
+/* ============================================================
+   REQUIREMENT TYPE BADGES
+   ============================================================ */
+
+.req-badge {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-left: 0.4rem;
+}
+
+.req-mandatory {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.req-optional {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.req-recommendation {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+.req-manual {
+    background: rgba(168, 85, 247, 0.2);
+    color: #a78bfa;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.req-legend {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-right: 1rem;
+}
+
+/* ============================================================
+   CITE TEST ID STYLING
+   ============================================================ */
+
+.cite-id {
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.1);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+}
+
+/* ============================================================
+   MANUAL VERIFICATION SECTION
+   ============================================================ */
+
+.manual-section {
+    background: rgba(168, 85, 247, 0.05);
+    border: 1px solid rgba(168, 85, 247, 0.2);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    padding: 1rem;
+}
+
+.manual-header {
+    margin-bottom: 1rem;
+}
+
+.manual-header h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #a78bfa;
+    margin: 0;
+}
+
+.manual-subtitle {
+    color: #9ca3af;
+    font-size: 0.8rem;
+}
+
+.manual-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.manual-checklist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.manual-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.manual-item-content {
+    flex: 1;
+    min-width: 200px;
+    color: #d1d5db;
+    font-size: 0.85rem;
+}
+
+.manual-item-spec {
+    color: #9ca3af;
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+.manual-item-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.manual-verify-btn {
+    background: rgba(34, 197, 94, 0.2);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #4ade80;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.manual-verify-btn:hover {
+    background: rgba(34, 197, 94, 0.3);
+}
+
+.manual-verify-btn.fail {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+.manual-verify-btn.fail:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
+
+.manual-verify-btn.skip {
+    background: rgba(107, 114, 128, 0.2);
+    border-color: rgba(107, 114, 128, 0.4);
+    color: #9ca3af;
+}
+
+.manual-verify-btn.skip:hover {
+    background: rgba(107, 114, 128, 0.3);
+}
+
+/* ============================================================
+   UNTESTED STATUS
+   ============================================================ */
+
+.ogc-test-icon.untested {
+    color: #6b7280;
+}
+
+/* ============================================================
+   IMPROVED TEST DISPLAY
+   ============================================================ */
+
+.ogc-test-id {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.ogc-test-desc {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}

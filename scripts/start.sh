@@ -56,6 +56,13 @@ load_env_file() {
     log_info "Create .env from .env.example to customize settings:"
     log_info "  cp .env.example .env"
   fi
+  
+  # Enable CITE test data for local development (OGC WMS compliance testing)
+  # This adds cite:Lakes, cite:Ponds, etc. layers for CITE test suite
+  export ENABLE_CITE_DATA="${ENABLE_CITE_DATA:-true}"
+  if [ "$ENABLE_CITE_DATA" = "true" ]; then
+    log_info "CITE test data enabled (cite:Lakes, cite:Ponds, etc.)"
+  fi
 }
 
 #------------------------------------------------------------------------------
@@ -233,6 +240,9 @@ show_compose_access_info() {
   echo "  ✓ EDR API - OGC Environmental Data Retrieval"
   echo "  ✓ Downloader - automatically fetches new weather data"
   echo "  ✓ PostgreSQL, Redis, MinIO - data infrastructure"
+  if [ "${ENABLE_CITE_DATA:-true}" = "true" ]; then
+    echo "  ✓ CITE Test Data - OGC compliance test layers (cite:Lakes, etc.)"
+  fi
   echo ""
   echo "The downloader service will automatically fetch new data."
   echo "Existing data in the database and storage is preserved."
@@ -464,14 +474,22 @@ main() {
     echo "NOTE: Debug builds are slower at runtime but compile MUCH faster."
     echo "      Use release builds only when testing performance."
     echo ""
-    echo "Services automatically started:"
-    echo "  - PostgreSQL (localhost:5432)"
-    echo "  - Redis (localhost:6379)"
-    echo "  - MinIO S3 (localhost:9000 + UI at 9001)"
-    echo "  - WMS API (localhost:8080)"
-    echo "  - Web Dashboard (localhost:8000)"
-    echo ""
-    ;;
+  echo "Services automatically started:"
+  echo "  - PostgreSQL (localhost:5432)"
+  echo "  - Redis (localhost:6379)"
+  echo "  - MinIO S3 (localhost:9000 + UI at 9001)"
+  echo "  - WMS API (localhost:8080)"
+  echo "  - Web Dashboard (localhost:8000)"
+  echo ""
+  echo "OGC COMPLIANCE TESTING:"
+  echo "  CITE test data is enabled by default for local development."
+  echo "  This adds cite:Lakes, cite:Ponds, etc. layers for WMS compliance testing."
+  echo "  To run OGC compliance tests:"
+  echo "    cd validation/ogc-compliance && ./run_wms_compliance.sh"
+  echo ""
+  echo "  To disable CITE data: export ENABLE_CITE_DATA=false"
+  echo ""
+  ;;
   *)
     log_error "Unknown option: $1"
     echo "Run './start.sh --help' for usage information"

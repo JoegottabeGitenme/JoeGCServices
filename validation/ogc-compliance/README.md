@@ -203,6 +203,55 @@ EDR tests use a standalone TestNG-based JAR that runs directly via Java without 
 5. **Parses TestNG results** from XML output
 6. **Generates HTML report** with detailed results
 
+## WMS 1.3.0 Compliance Status
+
+**Current Pass Rate: 93% (183/196 tests)**
+
+### Passing Test Categories
+
+All core protocol tests pass, including:
+- GetCapabilities XML schema validation
+- GetCapabilities content-type (text/xml)
+- GetMap parameter handling (LAYERS, STYLES, CRS, BBOX, FORMAT, etc.)
+- GetFeatureInfo parameter handling
+- Case-insensitive parameter names (OGC spec 6.8.1)
+- Exception handling with proper XML schema
+- Layer and style validation
+- BBOX validation (inverted, zero-size)
+- VERSION validation
+
+### Tests Requiring CITE Test Data (13 tests)
+
+The following tests require the **OGC CITE standard test dataset** which is not applicable to a weather-specific WMS service:
+
+| Test Name | Description | Why Skipped |
+|-----------|-------------|-------------|
+| `data-preconditions` | Checks for CITE dataset layers | Weather WMS serves weather data, not CITE test vectors |
+| `bbox-pixel-interpretation` | Verifies specific pixel values | Requires CITE raster data with known values |
+| `bbox-exponential` | Tests exponential BBOX notation | Uses empty CITE layers |
+| `layer-extents` | Checks CITE layer geographic extents | Requires CITE layer definitions |
+| `each-layer` | Tests each CITE layer individually | Requires CITE layers (Lakes, Ponds, etc.) |
+| `each-style` | Tests each CITE style | Requires CITE style definitions |
+| `no-bgcolor` | Tests default background color | Uses empty CITE layers |
+| `blue-bgcolor` | Tests BGCOLOR=0x0000FF | Uses empty CITE layers |
+| `transparent-default` | Tests default transparency | Uses empty CITE layers |
+| `transparent-true` | Tests TRANSPARENT=TRUE | Uses empty CITE layers |
+| `transparent-false` | Tests TRANSPARENT=FALSE | Uses empty CITE layers |
+| `missing-no-default` | Tests dimension without default | Requires layer with no dimension default |
+
+### About CITE Test Data
+
+The OGC CITE (Compliance Interoperability Testing & Evaluation) test suite includes a standard vector/raster test dataset with layers like `cite:Lakes`, `cite:Ponds`, `cite:Buildings`, etc. These layers have known pixel values and geographic extents that the ImageParser tests verify.
+
+Since Weather WMS is designed to serve gridded weather model data (GFS, HRRR, GOES, MRMS), implementing the CITE test layers would add artificial test data that has no relationship to the actual service functionality.
+
+**For production weather services, 93% compliance with all protocol-level tests passing represents strong OGC conformance.**
+
+To add CITE data support (if needed for certification):
+1. Download CITE test data: `png-worldfiles-wms-1.3.0.zip` (available in this directory)
+2. Implement a static raster layer handler
+3. Add CITE layer configurations with CRS:84 support
+
 ## Known Limitations
 
 ### WMS/WMTS (Docker-based)

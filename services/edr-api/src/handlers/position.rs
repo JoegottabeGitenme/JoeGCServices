@@ -20,6 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::availability::ModelAvailability;
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
+use crate::handlers::forecast_params::{ForecastParams, ForecastQueryStrategy, validate_not_observation_data};
 use crate::limits::ResponseSizeEstimate;
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, FormatType, Timer,
@@ -74,6 +75,16 @@ pub struct PositionQueryParams {
     /// Specified as an ISO 8601 duration (e.g., PT10M for 10 minutes, PT1H for 1 hour).
     /// Only used when datetime is an interval and interpolation is enabled.
     pub step: Option<String>,
+
+    /// Model run time (ISO8601). Required if forecast-hour is specified.
+    /// Only applicable to forecast models (GFS, HRRR, etc.), not observation data.
+    pub run: Option<String>,
+
+    /// Forecast hour(s) from the model run.
+    /// Formats: single (6), list (0,6,12), range (0/24), range+step (0/24/6).
+    /// Requires 'run' to be specified.
+    #[serde(rename = "forecast-hour")]
+    pub forecast_hour: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/position
@@ -183,6 +194,27 @@ async fn position_query(
             )),
         );
     }
+
+    // Parse and validate forecast parameters (run, forecast-hour)
+    let forecast_params = match ForecastParams::parse(
+        params.run.as_deref(),
+        params.forecast_hour.as_deref(),
+    ) {
+        Ok(fp) => fp,
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, e);
+        }
+    };
+
+    // Validate that forecast params are not used with observation data
+    // (observation_data flag is set in ModelEdrConfig)
+    let is_observation_model = model_config.create_query("dummy").observation_data;
+    if let Err(e) = validate_not_observation_data(&forecast_params, is_observation_model) {
+        return error_response(StatusCode::BAD_REQUEST, e);
+    }
+
+    // Determine forecast query strategy
+    let forecast_strategy = forecast_params.strategy();
 
     // Check for required coords parameter
     let coords_str = match &params.coords {
@@ -353,7 +385,103 @@ async fn position_query(
 
     // Get the list of target times (times user wants in the response)
     let mut target_times: Vec<DateTime<Utc>> = Vec::new();
+    
+    // Track if we're using forecast-based time resolution (run + forecast-hour)
+    // In this mode, we store (reference_time, forecast_hour) pairs for later query building
+    let mut forecast_hour_queries: Vec<(DateTime<Utc>, i32)> = Vec::new();
+    let use_forecast_hours = matches!(
+        forecast_strategy,
+        ForecastQueryStrategy::StrictRunHours { .. } | ForecastQueryStrategy::AllHoursForRun(_)
+    );
 
+    // Handle forecast strategy: run/forecast-hour takes precedence over datetime
+    match &forecast_strategy {
+        ForecastQueryStrategy::StrictRunHours { run, hours } => {
+            // Get available forecast hours for this run
+            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await {
+                Ok(h) => h,
+                Err(e) => {
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error(format!(
+                            "Failed to get forecast hours for run: {}",
+                            e
+                        )),
+                    );
+                }
+            };
+
+            if available_hours.is_empty() {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    ExceptionResponse::not_found(format!(
+                        "No data available for run {}",
+                        run.format("%Y-%m-%dT%H:%M:%SZ")
+                    )),
+                );
+            }
+
+            // Expand the requested hours against available hours
+            let requested_hours = hours.expand(&available_hours);
+
+            if requested_hours.is_empty() {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "None of the requested forecast hours are available for run {}. \
+                         Available hours: {:?}",
+                        run.format("%Y-%m-%dT%H:%M:%SZ"),
+                        available_hours
+                    )),
+                );
+            }
+
+            // Build forecast hour queries and corresponding target times
+            for hour in requested_hours {
+                let valid_time = *run + chrono::Duration::hours(hour as i64);
+                forecast_hour_queries.push((*run, hour));
+                target_times.push(valid_time);
+            }
+        }
+        ForecastQueryStrategy::AllHoursForRun(run) => {
+            // Get all available forecast hours for this run
+            let available_hours = match state.catalog.get_run_forecast_hours(model_name, *run).await {
+                Ok(h) => h,
+                Err(e) => {
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error(format!(
+                            "Failed to get forecast hours for run: {}",
+                            e
+                        )),
+                    );
+                }
+            };
+
+            if available_hours.is_empty() {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    ExceptionResponse::not_found(format!(
+                        "No data available for run {}",
+                        run.format("%Y-%m-%dT%H:%M:%SZ")
+                    )),
+                );
+            }
+
+            // Use all available hours
+            for hour in available_hours {
+                let valid_time = *run + chrono::Duration::hours(hour as i64);
+                forecast_hour_queries.push((*run, hour));
+                target_times.push(valid_time);
+            }
+        }
+        ForecastQueryStrategy::UseDatetime => {
+            // Fall through to existing datetime handling below
+        }
+    }
+
+    // If not using forecast hours, use datetime parameter
+    if !use_forecast_hours {
     if let Some(ref dq) = datetime_query {
         // Check if we need to generate times with step parameter
         if dq.is_interval()
@@ -419,6 +547,7 @@ async fn position_query(
                 .collect();
         }
     }
+    } // End of !use_forecast_hours block
 
     // Build interpolation plan: map each target time to how it should be queried
     // Each entry: (target_time, query_strategy)

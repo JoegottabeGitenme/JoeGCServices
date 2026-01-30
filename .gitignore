@@ -118,4 +118,7 @@ compile_commands.json
 
 # Security scan results
 /scripts/security-scan-results/
+
+# other stuff
 /VNL_npp_2024_global_vcmslcfg_v2_c202502261200.average_masked.dat.tif.gz
+/validation/ogc-compliance/png-worldfiles-wms-1.3.0.zip

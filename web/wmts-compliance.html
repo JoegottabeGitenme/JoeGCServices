@@ -62,13 +62,28 @@
         </div>
     </div>
 
+    <!-- OGC CommonOperations Tests -->
+    <div class="ogc-section" id="ogc-commonoperations">
+        <div class="ogc-header" onclick="toggleOgcSection('ogc-commonoperations', event)">
+            <div class="ogc-header-left">
+                <span class="ogc-toggle">▶</span>
+                <span class="ogc-title">CommonOperations</span>
+                <span class="ogc-subtitle">KVP encoding, error handling, case-insensitivity (OWS Common)</span>
+            </div>
+            <div class="ogc-header-right">
+                <span class="ogc-score pending" id="ogc-commonoperations-score">-- / --</span>
+            </div>
+        </div>
+        <div class="ogc-content" id="ogc-commonoperations-content"></div>
+    </div>
+
     <!-- OGC GetCapabilities Tests -->
     <div class="ogc-section" id="ogc-getcapabilities">
         <div class="ogc-header" onclick="toggleOgcSection('ogc-getcapabilities', event)">
             <div class="ogc-header-left">
                 <span class="ogc-toggle">▶</span>
                 <span class="ogc-title">GetCapabilities</span>
-                <span class="ogc-subtitle">Version negotiation, XML validation, Contents structure</span>
+                <span class="ogc-subtitle">Version negotiation, XML validation, metadata sections</span>
             </div>
             <div class="ogc-header-right">
                 <span class="ogc-score pending" id="ogc-getcapabilities-score">-- / --</span>

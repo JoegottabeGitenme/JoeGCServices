@@ -1362,6 +1362,251 @@ impl Catalog {
             bbox: BoundingBox::new(bbox_result.0, bbox_result.1, bbox_result.2, bbox_result.3),
         }))
     }
+
+    // =========================================================================
+    // Methods for custom dimension support (run/forecast-hour)
+    // =========================================================================
+
+    /// Get all available forecast hours for a specific model run.
+    ///
+    /// Returns a sorted list of forecast hours (ascending) that are available
+    /// for the given model at the specified reference time.
+    pub async fn get_run_forecast_hours(
+        &self,
+        model: &str,
+        reference_time: DateTime<Utc>,
+    ) -> WmsResult<Vec<i32>> {
+        let rows = sqlx::query_scalar::<_, i32>(
+            "SELECT DISTINCT forecast_hour FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available' \
+             ORDER BY forecast_hour ASC",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get comprehensive info about the latest model run.
+    ///
+    /// Returns information about the most recent model run including:
+    /// - The reference time
+    /// - All available forecast hours for that run
+    /// - The valid time range (start and end)
+    ///
+    /// Returns None if no runs exist for the model.
+    pub async fn get_latest_run_info(&self, model: &str) -> WmsResult<Option<LatestRunInfo>> {
+        // Get the latest reference_time
+        let latest_ref = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT reference_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY reference_time DESC LIMIT 1",
+        )
+        .bind(model)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        let Some(reference_time) = latest_ref else {
+            return Ok(None);
+        };
+
+        // Get all forecast hours for this run
+        let forecast_hours = self.get_run_forecast_hours(model, reference_time).await?;
+
+        // Get the valid time range for this run
+        let time_range = sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>)>(
+            "SELECT MIN(valid_time), MAX(valid_time) \
+             FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available'",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(Some(LatestRunInfo {
+            reference_time,
+            forecast_hours,
+            valid_time_start: time_range.0,
+            valid_time_end: time_range.1,
+        }))
+    }
+
+    /// Find dataset by specific run (reference_time) and forecast hour.
+    ///
+    /// Unlike `find_by_forecast_hour` which uses the latest run, this method
+    /// requires an exact run specification. Returns an error if the data is not
+    /// available for the specified run.
+    ///
+    /// This is used for "strict mode" queries where the user has explicitly
+    /// specified which model run to use.
+    pub async fn find_by_run_and_forecast_hour(
+        &self,
+        model: &str,
+        parameter: &str,
+        reference_time: DateTime<Utc>,
+        forecast_hour: i32,
+        level: Option<&str>,
+    ) -> WmsResult<CatalogEntry> {
+        let row = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND reference_time = $3 \
+                   AND forecast_hour = $4 AND level = $5 AND status = 'available' \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(reference_time)
+            .bind(forecast_hour)
+            .bind(lvl)
+            .fetch_optional(&self.pool)
+            .await
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                 storage_path, file_size, zarr_metadata FROM datasets \
+                 WHERE model = $1 AND parameter = $2 AND reference_time = $3 \
+                   AND forecast_hour = $4 AND status = 'available' \
+                 LIMIT 1",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(reference_time)
+            .bind(forecast_hour)
+            .fetch_optional(&self.pool)
+            .await
+        }
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        row.map(|r| r.into()).ok_or_else(|| {
+            WmsError::DataNotAvailable(format!(
+                "No data for {}/{} at run {} forecast hour {}{}",
+                model,
+                parameter,
+                reference_time.format("%Y-%m-%dT%H:%M:%SZ"),
+                forecast_hour,
+                level.map(|l| format!(" level {}", l)).unwrap_or_default()
+            ))
+        })
+    }
+
+    /// Get best available data for a time range, falling back across runs.
+    ///
+    /// For each valid_time in the requested range, returns the dataset from
+    /// the most recent model run that has data for that time. This enables
+    /// "best available" queries that can seamlessly merge data from multiple
+    /// runs when the latest run doesn't cover the full requested time range.
+    ///
+    /// Results are ordered by valid_time ASC.
+    pub async fn get_best_available_for_time_range(
+        &self,
+        model: &str,
+        parameter: &str,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        level: Option<&str>,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        // Use a window function to get the best (most recent run) dataset per valid_time
+        let rows = if let Some(lvl) = level {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH ranked AS (
+                    SELECT model, parameter, level, reference_time, forecast_hour, \
+                           bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                           storage_path, file_size, zarr_metadata, valid_time,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY valid_time
+                               ORDER BY reference_time DESC
+                           ) as rn
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2 AND level = $3
+                      AND valid_time >= $4 AND valid_time <= $5
+                      AND status = 'available'
+                )
+                SELECT model, parameter, level, reference_time, forecast_hour, \
+                       bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                       storage_path, file_size, zarr_metadata
+                FROM ranked WHERE rn = 1
+                ORDER BY valid_time ASC",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(lvl)
+            .bind(start_time)
+            .bind(end_time)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query_as::<_, DatasetRow>(
+                "WITH ranked AS (
+                    SELECT model, parameter, level, reference_time, forecast_hour, \
+                           bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                           storage_path, file_size, zarr_metadata, valid_time,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY valid_time
+                               ORDER BY reference_time DESC
+                           ) as rn
+                    FROM datasets
+                    WHERE model = $1 AND parameter = $2
+                      AND valid_time >= $3 AND valid_time <= $4
+                      AND status = 'available'
+                )
+                SELECT model, parameter, level, reference_time, forecast_hour, \
+                       bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+                       storage_path, file_size, zarr_metadata
+                FROM ranked WHERE rn = 1
+                ORDER BY valid_time ASC",
+            )
+            .bind(model)
+            .bind(parameter)
+            .bind(start_time)
+            .bind(end_time)
+            .fetch_all(&self.pool)
+            .await
+        }
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get all available model runs for a model (not filtered by parameter).
+    ///
+    /// Returns run times ordered by reference_time DESC (most recent first).
+    /// This is used for populating the "run" custom dimension in collection metadata.
+    pub async fn get_all_model_runs(&self, model: &str) -> WmsResult<Vec<DateTime<Utc>>> {
+        let rows = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT reference_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY reference_time DESC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows)
+    }
+}
+
+/// Information about the latest model run.
+#[derive(Debug, Clone)]
+pub struct LatestRunInfo {
+    /// The reference time (model initialization time) of the latest run.
+    pub reference_time: DateTime<Utc>,
+    /// All available forecast hours for this run.
+    pub forecast_hours: Vec<i32>,
+    /// The earliest valid time in this run.
+    pub valid_time_start: DateTime<Utc>,
+    /// The latest valid time in this run.
+    pub valid_time_end: DateTime<Utc>,
 }
 
 /// Full dataset information for tree views.

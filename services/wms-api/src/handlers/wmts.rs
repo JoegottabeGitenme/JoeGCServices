@@ -10,11 +10,10 @@
 //! - XYZ: Simplified tile URL format for web mapping libraries
 
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Extension, Path, Query, RawQuery},
     http::{header, StatusCode},
     response::Response,
 };
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument};
@@ -26,8 +25,9 @@ use wms_common::{
 };
 
 use super::common::{
-    convert_png_to_jpeg, convert_png_to_webp, get_wmts_styles_xml_from_file, wmts_exception,
-    DimensionParams, WmtsDimensionParams,
+    convert_png_to_jpeg, convert_png_to_webp, get_valid_styles_from_file,
+    get_wmts_styles_xml_from_file, wmts_exception, wmts_exception_with_locator, DimensionParams,
+    WmtsDimensionParams,
 };
 use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
@@ -35,99 +35,245 @@ use crate::state::AppState;
 use storage::ParameterAvailability;
 
 // ============================================================================
-// WMTS Parameters
+// WMTS Parameters (case-insensitive parsing per OGC spec)
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+/// WMTS KVP parameters parsed with case-insensitive key matching
+/// per OGC Web Services Common 1.1.0 (OGC 06-121r3) Section 11.5.2
+#[derive(Debug, Default)]
 pub struct WmtsKvpParams {
-    #[serde(rename = "SERVICE")]
     pub service: Option<String>,
-    #[serde(rename = "REQUEST")]
     pub request: Option<String>,
-    #[serde(rename = "LAYER")]
+    pub version: Option<String>,
     pub layer: Option<String>,
-    #[serde(rename = "STYLE")]
     pub style: Option<String>,
-    #[serde(rename = "TILEMATRIXSET")]
     pub tile_matrix_set: Option<String>,
-    #[serde(rename = "TILEMATRIX")]
     pub tile_matrix: Option<String>,
-    #[serde(rename = "TILEROW")]
     pub tile_row: Option<u32>,
-    #[serde(rename = "TILECOL")]
     pub tile_col: Option<u32>,
-    #[serde(rename = "FORMAT")]
     pub format: Option<String>,
-    #[serde(rename = "TIME")]
     pub time: Option<String>,
-    #[serde(rename = "RUN")]
     pub run: Option<String>,
-    #[serde(rename = "FORECAST")]
     pub forecast: Option<String>,
-    #[serde(rename = "ELEVATION")]
     pub elevation: Option<String>,
+}
+
+impl WmtsKvpParams {
+    /// Parse query string with case-insensitive parameter names
+    /// per OGC Web Services Common 1.1.0 (OGC 06-121r3) Section 11.5.2
+    pub fn from_query_string(query: &str) -> Self {
+        let mut params = Self::default();
+        let map: HashMap<String, String> = query
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?.to_uppercase();
+                let value = parts.next().map(|v| {
+                    // Simple percent-decoding for common cases
+                    v.replace("%2F", "/")
+                        .replace("%3A", ":")
+                        .replace("%20", " ")
+                        .replace("+", " ")
+                }).unwrap_or_default();
+                Some((key, value))
+            })
+            .collect();
+
+        params.service = map.get("SERVICE").cloned();
+        params.request = map.get("REQUEST").cloned();
+        params.version = map.get("VERSION").or_else(|| map.get("ACCEPTVERSIONS")).cloned();
+        params.layer = map.get("LAYER").cloned();
+        params.style = map.get("STYLE").cloned();
+        params.tile_matrix_set = map.get("TILEMATRIXSET").cloned();
+        params.tile_matrix = map.get("TILEMATRIX").cloned();
+        params.tile_row = map.get("TILEROW").and_then(|v| v.parse().ok());
+        params.tile_col = map.get("TILECOL").and_then(|v| v.parse().ok());
+        params.format = map.get("FORMAT").cloned();
+        params.time = map.get("TIME").cloned();
+        params.run = map.get("RUN").cloned();
+        params.forecast = map.get("FORECAST").cloned();
+        params.elevation = map.get("ELEVATION").cloned();
+        params
+    }
 }
 
 // ============================================================================
 // WMTS Handler Entry Points
 // ============================================================================
 
-/// WMTS KVP (Key-Value Pair) handler
+/// WMTS KVP (Key-Value Pair) handler with case-insensitive parameter parsing
 #[instrument(skip(state))]
 pub async fn wmts_kvp_handler(
     Extension(state): Extension<Arc<AppState>>,
-    Query(params): Query<WmtsKvpParams>,
+    RawQuery(raw_query): RawQuery,
 ) -> Response {
-    if params.service.as_deref() != Some("WMTS") {
-        return wmts_exception(
-            "InvalidParameterValue",
-            "SERVICE must be WMTS",
-            StatusCode::BAD_REQUEST,
-        );
+    // Parse query string with case-insensitive parameter names per OGC spec
+    let params = raw_query
+        .as_ref()
+        .map(|q| WmtsKvpParams::from_query_string(q))
+        .unwrap_or_default();
+
+    // Validate SERVICE parameter - required for all WMTS requests
+    match params.service.as_deref() {
+        None => {
+            return wmts_exception_with_locator(
+                "MissingParameterValue",
+                "SERVICE parameter is required",
+                Some("service"),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+        Some(s) if !s.eq_ignore_ascii_case("WMTS") => {
+            return wmts_exception_with_locator(
+                "InvalidParameterValue",
+                &format!("SERVICE must be WMTS, got '{}'", s),
+                Some("service"),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+        _ => {}
     }
 
-    match params.request.as_deref() {
-        Some("GetCapabilities") => wmts_get_capabilities(state).await,
-        Some("GetTile") => {
-            // Validate FORMAT parameter
-            let format = params.format.as_deref().unwrap_or("image/png");
+    // Validate REQUEST parameter
+    let request = match params.request.as_deref() {
+        None => {
+            return wmts_exception_with_locator(
+                "MissingParameterValue",
+                "REQUEST parameter is required",
+                Some("request"),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+        Some(r) => r,
+    };
+
+    match request.to_uppercase().as_str() {
+        "GETCAPABILITIES" => wmts_get_capabilities(state).await,
+        "GETTILE" => {
+            // Validate required LAYER parameter
+            let layer = match params.layer.as_deref() {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "LAYER parameter is required",
+                        Some("layer"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(l) => l.to_string(),
+            };
+
+            // Validate required STYLE parameter
+            let style = match params.style.as_deref() {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "STYLE parameter is required",
+                        Some("style"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(s) => s.to_string(),
+            };
+
+            // Validate required FORMAT parameter
+            let format = match params.format.as_deref() {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "FORMAT parameter is required",
+                        Some("format"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(f) => f,
+            };
             if format != "image/png" && format != "image/jpeg" && format != "image/webp" {
-                return wmts_exception(
+                return wmts_exception_with_locator(
                     "InvalidParameterValue",
                     &format!("FORMAT '{}' is not supported. Supported formats: image/png, image/jpeg, image/webp", format),
+                    Some("format"),
                     StatusCode::BAD_REQUEST,
                 );
             }
 
-            // Validate TILEMATRIXSET parameter
-            let tile_matrix_set = params
-                .tile_matrix_set
-                .as_deref()
-                .unwrap_or("WebMercatorQuad");
+            // Validate required TILEMATRIXSET parameter
+            let tile_matrix_set = match params.tile_matrix_set.as_deref() {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "TILEMATRIXSET parameter is required",
+                        Some("tilematrixset"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(tms) => tms,
+            };
             if tile_matrix_set != "WebMercatorQuad" && tile_matrix_set != "WorldCRS84Quad" {
-                return wmts_exception(
+                return wmts_exception_with_locator(
                     "InvalidParameterValue",
                     &format!("TILEMATRIXSET '{}' is not supported. Supported: WebMercatorQuad, WorldCRS84Quad", tile_matrix_set),
+                    Some("tilematrixset"),
                     StatusCode::BAD_REQUEST,
                 );
             }
 
-            let layer = params.layer.clone().unwrap_or_default();
-            let style = params
-                .style
-                .clone()
-                .unwrap_or_else(|| "default".to_string());
-            let tile_matrix = params.tile_matrix.clone().unwrap_or_default();
-            let tile_row = params.tile_row.unwrap_or(0);
-            let tile_col = params.tile_col.unwrap_or(0);
-            let z: u32 = tile_matrix.parse().unwrap_or(0);
+            // Validate required TILEMATRIX parameter
+            let tile_matrix = match params.tile_matrix.as_deref() {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "TILEMATRIX parameter is required",
+                        Some("tilematrix"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(tm) => tm,
+            };
+            let z: u32 = match tile_matrix.parse() {
+                Ok(z) => z,
+                Err(_) => {
+                    return wmts_exception_with_locator(
+                        "InvalidParameterValue",
+                        &format!("TILEMATRIX '{}' is not a valid integer", tile_matrix),
+                        Some("tilematrix"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            };
+
+            // Validate required TILEROW parameter
+            let tile_row = match params.tile_row {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "TILEROW parameter is required",
+                        Some("tilerow"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(tr) => tr,
+            };
+
+            // Validate required TILECOL parameter
+            let tile_col = match params.tile_col {
+                None => {
+                    return wmts_exception_with_locator(
+                        "MissingParameterValue",
+                        "TILECOL parameter is required",
+                        Some("tilecol"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+                Some(tc) => tc,
+            };
 
             // Validate TILEMATRIX (zoom level) - both TileMatrixSets support 0-18
             if z > 18 {
-                return wmts_exception(
+                return wmts_exception_with_locator(
                     "TileOutOfRange",
                     &format!("TILEMATRIX '{}' is out of range. Valid range: 0-18", z),
+                    Some("tilematrix"),
                     StatusCode::BAD_REQUEST,
                 );
             }
@@ -142,7 +288,7 @@ pub async fn wmts_kvp_handler(
             };
 
             if tile_row >= max_rows {
-                return wmts_exception(
+                return wmts_exception_with_locator(
                     "TileOutOfRange",
                     &format!(
                         "TILEROW '{}' is out of range for TILEMATRIX '{}'. Valid range: 0-{}",
@@ -150,11 +296,12 @@ pub async fn wmts_kvp_handler(
                         z,
                         max_rows - 1
                     ),
+                    Some("tilerow"),
                     StatusCode::BAD_REQUEST,
                 );
             }
             if tile_col >= max_cols {
-                return wmts_exception(
+                return wmts_exception_with_locator(
                     "TileOutOfRange",
                     &format!(
                         "TILECOL '{}' is out of range for TILEMATRIX '{}'. Valid range: 0-{}",
@@ -162,6 +309,7 @@ pub async fn wmts_kvp_handler(
                         z,
                         max_cols - 1
                     ),
+                    Some("tilecol"),
                     StatusCode::BAD_REQUEST,
                 );
             }
@@ -174,6 +322,75 @@ pub async fn wmts_kvp_handler(
             };
 
             let model = layer.split('_').next().unwrap_or("");
+            let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
+
+            // Validate dimension values against advertised values
+            if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
+                // Validate elevation if provided
+                if let Some(ref elev) = params.elevation {
+                    if !availability.levels.is_empty() {
+                        let elev_normalized = elev.replace("_", " ");
+                        let is_valid = availability.levels.iter().any(|l| {
+                            l.eq_ignore_ascii_case(&elev_normalized) || l.eq_ignore_ascii_case(elev)
+                        });
+                        if !is_valid {
+                            return wmts_exception_with_locator(
+                                "InvalidParameterValue",
+                                &format!("ELEVATION '{}' is not valid for layer '{}'. Valid values: {}", 
+                                    elev, layer, availability.levels.join(", ")),
+                                Some("elevation"),
+                                StatusCode::BAD_REQUEST,
+                            );
+                        }
+                    }
+                }
+
+                // Validate forecast hour if provided (for forecast models)
+                if let Some(ref forecast) = params.forecast {
+                    if !availability.forecast_hours.is_empty() {
+                        if let Ok(fh) = forecast.parse::<i32>() {
+                            if !availability.forecast_hours.contains(&fh) {
+                                return wmts_exception_with_locator(
+                                    "InvalidParameterValue",
+                                    &format!("FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}", 
+                                        forecast, layer, availability.forecast_hours),
+                                    Some("forecast"),
+                                    StatusCode::BAD_REQUEST,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Validate run/time if provided
+                if let Some(ref run) = params.run {
+                    if run != "latest" && !availability.times.is_empty() {
+                        let is_valid = availability.times.iter().any(|t| t == run);
+                        if !is_valid {
+                            return wmts_exception_with_locator(
+                                "InvalidParameterValue",
+                                &format!("RUN '{}' is not valid for layer '{}'", run, layer),
+                                Some("run"),
+                                StatusCode::BAD_REQUEST,
+                            );
+                        }
+                    }
+                }
+                if let Some(ref time) = params.time {
+                    if time != "latest" && !availability.times.is_empty() {
+                        let is_valid = availability.times.iter().any(|t| t == time);
+                        if !is_valid {
+                            return wmts_exception_with_locator(
+                                "InvalidParameterValue",
+                                &format!("TIME '{}' is not valid for layer '{}'", time, layer),
+                                Some("time"),
+                                StatusCode::BAD_REQUEST,
+                            );
+                        }
+                    }
+                }
+            }
+
             let (forecast_hour, observation_time, _) =
                 dimensions.parse_for_layer(model, &state.model_dimensions);
 
@@ -192,9 +409,10 @@ pub async fn wmts_kvp_handler(
             )
             .await
         }
-        _ => wmts_exception(
-            "MissingParameterValue",
-            "REQUEST is required",
+        _ => wmts_exception_with_locator(
+            "InvalidParameterValue",
+            &format!("REQUEST '{}' is not supported. Supported: GetCapabilities, GetTile", request),
+            Some("request"),
             StatusCode::BAD_REQUEST,
         ),
     }
@@ -246,6 +464,75 @@ pub async fn wmts_rest_handler(
     };
 
     let model = layer.split('_').next().unwrap_or("");
+    let parameter = layer.split('_').skip(1).collect::<Vec<_>>().join("_").to_uppercase();
+
+    // Validate dimension values against advertised values
+    if let Ok(Some(availability)) = state.catalog.get_parameter_availability(model, &parameter).await {
+        // Validate elevation if provided
+        if let Some(ref elev) = params.elevation {
+            if !availability.levels.is_empty() {
+                let elev_normalized = elev.replace("_", " ");
+                let is_valid = availability.levels.iter().any(|l| {
+                    l.eq_ignore_ascii_case(&elev_normalized) || l.eq_ignore_ascii_case(elev)
+                });
+                if !is_valid {
+                    return wmts_exception_with_locator(
+                        "InvalidParameterValue",
+                        &format!("ELEVATION '{}' is not valid for layer '{}'. Valid values: {}", 
+                            elev, layer, availability.levels.join(", ")),
+                        Some("elevation"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            }
+        }
+
+        // Validate forecast hour if provided (for forecast models)
+        if let Some(ref forecast) = params.forecast {
+            if !availability.forecast_hours.is_empty() {
+                if let Ok(fh) = forecast.parse::<i32>() {
+                    if !availability.forecast_hours.contains(&fh) {
+                        return wmts_exception_with_locator(
+                            "InvalidParameterValue",
+                            &format!("FORECAST '{}' is not valid for layer '{}'. Valid values: {:?}", 
+                                forecast, layer, availability.forecast_hours),
+                            Some("forecast"),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Validate run/time if provided
+        if let Some(ref run) = params.run {
+            if run != "latest" && !availability.times.is_empty() {
+                let is_valid = availability.times.iter().any(|t| t == run);
+                if !is_valid {
+                    return wmts_exception_with_locator(
+                        "InvalidParameterValue",
+                        &format!("RUN '{}' is not valid for layer '{}'", run, layer),
+                        Some("run"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            }
+        }
+        if let Some(ref time) = params.time {
+            if time != "latest" && !availability.times.is_empty() {
+                let is_valid = availability.times.iter().any(|t| t == time);
+                if !is_valid {
+                    return wmts_exception_with_locator(
+                        "InvalidParameterValue",
+                        &format!("TIME '{}' is not valid for layer '{}'", time, layer),
+                        Some("time"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            }
+        }
+    }
+
     let (forecast_hour, observation_time, _) =
         dimensions.parse_for_layer(model, &state.model_dimensions);
 
@@ -587,14 +874,37 @@ async fn wmts_get_tile(
     // Validate layer exists in configuration
     {
         let configs = state.layer_configs.read().await;
-        if configs.get_layer_by_param(model, &parameter).is_none() {
-            // Check if it's a wind barbs layer
-            if parameter != "WIND_BARBS" {
-                return wmts_exception(
-                    "TileNotDefined",
-                    &format!("Layer '{}' is not defined", layer),
-                    StatusCode::BAD_REQUEST,
-                );
+        let layer_config = configs.get_layer_by_param(model, &parameter);
+        if layer_config.is_none() && parameter != "WIND_BARBS" {
+            return wmts_exception_with_locator(
+                "InvalidParameterValue",
+                &format!("Layer '{}' is not defined", layer),
+                Some("layer"),
+                StatusCode::BAD_REQUEST,
+            );
+        }
+
+        // Validate style exists for the layer (skip for wind barbs which only use default)
+        if parameter != "WIND_BARBS" {
+            if let Some(lc) = layer_config {
+                // Get valid styles from the layer's style configuration
+                let style_path = configs.get_style_path(lc);
+                let valid_styles = get_valid_styles_from_file(&style_path);
+                
+                // Check if requested style is valid (case-insensitive)
+                let style_lower = style.to_lowercase();
+                let is_valid_style = style_lower == "default" 
+                    || valid_styles.iter().any(|s| s.to_lowercase() == style_lower);
+                
+                if !is_valid_style {
+                    return wmts_exception_with_locator(
+                        "InvalidParameterValue",
+                        &format!("Style '{}' is not defined for layer '{}'. Valid styles: {}", 
+                            style, layer, valid_styles.join(", ")),
+                        Some("style"),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
             }
         }
     }
@@ -1107,6 +1417,9 @@ fn build_wmts_capabilities_xml_v2(
             // Build bounding box
             let (west, east, south, north) = normalize_bbox_wmts(&availability.bbox);
 
+            // Per WMTS schema (wmtsGetCapabilities_response.xsd), Layer element order:
+            // Title, Abstract, Keywords, WGS84BoundingBox, BoundingBox, Identifier, Metadata,
+            // Style, Format, InfoFormat, Dimension, TileMatrixSetLink, ResourceURL
             all_layers.push(format!(
                 r#"    <Layer>
       <ows:Title>{}</ows:Title>
@@ -1119,13 +1432,13 @@ fn build_wmts_capabilities_xml_v2(
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
       <Format>image/webp</Format>
+{}{}
       <TileMatrixSetLink>
         <TileMatrixSet>WebMercatorQuad</TileMatrixSet>
       </TileMatrixSetLink>
       <TileMatrixSetLink>
         <TileMatrixSet>WorldCRS84Quad</TileMatrixSet>
       </TileMatrixSetLink>
-{}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
       <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
@@ -1195,6 +1508,7 @@ fn build_wmts_capabilities_xml_v2(
 
                 let (west, east, south, north) = normalize_bbox_wmts(&wind1.bbox);
 
+                // Per WMTS schema, Dimension comes before TileMatrixSetLink
                 all_layers.push(format!(
                     r#"    <Layer>
       <ows:Title>{} - Wind Barbs</ows:Title>
@@ -1203,13 +1517,13 @@ fn build_wmts_capabilities_xml_v2(
         <ows:LowerCorner>{} {}</ows:LowerCorner>
         <ows:UpperCorner>{} {}</ows:UpperCorner>
       </ows:WGS84BoundingBox>
-      <Style isDefault="true"><ows:Identifier>default</ows:Identifier><ows:Title>Default</ows:Title></Style>
+      <Style isDefault="true"><ows:Title>Default</ows:Title><ows:Identifier>default</ows:Identifier></Style>
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
       <Format>image/webp</Format>
+{}{}
       <TileMatrixSetLink><TileMatrixSet>WebMercatorQuad</TileMatrixSet></TileMatrixSetLink>
       <TileMatrixSetLink><TileMatrixSet>WorldCRS84Quad</TileMatrixSet></TileMatrixSetLink>
-{}{}
       <ResourceURL format="image/png" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.png"/>
       <ResourceURL format="image/webp" resourceType="tile" template="http://localhost:8080/wmts/rest/{}/{{Style}}/{{TileMatrixSet}}/{{TileMatrix}}/{{TileRow}}/{{TileCol}}.webp"/>
     </Layer>"#,
@@ -1231,18 +1545,34 @@ fn build_wmts_capabilities_xml_v2(
 <Capabilities xmlns="http://www.opengis.net/wmts/1.0"
     xmlns:ows="http://www.opengis.net/ows/1.1"
     xmlns:xlink="http://www.w3.org/1999/xlink"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.opengis.net/wmts/1.0 http://schemas.opengis.net/wmts/1.0/wmtsGetCapabilities_response.xsd"
     version="1.0.0">
   <ows:ServiceIdentification>
     <ows:Title>Weather WMTS Service</ows:Title>
     <ows:ServiceType>OGC WMTS</ows:ServiceType>
     <ows:ServiceTypeVersion>1.0.0</ows:ServiceTypeVersion>
   </ows:ServiceIdentification>
+  <ows:ServiceProvider>
+    <ows:ProviderName>Weather WMS Service</ows:ProviderName>
+    <ows:ServiceContact/>
+  </ows:ServiceProvider>
   <ows:OperationsMetadata>
     <ows:Operation name="GetCapabilities">
       <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+      <ows:Constraint name="GetEncoding">
+        <ows:AllowedValues>
+          <ows:Value>KVP</ows:Value>
+        </ows:AllowedValues>
+      </ows:Constraint>
     </ows:Operation>
     <ows:Operation name="GetTile">
       <ows:DCP><ows:HTTP><ows:Get xlink:href="http://localhost:8080/wmts?"/></ows:HTTP></ows:DCP>
+      <ows:Constraint name="GetEncoding">
+        <ows:AllowedValues>
+          <ows:Value>KVP</ows:Value>
+        </ows:AllowedValues>
+      </ows:Constraint>
     </ows:Operation>
   </ows:OperationsMetadata>
   <Contents>

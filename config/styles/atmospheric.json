@@ -6,7 +6,6 @@
   },
   "styles": {
     "pressure_msl": {
-      "default": true,
       "name": "Mean Sea Level Pressure",
       "description": "MSLP with contours",
       "type": "contour",
@@ -32,6 +31,7 @@
       }
     },
     "pressure_msl_filled": {
+      "default": true,
       "name": "Mean Sea Level Pressure (Filled)",
       "description": "MSLP as filled gradient",
       "type": "gradient",

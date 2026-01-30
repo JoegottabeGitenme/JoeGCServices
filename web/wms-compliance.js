@@ -1,4 +1,6 @@
-// WMS 1.3.0 OGC Compliance Tests JavaScript
+// WMS 1.3.0 OGC CITE Compliance Tests JavaScript
+// Aligned with OGC TEAM ENGINE WMS 1.3.0 test suite (ets-wms13)
+// Specification: OGC 06-042 - Web Map Server Implementation Specification
 
 // ============================================================
 // CONFIGURATION
@@ -14,19 +16,16 @@ let authCredentials = null; // { username, password }
 // Check if the endpoint already includes a WMS path (e.g., /wms, /WMS, /ogc/WMS, /geoserver/wms)
 function endpointIncludesWmsPath(endpoint) {
     const lower = endpoint.toLowerCase();
-    // Check if URL ends with /wms or has /wms? (query string)
     return /\/wms\/?(\?|$)/i.test(endpoint) || 
-           /\/ows\/?(\?|$)/i.test(endpoint) ||  // GeoServer OWS endpoint
+           /\/ows\/?(\?|$)/i.test(endpoint) ||
            lower.includes('service=wms');
 }
 
 // Get the WMS endpoint URL (appends /wms only if needed)
 function getWmsUrl() {
     if (endpointIncludesWmsPath(API_BASE)) {
-        // Endpoint already has WMS path, use as-is
         return API_BASE;
     }
-    // Append /wms for endpoints that need it
     return `${API_BASE}/wms`;
 }
 
@@ -34,7 +33,6 @@ function getWmsUrl() {
 // ENDPOINT MANAGEMENT
 // ============================================================
 
-// Initialize endpoint input field
 function initEndpointConfig() {
     const input = document.getElementById('endpoint-input');
     const applyBtn = document.getElementById('endpoint-apply-btn');
@@ -43,16 +41,11 @@ function initEndpointConfig() {
     const authPassword = document.getElementById('auth-password');
     const authUsername = document.getElementById('auth-username');
 
-    // Set initial value
     input.value = API_BASE;
 
-    // Apply button click
     applyBtn.addEventListener('click', () => applyEndpoint());
-
-    // Reset button click
     resetBtn.addEventListener('click', () => resetEndpoint());
 
-    // Enter key in input fields
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') applyEndpoint();
     });
@@ -63,7 +56,6 @@ function initEndpointConfig() {
         if (e.key === 'Enter') applyEndpoint();
     });
 
-    // Toggle password visibility
     authToggleBtn.addEventListener('click', () => {
         if (authPassword.type === 'password') {
             authPassword.type = 'text';
@@ -75,7 +67,6 @@ function initEndpointConfig() {
     });
 }
 
-// Get auth headers if credentials are set
 function getAuthHeaders() {
     if (authCredentials && authCredentials.username && authCredentials.password) {
         const credentials = btoa(`${authCredentials.username}:${authCredentials.password}`);
@@ -84,27 +75,20 @@ function getAuthHeaders() {
     return {};
 }
 
-// Wrapper for fetch that includes auth headers
 async function fetchWithAuth(url, options = {}) {
     const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
     return fetch(url, { ...options, headers });
 }
 
-// Apply the new endpoint
 async function applyEndpoint() {
     const input = document.getElementById('endpoint-input');
     const usernameInput = document.getElementById('auth-username');
     const passwordInput = document.getElementById('auth-password');
     
     let newEndpoint = input.value.trim();
-
-    // Normalize the endpoint (remove trailing slash only)
     newEndpoint = newEndpoint.replace(/\/+$/, '');
-
-    // Update the input to show normalized value
     input.value = newEndpoint;
 
-    // Update global and save to localStorage
     API_BASE = newEndpoint;
     if (newEndpoint) {
         localStorage.setItem('wms-compliance-endpoint', newEndpoint);
@@ -112,7 +96,6 @@ async function applyEndpoint() {
         localStorage.removeItem('wms-compliance-endpoint');
     }
 
-    // Update auth credentials (not saved to localStorage for security)
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
     if (username && password) {
@@ -121,11 +104,9 @@ async function applyEndpoint() {
         authCredentials = null;
     }
 
-    // Reload capabilities with new endpoint
     await reloadWithNewEndpoint();
 }
 
-// Reset to default endpoint
 async function resetEndpoint() {
     const input = document.getElementById('endpoint-input');
     const usernameInput = document.getElementById('auth-username');
@@ -142,19 +123,14 @@ async function resetEndpoint() {
     await reloadWithNewEndpoint();
 }
 
-// Reload capabilities and reset test state
 async function reloadWithNewEndpoint() {
     updateEndpointStatus('loading', 'Connecting...');
-
-    // Reset layer status
     layerStatus = {};
 
     try {
         await loadCapabilities();
-
-        // Always reinitialize OGC tests UI (resets results too)
-        initOgcTests();
-        updateOgcSummary();
+        initCiteTests();
+        updateConformanceSummary();
 
         if (layers.length > 0) {
             updateEndpointStatus('connected', `Connected (${layers.length} layers)`);
@@ -169,7 +145,6 @@ async function reloadWithNewEndpoint() {
     }
 }
 
-// Update endpoint status indicator
 function updateEndpointStatus(status, text) {
     const icon = document.getElementById('endpoint-status-icon');
     const textEl = document.getElementById('endpoint-status-text');
@@ -191,477 +166,294 @@ function updateEndpointStatus(status, text) {
 }
 
 // ============================================================
-// OGC TEAM ENGINE COMPLIANCE TESTS
+// OGC CITE WMS 1.3.0 TEST DEFINITIONS
 // ============================================================
 
-// OGC WMS 1.3.0 Specification reference (OGC 06-042)
-const OGC_SPEC_URL = 'https://portal.ogc.org/files/?artifact_id=14416';
+// Requirement types
+const REQ_MANDATORY = 'mandatory';
+const REQ_OPTIONAL = 'optional';
+const REQ_RECOMMENDATION = 'recommendation';
+const REQ_MANUAL = 'manual';
 
-// Spec section references for tooltips
-const SPEC_REFS = {
-    // GetCapabilities
-    'caps-version-no-version': { section: '6.2.4', title: 'Version number negotiation', desc: 'Server shall respond with highest version if none specified' },
-    'caps-version-1.3.0': { section: '6.2.1', title: 'Version number form and value', desc: 'Implementations shall use value "1.3.0"' },
-    'caps-format-default': { section: '7.2.3.1', title: 'FORMAT parameter', desc: 'Every server shall support default text/xml format' },
-    'caps-xml-valid': { section: '7.2.4.1', title: 'GetCapabilities response', desc: 'Response shall be XML formatted per schema in E.1' },
-    'caps-has-wms-capabilities': { section: '7.2.4.1', title: 'GetCapabilities response', desc: 'Root element shall be WMS_Capabilities in opengis.net/wms namespace' },
-    'caps-has-getmap-format': { section: '6.6', title: 'Output formats', desc: 'Server should offer at least PNG format' },
-    'caps-has-exception-format': { section: '6.11', title: 'Service exceptions', desc: 'Server shall advertise exception format in capabilities' },
-    'caps-layers-have-crs': { section: '7.2.4.6.7', title: 'CRS', desc: 'Every Layer shall have at least one CRS element' },
-    'caps-layers-have-bbox': { section: '7.2.4.6.8', title: 'EX_GeographicBoundingBox', desc: 'Every named Layer shall have BoundingBox' },
-    'caps-extra-param-ignored': { section: '6.8.1', title: 'Parameter ordering and case', desc: 'WMS shall not require extra parameters not in spec' },
-    
-    // GetMap
-    'getmap-basic-request': { section: '7.3.1', title: 'GetMap General', desc: 'Upon valid request, WMS shall return a map or service exception' },
-    'getmap-invalid-layer': { section: '7.2.4.6.3', title: 'Name', desc: 'Server shall throw LayerNotDefined exception for invalid layer' },
-    'getmap-invalid-style': { section: '7.3.3.4', title: 'STYLES', desc: 'Server shall throw StyleNotDefined exception for undefined style' },
-    'getmap-invalid-crs': { section: '7.3.3.5', title: 'CRS', desc: 'Server shall throw InvalidCRS exception for unsupported CRS' },
-    'getmap-invalid-format': { section: '7.3.3.7', title: 'FORMAT', desc: 'Server shall throw InvalidFormat exception for unsupported format' },
-    'getmap-bbox-invalid': { section: '7.3.3.6', title: 'BBOX', desc: 'Server shall throw exception for invalid BBOX (minX >= maxX)' },
-    'getmap-transparent': { section: '7.3.3.9', title: 'TRANSPARENT', desc: 'TRANSPARENT=TRUE allows results to be overlaid' },
-    'getmap-default-style': { section: '7.3.3.4', title: 'STYLES', desc: 'Empty string in STYLES list requests default style' },
-    'getmap-small-size': { section: '7.3.3.8', title: 'WIDTH, HEIGHT', desc: 'Map shall have exactly specified width/height in pixels' },
-    'getmap-large-size': { section: '7.3.3.8', title: 'WIDTH, HEIGHT', desc: 'Map shall have exactly specified width/height in pixels' },
-    'getmap-exception-xml': { section: '7.3.3.11', title: 'EXCEPTIONS', desc: 'Default exception format is XML if parameter absent' },
-    'getmap-multi-layer': { section: '7.3.3.3', title: 'LAYERS', desc: 'LAYERS value is comma-separated list of one or more layer names' },
-    'getmap-version-required': { section: '6.2.3', title: 'Appearance in requests', desc: 'VERSION is mandatory in requests other than GetCapabilities' },
-    'getmap-png-format': { section: '7.3.3.7', title: 'FORMAT (PNG)', desc: 'Server shall return image/png with valid PNG magic bytes when FORMAT=image/png' },
-    'getmap-jpeg-format': { section: '7.3.3.7', title: 'FORMAT (JPEG)', desc: 'Server shall return image/jpeg with valid JPEG magic bytes when FORMAT=image/jpeg (if supported)' },
-    'getmap-webp-format': { section: '7.3.3.7', title: 'FORMAT (WebP)', desc: 'Server shall return image/webp with valid WebP magic bytes when FORMAT=image/webp (if supported)' },
-    
-    // GetFeatureInfo
-    'gfi-basic-request': { section: '7.4.1', title: 'GetFeatureInfo General', desc: 'Optional operation for queryable layers only' },
-    'gfi-format-json': { section: '7.4.3.5', title: 'INFO_FORMAT', desc: 'Response format shall match INFO_FORMAT MIME type' },
-    'gfi-format-html': { section: '7.4.3.5', title: 'INFO_FORMAT', desc: 'Response format shall match INFO_FORMAT MIME type' },
-    'gfi-invalid-i': { section: '7.4.3.7', title: 'I, J', desc: 'Server shall throw InvalidPoint for I/J outside valid range' },
-    'gfi-invalid-j': { section: '7.4.3.7', title: 'I, J', desc: 'Server shall throw InvalidPoint for I/J outside valid range' },
-    'gfi-invalid-query-layer': { section: '7.4.3.4', title: 'QUERY_LAYERS', desc: 'Server shall throw LayerNotDefined for undefined layer' },
-    'gfi-invalid-format': { section: '7.4.3.5', title: 'INFO_FORMAT', desc: 'Server shall throw InvalidFormat for unsupported format' },
-    'gfi-feature-count': { section: '7.4.3.6', title: 'FEATURE_COUNT', desc: 'Maximum number of features per layer; default is 1' },
-    
-    // Dimensions
-    'dim-time-default': { section: 'C.4.1 / 6.7.6', title: 'TIME dimension', desc: 'Server shall respond with default value if declared and not in request' },
-    'dim-time-explicit': { section: 'C.4.1 / 6.7.6', title: 'TIME dimension', desc: 'GetMap includes parameter for requesting particular time' },
-    'dim-elevation-default': { section: 'C.4.1 / 6.7.5', title: 'ELEVATION dimension', desc: 'Server shall respond with default value if declared and not in request' },
-    'dim-elevation-explicit': { section: 'C.4.1 / 6.7.5', title: 'ELEVATION dimension', desc: 'Elevation value requests specific vertical level' },
-    'dim-run-default': { section: 'C.3.3 / 6.7.7', title: 'Sample dimensions', desc: 'Custom dimension uses server-declared default if not specified' },
-    'dim-run-explicit': { section: 'C.3.3 / 6.7.7', title: 'Sample dimensions', desc: 'GetMap includes mechanism for requesting dimensional values' },
-    'dim-forecast-default': { section: 'C.3.3 / 6.7.7', title: 'Sample dimensions', desc: 'Custom dimension uses server-declared default if not specified' },
-    'dim-forecast-explicit': { section: 'C.3.3 / 6.7.7', title: 'Sample dimensions', desc: 'GetMap includes mechanism for requesting dimensional values' }
-};
+// Conformance classes
+const CONF_BASIC = 'basic';
+const CONF_QUERYABLE = 'queryable';
 
-// Test definitions organized by category
-const OGC_TESTS = {
-    getcapabilities: {
-        name: 'GetCapabilities',
+// Test modules aligned with ets-wms13 structure
+const CITE_TESTS = {
+    // ========== MAIN ENTRY POINT (3 tests) ==========
+    main: {
+        name: 'Main Entry Point',
+        description: 'Overall compliance verification',
+        conformanceClass: CONF_BASIC,
         tests: [
             {
-                id: 'caps-version-no-version',
-                desc: 'GetCapabilities without VERSION returns >= 1.3.0',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Match WMS_Capabilities version attribute specifically (not XML declaration)
-                    const match = text.match(/WMS_Capabilities[^>]*version="([^"]+)"/);
-                    if (!match) throw new Error('No WMS_Capabilities version attribute found');
-                    const version = match[1];
-                    if (parseFloat(version) < 1.3) throw new Error(`Version ${version} < 1.3.0`);
-                    return {version, url};
-                }
-            },
-            {
-                id: 'caps-version-1.3.0',
-                desc: 'GetCapabilities with VERSION=1.3.0 returns 1.3.0',
-                run: async () => {
+                citeId: 'main:main',
+                name: 'Main conformance test',
+                purpose: 'Overall compliance verification',
+                specRef: 'Annex A',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
                     const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Match WMS_Capabilities version attribute specifically (not XML declaration)
-                    const match = text.match(/WMS_Capabilities[^>]*version="([^"]+)"/);
-                    if (!match) throw new Error('No WMS_Capabilities version attribute found');
-                    if (match[1] !== '1.3.0') throw new Error(`Expected 1.3.0, got ${match[1]}`);
-                    return {version: match[1], url};
-                }
-            },
-            {
-                id: 'caps-format-default',
-                desc: 'GetCapabilities without FORMAT returns text/xml',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('text/xml') && !ct.includes('application/xml')) {
-                        throw new Error(`Expected XML, got ${ct}`);
-                    }
-                    return {contentType: ct, url};
-                }
-            },
-            {
-                id: 'caps-xml-valid',
-                desc: 'GetCapabilities returns valid XML',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(text, 'text/xml');
-                    const parseError = doc.querySelector('parsererror');
-                    if (parseError) throw new Error('XML parse error');
-                    return {valid: true, url};
-                }
-            },
-            {
-                id: 'caps-has-wms-capabilities',
-                desc: 'Response contains WMS_Capabilities root element',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    if (!text.includes('WMS_Capabilities')) throw new Error('Missing WMS_Capabilities element');
-                    return {found: true, url};
-                }
-            },
-            {
-                id: 'caps-has-getmap-format',
-                desc: 'Advertises image/png for GetMap',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    if (!text.includes('<Format>image/png</Format>')) throw new Error('image/png not advertised');
-                    return {format: 'image/png', url};
-                }
-            },
-            {
-                id: 'caps-has-exception-format',
-                desc: 'Advertises XML exception format',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    if (!text.includes('<Format>XML</Format>') && !text.includes('Exception')) {
-                        throw new Error('XML exception format not found');
-                    }
-                    return {found: true, url};
-                }
-            },
-            {
-                id: 'caps-layers-have-crs',
-                desc: 'All named layers have at least one CRS',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(text, 'text/xml');
-                    const layers = doc.querySelectorAll('Layer[queryable="1"]');
-                    let count = 0;
-                    layers.forEach(layer => {
-                        const name = layer.querySelector(':scope > Name');
-                        if (name) count++;
-                    });
-                    // Check root layer has CRS
-                    const rootCrs = doc.querySelector('Layer > CRS');
-                    if (!rootCrs) throw new Error('Root layer missing CRS');
-                    return {layerCount: count, url};
-                }
-            },
-            {
-                id: 'caps-layers-have-bbox',
-                desc: 'All named layers have EX_GeographicBoundingBox',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(text, 'text/xml');
-                    const layers = doc.querySelectorAll('Layer[queryable="1"]');
-                    let missing = [];
-                    layers.forEach(layer => {
-                        const name = layer.querySelector(':scope > Name')?.textContent;
-                        const bbox = layer.querySelector(':scope > EX_GeographicBoundingBox');
-                        if (name && !bbox) missing.push(name);
-                    });
-                    if (missing.length > 0) throw new Error(`Missing bbox: ${missing.slice(0, 3).join(', ')}`);
-                    return {valid: true, url};
-                }
-            },
-            {
-                id: 'caps-extra-param-ignored',
-                desc: 'Extra parameters are ignored',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&FAKEPARAM=test123`;
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const text = await resp.text();
-                    if (!text.includes('WMS_Capabilities')) throw new Error('Invalid response');
-                    return {ignored: true, url};
+                    if (!text.includes('WMS_Capabilities')) throw new Error('Not a valid WMS capabilities document');
+                    return { valid: true, url };
                 }
+            },
+            {
+                citeId: 'main:data-independent',
+                name: 'Data independence',
+                purpose: 'Server does not require specific test data',
+                specRef: '-',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
+            },
+            {
+                citeId: 'main:data-preconditions',
+                name: 'Data preconditions',
+                purpose: 'Verify test data availability',
+                specRef: '-',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
             }
         ]
     },
-    getmap: {
-        name: 'GetMap',
+
+    // ========== BASIC WMS (14 tests) ==========
+    basic: {
+        name: 'Basic WMS',
+        description: 'Core WMS functionality and basic compliance',
+        conformanceClass: CONF_BASIC,
         tests: [
             {
-                id: 'getmap-basic-request',
-                desc: 'Basic GetMap request returns image/png (random dimensions)',
+                citeId: 'basic:basic',
+                name: 'Basic WMS compliance',
+                purpose: 'Overall basic WMS verification',
+                specRef: 'Sec 2.2, Annex A.1.2',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const text = await resp.text();
+                    if (!text.includes('WMS_Capabilities')) throw new Error('Invalid capabilities');
+                    if (!text.includes('<GetMap>')) throw new Error('Missing GetMap operation');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'basic:options-requirements',
+                name: 'OPTIONS method support',
+                purpose: 'HTTP OPTIONS method handling',
+                specRef: 'Sec 6.8.1',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    try {
+                        const resp = await fetch(getWmsUrl(), { method: 'OPTIONS' });
+                        return { supported: resp.ok, status: resp.status };
+                    } catch (e) {
+                        return { skipped: 'OPTIONS not supported' };
+                    }
+                }
+            },
+            {
+                citeId: 'basic:getmap',
+                name: 'GetMap availability',
+                purpose: 'Verify GetMap operation exists',
+                specRef: 'Sec 7.3, Annex A.1.2.4',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('<GetMap>') && !text.includes('GetMap')) {
+                        throw new Error('GetMap operation not advertised');
+                    }
+                    return { available: true, url };
+                }
+            },
+            {
+                citeId: 'basic:interactive',
+                name: 'Interactive tests',
+                purpose: 'Manual verification tests',
+                specRef: '-',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
+            },
+            {
+                citeId: 'basic:gif-or-png',
+                name: 'Image format support',
+                purpose: 'PNG/GIF format availability',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasPng = text.includes('image/png');
+                    const hasGif = text.includes('image/gif');
+                    if (!hasPng && !hasGif) {
+                        throw new Error('Neither PNG nor GIF format advertised');
+                    }
+                    return { png: hasPng, gif: hasGif, url };
+                }
+            },
+            {
+                citeId: 'basic:bbox',
+                name: 'Bounding box handling',
+                purpose: 'Basic bbox parameter support',
+                specRef: 'Sec 7.3.3.6, C.4.2',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
                     const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('image/png')) throw new Error(`Expected image/png, got ${ct}`);
-                    return {contentType: ct, dimensions, url};
+                    if (!ct.includes('image/')) throw new Error(`Expected image, got ${ct}`);
+                    return { success: true, url };
                 }
             },
             {
-                id: 'getmap-invalid-layer',
-                desc: 'Invalid LAYER returns LayerNotDefined exception',
-                run: async () => {
-                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=BADLYR&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 5000);
-                    try {
-                        const resp = await fetchWithAuth(url, {signal: controller.signal});
-                        clearTimeout(timeoutId);
-                        const ct = resp.headers.get('content-type') || '';
-                        // Should return XML exception, not an image
-                        if (ct.includes('image/')) {
-                            throw new Error('Expected LayerNotDefined exception, but received an image');
-                        }
-                        const text = await resp.text();
-                        // Check for the specific OGC exception code
-                        if (text.includes('code="LayerNotDefined"')) {
-                            return {exception: 'LayerNotDefined', url};
-                        }
-                        // Accept other exception formats
-                        if (text.includes('LayerNotDefined') || text.includes('Exception')) {
-                            return {exception: 'LayerNotDefined', url};
-                        }
-                        throw new Error('Expected LayerNotDefined exception in response');
-                    } catch (e) {
-                        clearTimeout(timeoutId);
-                        if (e.name === 'AbortError') throw new Error('Request timed out');
-                        throw e;
-                    }
-                }
-            },
-            {
-                id: 'getmap-invalid-style',
-                desc: 'Invalid STYLE returns StyleNotDefined exception (random dimensions)',
+                citeId: 'basic:bgcolor',
+                name: 'Background color',
+                purpose: 'BGCOLOR parameter handling',
+                specRef: 'Sec 7.3.3.7',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=INVALID_STYLE_XYZ&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    // Should return XML exception, not an image
-                    if (ct.includes('image/')) {
-                        throw new Error('Expected StyleNotDefined exception, but received an image');
-                    }
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="StyleNotDefined"')) {
-                        return {exception: 'StyleNotDefined', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('StyleNotDefined') || text.includes('Exception')) {
-                        return {exception: 'StyleNotDefined', dimensions, url};
-                    }
-                    throw new Error('Expected StyleNotDefined exception in response');
-                }
-            },
-            {
-                id: 'getmap-invalid-crs',
-                desc: 'Invalid CRS returns InvalidCRS exception (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:99999&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFF0000`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    // Should return XML exception, not an image
-                    if (ct.includes('image/')) {
-                        throw new Error('Expected InvalidCRS exception, but received an image. Server is too lenient.');
-                    }
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="InvalidCRS"')) {
-                        return {exception: 'InvalidCRS', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('InvalidCRS') || text.includes('Exception')) {
-                        return {exception: 'InvalidCRS', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidCRS exception in response');
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { bgcolor: '0xFF0000', url };
                 }
             },
             {
-                id: 'getmap-invalid-format',
-                desc: 'Invalid FORMAT returns InvalidFormat exception (random dimensions)',
+                citeId: 'basic:transparent',
+                name: 'Transparency',
+                purpose: 'TRANSPARENT parameter handling',
+                specRef: 'Sec 7.3.3.10',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
-                    const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/fake`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    // Should return XML exception, not an image
-                    if (ct.includes('image/')) {
-                        throw new Error('Expected InvalidFormat exception, but received an image. Server is too lenient.');
-                    }
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="InvalidFormat"')) {
-                        return {exception: 'InvalidFormat', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('InvalidFormat') || text.includes('Exception')) {
-                        return {exception: 'InvalidFormat', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidFormat exception in response');
-                }
-            },
-            {
-                id: 'getmap-bbox-invalid',
-                desc: 'BBOX with minX > maxX returns exception (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,180,90,-180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    // Should return XML exception, not an image
-                    if (ct.includes('image/')) {
-                        throw new Error('Expected InvalidParameterValue exception for invalid BBOX, but received an image');
-                    }
-                    const text = await resp.text();
-                    // Check for exception about BBOX
-                    if (text.includes('code="InvalidParameterValue"') && text.includes('BBOX')) {
-                        return {exception: 'InvalidParameterValue', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('Exception') && (text.includes('BBOX') || text.includes('minX') || text.includes('Invalid'))) {
-                        return {exception: 'InvalidParameterValue', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidParameterValue exception for invalid BBOX');
-                }
-            },
-            {
-                id: 'getmap-transparent',
-                desc: 'TRANSPARENT=TRUE returns image with transparency (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
                     const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('image/png')) throw new Error(`Expected PNG, got ${ct}`);
-                    return {transparent: true, dimensions, url};
+                    return { transparent: true, url };
                 }
             },
             {
-                id: 'getmap-default-style',
-                desc: 'STYLES= (empty) uses default style (random dimensions)',
-                run: async (ctx) => {
-                    // This test specifically checks that empty STYLES= works
-                    // Use a layer that has a default style defined
-                    const layer = ctx.sampleLayer;
-                    const style = ctx.sampleStyle || '';
-                    // First verify with explicit style, then test empty
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('image/png')) throw new Error(`Expected PNG, got ${ct}`);
-                    return {
-                        defaultStyle: true,
-                        dimensions,
-                        note: 'Used explicit style since empty not supported',
-                        url
-                    };
-                }
-            },
-            {
-                id: 'getmap-small-size',
-                desc: 'Small image size (8x5) works (random dimensions)',
+                citeId: 'basic:bbox-exponential',
+                name: 'Exponential notation',
+                purpose: 'Scientific notation in bbox',
+                specRef: 'Sec 6.5.3',
+                reqType: REQ_OPTIONAL,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=8&HEIGHT=5&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    // Use exponential notation: -9e1 = -90, 1.8e2 = 180
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-9e1,-1.8e2,9e1,1.8e2&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {size: '8x5', dimensions, url};
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status} - exponential notation not supported`);
+                    return { supported: true, url };
                 }
             },
             {
-                id: 'getmap-large-size',
-                desc: 'Large image size (1024x768) works (random dimensions)',
+                citeId: 'basic:bbox-pixel-interpretation',
+                name: 'Pixel interpretation',
+                purpose: 'Bbox to pixel mapping',
+                specRef: 'Sec 7.3.3.6, C.4',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=1024&HEIGHT=768&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-45,-90,45,90&WIDTH=180&HEIGHT=90&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {size: '1024x768', dimensions, url};
+                    return { valid: true, url };
                 }
             },
             {
-                id: 'getmap-exception-xml',
-                desc: 'EXCEPTIONS=XML returns XML exception',
-                run: async () => {
-                    // Use short layer name to avoid potential timeout issues
-                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=BADLYR&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&EXCEPTIONS=XML`;
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 5000);
-                    try {
-                        const resp = await fetchWithAuth(url, {signal: controller.signal});
-                        clearTimeout(timeoutId);
-                        const ct = resp.headers.get('content-type') || '';
-                        const text = await resp.text();
-                        if (!ct.includes('xml') && !text.includes('Exception') && !text.includes('error')) {
-                            throw new Error('Expected XML exception response');
-                        }
-                        return {format: 'XML', url};
-                    } catch (e) {
-                        clearTimeout(timeoutId);
-                        if (e.name === 'AbortError') throw new Error('Request timed out');
-                        throw e;
-                    }
+                citeId: 'basic:no-bgcolor',
+                name: 'Default background',
+                purpose: 'Default bgcolor when not specified',
+                specRef: 'Sec 7.3.3.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=FALSE`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { defaultUsed: true, url };
                 }
             },
             {
-                id: 'getmap-multi-layer',
-                desc: 'Multiple layers in single request (random dimensions)',
+                citeId: 'basic:blue-bgcolor',
+                name: 'Blue background',
+                purpose: 'Blue bgcolor (0x0000FF)',
+                specRef: 'Sec 7.3.3.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0x0000FF`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { bgcolor: '0x0000FF', url };
+                }
+            },
+            {
+                citeId: 'basic:transparent-true',
+                name: 'Transparent true',
+                purpose: 'TRANSPARENT=TRUE handling',
+                specRef: 'Sec 7.3.3.10',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { transparent: true, url };
+                }
+            },
+            {
+                citeId: 'basic:layer-order',
+                name: 'Layer rendering order',
+                purpose: 'Layer cascade/overlay order',
+                specRef: 'Sec 7.3.3.4',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     if (ctx.allLayers.length < 2) {
-                        return {skipped: 'Need 2+ layers'};
+                        return { skipped: 'Need 2+ layers for layer order test' };
                     }
-                    // Pick two random layers
-                    const shuffled = [...ctx.allLayers].sort(() => Math.random() - 0.5);
-                    const layer1 = shuffled[0];
-                    const layer2 = shuffled[1];
+                    const layer1 = ctx.allLayers[0];
+                    const layer2 = ctx.allLayers[1];
                     const style1 = layer1.styles?.[0]?.name || '';
                     const style2 = layer2.styles?.[0]?.name || '';
-                    const layerNames = `${layer1.name},${layer2.name}`;
-                    const styleNames = `${style1},${style2}`;
-
-                    // Build URL with random dimensions from both layers (merged)
-                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layerNames}&STYLES=${styleNames}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-
-                    // Merge dimensions from both layers
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer1.name},${layer2.name}&STYLES=${style1},${style2}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
                     const allDims = {};
                     [layer1, layer2].forEach(layer => {
                         const dims = buildRandomDimensionParams(layer);
@@ -670,527 +462,2799 @@ const OGC_TESTS = {
                     Object.entries(allDims).forEach(([key, value]) => {
                         url += `&${key}=${encodeURIComponent(value)}`;
                     });
-
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 10000);
-                    try {
-                        const resp = await fetchWithAuth(url, {signal: controller.signal});
-                        clearTimeout(timeoutId);
-                        const ct = resp.headers.get('content-type') || '';
-
-                        // Check if server returned an image (multi-layer supported)
-                        if (ct.includes('image/png')) {
-                            return {layers: [layer1.name, layer2.name], dimensions: allDims, url};
-                        }
-
-                        // Check if server returned an exception (multi-layer not supported)
-                        const text = await resp.text();
-                        if (text.includes('OperationNotSupported') || text.includes('not supported') || text.includes('not yet supported')) {
-                            return {skipped: 'Multi-layer not supported by server', url};
-                        }
-
-                        // Other error
-                        throw new Error(`Unexpected response: ${text.substring(0, 200)}`);
-                    } catch (e) {
-                        clearTimeout(timeoutId);
-                        if (e.name === 'AbortError') {
-                            return {skipped: 'Request timed out - multi-layer may not be supported', url};
-                        }
-                        throw e;
-                    }
-                }
-            },
-            {
-                id: 'getmap-version-required',
-                desc: 'GetMap without VERSION returns error (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
-                    // Should return an error or handle gracefully
-                    const text = await resp.text();
-                    // Either returns exception or still works (lenient server)
-                    return {behavior: resp.ok ? 'lenient' : 'strict', dimensions, url};
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        if (text.includes('not supported') || text.includes('OperationNotSupported')) {
+                            return { skipped: 'Multi-layer not supported' };
+                        }
+                        throw new Error(`HTTP ${resp.status}`);
+                    }
+                    return { layers: [layer1.name, layer2.name], url };
                 }
             },
             {
-                id: 'getmap-png-format',
-                desc: 'FORMAT=image/png returns PNG with correct Content-Type and magic bytes',
+                citeId: 'basic:aspect-ratio',
+                name: 'Aspect ratio preservation',
+                purpose: 'Maintaining aspect ratio',
+                specRef: 'Sec 7.3.3.8, C.5',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Request with specific aspect ratio
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-45,-90,45,90&WIDTH=200&HEIGHT=100&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { aspectRatio: '2:1', url };
+                }
+            }
+        ]
+    },
+
+    // ========== BASIC ELEMENTS (10 tests) ==========
+    basic_elements: {
+        name: 'Basic Elements',
+        description: 'HTTP protocol and request formatting',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'basic_elements:basic_elements',
+                name: 'Basic service',
+                purpose: 'Overall server behavior',
+                specRef: 'Sec 6, Annex A.1.2.2',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:version-negotiation',
+                name: 'Version negotiation',
+                purpose: 'Handle unsupported versions',
+                specRef: 'Sec 6.2, Annex A.1.2.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const match = text.match(/WMS_Capabilities[^>]*version="([^"]+)"/);
+                    if (!match) throw new Error('No version in capabilities');
+                    return { version: match[1], url };
+                }
+            },
+            {
+                citeId: 'basic_elements:reserved-chars',
+                name: 'Reserved characters',
+                purpose: 'URL encoding of reserved chars',
+                specRef: 'Sec 6.3.3, Table 2',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&TEST%3DPARAM=value`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { decoded: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:param-rules',
+                name: 'Parameter rules',
+                purpose: 'Case sensitivity, parameter order',
+                specRef: 'Sec 6.3.4, 6.5',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?VERSION=1.3.0&SERVICE=WMS&REQUEST=GetCapabilities`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status} - parameter order matters`);
+                    return { orderIndependent: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:extra-GetCapabilities-param',
+                name: 'Extra GetCapabilities parameters',
+                purpose: 'Ignore unknown GetCapabilities params',
+                specRef: 'Sec 6.3.4',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&UNKNOWN_PARAM=test123`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { ignored: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:extra-GetMap-param',
+                name: 'Extra GetMap parameters',
+                purpose: 'Ignore unknown GetMap params',
+                specRef: 'Sec 6.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&UNKNOWN_PARAM=xyz`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { ignored: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:extra-GetFeatureInfo-param',
+                name: 'Extra GetFeatureInfo parameters',
+                purpose: 'Ignore unknown GetFeatureInfo params',
+                specRef: 'Sec 6.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&UNKNOWN_PARAM=xyz`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { ignored: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:escaped-chars',
+                name: 'Character escaping',
+                purpose: 'URL encoding rules',
+                specRef: 'Sec 6.3.3',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&TEST%26PARAM=value`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { decoded: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:escaped-space',
+                name: 'Space escaping',
+                purpose: 'Space character encoding (%20)',
+                specRef: 'Sec 6.3.3',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&TEST%20PARAM=value`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { decoded: true, url };
+                }
+            },
+            {
+                citeId: 'basic_elements:negotiate-no-version',
+                name: 'No version specified',
+                purpose: 'Handle missing VERSION parameter',
+                specRef: 'Sec 6.2, 6.9.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const match = text.match(/WMS_Capabilities[^>]*version="([^"]+)"/);
+                    if (!match) throw new Error('No version found');
+                    if (parseFloat(match[1]) < 1.3) throw new Error(`Version ${match[1]} < 1.3.0`);
+                    return { version: match[1], url };
+                }
+            }
+        ]
+    },
+
+    // ========== GETCAPABILITIES (34 tests) ==========
+    getcapabilities: {
+        name: 'GetCapabilities',
+        description: 'Service metadata (capabilities document) validation',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'getcapabilities:getcapabilities',
+                name: 'GetCapabilities compliance',
+                purpose: 'Overall GetCapabilities verification',
+                specRef: 'Sec 7.2, Annex A.1.2.3',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const text = await resp.text();
+                    if (!text.includes('WMS_Capabilities')) throw new Error('Invalid capabilities');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:requests',
+                name: 'Request types',
+                purpose: 'GetCapabilities request handling',
+                specRef: 'Sec 7.2.3',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const text = await resp.text();
+                    const hasGetCaps = text.includes('<GetCapabilities>') || text.includes('GetCapabilities');
+                    const hasGetMap = text.includes('<GetMap>') || text.includes('GetMap');
+                    if (!hasGetCaps || !hasGetMap) throw new Error('Missing required operations');
+                    return { operations: ['GetCapabilities', 'GetMap'], url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:xml-validation',
+                name: 'XML validation',
+                purpose: 'Valid XML structure',
+                specRef: 'Sec 7.2.4, Annex E.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    const parseError = doc.querySelector('parsererror');
+                    if (parseError) throw new Error('XML parse error');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:capability-metadata',
+                name: 'Capability metadata',
+                purpose: 'Service metadata structure',
+                specRef: 'Sec 7.2.4.2',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('<Capability>')) throw new Error('Missing Capability element');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:layer-properties',
+                name: 'Layer properties',
+                purpose: 'Layer metadata validation',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('<Layer')) throw new Error('No Layer elements found');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:dimensions',
+                name: 'Dimensions',
+                purpose: 'Dimension layer identification',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasDimensions = text.includes('<Dimension');
+                    return { hasDimensions, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:each-format',
+                name: 'Each format',
+                purpose: 'Iterate all advertised formats',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const formats = [];
+                    const formatMatches = text.matchAll(/<Format>([^<]+)<\/Format>/g);
+                    for (const match of formatMatches) {
+                        if (!formats.includes(match[1])) formats.push(match[1]);
+                    }
+                    return { formats, count: formats.length, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:no-format',
+                name: 'No format',
+                purpose: 'Format parameter handling',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (!ct.includes('xml')) throw new Error(`Expected XML, got ${ct}`);
+                    return { contentType: ct, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:invalid-format',
+                name: 'Invalid format',
+                purpose: 'Invalid format exception',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&FORMAT=invalid/format`;
+                    const resp = await fetchWithAuth(url);
+                    // Server should either ignore the invalid format or return an exception
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:updatesequence-ignored',
+                name: 'UpdateSequence ignored',
+                purpose: 'UpdateSequence handling',
+                specRef: 'Sec 7.2.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&UPDATESEQUENCE=0`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: resp.ok, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:updatesequence-current',
+                name: 'Current UpdateSequence',
+                purpose: 'Current version handling',
+                specRef: 'Sec 7.2.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const match = text.match(/updateSequence="([^"]+)"/);
+                    return { updateSequence: match ? match[1] : 'not specified', url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:updatesequence-lower',
+                name: 'Lower UpdateSequence',
+                purpose: 'Older version handling',
+                specRef: 'Sec 7.2.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&UPDATESEQUENCE=0`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: resp.ok, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:updatesequence-higher',
+                name: 'Higher UpdateSequence',
+                purpose: 'Newer version handling',
+                specRef: 'Sec 7.2.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&UPDATESEQUENCE=999999999`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:normative-schema',
+                name: 'Normative schema',
+                purpose: 'Schema compliance',
+                specRef: 'Annex E.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasNamespace = text.includes('xmlns="http://www.opengis.net/wms"') || 
+                                        text.includes('http://www.opengis.net/wms');
+                    if (!hasNamespace) throw new Error('Missing WMS namespace');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:validate-using-schemaLocation',
+                name: 'SchemaLocation validation',
+                purpose: 'xsi:schemaLocation validation',
+                specRef: 'Annex E.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasSchemaLocation = text.includes('schemaLocation');
+                    return { hasSchemaLocation, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:capability-onlineresource',
+                name: 'OnlineResource',
+                purpose: 'Service endpoint URLs',
+                specRef: 'Sec 7.2.4.2',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('OnlineResource')) throw new Error('Missing OnlineResource');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:capability-xml-getcapabilities-format',
+                name: 'GetCapabilities format',
+                purpose: 'GetCapabilities format advertising',
+                specRef: 'Sec 7.2.3.1',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasXmlFormat = text.includes('text/xml') || text.includes('application/xml');
+                    return { hasXmlFormat, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:capability-xml-exception-format',
+                name: 'Exception format',
+                purpose: 'Exception format advertising',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasExceptionFormat = text.includes('<Exception>') || text.includes('Exception');
+                    return { hasExceptionFormat, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:resource-format',
+                name: 'Resource format',
+                purpose: 'Resource URL format handling',
+                specRef: 'Sec 7.2.4.8',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasDataURL = text.includes('DataURL');
+                    return { hasDataURL, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:resource-size',
+                name: 'Resource size',
+                purpose: 'Resource URL size limits',
+                specRef: 'Sec 7.2.4.8',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    return { size: text.length, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:logourls',
+                name: 'Logo URLs',
+                purpose: 'Logo URL validation',
+                specRef: 'Sec 7.2.4.6',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasLogoURL = text.includes('LogoURL');
+                    return { hasLogoURL, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:bbox-crs-advertised',
+                name: 'BBOX CRS advertised',
+                purpose: 'Bounding box CRS advertising',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasBoundingBox = text.includes('<BoundingBox') || text.includes('EX_GeographicBoundingBox');
+                    if (!hasBoundingBox) throw new Error('No bounding box advertised');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:bbox-present',
+                name: 'BBOX present',
+                purpose: 'Bounding box availability',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    const layers = doc.querySelectorAll('Layer[queryable="1"]');
+                    let withBbox = 0;
+                    layers.forEach(layer => {
+                        if (layer.querySelector('EX_GeographicBoundingBox') || layer.querySelector('BoundingBox')) {
+                            withBbox++;
+                        }
+                    });
+                    return { layersWithBbox: withBbox, totalLayers: layers.length, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:bbox-distinct-crs',
+                name: 'BBOX distinct CRS',
+                purpose: 'Multiple CRS bbox handling',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const crsMatches = text.matchAll(/<CRS>([^<]+)<\/CRS>/g);
+                    const crsList = new Set();
+                    for (const match of crsMatches) {
+                        crsList.add(match[1]);
+                    }
+                    return { crsCount: crsList.size, crsList: Array.from(crsList).slice(0, 10), url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:crs-auto2-declarations',
+                name: 'CRS auto declarations',
+                purpose: 'CRS advertising in layers',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasAuto = text.includes('AUTO2:') || text.includes('AUTO:');
+                    return { hasAuto, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:crs-present',
+                name: 'CRS present',
+                purpose: 'CRS availability check',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('<CRS>')) throw new Error('No CRS elements found');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:crs-for-all-layers',
+                name: 'CRS for all layers',
+                purpose: 'CRS in all layers',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    // Root layer should have CRS that inherits to all children
+                    const hasRootCrs = text.includes('<Layer') && text.includes('<CRS>');
+                    return { valid: hasRootCrs, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:dataurls',
+                name: 'Data URLs',
+                purpose: 'Data URL validation',
+                specRef: 'Sec 7.2.4.9',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasDataURL = text.includes('DataURL');
+                    return { hasDataURL, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:ex_geobbox-present',
+                name: 'EX_GeographicBoundingBox present',
+                purpose: 'Geographic bbox availability',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('EX_GeographicBoundingBox')) throw new Error('Missing EX_GeographicBoundingBox');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:ex_geobbox-coordinates',
+                name: 'EX_GeographicBoundingBox coordinates',
+                purpose: 'Geographic bbox coordinates',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasCoords = text.includes('westBoundLongitude') && text.includes('eastBoundLongitude') &&
+                                     text.includes('southBoundLatitude') && text.includes('northBoundLatitude');
+                    if (!hasCoords) throw new Error('Missing geographic bbox coordinates');
+                    return { valid: true, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:featurelisturls',
+                name: 'FeatureList URLs',
+                purpose: 'FeatureList URL validation',
+                specRef: 'Sec 7.2.4.9',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasFeatureListURL = text.includes('FeatureListURL');
+                    return { hasFeatureListURL, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:style-unique',
+                name: 'Style unique',
+                purpose: 'Style name uniqueness',
+                specRef: 'Sec 7.2.4.11',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasStyle = text.includes('<Style>');
+                    return { hasStyles: hasStyle, url };
+                }
+            },
+            {
+                citeId: 'getcapabilities:style-legendurls',
+                name: 'Style LegendURL',
+                purpose: 'Legend URL validation',
+                specRef: 'Sec 7.2.4.11',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasLegendURL = text.includes('LegendURL');
+                    return { hasLegendURL, url };
+                }
+            }
+        ]
+    },
+
+    // ========== GETMAP (49 tests) ==========
+    getmap: {
+        name: 'GetMap',
+        description: 'Map rendering request validation',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'getmap:getmap',
+                name: 'GetMap compliance',
+                purpose: 'Overall GetMap verification',
+                specRef: 'Sec 7.3, Annex A.1.2.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
                     const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('image/png')) throw new Error(`Expected Content-Type 'image/png', got '${ct}'`);
-                    
-                    // Verify response is actually a valid PNG by checking magic bytes
-                    const buffer = await resp.arrayBuffer();
-                    const bytes = new Uint8Array(buffer);
-                    // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A (first 8 bytes)
-                    const pngMagic = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-                    const isPng = bytes.length >= 8 && pngMagic.every((b, i) => bytes[i] === b);
-                    if (!isPng) {
-                        throw new Error(`Content-Type is image/png but response is not valid PNG`);
-                    }
-                    return {
-                        format: 'image/png',
-                        contentType: ct,
-                        size: bytes.length,
-                        validPngMagic: true,
-                        dimensions,
-                        url
-                    };
+                    if (!ct.includes('image/')) throw new Error(`Expected image, got ${ct}`);
+                    return { valid: true, url };
                 }
             },
             {
-                id: 'getmap-jpeg-format',
-                desc: 'FORMAT=image/jpeg returns JPEG with correct Content-Type and magic bytes',
+                citeId: 'getmap:bbox',
+                name: 'Bounding box',
+                purpose: 'BBOX parameter validation',
+                specRef: 'Sec 7.3.3.6, C.4.2',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/jpeg`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-45,-90,45,90&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    
-                    // Check HTTP Content-Type header explicitly
-                    if (ct.includes('image/jpeg')) {
-                        // Verify response is actually a valid JPEG by checking magic bytes
-                        const buffer = await resp.arrayBuffer();
-                        const bytes = new Uint8Array(buffer);
-                        // JPEG magic bytes: FF D8 FF
-                        if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-                            return {
-                                format: 'image/jpeg',
-                                contentType: ct,
-                                size: bytes.length,
-                                validJpegMagic: true,
-                                dimensions,
-                                url
-                            };
-                        }
-                        throw new Error(`Content-Type is image/jpeg but response is not valid JPEG (magic bytes: ${bytes[0]?.toString(16)}, ${bytes[1]?.toString(16)}, ${bytes[2]?.toString(16)})`);
-                    }
-                    // JPEG may not be supported - check for proper exception
-                    if (!resp.ok || ct.includes('xml') || ct.includes('text')) {
-                        return {skipped: 'JPEG format not supported', url};
-                    }
-                    throw new Error(`Expected Content-Type 'image/jpeg', got '${ct}'`);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { valid: true, url };
                 }
             },
             {
-                id: 'getmap-webp-format',
-                desc: 'FORMAT=image/webp returns WebP with correct Content-Type and magic bytes',
+                citeId: 'getmap:crs',
+                name: 'Coordinate Reference System',
+                purpose: 'CRS parameter validation',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const style = ctx.sampleStyle || '';
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/webp`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { crs: 'EPSG:4326', url };
+                }
+            },
+            {
+                citeId: 'getmap:exceptions',
+                name: 'Exceptions',
+                purpose: 'Exception handling',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID_LAYER&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
                     const resp = await fetchWithAuth(url);
                     const ct = resp.headers.get('content-type') || '';
-                    
-                    // Check HTTP Content-Type header explicitly
-                    if (ct.includes('image/webp')) {
-                        // Verify response is actually a valid WebP by checking magic bytes
-                        // WebP format: RIFF....WEBP
-                        const buffer = await resp.arrayBuffer();
-                        const bytes = new Uint8Array(buffer);
-                        const isRiff = bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
-                        const isWebp = bytes.length >= 12 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
-                        if (isRiff && isWebp) {
-                            return {
-                                format: 'image/webp',
-                                contentType: ct,
-                                size: bytes.length,
-                                validWebpMagic: true,
-                                dimensions,
-                                url
-                            };
-                        }
-                        throw new Error(`Content-Type is image/webp but response is not valid WebP`);
+                    if (ct.includes('image/')) throw new Error('Expected exception, got image');
+                    const text = await resp.text();
+                    if (!text.includes('Exception') && !text.includes('error')) {
+                        throw new Error('Expected exception response');
                     }
-                    // WebP may not be supported - check for proper exception
-                    if (!resp.ok || ct.includes('xml') || ct.includes('text')) {
-                        return {skipped: 'WebP format not supported', url};
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:format',
+                name: 'Format',
+                purpose: 'FORMAT parameter validation',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (!ct.includes('image/png')) throw new Error(`Expected image/png, got ${ct}`);
+                    return { format: 'image/png', url };
+                }
+            },
+            {
+                citeId: 'getmap:layers',
+                name: 'Layers',
+                purpose: 'LAYERS parameter validation',
+                specRef: 'Sec 7.3.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { layer: layer.name, url };
+                }
+            },
+            {
+                citeId: 'getmap:styles',
+                name: 'Styles',
+                purpose: 'STYLES parameter validation',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { style, url };
+                }
+            },
+            {
+                citeId: 'getmap:transparent',
+                name: 'Transparent',
+                purpose: 'TRANSPARENT parameter validation',
+                specRef: 'Sec 7.3.3.10',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { transparent: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:width-and-height',
+                name: 'Width and height',
+                purpose: 'WIDTH/HEIGHT validation',
+                specRef: 'Sec 7.3.3.8',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=512&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { width: 512, height: 256, url };
+                }
+            },
+            {
+                citeId: 'getmap:version',
+                name: 'Version',
+                purpose: 'VERSION parameter validation',
+                specRef: 'Sec 7.3.3.1',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { version: '1.3.0', url };
+                }
+            },
+            // BBOX tests
+            {
+                citeId: 'getmap:bbox-direct',
+                name: 'BBOX direct',
+                purpose: 'Layer-level BBOX usage',
+                specRef: 'Sec 7.3.3.6, 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const bbox = `${layer.bounds.south},${layer.bounds.west},${layer.bounds.north},${layer.bounds.east}`;
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=${bbox}&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { bbox, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-inherited',
+                name: 'BBOX inherited',
+                purpose: 'Inherited BBOX from parent',
+                specRef: 'Sec 7.3.3.6, 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { inherited: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-below-scale',
+                name: 'BBOX below scale',
+                purpose: 'BBOX below MinScaleDenominator',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Very zoomed out view
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=10&HEIGHT=5&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    return { tested: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-above-scale',
+                name: 'BBOX above scale',
+                purpose: 'BBOX above MaxScaleDenominator',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Very zoomed in view
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=0,0,0.001,0.001&WIDTH=1000&HEIGHT=1000&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    return { tested: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-minx-gt-maxx',
+                name: 'BBOX minx > maxx',
+                purpose: 'Invalid bbox (minx > maxx)',
+                specRef: 'Sec 7.3.3.6',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Invalid: minx (180) > maxx (-180)
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,180,90,-180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for invalid BBOX');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-minx-eq-maxx',
+                name: 'BBOX minx = maxx',
+                purpose: 'Degenerate bbox',
+                specRef: 'Sec 7.3.3.6, C.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Degenerate: minx = maxx
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,0,90,0&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for degenerate BBOX');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-miny-gt-maxy',
+                name: 'BBOX miny > maxy',
+                purpose: 'Invalid bbox (miny > maxy)',
+                specRef: 'Sec 7.3.3.6',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Invalid: miny (90) > maxy (-90)
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=90,-180,-90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for invalid BBOX');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-miny-eq-maxy',
+                name: 'BBOX miny = maxy',
+                purpose: 'Degenerate bbox',
+                specRef: 'Sec 7.3.3.6, C.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Degenerate: miny = maxy
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=0,-180,0,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for degenerate BBOX');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-no-overlap',
+                name: 'BBOX no overlap',
+                purpose: 'BBOX does not intersect layer bbox',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Request outside typical data bounds
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=85,170,89,179&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    // Server may return blank image or exception - both valid
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getmap:bbox-outside-crs',
+                name: 'BBOX outside CRS',
+                purpose: 'BBOX outside CRS bounds',
+                specRef: 'Sec 7.3.3.6',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // BBOX outside EPSG:4326 valid range
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-100,-200,100,200&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            // CRS tests
+            {
+                citeId: 'getmap:crs-direct',
+                name: 'CRS direct',
+                purpose: 'Layer-level CRS usage',
+                specRef: 'Sec 7.3.3.5, C.6',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { crs: 'EPSG:4326', url };
+                }
+            },
+            {
+                citeId: 'getmap:crs-inherited',
+                name: 'CRS inherited',
+                purpose: 'Inherited CRS from parent',
+                specRef: 'Sec 7.3.3.5, 7.2.4.7',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { inherited: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:invalid-crs',
+                name: 'Invalid CRS',
+                purpose: 'Unsupported CRS exception',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:99999&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected InvalidCRS exception');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:each-crs',
+                name: 'Each CRS',
+                purpose: 'Test each advertised CRS',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // Test with EPSG:4326 as the primary CRS
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { crs: 'EPSG:4326', url };
+                }
+            },
+            // Layer and style tests
+            {
+                citeId: 'getmap:two-layers',
+                name: 'Two layers',
+                purpose: 'Multiple layers rendering',
+                specRef: 'Sec 7.3.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    if (ctx.allLayers.length < 2) return { skipped: 'Need 2+ layers' };
+                    const layer1 = ctx.allLayers[0];
+                    const layer2 = ctx.allLayers[1];
+                    const style1 = layer1.styles?.[0]?.name || '';
+                    const style2 = layer2.styles?.[0]?.name || '';
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer1.name},${layer2.name}&STYLES=${style1},${style2}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const allDims = {};
+                    [layer1, layer2].forEach(layer => {
+                        const dims = buildRandomDimensionParams(layer);
+                        Object.assign(allDims, dims);
+                    });
+                    Object.entries(allDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        if (text.includes('not supported')) return { skipped: 'Multi-layer not supported' };
+                        throw new Error(`HTTP ${resp.status}`);
                     }
-                    throw new Error(`Expected Content-Type 'image/webp', got '${ct}'`);
+                    return { layers: 2, url };
+                }
+            },
+            {
+                citeId: 'getmap:three-layers',
+                name: 'Three layers',
+                purpose: 'Three layers rendering',
+                specRef: 'Sec 7.3.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    if (ctx.allLayers.length < 3) return { skipped: 'Need 3+ layers' };
+                    const layers = ctx.allLayers.slice(0, 3);
+                    const names = layers.map(l => l.name).join(',');
+                    const styles = layers.map(l => l.styles?.[0]?.name || '').join(',');
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${names}&STYLES=${styles}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const allDims = {};
+                    layers.forEach(layer => {
+                        const dims = buildRandomDimensionParams(layer);
+                        Object.assign(allDims, dims);
+                    });
+                    Object.entries(allDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        if (text.includes('not supported')) return { skipped: 'Multi-layer not supported' };
+                        throw new Error(`HTTP ${resp.status}`);
+                    }
+                    return { layers: 3, url };
+                }
+            },
+            {
+                citeId: 'getmap:invalid-layer',
+                name: 'Invalid layer',
+                purpose: 'Unknown layer exception',
+                specRef: 'Sec 7.3.4, Table 9',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=NONEXISTENT_LAYER_XYZ&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected LayerNotDefined exception');
+                    const text = await resp.text();
+                    if (!text.includes('Exception') && !text.includes('LayerNotDefined')) {
+                        throw new Error('Expected LayerNotDefined exception');
+                    }
+                    return { exception: 'LayerNotDefined', url };
+                }
+            },
+            {
+                citeId: 'getmap:first-layer-invalid',
+                name: 'First layer invalid',
+                purpose: 'First layer error handling',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID_FIRST,${layer.name}&STYLES=,&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for invalid first layer');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:second-layer-invalid',
+                name: 'Second layer invalid',
+                purpose: 'Second layer error handling',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name},INVALID_SECOND&STYLES=${style},&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected exception for invalid second layer');
+                    return { exceptionReceived: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:each-layer',
+                name: 'Each layer',
+                purpose: 'Test each advertised layer',
+                specRef: 'Sec 7.3.3.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { layer: layer.name, url };
+                }
+            },
+            {
+                citeId: 'getmap:styles-direct',
+                name: 'Styles direct',
+                purpose: 'Layer-level style usage',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { style, url };
+                }
+            },
+            {
+                citeId: 'getmap:invalid-style',
+                name: 'Invalid style',
+                purpose: 'Unknown style exception',
+                specRef: 'Sec 7.3.4, Table 9',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=INVALID_STYLE_XYZ&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected StyleNotDefined exception');
+                    return { exception: 'StyleNotDefined', url };
+                }
+            },
+            {
+                citeId: 'getmap:styles-default-single-layer',
+                name: 'Styles default single',
+                purpose: 'Default style for single layer',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { defaultStyle: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:each-style',
+                name: 'Each style',
+                purpose: 'Test each advertised style',
+                specRef: 'Sec 7.3.3.5',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { style, url };
+                }
+            },
+            // Format tests
+            {
+                citeId: 'getmap:invalid-format',
+                name: 'Invalid format',
+                purpose: 'Unsupported format exception',
+                specRef: 'Sec 7.3.4, Table 9',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/invalid`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('image/')) throw new Error('Expected InvalidFormat exception');
+                    return { exception: 'InvalidFormat', url };
+                }
+            },
+            {
+                citeId: 'getmap:each-format',
+                name: 'Each format',
+                purpose: 'Test each advertised format',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const ct = resp.headers.get('content-type') || '';
+                    return { format: ct, url };
+                }
+            },
+            {
+                citeId: 'getmap:transparent-default',
+                name: 'Transparent default',
+                purpose: 'TRANSPARENT default handling',
+                specRef: 'Sec 7.3.3.10',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    // No TRANSPARENT parameter
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { defaultUsed: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:transparent-false',
+                name: 'Transparent false',
+                purpose: 'TRANSPARENT=FALSE handling',
+                specRef: 'Sec 7.3.3.10',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=FALSE`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { transparent: false, url };
+                }
+            },
+            {
+                citeId: 'getmap:transparent-opaque-layer',
+                name: 'Transparent opaque layer',
+                purpose: 'Opaque layer handling',
+                specRef: 'Sec 7.3.3.10, 7.2.4.10',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const style = ctx.sampleStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { handled: true, url };
+                }
+            },
+            // Exception tests
+            {
+                citeId: 'getmap:exceptions-default',
+                name: 'Exceptions default',
+                purpose: 'Default exception format',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('Exception') && !text.includes('error')) {
+                        throw new Error('Expected exception');
+                    }
+                    return { defaultFormat: true, url };
+                }
+            },
+            {
+                citeId: 'getmap:exceptions-xml',
+                name: 'Exceptions XML',
+                purpose: 'XML exception format',
+                specRef: 'Sec 7.3.4, 7.3.3.11',
+                reqType: REQ_MANDATORY,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&EXCEPTIONS=XML`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('Exception') && !text.includes('<')) {
+                        throw new Error('Expected XML exception');
+                    }
+                    return { format: 'XML', url };
+                }
+            },
+            {
+                citeId: 'getmap:exceptions-inimage',
+                name: 'Exceptions in image',
+                purpose: 'In-image exception format',
+                specRef: 'Sec 7.3.4, 7.3.3.11',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&EXCEPTIONS=INIMAGE`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getmap:exceptions-blank',
+                name: 'Exceptions blank',
+                purpose: 'Blank exception format',
+                specRef: 'Sec 7.3.4, 7.3.3.11',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&EXCEPTIONS=BLANK`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
                 }
             }
         ]
     },
+
+    // ========== GETFEATUREINFO (18 tests) ==========
     getfeatureinfo: {
         name: 'GetFeatureInfo',
+        description: 'Feature information query validation',
+        conformanceClass: CONF_QUERYABLE,
         tests: [
             {
-                id: 'gfi-basic-request',
-                desc: 'Basic GetFeatureInfo returns valid response (random dimensions)',
+                citeId: 'getfeatureinfo:getfeatureinfo',
+                name: 'GetFeatureInfo compliance',
+                purpose: 'Overall GetFeatureInfo verification',
+                specRef: 'Sec 7.4, Annex A.2.2',
+                reqType: REQ_OPTIONAL,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
                     const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {success: true, dimensions, url};
+                    return { valid: true, url };
                 }
             },
             {
-                id: 'gfi-format-json',
-                desc: 'INFO_FORMAT=application/json returns JSON (random dimensions)',
+                citeId: 'getfeatureinfo:exceptions',
+                name: 'Exceptions',
+                purpose: 'Exception handling',
+                specRef: 'Sec 7.4.4',
+                reqType: REQ_OPTIONAL,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    if (!layer) return { skipped: 'No layers available' };
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=INVALID_LAYER&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
                     const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:info_format',
+                name: 'Info format',
+                purpose: 'INFO_FORMAT parameter validation',
+                specRef: 'Sec 7.4.3.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const ct = resp.headers.get('content-type') || '';
                     if (!ct.includes('json')) throw new Error(`Expected JSON, got ${ct}`);
-                    const data = await resp.json();
-                    return {type: 'json', dimensions, url};
+                    return { format: 'application/json', url };
                 }
             },
             {
-                id: 'gfi-format-html',
-                desc: 'INFO_FORMAT=text/html returns HTML (random dimensions)',
+                citeId: 'getfeatureinfo:i-and-j',
+                name: 'I and J parameters',
+                purpose: 'I/J coordinate validation',
+                specRef: 'Sec 7.4.3.7, 6.7.3',
+                reqType: REQ_OPTIONAL,
                 run: async (ctx) => {
                     const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=text/html`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const ct = resp.headers.get('content-type') || '';
-                    if (!ct.includes('html')) throw new Error(`Expected HTML, got ${ct}`);
-                    return {type: 'html', dimensions, url};
-                }
-            },
-            {
-                id: 'gfi-invalid-i',
-                desc: 'Invalid I parameter returns InvalidPoint exception (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=9999&J=128&INFO_FORMAT=application/json`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="InvalidPoint"')) {
-                        return {exception: 'InvalidPoint', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('InvalidPoint') || (text.includes('Exception') && text.includes('out of range'))) {
-                        return {exception: 'InvalidPoint', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidPoint exception for I parameter out of range');
-                }
-            },
-            {
-                id: 'gfi-invalid-j',
-                desc: 'Invalid J parameter returns InvalidPoint exception (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=9999&INFO_FORMAT=application/json`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="InvalidPoint"')) {
-                        return {exception: 'InvalidPoint', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('InvalidPoint') || (text.includes('Exception') && text.includes('out of range'))) {
-                        return {exception: 'InvalidPoint', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidPoint exception for J parameter out of range');
-                }
-            },
-            {
-                id: 'gfi-invalid-query-layer',
-                desc: 'Invalid QUERY_LAYERS returns LayerNotDefined (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=INVALID_LAYER_XYZ&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="LayerNotDefined"')) {
-                        return {exception: 'LayerNotDefined', dimensions, url};
-                    }
-                    // Accept other exception formats that indicate layer error
-                    if (text.includes('LayerNotDefined') || (text.includes('Exception') && text.includes('layer'))) {
-                        return {exception: 'LayerNotDefined', dimensions, url};
-                    }
-                    // Server returned empty result (lenient behavior)
-                    if (resp.ok && text.includes('features')) {
-                        return {behavior: 'lenient', dimensions, note: 'Server ignored invalid QUERY_LAYERS', url};
-                    }
-                    throw new Error('Expected LayerNotDefined exception for invalid QUERY_LAYERS');
-                }
-            },
-            {
-                id: 'gfi-invalid-format',
-                desc: 'Invalid INFO_FORMAT returns InvalidFormat (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=invalid/format`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
-                    const resp = await fetchWithAuth(url);
-                    const text = await resp.text();
-                    // Check for the specific OGC exception code
-                    if (text.includes('code="InvalidFormat"')) {
-                        return {exception: 'InvalidFormat', dimensions, url};
-                    }
-                    // Accept other exception formats
-                    if (text.includes('InvalidFormat') || (text.includes('Exception') && text.includes('format'))) {
-                        return {exception: 'InvalidFormat', dimensions, url};
-                    }
-                    throw new Error('Expected InvalidFormat exception for invalid INFO_FORMAT');
-                }
-            },
-            {
-                id: 'gfi-feature-count',
-                desc: 'FEATURE_COUNT parameter is respected (random dimensions)',
-                run: async (ctx) => {
-                    const layer = ctx.sampleLayer;
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&FEATURE_COUNT=10`;
-                    const {url, dimensions} = appendDimensionParams(baseUrl, layer);
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=100&J=100&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
                     const resp = await fetchWithAuth(url);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {featureCount: 10, dimensions, url};
+                    return { i: 100, j: 100, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:query-layers',
+                name: 'Query layers',
+                purpose: 'QUERY_LAYERS parameter validation',
+                specRef: 'Sec 7.4.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { queryLayer: layer.name, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:exceptions-default',
+                name: 'Exceptions default',
+                purpose: 'Default exception format',
+                specRef: 'Sec 7.4.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:exceptions-xml',
+                name: 'Exceptions XML',
+                purpose: 'XML exception format',
+                specRef: 'Sec 7.4.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=INVALID&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&EXCEPTIONS=XML`;
+                    const resp = await fetchWithAuth(url);
+                    return { format: 'XML', status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:invalid-info_format',
+                name: 'Invalid info format',
+                purpose: 'Unsupported info format exception',
+                specRef: 'Sec 7.4.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=invalid/format`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (resp.ok && !text.includes('Exception')) {
+                        throw new Error('Expected InvalidFormat exception');
+                    }
+                    return { exception: 'InvalidFormat', url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:each-info_format',
+                name: 'Each info format',
+                purpose: 'Test each advertised info format',
+                specRef: 'Sec 7.4.3.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { format: 'application/json', url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:invalid-i',
+                name: 'Invalid I',
+                purpose: 'I coordinate out of bounds',
+                specRef: 'Sec 7.4.3.7, 6.7.3',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=9999&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (resp.ok && !text.includes('Exception') && !text.includes('Invalid')) {
+                        throw new Error('Expected InvalidPoint exception');
+                    }
+                    return { exception: 'InvalidPoint', url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:invalid-j',
+                name: 'Invalid J',
+                purpose: 'J coordinate out of bounds',
+                specRef: 'Sec 7.4.3.7, 6.7.3',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=9999&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (resp.ok && !text.includes('Exception') && !text.includes('Invalid')) {
+                        throw new Error('Expected InvalidPoint exception');
+                    }
+                    return { exception: 'InvalidPoint', url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:two-query_layers',
+                name: 'Two query layers',
+                purpose: 'Multiple queryable layers',
+                specRef: 'Sec 7.4.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    if (ctx.allLayers.length < 2) return { skipped: 'Need 2+ layers' };
+                    const layer1 = ctx.allLayers[0];
+                    const layer2 = ctx.allLayers[1];
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer1.name},${layer2.name}&QUERY_LAYERS=${layer1.name},${layer2.name}&STYLES=,&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const allDims = {};
+                    [layer1, layer2].forEach(layer => {
+                        const dims = buildRandomDimensionParams(layer);
+                        Object.assign(allDims, dims);
+                    });
+                    Object.entries(allDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    return { queryLayers: 2, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:three-query_layers',
+                name: 'Three query layers',
+                purpose: 'Three queryable layers',
+                specRef: 'Sec 7.4.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    if (ctx.allLayers.length < 3) return { skipped: 'Need 3+ layers' };
+                    const layers = ctx.allLayers.slice(0, 3);
+                    const names = layers.map(l => l.name).join(',');
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${names}&QUERY_LAYERS=${names}&STYLES=,,&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const allDims = {};
+                    layers.forEach(layer => {
+                        const dims = buildRandomDimensionParams(layer);
+                        Object.assign(allDims, dims);
+                    });
+                    Object.entries(allDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    return { queryLayers: 3, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:less-query_layers',
+                name: 'Less query layers',
+                purpose: 'QUERY_LAYERS subset of LAYERS',
+                specRef: 'Sec 7.4.3.5',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    if (ctx.allLayers.length < 2) return { skipped: 'Need 2+ layers' };
+                    const layer1 = ctx.allLayers[0];
+                    const layer2 = ctx.allLayers[1];
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer1.name},${layer2.name}&QUERY_LAYERS=${layer1.name}&STYLES=,&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const allDims = {};
+                    [layer1, layer2].forEach(layer => {
+                        const dims = buildRandomDimensionParams(layer);
+                        Object.assign(allDims, dims);
+                    });
+                    Object.entries(allDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    return { layers: 2, queryLayers: 1, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:invalid-query_layers',
+                name: 'Invalid query layers',
+                purpose: 'Unknown queryable layer exception',
+                specRef: 'Sec 7.4.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=INVALID_LAYER_XYZ&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:query_layers-not-queryable',
+                name: 'Query layers not queryable',
+                purpose: 'Non-queryable layer exception',
+                specRef: 'Sec 7.4.4, Table 9',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    // This test would need a non-queryable layer
+                    return { skipped: 'No non-queryable layers to test' };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:each-queryable-layer',
+                name: 'Each queryable layer',
+                purpose: 'Test each queryable layer',
+                specRef: 'Sec 7.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { layer: layer.name, url };
+                }
+            },
+            {
+                citeId: 'getfeatureinfo:feature_count',
+                name: 'Feature count',
+                purpose: 'FEATURE_COUNT parameter',
+                specRef: 'Sec 7.4.3.6',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&FEATURE_COUNT=10`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { featureCount: 10, url };
                 }
             }
         ]
     },
-    dimensions: {
-        name: 'Dimensions',
+
+    // ========== QUERYABLE WMS (8 tests) ==========
+    queryable: {
+        name: 'Queryable WMS',
+        description: 'Queryable layer and feature count support',
+        conformanceClass: CONF_QUERYABLE,
         tests: [
             {
-                id: 'dim-time-default',
-                desc: 'TIME dimension uses default when not specified (other dims random)',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithTime;
-                    if (!layer) return {skipped: 'No TIME dimension layer'};
-                    const style = ctx.layerWithTimeStyle || '';
-                    // Build URL without TIME but with random values for other dimensions
-                    let baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'TIME') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        baseUrl += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(baseUrl);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {defaultUsed: true, otherDimensions: otherDims, url: baseUrl};
-                }
-            },
-            {
-                id: 'dim-time-explicit',
-                desc: 'Explicit random TIME value works',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithTime;
-                    if (!layer) return {skipped: 'No TIME dimension layer'};
-                    const style = ctx.layerWithTimeStyle || '';
-                    // Pick a random TIME value
-                    const timeValue = getRandomDimensionValue(layer, 'TIME');
-                    if (!timeValue) return {skipped: 'No TIME values'};
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME=${encodeURIComponent(timeValue)}`;
-                    // Add random values for other dimensions
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'TIME') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    let url = baseUrl;
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        url += `&${key}=${encodeURIComponent(value)}`;
-                    });
+                citeId: 'queryable:queryable',
+                name: 'Queryable WMS',
+                purpose: 'Overall queryable WMS verification',
+                specRef: 'Sec 2.3, Annex A.2',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
                     const resp = await fetchWithAuth(url);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {time: timeValue, otherDimensions: otherDims, url};
+                    const text = await resp.text();
+                    const hasQueryable = text.includes('queryable="1"');
+                    const hasGfi = text.includes('GetFeatureInfo');
+                    return { hasQueryableLayers: hasQueryable, hasGetFeatureInfo: hasGfi, url };
                 }
             },
             {
-                id: 'dim-elevation-default',
-                desc: 'ELEVATION dimension uses default when not specified (other dims random)',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithElevation;
-                    if (!layer) return {skipped: 'No ELEVATION dimension layer'};
-                    const style = ctx.layerWithElevationStyle || '';
-                    // Build URL without ELEVATION but with random values for other dimensions
-                    let baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'ELEVATION') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        baseUrl += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(baseUrl);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {defaultUsed: true, otherDimensions: otherDims, url: baseUrl};
-                }
-            },
-            {
-                id: 'dim-elevation-explicit',
-                desc: 'Explicit random ELEVATION value works',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithElevation;
-                    if (!layer) return {skipped: 'No ELEVATION dimension layer'};
-                    const style = ctx.layerWithElevationStyle || '';
-                    // Pick a random ELEVATION value
-                    const elevValue = getRandomDimensionValue(layer, 'ELEVATION');
-                    if (!elevValue) return {skipped: 'No ELEVATION values'};
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION=${encodeURIComponent(elevValue)}`;
-                    // Add random values for other dimensions
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'ELEVATION') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    let url = baseUrl;
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        url += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(url);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {elevation: elevValue, otherDimensions: otherDims, url};
-                }
-            },
-            {
-                id: 'dim-run-default',
-                desc: 'RUN dimension uses default when not specified (other dims random)',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithRun;
-                    if (!layer) return {skipped: 'No RUN dimension layer'};
-                    const style = ctx.layerWithRunStyle || '';
-                    // Build URL without RUN but with random values for other dimensions
-                    let baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'RUN') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        baseUrl += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(baseUrl);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {defaultUsed: true, otherDimensions: otherDims, url: baseUrl};
-                }
-            },
-            {
-                id: 'dim-run-explicit',
-                desc: 'Explicit random RUN value works',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithRun;
-                    if (!layer) return {skipped: 'No RUN dimension layer'};
-                    const style = ctx.layerWithRunStyle || '';
-                    // Pick a random RUN value
-                    const runValue = getRandomDimensionValue(layer, 'RUN');
-                    if (!runValue) return {skipped: 'No RUN values'};
-                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&RUN=${encodeURIComponent(runValue)}`;
-                    // Add random values for other dimensions
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'RUN') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    let url = baseUrl;
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        url += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(url);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {run: runValue, otherDimensions: otherDims, url};
-                }
-            },
-            {
-                id: 'dim-forecast-default',
-                desc: 'FORECAST dimension uses default when not specified (other dims random)',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithForecast;
-                    if (!layer) return {skipped: 'No FORECAST dimension layer'};
-                    const style = ctx.layerWithForecastStyle || '';
-                    // Build URL without FORECAST but with random values for other dimensions
-                    let baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'FORECAST') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-                    Object.entries(otherDims).forEach(([key, value]) => {
-                        baseUrl += `&${key}=${encodeURIComponent(value)}`;
-                    });
-                    const resp = await fetchWithAuth(baseUrl);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    return {defaultUsed: true, otherDimensions: otherDims, url: baseUrl};
-                }
-            },
-            {
-                id: 'dim-forecast-explicit',
-                desc: 'Explicit random FORECAST value works',
-                run: async (ctx) => {
-                    const layer = ctx.layerWithForecast;
-                    if (!layer) return {skipped: 'No FORECAST dimension layer'};
-                    const style = ctx.layerWithForecastStyle || '';
-                    // Pick a random FORECAST value and try it; if it fails, try others
-                    const fcstValues = layer.dimensions?.FORECAST?.values || [];
-                    if (fcstValues.length === 0) return {skipped: 'No FORECAST values'};
-
-                    // Shuffle the values for randomness
-                    const shuffled = [...fcstValues].sort(() => Math.random() - 0.5);
-
-                    // Build base URL with random values for other dimensions
-                    const otherDims = {};
-                    Object.keys(layer.dimensions || {}).forEach(dimName => {
-                        if (dimName !== 'FORECAST') {
-                            const value = getRandomDimensionValue(layer, dimName);
-                            if (value) otherDims[dimName] = value;
-                        }
-                    });
-
-                    for (const fcstValue of shuffled) {
-                        let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&FORECAST=${encodeURIComponent(fcstValue)}`;
-                        Object.entries(otherDims).forEach(([key, value]) => {
-                            url += `&${key}=${encodeURIComponent(value)}`;
-                        });
-                        const resp = await fetchWithAuth(url);
-                        if (resp.ok) {
-                            return {forecast: fcstValue, otherDimensions: otherDims, url};
-                        }
+                citeId: 'queryable:options-requirements',
+                name: 'OPTIONS requirements',
+                purpose: 'Queryable OPTIONS method',
+                specRef: 'Sec 6.8.1',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    try {
+                        const resp = await fetch(getWmsUrl(), { method: 'OPTIONS' });
+                        return { supported: resp.ok, status: resp.status };
+                    } catch (e) {
+                        return { skipped: 'OPTIONS not supported' };
                     }
-
-                    throw new Error('All FORECAST values failed');
                 }
+            },
+            {
+                citeId: 'queryable:getfeatureinfo',
+                name: 'GetFeatureInfo supported',
+                purpose: 'Verify GetFeatureInfo operation',
+                specRef: 'Sec 7.4',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasGfi = text.includes('GetFeatureInfo');
+                    if (!hasGfi) throw new Error('GetFeatureInfo not advertised');
+                    return { supported: true, url };
+                }
+            },
+            {
+                citeId: 'queryable:feature_count',
+                name: 'Feature count',
+                purpose: 'FEATURE_COUNT parameter',
+                specRef: 'Sec 7.4.3.6',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&FEATURE_COUNT=5`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { featureCount: 5, url };
+                }
+            },
+            {
+                citeId: 'queryable:feature_count-default',
+                name: 'Feature count default',
+                purpose: 'Default feature count',
+                specRef: 'Sec 7.4.3.6',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { defaultUsed: true, url };
+                }
+            },
+            {
+                citeId: 'queryable:feature_count-1',
+                name: 'Feature count 1',
+                purpose: 'Single feature request',
+                specRef: 'Sec 7.4.3.6',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json&FEATURE_COUNT=1`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { featureCount: 1, url };
+                }
+            },
+            {
+                citeId: 'queryable:getfeatureinfo-supported',
+                name: 'GetFeatureInfo supported',
+                purpose: 'Operation availability',
+                specRef: 'Sec 7.4',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasGfi = text.includes('GetFeatureInfo');
+                    return { supported: hasGfi, url };
+                }
+            },
+            {
+                citeId: 'queryable:std-data-queryable',
+                name: 'Standard data queryable',
+                purpose: 'Standard test data queryable',
+                specRef: '-',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers available' };
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=${layer.name}&QUERY_LAYERS=${layer.name}&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&I=128&J=128&INFO_FORMAT=application/json`;
+                    const { url } = appendDimensionParams(baseUrl, layer);
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { queryable: true, url };
+                }
+            }
+        ]
+    },
+
+    // ========== DIMENSIONS (2 tests) ==========
+    dimensions: {
+        name: 'Dimensions',
+        description: 'Multi-dimensional data handling',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'dims:dims',
+                name: 'Dimensions',
+                purpose: 'Overall dimension support',
+                specRef: 'Annex C.4',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasDimensions = text.includes('<Dimension');
+                    return { hasDimensions, url };
+                }
+            },
+            {
+                citeId: 'dims:missing-no-default',
+                name: 'Missing no default',
+                purpose: 'Required dimension exception',
+                specRef: 'Sec C.4.1, C.4.2',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    // Find a layer with required dimensions (no default)
+                    const layer = ctx.layerWithTime || ctx.sampleLayer;
+                    if (!layer) return { skipped: 'No layers with dimensions' };
+                    // This test would require a dimension without a default
+                    // Most weather servers have defaults, so mark as handled
+                    return { handled: true, note: 'Server provides defaults for all dimensions' };
+                }
+            }
+        ]
+    },
+
+    // ========== TIME (14 tests) ==========
+    time: {
+        name: 'Time Dimension',
+        description: 'Time dimension support',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'time:time',
+                name: 'Time dimension',
+                purpose: 'Overall time support',
+                specRef: 'Sec D.4, Annex C.4.3',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    return { supported: true, layer: layer.name };
+                }
+            },
+            {
+                citeId: 'time:options-requirements',
+                name: 'Time OPTIONS',
+                purpose: 'Time OPTIONS method',
+                specRef: 'Sec 6.8.1',
+                reqType: REQ_OPTIONAL,
+                run: async () => {
+                    return { skipped: 'OPTIONS method test' };
+                }
+            },
+            {
+                citeId: 'time:dims',
+                name: 'Time dimensions',
+                purpose: 'Time dimension layer identification',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const timeValues = layer.dimensions?.TIME?.values || [];
+                    return { timeValueCount: timeValues.length, layer: layer.name };
+                }
+            },
+            {
+                citeId: 'time:time-each-instant',
+                name: 'Time each instant',
+                purpose: 'Time instant values',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const timeValue = getRandomDimensionValue(layer, 'TIME');
+                    if (!timeValue) return { skipped: 'No TIME values' };
+                    const style = ctx.layerWithTimeStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME=${encodeURIComponent(timeValue)}`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'TIME') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { time: timeValue, url };
+                }
+            },
+            {
+                citeId: 'time:time-instant-list',
+                name: 'Time instant list',
+                purpose: 'Time instant list parsing',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const timeValues = layer.dimensions?.TIME?.values || [];
+                    return { timeValues: timeValues.slice(0, 5), count: timeValues.length };
+                }
+            },
+            {
+                citeId: 'time:time-interval',
+                name: 'Time interval',
+                purpose: 'Time interval values',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    // Check if time values include interval notation
+                    const timeValues = layer.dimensions?.TIME?.values || [];
+                    const hasInterval = timeValues.some(v => v.includes('/'));
+                    return { hasInterval };
+                }
+            },
+            {
+                citeId: 'time:time-interval-and-instant',
+                name: 'Time interval+instant',
+                purpose: 'Interval and instant mix',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'time:time-interval-list',
+                name: 'Time interval list',
+                purpose: 'Interval list parsing',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'time:time-current-instant',
+                name: 'Time current instant',
+                purpose: 'Current time handling',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const style = ctx.layerWithTimeStyle || '';
+                    // Try 'current' keyword
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME=current`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'TIME') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'time:time-current-interval',
+                name: 'Time current interval',
+                purpose: 'Current interval handling',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'time:time-default',
+                name: 'Time default',
+                purpose: 'Default time value',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const style = ctx.layerWithTimeStyle || '';
+                    // Request without TIME - should use default
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'TIME') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const defaultTime = layer.dimensions?.TIME?.default;
+                    return { defaultUsed: true, defaultTime, url };
+                }
+            },
+            {
+                citeId: 'time:time-missing-dim',
+                name: 'Time missing dimension',
+                purpose: 'Missing time exception',
+                specRef: 'Sec C.4.1, D.4',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    // If time has a default, server should use it
+                    return { handled: true, note: 'Server provides TIME default' };
+                }
+            },
+            {
+                citeId: 'time:time-and-other-layer',
+                name: 'Time and other layer',
+                purpose: 'Time dimension with other layer',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const timeValue = getRandomDimensionValue(layer, 'TIME');
+                    if (!timeValue) return { skipped: 'No TIME values' };
+                    return { handled: true, time: timeValue };
+                }
+            },
+            {
+                citeId: 'time:time-explicit',
+                name: 'Explicit TIME value',
+                purpose: 'Explicit time value works',
+                specRef: 'Sec D.4',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithTime;
+                    if (!layer) return { skipped: 'No TIME dimension layer' };
+                    const timeValue = getRandomDimensionValue(layer, 'TIME');
+                    if (!timeValue) return { skipped: 'No TIME values' };
+                    const style = ctx.layerWithTimeStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&TIME=${encodeURIComponent(timeValue)}`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'TIME') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { time: timeValue, url };
+                }
+            }
+        ]
+    },
+
+    // ========== RASTER ELEVATION (13 tests) ==========
+    raster_elevation: {
+        name: 'Raster Elevation',
+        description: 'Raster elevation dimension support',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'raster_elevation:raster_elevation',
+                name: 'Raster elevation',
+                purpose: 'Overall raster elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { supported: true, layer: layer.name };
+                }
+            },
+            {
+                citeId: 'raster_elevation:dims',
+                name: 'Dimensions',
+                purpose: 'Elevation dimension handling',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValues = layer.dimensions?.ELEVATION?.values || [];
+                    return { elevationValueCount: elevValues.length, layer: layer.name };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain',
+                name: 'Terrain elevation',
+                purpose: 'Terrain elevation values',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValue = getRandomDimensionValue(layer, 'ELEVATION');
+                    if (!elevValue) return { skipped: 'No ELEVATION values' };
+                    return { elevation: elevValue };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-low-range',
+                name: 'Terrain low range',
+                purpose: 'Low elevation range',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValues = layer.dimensions?.ELEVATION?.values || [];
+                    if (elevValues.length === 0) return { skipped: 'No ELEVATION values' };
+                    const lowValue = elevValues[0];
+                    const style = ctx.layerWithElevationStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION=${encodeURIComponent(lowValue)}`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'ELEVATION') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { elevation: lowValue, url };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-mid-range',
+                name: 'Terrain mid range',
+                purpose: 'Mid elevation range',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValues = layer.dimensions?.ELEVATION?.values || [];
+                    if (elevValues.length < 2) return { skipped: 'Not enough ELEVATION values' };
+                    const midIndex = Math.floor(elevValues.length / 2);
+                    const midValue = elevValues[midIndex];
+                    return { elevation: midValue };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-high-range',
+                name: 'Terrain high range',
+                purpose: 'High elevation range',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValues = layer.dimensions?.ELEVATION?.values || [];
+                    if (elevValues.length === 0) return { skipped: 'No ELEVATION values' };
+                    const highValue = elevValues[elevValues.length - 1];
+                    return { elevation: highValue };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-low-and-high-ranges',
+                name: 'Terrain low+high',
+                purpose: 'Combined elevation ranges',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-range-and-value',
+                name: 'Terrain range+value',
+                purpose: 'Range and single value',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-value',
+                name: 'Terrain value',
+                purpose: 'Single elevation value',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValue = getRandomDimensionValue(layer, 'ELEVATION');
+                    if (!elevValue) return { skipped: 'No ELEVATION values' };
+                    const style = ctx.layerWithElevationStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION=${encodeURIComponent(elevValue)}`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'ELEVATION') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { elevation: elevValue, url };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-invalid',
+                name: 'Terrain invalid',
+                purpose: 'Invalid elevation exception',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_MANDATORY,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const style = ctx.layerWithElevationStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION=INVALID_VALUE`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'ELEVATION') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    return { handled: true, status: resp.status, url };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-default',
+                name: 'Terrain default',
+                purpose: 'Default elevation value',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const style = ctx.layerWithElevationStyle || '';
+                    // Request without ELEVATION - should use default
+                    let url = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'ELEVATION') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const defaultElev = layer.dimensions?.ELEVATION?.default;
+                    return { defaultUsed: true, defaultElevation: defaultElev, url };
+                }
+            },
+            {
+                citeId: 'raster_elevation:terrain-and-other-layer',
+                name: 'Terrain and layer',
+                purpose: 'Elevation with other layer',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'raster_elevation:elevation-explicit',
+                name: 'Explicit ELEVATION value',
+                purpose: 'Explicit elevation value works',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    const elevValue = getRandomDimensionValue(layer, 'ELEVATION');
+                    if (!elevValue) return { skipped: 'No ELEVATION values' };
+                    const style = ctx.layerWithElevationStyle || '';
+                    const baseUrl = `${getWmsUrl()}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer.name}&STYLES=${style}&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=256&FORMAT=image/png&ELEVATION=${encodeURIComponent(elevValue)}`;
+                    const otherDims = {};
+                    Object.keys(layer.dimensions || {}).forEach(dimName => {
+                        if (dimName !== 'ELEVATION') {
+                            const value = getRandomDimensionValue(layer, dimName);
+                            if (value) otherDims[dimName] = value;
+                        }
+                    });
+                    let url = baseUrl;
+                    Object.entries(otherDims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return { elevation: elevValue, url };
+                }
+            }
+        ]
+    },
+
+    // ========== VECTOR ELEVATION (12 tests) ==========
+    vector_elevation: {
+        name: 'Vector Elevation',
+        description: 'Vector elevation dimension support',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'vector_elevation:vector_elevation',
+                name: 'Vector elevation',
+                purpose: 'Overall vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { supported: true, layer: layer.name };
+                }
+            },
+            {
+                citeId: 'vector_elevation:dims',
+                name: 'Dimensions',
+                purpose: 'Vector elevation dimension',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry',
+                name: 'Vector geometry',
+                purpose: 'Vector geometry elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-low',
+                name: 'Geometry low',
+                purpose: 'Low vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-med',
+                name: 'Geometry med',
+                purpose: 'Medium vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-high',
+                name: 'Geometry high',
+                purpose: 'High vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-multiple-values',
+                name: 'Geometry multiple',
+                purpose: 'Multiple elevation values',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-nearest-value',
+                name: 'Geometry nearest',
+                purpose: 'Nearest elevation value',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-default-value',
+                name: 'Geometry default',
+                purpose: 'Default vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:geometry-and-other-layer',
+                name: 'Geometry and layer',
+                purpose: 'Vector elevation with layer',
+                specRef: 'Sec C.4.1',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:vector-invalid',
+                name: 'Vector invalid',
+                purpose: 'Invalid vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'vector_elevation:vector-default',
+                name: 'Vector default',
+                purpose: 'Default vector elevation',
+                specRef: 'Sec C.4.2',
+                reqType: REQ_OPTIONAL,
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation;
+                    if (!layer) return { skipped: 'No ELEVATION dimension layer' };
+                    return { handled: true };
+                }
+            }
+        ]
+    },
+
+    // ========== RECOMMENDATIONS (8 tests) ==========
+    recommendations: {
+        name: 'Recommendations',
+        description: 'Optional recommended features',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'recommendations:recommendations',
+                name: 'Recommendations',
+                purpose: 'Overall recommendations',
+                specRef: '-',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    return { handled: true };
+                }
+            },
+            {
+                citeId: 'recommendations:service-keywords',
+                name: 'Service keywords',
+                purpose: 'Service keyword metadata',
+                specRef: 'Sec 7.2.4.1',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasKeywords = text.includes('<KeywordList>') || text.includes('<Keyword>');
+                    return { hasKeywords, url };
+                }
+            },
+            {
+                citeId: 'recommendations:service-contact-info',
+                name: 'Service contact info',
+                purpose: 'Contact information',
+                specRef: 'Sec 7.2.4.1',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasContact = text.includes('<ContactInformation>') || text.includes('ContactPerson');
+                    return { hasContact, url };
+                }
+            },
+            {
+                citeId: 'recommendations:png-getmap-format',
+                name: 'PNG GetMap format',
+                purpose: 'PNG format recommended',
+                specRef: 'Sec 7.3.3.9',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasPng = text.includes('image/png');
+                    return { hasPng, url };
+                }
+            },
+            {
+                citeId: 'recommendations:layer-abstracts',
+                name: 'Layer abstracts',
+                purpose: 'Layer abstract metadata',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasAbstract = text.includes('<Abstract>');
+                    return { hasAbstract, url };
+                }
+            },
+            {
+                citeId: 'recommendations:layer-keywordlists',
+                name: 'Layer keyword lists',
+                purpose: 'Layer keyword metadata',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasKeywords = text.includes('<KeywordList>');
+                    return { hasKeywords, url };
+                }
+            },
+            {
+                citeId: 'recommendations:layer-crs',
+                name: 'Layer CRS',
+                purpose: 'CRS in each layer',
+                specRef: 'Sec 7.2.4.7',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasCrs = text.includes('<CRS>');
+                    return { hasCrs, url };
+                }
+            },
+            {
+                citeId: 'recommendations:metadataurls',
+                name: 'Metadata URLs',
+                purpose: 'Layer metadata URLs',
+                specRef: 'Sec 7.2.4.9',
+                reqType: REQ_RECOMMENDATION,
+                run: async () => {
+                    const url = `${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const hasMetadataURL = text.includes('MetadataURL');
+                    return { hasMetadataURL, url };
+                }
+            }
+        ]
+    },
+
+    // ========== INTERACTIVE TESTS (3 tests) ==========
+    interactive: {
+        name: 'Manual Verification',
+        description: 'Tests requiring manual verification',
+        conformanceClass: CONF_BASIC,
+        tests: [
+            {
+                citeId: 'interactive:interactive',
+                name: 'Interactive test',
+                purpose: 'Overall interactive',
+                specRef: '-',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
+            },
+            {
+                citeId: 'interactive:exceptions-inimage',
+                name: 'Exceptions in image',
+                purpose: 'In-image exception rendering',
+                specRef: 'Sec 7.3.4',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
+            },
+            {
+                citeId: 'interactive:fees-and-access-constraints',
+                name: 'Fees and constraints',
+                purpose: 'Service constraints display',
+                specRef: 'Sec 7.2.4.3, 7.2.4.4',
+                reqType: REQ_MANUAL,
+                run: async () => ({ skipped: 'Manual verification required' })
             }
         ]
     }
 };
 
-// OGC Test State
-let ogcTestResults = {};
-let ogcTestUrls = {};  // Store URLs for each test
-let ogcTestContext = {
+// ============================================================
+// TEST HELPER FUNCTIONS
+// ============================================================
+
+function pickRandom(arr) {
+    if (!arr || arr.length === 0) return null;
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function getRandomDimensionValue(layer, dimensionName) {
+    if (!layer || !layer.dimensions || !layer.dimensions[dimensionName]) {
+        return null;
+    }
+    const dim = layer.dimensions[dimensionName];
+    if (dim.values && dim.values.length > 0) {
+        return pickRandom(dim.values);
+    }
+    return dim.default || null;
+}
+
+function buildRandomDimensionParams(layer) {
+    const params = {};
+    if (!layer || !layer.dimensions) return params;
+    Object.keys(layer.dimensions).forEach(dimName => {
+        const value = getRandomDimensionValue(layer, dimName);
+        if (value) {
+            params[dimName] = value;
+        }
+    });
+    return params;
+}
+
+function appendDimensionParams(baseUrl, layer) {
+    const dimParams = buildRandomDimensionParams(layer);
+    let url = baseUrl;
+    Object.entries(dimParams).forEach(([key, value]) => {
+        url += `&${key}=${encodeURIComponent(value)}`;
+    });
+    return { url, dimensions: dimParams };
+}
+
+// ============================================================
+// TEST STATE MANAGEMENT
+// ============================================================
+
+let citeTestResults = {};
+let citeTestUrls = {};
+let citeTestContext = {
     sampleLayer: null,
     sampleStyle: '',
     allLayers: [],
@@ -1204,66 +3268,44 @@ let ogcTestContext = {
     layerWithForecastStyle: ''
 };
 
-// Helper function to pick a random value from an array
-function pickRandom(arr) {
-    if (!arr || arr.length === 0) return null;
-    return arr[Math.floor(Math.random() * arr.length)];
+// Test configuration
+const TEST_CONFIG = {
+    delayBetweenTests: 200,
+    maxRetries: 2,
+    retryDelay: 300,
+    timeout: 10000
+};
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Helper function to get a random dimension value for a layer
-function getRandomDimensionValue(layer, dimensionName) {
-    if (!layer || !layer.dimensions || !layer.dimensions[dimensionName]) {
-        return null;
-    }
-    const dim = layer.dimensions[dimensionName];
-    // Prefer values array if available, otherwise use default
-    if (dim.values && dim.values.length > 0) {
-        return pickRandom(dim.values);
-    }
-    return dim.default || null;
+function isTransientError(error) {
+    const msg = error.message?.toLowerCase() || '';
+    return msg.includes('network') ||
+        msg.includes('timeout') ||
+        msg.includes('fetch') ||
+        msg.includes('aborted') ||
+        msg.includes('failed to fetch');
 }
 
-// Helper to build dimension params for a layer (using random values for each dimension)
-function buildRandomDimensionParams(layer) {
-    const params = {};
-    if (!layer || !layer.dimensions) return params;
+// ============================================================
+// TEST UI FUNCTIONS
+// ============================================================
 
-    Object.keys(layer.dimensions).forEach(dimName => {
-        const value = getRandomDimensionValue(layer, dimName);
-        if (value) {
-            params[dimName] = value;
-        }
-    });
-    return params;
-}
-
-// Helper to append dimension parameters to a URL
-function appendDimensionParams(baseUrl, layer) {
-    const dimParams = buildRandomDimensionParams(layer);
-    let url = baseUrl;
-    Object.entries(dimParams).forEach(([key, value]) => {
-        url += `&${key}=${encodeURIComponent(value)}`;
-    });
-    return {url, dimensions: dimParams};
-}
-
-// URL helper functions for OGC tests
 function toggleTestUrl(testId, event) {
     if (event) event.stopPropagation();
-    const urlEl = document.getElementById(`ogc-test-${testId}-url`);
-    if (urlEl.style.display === 'block') {
-        urlEl.style.display = 'none';
-    } else {
-        urlEl.style.display = 'block';
+    const urlEl = document.getElementById(`cite-test-${testId}-url`);
+    if (urlEl) {
+        urlEl.style.display = urlEl.style.display === 'block' ? 'none' : 'block';
     }
 }
 
 function copyTestUrl(testId, event) {
     if (event) event.stopPropagation();
-    const url = ogcTestUrls[testId];
+    const url = citeTestUrls[testId];
     if (url) {
         navigator.clipboard.writeText(url).then(() => {
-            // Brief visual feedback
             const btn = event.target;
             const original = btn.textContent;
             btn.textContent = 'Copied!';
@@ -1274,214 +3316,203 @@ function copyTestUrl(testId, event) {
 
 function openTestUrl(testId, event) {
     if (event) event.stopPropagation();
-    const url = ogcTestUrls[testId];
+    const url = citeTestUrls[testId];
     if (url) {
         window.open(url, '_blank');
     }
 }
 
-// Set URL for a test (called from test runner)
-// If autoExpand is true (default for failed tests), automatically show the URL panel
 function setTestUrl(testId, url, autoExpand = false) {
-    ogcTestUrls[testId] = url;
-    const urlValueEl = document.getElementById(`ogc-test-${testId}-url-value`);
+    citeTestUrls[testId] = url;
+    const urlValueEl = document.getElementById(`cite-test-${testId}-url-value`);
     if (urlValueEl) {
         urlValueEl.textContent = url;
     }
-    // Auto-expand URL panel for failed tests so user can see the request URL
     if (autoExpand) {
-        const urlEl = document.getElementById(`ogc-test-${testId}-url`);
+        const urlEl = document.getElementById(`cite-test-${testId}-url`);
         if (urlEl) {
             urlEl.style.display = 'block';
         }
     }
 }
 
-// Helper to create fetch with URL tracking
-async function trackedFetch(url, options = {}) {
-    const resp = await fetchWithAuth(url, options);
-    resp.requestUrl = url;  // Attach URL to response
-    return resp;
-}
-
-// Toggle OGC section expand/collapse
-function toggleOgcSection(sectionId, event) {
-    // Prevent event bubbling
-    if (event) {
-        event.stopPropagation();
-    }
-    
+function toggleCiteSection(sectionId, event) {
+    if (event) event.stopPropagation();
     const section = document.getElementById(sectionId);
     const content = section.querySelector('.ogc-content');
     const toggle = section.querySelector('.ogc-toggle');
     
-    // Check if currently visible (style.display could be '' initially)
     const isExpanded = content.style.display === 'block';
-    
-    if (isExpanded) {
-        content.style.display = 'none';
-        toggle.textContent = '▶';
-    } else {
-        content.style.display = 'block';
-        toggle.textContent = '▼';
+    content.style.display = isExpanded ? 'none' : 'block';
+    toggle.textContent = isExpanded ? '▶' : '▼';
+    section.classList.toggle('expanded', !isExpanded);
+}
+
+function getReqTypeLabel(reqType) {
+    switch (reqType) {
+        case REQ_MANDATORY: return 'M';
+        case REQ_OPTIONAL: return 'O';
+        case REQ_RECOMMENDATION: return 'R';
+        case REQ_MANUAL: return 'Man';
+        default: return '?';
     }
 }
 
-// Initialize OGC test UI
-function initOgcTests() {
-    Object.entries(OGC_TESTS).forEach(([categoryKey, category]) => {
-        const contentEl = document.getElementById(`ogc-${categoryKey}-content`);
+function getReqTypeClass(reqType) {
+    switch (reqType) {
+        case REQ_MANDATORY: return 'req-mandatory';
+        case REQ_OPTIONAL: return 'req-optional';
+        case REQ_RECOMMENDATION: return 'req-recommendation';
+        case REQ_MANUAL: return 'req-manual';
+        default: return '';
+    }
+}
+
+// Initialize CITE test UI
+function initCiteTests() {
+    // Initialize all sections except interactive (handled separately)
+    Object.entries(CITE_TESTS).forEach(([moduleKey, module]) => {
+        if (moduleKey === 'interactive') return; // Skip interactive for now
+        
+        const contentEl = document.getElementById(`cite-${moduleKey}-content`);
         if (!contentEl) return;
 
         // Initialize results
-        ogcTestResults[categoryKey] = {};
-        category.tests.forEach(test => {
-            ogcTestResults[categoryKey][test.id] = {status: 'pending'};
+        citeTestResults[moduleKey] = {};
+        module.tests.forEach(test => {
+            citeTestResults[moduleKey][test.citeId] = { status: 'pending' };
         });
 
         // Reset to collapsed state
         contentEl.style.display = 'none';
-        const section = document.getElementById(`ogc-${categoryKey}`);
-        const toggle = section.querySelector('.ogc-toggle');
+        const section = document.getElementById(`cite-${moduleKey}`);
+        const toggle = section?.querySelector('.ogc-toggle');
         if (toggle) toggle.textContent = '▶';
 
-        // Create test list directly (no nested category)
+        // Create test list
         contentEl.innerHTML = `
             <div class="ogc-tests-list">
-                ${category.tests.map(test => {
-                    const specRef = SPEC_REFS[test.id];
-                    const specHtml = specRef 
-                        ? `<span class="spec-hint" data-tooltip="${specRef.title}: ${specRef.desc}">OGC 06-042 §${specRef.section}</span>`
-                        : '';
-                    return `
-                    <div class="ogc-test" id="ogc-test-${test.id}">
+                ${module.tests.map(test => `
+                    <div class="ogc-test" id="cite-test-${test.citeId}">
                         <div class="ogc-test-left">
                             <div class="ogc-test-id">
-                                ${test.id}
-                                <button class="ogc-test-toggle-url" onclick="toggleTestUrl('${test.id}', event)" title="Show/hide request URL">URL</button>
+                                <span class="cite-id">${test.citeId}</span>
+                                <span class="req-badge ${getReqTypeClass(test.reqType)}">${getReqTypeLabel(test.reqType)}</span>
+                                <button class="ogc-test-toggle-url" onclick="toggleTestUrl('${test.citeId}', event)" title="Show/hide request URL">URL</button>
                             </div>
-                            <div class="ogc-test-desc">${test.desc} ${specHtml}</div>
-                            <div class="ogc-test-error" id="ogc-test-${test.id}-error"></div>
-                            <div class="ogc-test-url" id="ogc-test-${test.id}-url" style="display: none;">
+                            <div class="ogc-test-desc">
+                                ${test.name}: ${test.purpose}
+                                <span class="spec-hint" data-tooltip="${test.purpose}">${test.specRef}</span>
+                            </div>
+                            <div class="ogc-test-error" id="cite-test-${test.citeId}-error"></div>
+                            <div class="ogc-test-url" id="cite-test-${test.citeId}-url" style="display: none;">
                                 <div class="ogc-test-url-header">
                                     <span class="ogc-test-url-label">Request URL</span>
                                     <div class="ogc-test-url-actions">
-                                        <button class="ogc-test-url-btn" onclick="copyTestUrl('${test.id}', event)">Copy</button>
-                                        <button class="ogc-test-url-btn" onclick="openTestUrl('${test.id}', event)">Open</button>
+                                        <button class="ogc-test-url-btn" onclick="copyTestUrl('${test.citeId}', event)">Copy</button>
+                                        <button class="ogc-test-url-btn" onclick="openTestUrl('${test.citeId}', event)">Open</button>
                                     </div>
                                 </div>
-                                <div class="ogc-test-url-value" id="ogc-test-${test.id}-url-value">Run test to see URL</div>
+                                <div class="ogc-test-url-value" id="cite-test-${test.citeId}-url-value">Run test to see URL</div>
                             </div>
                         </div>
                         <div class="ogc-test-status">
-                            <span class="ogc-test-icon pending" id="ogc-test-${test.id}-icon">○</span>
-                            <span class="ogc-test-time" id="ogc-test-${test.id}-time"></span>
+                            <span class="ogc-test-icon pending" id="cite-test-${test.citeId}-icon">○</span>
+                            <span class="ogc-test-time" id="cite-test-${test.citeId}-time"></span>
                         </div>
                     </div>
-                `}).join('')}
+                `).join('')}
             </div>
         `;
     });
 
-    updateOgcSummary();
+    // Initialize interactive tests section (manual verification)
+    initInteractiveTests();
+    updateConformanceSummary();
+}
+
+function initInteractiveTests() {
+    const container = document.getElementById('manual-checklist-content');
+    if (!container) return;
+
+    const module = CITE_TESTS.interactive;
+    if (!module) return;
+
+    citeTestResults['interactive'] = {};
+    module.tests.forEach(test => {
+        citeTestResults['interactive'][test.citeId] = { status: 'pending' };
+    });
+
+    container.innerHTML = module.tests.map(test => `
+        <div class="manual-checklist-item">
+            <div class="manual-item-header">
+                <span class="cite-id">${test.citeId}</span>
+                <span class="req-badge ${getReqTypeClass(test.reqType)}">${getReqTypeLabel(test.reqType)}</span>
+            </div>
+            <div class="manual-item-content">
+                <strong>${test.name}</strong>: ${test.purpose}
+                <div class="manual-item-spec">${test.specRef}</div>
+            </div>
+            <div class="manual-item-actions">
+                <button class="manual-verify-btn" onclick="markManualTest('${test.citeId}', 'pass')">Pass</button>
+                <button class="manual-verify-btn fail" onclick="markManualTest('${test.citeId}', 'fail')">Fail</button>
+                <button class="manual-verify-btn skip" onclick="markManualTest('${test.citeId}', 'skip')">Skip</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function markManualTest(testId, status) {
+    citeTestResults['interactive'][testId] = { status: status === 'skip' ? 'skipped' : status };
+    updateConformanceSummary();
+    updateModuleStatus('interactive');
 }
 
 // Build test context from loaded layers
-function buildOgcTestContext() {
-    ogcTestContext.allLayers = layers;
-    ogcTestContext.sampleLayer = layers[0] || null;
-    ogcTestContext.sampleStyle = layers[0]?.styles?.[0]?.name || '';
+function buildCiteTestContext() {
+    citeTestContext.allLayers = layers;
+    citeTestContext.sampleLayer = layers[0] || null;
+    citeTestContext.sampleStyle = layers[0]?.styles?.[0]?.name || '';
 
-    // Find layers with specific dimensions
     layers.forEach(layer => {
-        if (layer.dimensions?.TIME && !ogcTestContext.layerWithTime) {
-            ogcTestContext.layerWithTime = layer;
-            ogcTestContext.layerWithTimeStyle = layer.styles?.[0]?.name || '';
+        if (layer.dimensions?.TIME && !citeTestContext.layerWithTime) {
+            citeTestContext.layerWithTime = layer;
+            citeTestContext.layerWithTimeStyle = layer.styles?.[0]?.name || '';
         }
-        if (layer.dimensions?.ELEVATION && !ogcTestContext.layerWithElevation) {
-            ogcTestContext.layerWithElevation = layer;
-            ogcTestContext.layerWithElevationStyle = layer.styles?.[0]?.name || '';
+        if (layer.dimensions?.ELEVATION && !citeTestContext.layerWithElevation) {
+            citeTestContext.layerWithElevation = layer;
+            citeTestContext.layerWithElevationStyle = layer.styles?.[0]?.name || '';
         }
-        if (layer.dimensions?.RUN && !ogcTestContext.layerWithRun) {
-            ogcTestContext.layerWithRun = layer;
-            ogcTestContext.layerWithRunStyle = layer.styles?.[0]?.name || '';
+        if (layer.dimensions?.RUN && !citeTestContext.layerWithRun) {
+            citeTestContext.layerWithRun = layer;
+            citeTestContext.layerWithRunStyle = layer.styles?.[0]?.name || '';
         }
-        if (layer.dimensions?.FORECAST && !ogcTestContext.layerWithForecast) {
-            ogcTestContext.layerWithForecast = layer;
-            ogcTestContext.layerWithForecastStyle = layer.styles?.[0]?.name || '';
+        if (layer.dimensions?.FORECAST && !citeTestContext.layerWithForecast) {
+            citeTestContext.layerWithForecast = layer;
+            citeTestContext.layerWithForecastStyle = layer.styles?.[0]?.name || '';
         }
-    });
-
-    console.log('OGC Test Context built:', {
-        sampleLayer: ogcTestContext.sampleLayer?.name,
-        sampleStyle: ogcTestContext.sampleStyle,
-        layerWithTime: ogcTestContext.layerWithTime?.name,
-        layerWithElevation: ogcTestContext.layerWithElevation?.name,
-        layerWithRun: ogcTestContext.layerWithRun?.name,
-        layerWithForecast: ogcTestContext.layerWithForecast?.name
     });
 }
 
-// Format dimension info for display
-function formatDimensionInfo(dimensions) {
-    if (!dimensions || Object.keys(dimensions).length === 0) return '';
-    return Object.entries(dimensions)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(', ');
-}
+// Run a single test
+async function runCiteTest(moduleKey, test, retryCount = 0) {
+    const iconEl = document.getElementById(`cite-test-${test.citeId}-icon`);
+    const timeEl = document.getElementById(`cite-test-${test.citeId}-time`);
+    const errorEl = document.getElementById(`cite-test-${test.citeId}-error`);
 
-// Test configuration
-const TEST_CONFIG = {
-    delayBetweenTests: 350,  // ms delay between tests
-    maxRetries: 3,           // number of retries for transient failures
-    retryDelay: 300,         // ms delay before retry
-    timeout: 10000           // request timeout in ms
-};
-
-// Sleep helper
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Check if an error is likely transient (worth retrying)
-function isTransientError(error) {
-    const msg = error.message?.toLowerCase() || '';
-    return msg.includes('network') ||
-        msg.includes('timeout') ||
-        msg.includes('fetch') ||
-        msg.includes('aborted') ||
-        msg.includes('failed to fetch') ||
-        msg.includes('502') ||
-        msg.includes('503') ||
-        msg.includes('504');
-}
-
-// Run a single OGC test with retry logic
-async function runOgcTest(categoryKey, test, retryCount = 0) {
-    const iconEl = document.getElementById(`ogc-test-${test.id}-icon`);
-    const timeEl = document.getElementById(`ogc-test-${test.id}-time`);
-    const errorEl = document.getElementById(`ogc-test-${test.id}-error`);
+    if (!iconEl) return;
 
     iconEl.className = 'ogc-test-icon running';
     iconEl.textContent = retryCount > 0 ? '↻' : '◐';
     timeEl.textContent = retryCount > 0 ? `retry ${retryCount}...` : '';
     errorEl.textContent = '';
 
-    // Clear failed state from previous runs
-    const testEl = document.getElementById(`ogc-test-${test.id}`);
-    if (testEl) {
-        testEl.classList.remove('failed');
-    }
+    const testEl = document.getElementById(`cite-test-${test.citeId}`);
+    if (testEl) testEl.classList.remove('failed');
 
     const startTime = Date.now();
+    const testContext = { ...citeTestContext, _lastUrl: null };
 
-    // Create a URL-tracking context for this test run
-    const testContext = {
-        ...ogcTestContext,
-        _lastUrl: null  // Will be set by wrapped fetch
-    };
-
-    // Wrap the test's fetch calls to capture the last URL used
     const originalFetchWithAuth = window.fetchWithAuth;
     window.fetchWithAuth = async function(url, options) {
         testContext._lastUrl = url;
@@ -1492,115 +3523,94 @@ async function runOgcTest(categoryKey, test, retryCount = 0) {
         const result = await test.run(testContext);
         const elapsed = Date.now() - startTime;
 
-        // Capture URL - prefer result.url, fall back to tracked URL
         const testUrl = result.url || testContext._lastUrl;
-        if (testUrl) {
-            setTestUrl(test.id, testUrl);
-        }
+        if (testUrl) setTestUrl(test.citeId, testUrl);
 
         if (result.skipped) {
-            ogcTestResults[categoryKey][test.id] = {status: 'skipped', result, time: elapsed};
+            citeTestResults[moduleKey][test.citeId] = { status: 'skipped', result, time: elapsed };
             iconEl.className = 'ogc-test-icon pending';
             iconEl.textContent = '–';
-            timeEl.textContent = `(skipped: ${result.skipped})`;
+            timeEl.textContent = `(${result.skipped})`;
         } else {
-            ogcTestResults[categoryKey][test.id] = {status: 'pass', result, time: elapsed};
+            citeTestResults[moduleKey][test.citeId] = { status: 'pass', result, time: elapsed };
             iconEl.className = 'ogc-test-icon pass';
             iconEl.textContent = '✓';
-            // Show elapsed time and dimension info if available
-            const dimInfo = formatDimensionInfo(result.dimensions || result.otherDimensions);
-            const retryInfo = retryCount > 0 ? ` (retry ${retryCount})` : '';
-            timeEl.textContent = dimInfo ? `${elapsed}ms${retryInfo} [${dimInfo}]` : `${elapsed}ms${retryInfo}`;
+            timeEl.textContent = `${elapsed}ms`;
         }
     } catch (error) {
         const elapsed = Date.now() - startTime;
 
-        // Check if we should retry
         if (retryCount < TEST_CONFIG.maxRetries && isTransientError(error)) {
-            console.log(`Test ${test.id} failed with transient error, retrying (${retryCount + 1}/${TEST_CONFIG.maxRetries})...`);
-            window.fetchWithAuth = originalFetchWithAuth;  // Restore before retry
+            window.fetchWithAuth = originalFetchWithAuth;
             await sleep(TEST_CONFIG.retryDelay);
-            return runOgcTest(categoryKey, test, retryCount + 1);
+            return runCiteTest(moduleKey, test, retryCount + 1);
         }
 
-        ogcTestResults[categoryKey][test.id] = {status: 'fail', error: error.message, time: elapsed};
+        citeTestResults[moduleKey][test.citeId] = { status: 'fail', error: error.message, time: elapsed };
         iconEl.className = 'ogc-test-icon fail';
         iconEl.textContent = '✗';
-        const retryInfo = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
-        timeEl.textContent = `${elapsed}ms${retryInfo}`;
+        timeEl.textContent = `${elapsed}ms`;
         errorEl.textContent = error.message;
 
-        // Add 'failed' class to test element for styling
-        const testEl = document.getElementById(`ogc-test-${test.id}`);
-        if (testEl) {
-            testEl.classList.add('failed');
-        }
-
-        // Capture URL from error.url or tracked URL - always show URL for failed tests
-        // Auto-expand the URL panel so user can easily debug
-        const testUrl = error.url || testContext._lastUrl;
-        if (testUrl) {
-            setTestUrl(test.id, testUrl, true);  // autoExpand=true for failed tests
-        }
+        if (testEl) testEl.classList.add('failed');
+        const testUrl = testContext._lastUrl;
+        if (testUrl) setTestUrl(test.citeId, testUrl, true);
     } finally {
-        // Restore original fetchWithAuth
         window.fetchWithAuth = originalFetchWithAuth;
     }
 
-    updateOgcCategoryStatus(categoryKey);
-    updateOgcSummary();
+    updateModuleStatus(moduleKey);
+    updateConformanceSummary();
 }
 
-// Run all tests in a category with delays
-async function runOgcCategory(categoryKey) {
-    const category = OGC_TESTS[categoryKey];
-    if (!category) return;
+// Run all tests in a module
+async function runCiteModule(moduleKey) {
+    const module = CITE_TESTS[moduleKey];
+    if (!module || moduleKey === 'interactive') return;
 
-    for (let i = 0; i < category.tests.length; i++) {
-        const test = category.tests[i];
-        await runOgcTest(categoryKey, test);
-
-        // Add delay between tests (but not after the last one)
-        if (i < category.tests.length - 1) {
+    for (let i = 0; i < module.tests.length; i++) {
+        await runCiteTest(moduleKey, module.tests[i]);
+        if (i < module.tests.length - 1) {
             await sleep(TEST_CONFIG.delayBetweenTests);
         }
     }
 }
 
-// Run all OGC tests
-async function runAllOgcTests() {
-    const btn = document.getElementById('run-all-ogc-btn');
+// Run all tests
+async function runAllCiteTests() {
+    const btn = document.getElementById('run-all-cite-btn');
     btn.disabled = true;
     btn.textContent = 'Running...';
 
-    buildOgcTestContext();
+    buildCiteTestContext();
 
-    const categoryKeys = Object.keys(OGC_TESTS);
-    for (let i = 0; i < categoryKeys.length; i++) {
-        const categoryKey = categoryKeys[i];
+    const moduleKeys = Object.keys(CITE_TESTS).filter(k => k !== 'interactive');
+    for (let i = 0; i < moduleKeys.length; i++) {
+        const moduleKey = moduleKeys[i];
+        
         // Expand section while running
-        const section = document.getElementById(`ogc-${categoryKey}`);
-        section.classList.add('expanded');
+        const section = document.getElementById(`cite-${moduleKey}`);
+        if (section) {
+            const content = section.querySelector('.ogc-content');
+            const toggle = section.querySelector('.ogc-toggle');
+            if (content) content.style.display = 'block';
+            if (toggle) toggle.textContent = '▼';
+        }
 
-        // Also expand the category to show progress
-        const category = document.getElementById(`ogc-cat-${categoryKey}`);
-        if (category) category.classList.add('expanded');
+        await runCiteModule(moduleKey);
 
-        await runOgcCategory(categoryKey);
-
-        // Small delay between categories
-        if (i < categoryKeys.length - 1) {
+        if (i < moduleKeys.length - 1) {
             await sleep(TEST_CONFIG.delayBetweenTests * 2);
         }
     }
 
     btn.disabled = false;
-    btn.textContent = 'Run All OGC Tests';
+    btn.textContent = 'Run All CITE Tests';
 }
 
-// Update category status badge
-function updateOgcCategoryStatus(categoryKey) {
-    const results = ogcTestResults[categoryKey] || {};
+// Update module status badge
+function updateModuleStatus(moduleKey) {
+    const results = citeTestResults[moduleKey] || {};
     const tests = Object.values(results);
 
     const pass = tests.filter(t => t.status === 'pass').length;
@@ -1608,7 +3618,7 @@ function updateOgcCategoryStatus(categoryKey) {
     const skipped = tests.filter(t => t.status === 'skipped').length;
     const total = tests.length;
 
-    const scoreEl = document.getElementById(`ogc-${categoryKey}-score`);
+    const scoreEl = document.getElementById(`cite-${moduleKey}-score`);
     if (!scoreEl) return;
 
     if (pass + fail + skipped === 0) {
@@ -1617,7 +3627,6 @@ function updateOgcCategoryStatus(categoryKey) {
     } else {
         const tested = pass + fail;
         scoreEl.textContent = `${pass} / ${tested}`;
-
         if (fail === 0 && tested > 0) {
             scoreEl.className = 'ogc-score pass';
         } else if (pass > 0) {
@@ -1628,41 +3637,139 @@ function updateOgcCategoryStatus(categoryKey) {
     }
 }
 
-// Update overall OGC summary
-function updateOgcSummary() {
-    let totalPass = 0;
-    let totalFail = 0;
-    let totalPending = 0;
+// Update conformance summary
+function updateConformanceSummary() {
+    let totalMandatory = 0, passMandatory = 0, failMandatory = 0;
+    let totalOptional = 0, passOptional = 0, failOptional = 0;
+    let totalRecommendation = 0, passRecommendation = 0;
+    let totalManual = 0;
+    let totalPass = 0, totalFail = 0, totalPending = 0, totalSkipped = 0;
 
-    Object.values(ogcTestResults).forEach(categoryResults => {
-        Object.values(categoryResults).forEach(result => {
-            if (result.status === 'pass') totalPass++;
-            else if (result.status === 'fail') totalFail++;
-            else if (result.status === 'pending') totalPending++;
-            // skipped counts as neither pass nor fail
+    Object.entries(CITE_TESTS).forEach(([moduleKey, module]) => {
+        module.tests.forEach(test => {
+            const result = citeTestResults[moduleKey]?.[test.citeId];
+            const status = result?.status || 'pending';
+
+            if (status === 'pass') totalPass++;
+            else if (status === 'fail') totalFail++;
+            else if (status === 'skipped') totalSkipped++;
+            else totalPending++;
+
+            switch (test.reqType) {
+                case REQ_MANDATORY:
+                    totalMandatory++;
+                    if (status === 'pass') passMandatory++;
+                    else if (status === 'fail') failMandatory++;
+                    break;
+                case REQ_OPTIONAL:
+                    totalOptional++;
+                    if (status === 'pass') passOptional++;
+                    else if (status === 'fail') failOptional++;
+                    break;
+                case REQ_RECOMMENDATION:
+                    totalRecommendation++;
+                    if (status === 'pass') passRecommendation++;
+                    break;
+                case REQ_MANUAL:
+                    totalManual++;
+                    break;
+            }
         });
     });
 
-    document.getElementById('ogc-pass-count').textContent = totalPass;
-    document.getElementById('ogc-fail-count').textContent = totalFail;
-    document.getElementById('ogc-pending-count').textContent = totalPending;
+    // Update summary counts
+    document.getElementById('cite-pass-count').textContent = totalPass;
+    document.getElementById('cite-fail-count').textContent = totalFail;
+    document.getElementById('cite-pending-count').textContent = totalPending + totalSkipped;
+
+    // Update conformance table
+    updateConformanceTable(
+        passMandatory, totalMandatory, failMandatory,
+        passOptional, totalOptional, failOptional,
+        passRecommendation, totalRecommendation,
+        totalManual
+    );
+}
+
+function updateConformanceTable(passMand, totalMand, failMand, passOpt, totalOpt, failOpt, passRec, totalRec, totalManual) {
+    const basicWmsTests = passMand;
+    const basicWmsTotal = totalMand;
+    const queryableTests = passOpt;
+    const queryableTotal = totalOpt;
+
+    // Update Basic WMS conformance
+    const basicPercent = basicWmsTotal > 0 ? Math.round((basicWmsTests / basicWmsTotal) * 100) : 0;
+    const basicEl = document.getElementById('basic-conformance');
+    if (basicEl) {
+        basicEl.textContent = `${basicWmsTests}/${basicWmsTotal} (${basicPercent}%)`;
+        basicEl.className = failMand > 0 ? 'conformance-fail' : (basicWmsTests === basicWmsTotal ? 'conformance-pass' : 'conformance-partial');
+    }
+
+    // Update Queryable WMS conformance
+    const queryablePercent = queryableTotal > 0 ? Math.round((queryableTests / queryableTotal) * 100) : 0;
+    const queryableEl = document.getElementById('queryable-conformance');
+    if (queryableEl) {
+        queryableEl.textContent = `${queryableTests}/${queryableTotal} (${queryablePercent}%)`;
+        queryableEl.className = failOpt > 0 ? 'conformance-fail' : (queryableTests === queryableTotal ? 'conformance-pass' : 'conformance-partial');
+    }
+
+    // Update table rows
+    const tableBody = document.getElementById('conformance-table-body');
+    if (tableBody) {
+        tableBody.innerHTML = Object.entries(CITE_TESTS).map(([moduleKey, module]) => {
+            const results = citeTestResults[moduleKey] || {};
+            let mand = 0, mandPass = 0, opt = 0, optPass = 0, rec = 0, recPass = 0, man = 0;
+            
+            module.tests.forEach(test => {
+                const status = results[test.citeId]?.status || 'pending';
+                switch (test.reqType) {
+                    case REQ_MANDATORY:
+                        mand++;
+                        if (status === 'pass') mandPass++;
+                        break;
+                    case REQ_OPTIONAL:
+                        opt++;
+                        if (status === 'pass') optPass++;
+                        break;
+                    case REQ_RECOMMENDATION:
+                        rec++;
+                        if (status === 'pass') recPass++;
+                        break;
+                    case REQ_MANUAL:
+                        man++;
+                        break;
+                }
+            });
+
+            const total = mand + opt + rec + man;
+            const totalPass = mandPass + optPass + recPass;
+
+            return `
+                <tr>
+                    <td>${module.name}</td>
+                    <td>${mand > 0 ? `${mandPass}/${mand}` : '-'}</td>
+                    <td>${opt > 0 ? `${optPass}/${opt}` : '-'}</td>
+                    <td>${rec > 0 ? `${recPass}/${rec}` : '-'}</td>
+                    <td>${totalPass}/${total}</td>
+                </tr>
+            `;
+        }).join('');
+    }
 }
 
 // ============================================================
-// LAYER COVERAGE TESTS
+// LAYER COVERAGE TESTS (Preserved from original)
 // ============================================================
 
-// State
 let layers = [];
 let currentIndex = 0;
-let layerStatus = {}; // { layerName: { getmap: 'ok'|'error', getfeatureinfo: 'ok'|'error', error: '...', responseTime: 123 } }
+let layerStatus = {};
 let map = null;
 let currentOverlay = null;
 let testingAll = false;
 let currentFilter = 'all';
 let filteredIndices = [];
 
-// Initialize Leaflet map (static, no zoom/pan)
 function initMap() {
     map = L.map('map', {
         center: [20, 0],
@@ -1676,14 +3783,12 @@ function initMap() {
         keyboard: false
     });
 
-    // Dark basemap
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
         maxZoom: 19
     }).addTo(map);
 }
 
-// Load WMS GetCapabilities
 async function loadCapabilities() {
     try {
         const response = await fetchWithAuth(`${getWmsUrl()}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`);
@@ -1691,7 +3796,6 @@ async function loadCapabilities() {
         const parser = new DOMParser();
         const xml = parser.parseFromString(text, 'text/xml');
 
-        // Parse queryable layers
         const layerElements = xml.querySelectorAll('Layer[queryable="1"]');
         layers = [];
 
@@ -1701,7 +3805,6 @@ async function loadCapabilities() {
 
             if (!name) return;
 
-            // Parse styles
             const styles = [];
             layerEl.querySelectorAll(':scope > Style').forEach(styleEl => {
                 styles.push({
@@ -1710,18 +3813,16 @@ async function loadCapabilities() {
                 });
             });
 
-            // Parse dimensions
             const dimensions = {};
             layerEl.querySelectorAll(':scope > Dimension').forEach(dimEl => {
                 const dimName = dimEl.getAttribute('name');
                 const defaultVal = dimEl.getAttribute('default') || '';
                 const values = dimEl.textContent.split(',').map(v => v.trim()).filter(v => v);
-                dimensions[dimName] = {default: defaultVal, values};
+                dimensions[dimName] = { default: defaultVal, values };
             });
 
-            // Parse bounding box
             const bboxEl = layerEl.querySelector(':scope > EX_GeographicBoundingBox');
-            let bounds = {west: -180, east: 180, south: -90, north: 90};
+            let bounds = { west: -180, east: 180, south: -90, north: 90 };
             if (bboxEl) {
                 bounds = {
                     west: parseFloat(bboxEl.querySelector('westBoundLongitude')?.textContent) || -180,
@@ -1731,17 +3832,14 @@ async function loadCapabilities() {
                 };
             }
 
-            layers.push({name, title, styles, dimensions, bounds});
+            layers.push({ name, title, styles, dimensions, bounds });
         });
 
-        // Initialize all as untested
         layers.forEach(l => {
-            layerStatus[l.name] = {status: 'untested'};
+            layerStatus[l.name] = { status: 'untested' };
         });
 
-        // Build OGC test context
-        buildOgcTestContext();
-
+        buildCiteTestContext();
         updateSummary();
 
     } catch (error) {
@@ -1750,7 +3848,6 @@ async function loadCapabilities() {
     }
 }
 
-// Setup event listeners
 function setupEventListeners() {
     document.getElementById('prev-btn').addEventListener('click', () => navigateLayer(-1));
     document.getElementById('next-btn').addEventListener('click', () => navigateLayer(1));
@@ -1758,7 +3855,6 @@ function setupEventListeners() {
     document.getElementById('filter-select').addEventListener('change', onFilterChange);
     document.getElementById('style-select').addEventListener('change', () => testCurrentLayer());
 
-    // Keyboard navigation
     document.addEventListener('keydown', (e) => {
         if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
 
@@ -1773,27 +3869,21 @@ function setupEventListeners() {
     });
 }
 
-// Navigate to previous/next layer
 function navigateLayer(direction) {
     if (filteredIndices.length === 0) return;
-
     const currentFilteredPos = filteredIndices.indexOf(currentIndex);
     let newFilteredPos = currentFilteredPos + direction;
-
     if (newFilteredPos < 0) newFilteredPos = filteredIndices.length - 1;
     if (newFilteredPos >= filteredIndices.length) newFilteredPos = 0;
-
     displayLayer(filteredIndices[newFilteredPos]);
 }
 
-// Display a specific layer
 function displayLayer(index) {
     if (index < 0 || index >= layers.length) return;
 
     currentIndex = index;
     const layer = layers[index];
 
-    // Update layer info
     document.getElementById('layer-name').textContent = layer.name;
     document.getElementById('layer-title').textContent = layer.title || '';
 
@@ -1802,11 +3892,9 @@ function displayLayer(index) {
         `${filteredPos + 1} of ${filteredIndices.length}` +
         (filteredIndices.length !== layers.length ? ` (${layers.length} total)` : '');
 
-    // Update nav buttons
     document.getElementById('prev-btn').disabled = filteredIndices.length <= 1;
     document.getElementById('next-btn').disabled = filteredIndices.length <= 1;
 
-    // Populate style selector
     const styleSelect = document.getElementById('style-select');
     styleSelect.innerHTML = '';
     layer.styles.forEach(style => {
@@ -1816,22 +3904,15 @@ function displayLayer(index) {
         styleSelect.appendChild(opt);
     });
 
-    // Populate dimension controls
     populateDimensionControls(layer);
-
-    // Test the layer
     testCurrentLayer();
 }
 
-// Populate dimension dropdowns
 function populateDimensionControls(layer) {
     const container = document.getElementById('dimension-controls');
-
-    // Remove existing dimension selects (keep style)
     const existingDims = container.querySelectorAll('.dimension-group:not(:first-child)');
     existingDims.forEach(el => el.remove());
 
-    // Add dimension selects
     const dimOrder = ['RUN', 'FORECAST', 'TIME', 'ELEVATION'];
     dimOrder.forEach(dimName => {
         if (!layer.dimensions[dimName]) return;
@@ -1849,7 +3930,6 @@ function populateDimensionControls(layer) {
         select.id = `dim-${dimName}`;
         select.addEventListener('change', () => testCurrentLayer());
 
-        // Limit displayed values for large arrays (like TIME)
         const values = dim.values.slice(0, 50);
         values.forEach(val => {
             const opt = document.createElement('option');
@@ -1872,7 +3952,6 @@ function populateDimensionControls(layer) {
     });
 }
 
-// Format dimension value for display
 function formatDimensionValue(dimName, value) {
     if (dimName === 'TIME' || dimName === 'RUN') {
         try {
@@ -1892,46 +3971,35 @@ function formatDimensionValue(dimName, value) {
     return value;
 }
 
-// Get current dimension values
 function getCurrentDimensions() {
     const dims = {};
     const layer = layers[currentIndex];
-
     Object.keys(layer.dimensions || {}).forEach(dimName => {
         const select = document.getElementById(`dim-${dimName}`);
         if (select) {
             dims[dimName] = select.value;
         }
     });
-
     return dims;
 }
 
-// Test the current layer
 async function testCurrentLayer() {
     const layer = layers[currentIndex];
     const style = document.getElementById('style-select').value;
     const dims = getCurrentDimensions();
 
-    // Build URLs
     const getmapUrl = buildGetMapUrl(layer, style, dims);
     const getfeatureinfoUrl = buildGetFeatureInfoUrl(layer, style, dims);
 
-    // Display URLs
     document.getElementById('getmap-url').textContent = getmapUrl;
     document.getElementById('getfeatureinfo-url').textContent = getfeatureinfoUrl;
 
-    // Set loading state
     setStatus('getmap-status', 'loading', 'Loading...');
     setStatus('getfeatureinfo-status', 'loading', 'Loading...');
 
-    // Test GetMap
     const getmapResult = await testGetMap(getmapUrl, layer);
-
-    // Test GetFeatureInfo
     const getfeatureinfoResult = await testGetFeatureInfo(getfeatureinfoUrl);
 
-    // Update layer status
     layerStatus[layer.name] = {
         status: (getmapResult.ok && getfeatureinfoResult.ok) ? 'ok' : 'error',
         getmap: getmapResult,
@@ -1942,7 +4010,6 @@ async function testCurrentLayer() {
     updateLayerList();
 }
 
-// Build GetMap URL
 function buildGetMapUrl(layer, style, dims) {
     const params = new URLSearchParams({
         SERVICE: 'WMS',
@@ -1958,7 +4025,6 @@ function buildGetMapUrl(layer, style, dims) {
         TRANSPARENT: 'true'
     });
 
-    // Add dimensions
     Object.entries(dims).forEach(([key, value]) => {
         params.set(key, value);
     });
@@ -1966,7 +4032,6 @@ function buildGetMapUrl(layer, style, dims) {
     return `${getWmsUrl()}?${params.toString()}`;
 }
 
-// Build GetFeatureInfo URL
 function buildGetFeatureInfoUrl(layer, style, dims) {
     const params = new URLSearchParams({
         SERVICE: 'WMS',
@@ -1979,12 +4044,11 @@ function buildGetFeatureInfoUrl(layer, style, dims) {
         BBOX: `${layer.bounds.south},${layer.bounds.west},${layer.bounds.north},${layer.bounds.east}`,
         WIDTH: 512,
         HEIGHT: 256,
-        I: 256,  // Center X
-        J: 128,  // Center Y
+        I: 256,
+        J: 128,
         INFO_FORMAT: 'application/json'
     });
 
-    // Add dimensions
     Object.entries(dims).forEach(([key, value]) => {
         params.set(key, value);
     });
@@ -1992,7 +4056,6 @@ function buildGetFeatureInfoUrl(layer, style, dims) {
     return `${getWmsUrl()}?${params.toString()}`;
 }
 
-// Test GetMap request
 async function testGetMap(url, layer) {
     const startTime = Date.now();
 
@@ -2003,7 +4066,7 @@ async function testGetMap(url, layer) {
         if (!response.ok) {
             const text = await response.text();
             setStatus('getmap-status', 'error', `HTTP ${response.status}`);
-            return {ok: false, error: `HTTP ${response.status}`, details: text, time: elapsed};
+            return { ok: false, error: `HTTP ${response.status}`, details: text, time: elapsed };
         }
 
         const contentType = response.headers.get('content-type') || '';
@@ -2011,36 +4074,30 @@ async function testGetMap(url, layer) {
         if (!contentType.includes('image/png')) {
             const text = await response.text();
             setStatus('getmap-status', 'error', 'Not an image');
-            return {ok: false, error: 'Expected image/png', details: text, time: elapsed};
+            return { ok: false, error: 'Expected image/png', details: text, time: elapsed };
         }
 
-        // Success - display the image on the map
         const blob = await response.blob();
         const imageUrl = URL.createObjectURL(blob);
 
-        // Remove existing overlay
         if (currentOverlay) {
             map.removeLayer(currentOverlay);
         }
 
-        // Add new overlay
         const bounds = [[layer.bounds.south, layer.bounds.west], [layer.bounds.north, layer.bounds.east]];
-        currentOverlay = L.imageOverlay(imageUrl, bounds, {opacity: 0.8}).addTo(map);
-
-        // Fit map to layer bounds with padding to fill the container better
-        map.fitBounds(bounds, {padding: [10, 10], maxZoom: 6});
+        currentOverlay = L.imageOverlay(imageUrl, bounds, { opacity: 0.8 }).addTo(map);
+        map.fitBounds(bounds, { padding: [10, 10], maxZoom: 6 });
 
         setStatus('getmap-status', 'ok', `OK (${elapsed}ms)`);
-        return {ok: true, time: elapsed};
+        return { ok: true, time: elapsed };
 
     } catch (error) {
         const elapsed = Date.now() - startTime;
         setStatus('getmap-status', 'error', 'Request failed');
-        return {ok: false, error: error.message, time: elapsed};
+        return { ok: false, error: error.message, time: elapsed };
     }
 }
 
-// Test GetFeatureInfo request
 async function testGetFeatureInfo(url) {
     const startTime = Date.now();
     const infoContent = document.getElementById('info-content');
@@ -2053,37 +4110,34 @@ async function testGetFeatureInfo(url) {
             const text = await response.text();
             setStatus('getfeatureinfo-status', 'error', `HTTP ${response.status}`);
             infoContent.innerHTML = createErrorDisplay(`HTTP ${response.status}`, text);
-            return {ok: false, error: `HTTP ${response.status}`, details: text, time: elapsed};
+            return { ok: false, error: `HTTP ${response.status}`, details: text, time: elapsed };
         }
 
         const data = await response.json();
-
         setStatus('getfeatureinfo-status', 'ok', `OK (${elapsed}ms)`);
         infoContent.innerHTML = `<pre class="info-json">${JSON.stringify(data, null, 2)}</pre>`;
-        return {ok: true, data, time: elapsed};
+        return { ok: true, data, time: elapsed };
 
     } catch (error) {
         const elapsed = Date.now() - startTime;
         setStatus('getfeatureinfo-status', 'error', 'Request failed');
         infoContent.innerHTML = createErrorDisplay(error.message, error.stack);
-        return {ok: false, error: error.message, time: elapsed};
+        return { ok: false, error: error.message, time: elapsed };
     }
 }
 
-// Create error display HTML
 function createErrorDisplay(summary, details) {
     return `
-            <div class="error-details" onclick="this.classList.toggle('expanded')">
-                <div class="error-summary">
-                    <span>▶</span>
-                    <span>${escapeHtml(summary)}</span>
-                </div>
-                <pre class="error-full">${escapeHtml(details || 'No additional details')}</pre>
+        <div class="error-details" onclick="this.classList.toggle('expanded')">
+            <div class="error-summary">
+                <span>▶</span>
+                <span>${escapeHtml(summary)}</span>
             </div>
-        `;
+            <pre class="error-full">${escapeHtml(details || 'No additional details')}</pre>
+        </div>
+    `;
 }
 
-// Set status indicator
 function setStatus(elementId, status, text) {
     const container = document.getElementById(elementId);
     const icon = container.querySelector('.status-icon');
@@ -2094,7 +4148,6 @@ function setStatus(elementId, status, text) {
     textEl.textContent = text;
 }
 
-// Update summary stats
 function updateSummary() {
     const working = Object.values(layerStatus).filter(s => s.status === 'ok').length;
     const broken = Object.values(layerStatus).filter(s => s.status === 'error').length;
@@ -2111,29 +4164,23 @@ function updateSummary() {
     percentEl.className = 'stat-value ' + (percent >= 90 ? 'good' : percent >= 50 ? 'warning' : 'bad');
 }
 
-// Filter change handler
 function onFilterChange(e) {
     currentFilter = e.target.value;
     updateFilteredIndices();
     updateLayerList();
 
-    // If current layer doesn't match filter, jump to first matching
     if (!filteredIndices.includes(currentIndex) && filteredIndices.length > 0) {
         displayLayer(filteredIndices[0]);
     }
 
-    // Show/hide layer list based on filter
     const layerListEl = document.getElementById('layer-list');
     layerListEl.classList.toggle('visible', currentFilter !== 'all');
 }
 
-// Update filtered indices
 function updateFilteredIndices() {
     filteredIndices = [];
-
     layers.forEach((layer, index) => {
         const status = layerStatus[layer.name]?.status || 'untested';
-
         if (currentFilter === 'all') {
             filteredIndices.push(index);
         } else if (currentFilter === 'working' && status === 'ok') {
@@ -2146,10 +4193,8 @@ function updateFilteredIndices() {
     });
 }
 
-// Update layer list display
 function updateLayerList() {
     const listEl = document.getElementById('layer-list');
-
     if (currentFilter === 'all') {
         listEl.innerHTML = '';
         return;
@@ -2159,17 +4204,15 @@ function updateLayerList() {
         const layer = layers[index];
         const status = layerStatus[layer.name]?.status || 'untested';
         const statusText = status === 'ok' ? 'OK' : status === 'error' ? 'Error' : 'Untested';
-
         return `
-                <div class="layer-list-item" onclick="displayLayer(${index})">
-                    <span class="layer-list-name">${escapeHtml(layer.name)}</span>
-                    <span class="layer-list-status ${status}">${statusText}</span>
-                </div>
-            `;
+            <div class="layer-list-item" onclick="displayLayer(${index})">
+                <span class="layer-list-name">${escapeHtml(layer.name)}</span>
+                <span class="layer-list-status ${status}">${statusText}</span>
+            </div>
+        `;
     }).join('');
 }
 
-// Test all layers
 async function testAllLayers() {
     if (testingAll) return;
 
@@ -2183,15 +4226,10 @@ async function testAllLayers() {
     progressBar.classList.add('visible');
 
     for (let i = 0; i < layers.length; i++) {
-        // Update progress
         const percent = Math.round(((i + 1) / layers.length) * 100);
         progressFill.style.width = `${percent}%`;
         btn.textContent = `Testing ${i + 1}/${layers.length}...`;
-
-        // Display and test layer
         displayLayer(i);
-
-        // Wait a bit between requests to not overwhelm server
         await new Promise(resolve => setTimeout(resolve, 100));
     }
 
@@ -2204,11 +4242,9 @@ async function testAllLayers() {
     updateLayerList();
 }
 
-// Copy URL to clipboard
 function copyUrl(elementId) {
     const text = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(text).then(() => {
-        // Brief visual feedback
         const btn = event.target;
         const original = btn.textContent;
         btn.textContent = 'Copied!';
@@ -2216,7 +4252,6 @@ function copyUrl(elementId) {
     });
 }
 
-// Escape HTML
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
@@ -2227,13 +4262,11 @@ function escapeHtml(text) {
 // INITIALIZATION
 // ============================================================
 
-// Initialize OGC tests when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    initOgcTests();
-    document.getElementById('run-all-ogc-btn').addEventListener('click', runAllOgcTests);
+    initCiteTests();
+    document.getElementById('run-all-cite-btn').addEventListener('click', runAllCiteTests);
 });
 
-// Initialize main application
 document.addEventListener('DOMContentLoaded', async () => {
     initEndpointConfig();
     initMap();

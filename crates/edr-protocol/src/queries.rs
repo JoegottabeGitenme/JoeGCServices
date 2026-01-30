@@ -1943,6 +1943,204 @@ impl CorridorQuery {
     }
 }
 
+/// Parsed forecast-hour query parameter.
+///
+/// Supports the same syntax as the datetime parameter:
+/// - Single value: `6`
+/// - List of values: `0,6,12,24`
+/// - Range: `0/24` (all available hours from 0 to 24 inclusive)
+/// - Range with step: `0/24/6` (hours 0, 6, 12, 18, 24)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForecastHourQuery {
+    /// A single forecast hour.
+    Single(i32),
+
+    /// Multiple specific forecast hours.
+    List(Vec<i32>),
+
+    /// A range of forecast hours with optional step.
+    Range {
+        /// Start hour (inclusive).
+        start: i32,
+        /// End hour (inclusive).
+        end: i32,
+        /// Optional step (defaults to 1 if not specified, but expands against available).
+        step: Option<i32>,
+    },
+}
+
+impl ForecastHourQuery {
+    /// Parse a forecast-hour parameter string.
+    ///
+    /// # Formats
+    /// - Single: `6`
+    /// - List: `0,6,12,24`
+    /// - Range: `0/24`
+    /// - Range with step: `0/24/6`
+    pub fn parse(s: &str) -> Result<Self, CoordinateParseError> {
+        let s = s.trim();
+
+        // Check for range format (contains / but not comma)
+        if s.contains('/') && !s.contains(',') {
+            let parts: Vec<&str> = s.split('/').collect();
+            match parts.len() {
+                2 => {
+                    let start = Self::parse_hour(parts[0])?;
+                    let end = Self::parse_hour(parts[1])?;
+                    if start > end {
+                        return Err(CoordinateParseError::OutOfRange(format!(
+                            "forecast-hour range start ({}) must be <= end ({})",
+                            start, end
+                        )));
+                    }
+                    Ok(ForecastHourQuery::Range {
+                        start,
+                        end,
+                        step: None,
+                    })
+                }
+                3 => {
+                    let start = Self::parse_hour(parts[0])?;
+                    let end = Self::parse_hour(parts[1])?;
+                    let step = Self::parse_hour(parts[2])?;
+                    if start > end {
+                        return Err(CoordinateParseError::OutOfRange(format!(
+                            "forecast-hour range start ({}) must be <= end ({})",
+                            start, end
+                        )));
+                    }
+                    if step <= 0 {
+                        return Err(CoordinateParseError::OutOfRange(
+                            "forecast-hour step must be positive".to_string(),
+                        ));
+                    }
+                    Ok(ForecastHourQuery::Range {
+                        start,
+                        end,
+                        step: Some(step),
+                    })
+                }
+                _ => Err(CoordinateParseError::InvalidWkt(format!(
+                    "Invalid forecast-hour range format '{}'. Expected start/end or start/end/step",
+                    s
+                ))),
+            }
+        } else if s.contains(',') {
+            // List format - filter out empty strings from trailing commas
+            let hours: Result<Vec<i32>, _> = s
+                .split(',')
+                .filter(|part| !part.trim().is_empty())
+                .map(Self::parse_hour)
+                .collect();
+            let hours = hours?;
+            if hours.is_empty() {
+                return Err(CoordinateParseError::InvalidWkt(
+                    "forecast-hour list cannot be empty".to_string(),
+                ));
+            }
+            if hours.len() == 1 {
+                Ok(ForecastHourQuery::Single(hours[0]))
+            } else {
+                Ok(ForecastHourQuery::List(hours))
+            }
+        } else {
+            // Single value
+            let hour = Self::parse_hour(s)?;
+            Ok(ForecastHourQuery::Single(hour))
+        }
+    }
+
+    /// Parse a single hour value.
+    fn parse_hour(s: &str) -> Result<i32, CoordinateParseError> {
+        let s = s.trim();
+        s.parse::<i32>().map_err(|_| {
+            CoordinateParseError::InvalidCoordinate(format!(
+                "Invalid forecast hour '{}'. Expected integer.",
+                s
+            ))
+        })
+    }
+
+    /// Expand the query against available forecast hours.
+    ///
+    /// Returns the list of hours that match the query and are available.
+    pub fn expand(&self, available: &[i32]) -> Vec<i32> {
+        match self {
+            ForecastHourQuery::Single(h) => {
+                if available.contains(h) {
+                    vec![*h]
+                } else {
+                    vec![]
+                }
+            }
+            ForecastHourQuery::List(hours) => hours
+                .iter()
+                .copied()
+                .filter(|h| available.contains(h))
+                .collect(),
+            ForecastHourQuery::Range { start, end, step } => {
+                if let Some(s) = step {
+                    // With explicit step: generate hours and filter
+                    let mut hours = Vec::new();
+                    let mut h = *start;
+                    while h <= *end {
+                        if available.contains(&h) {
+                            hours.push(h);
+                        }
+                        h += s;
+                    }
+                    hours
+                } else {
+                    // Without step: return all available hours in range
+                    available
+                        .iter()
+                        .copied()
+                        .filter(|h| *h >= *start && *h <= *end)
+                        .collect()
+                }
+            }
+        }
+    }
+
+    /// Get all hours requested (before filtering by available).
+    ///
+    /// For ranges without step, returns start and end only.
+    pub fn to_vec(&self) -> Vec<i32> {
+        match self {
+            ForecastHourQuery::Single(h) => vec![*h],
+            ForecastHourQuery::List(hours) => hours.clone(),
+            ForecastHourQuery::Range { start, end, step } => {
+                if let Some(s) = step {
+                    let mut hours = Vec::new();
+                    let mut h = *start;
+                    while h <= *end {
+                        hours.push(h);
+                        h += s;
+                    }
+                    hours
+                } else {
+                    // For ranges without step, just return bounds
+                    vec![*start, *end]
+                }
+            }
+        }
+    }
+
+    /// Check if this is a range query.
+    pub fn is_range(&self) -> bool {
+        matches!(self, ForecastHourQuery::Range { .. })
+    }
+
+    /// Check if this query requests multiple hours.
+    pub fn is_multi(&self) -> bool {
+        match self {
+            ForecastHourQuery::Single(_) => false,
+            ForecastHourQuery::List(hours) => hours.len() > 1,
+            ForecastHourQuery::Range { start, end, .. } => start != end,
+        }
+    }
+}
+
 impl BboxQuery {
     /// Parse a bbox parameter.
     ///
@@ -2882,5 +3080,183 @@ mod tests {
         // The jump is 300 degrees which is > 180, and crosses sign
         // So this SHOULD be detected as crossing notation
         assert!(wide_polygon.uses_crossing_notation().is_some());
+    }
+
+    // =========== ForecastHourQuery tests ===========
+
+    #[test]
+    fn test_forecast_hour_query_single() {
+        let query = ForecastHourQuery::parse("6").unwrap();
+        assert!(matches!(query, ForecastHourQuery::Single(6)));
+        assert!(!query.is_multi());
+        assert!(!query.is_range());
+    }
+
+    #[test]
+    fn test_forecast_hour_query_single_with_spaces() {
+        let query = ForecastHourQuery::parse(" 12 ").unwrap();
+        assert!(matches!(query, ForecastHourQuery::Single(12)));
+    }
+
+    #[test]
+    fn test_forecast_hour_query_list() {
+        let query = ForecastHourQuery::parse("0,6,12,24").unwrap();
+        if let ForecastHourQuery::List(hours) = query {
+            assert_eq!(hours, vec![0, 6, 12, 24]);
+        } else {
+            panic!("Expected List");
+        }
+    }
+
+    #[test]
+    fn test_forecast_hour_query_list_with_spaces() {
+        let query = ForecastHourQuery::parse(" 0 , 6 , 12 ").unwrap();
+        if let ForecastHourQuery::List(hours) = query {
+            assert_eq!(hours, vec![0, 6, 12]);
+        } else {
+            panic!("Expected List");
+        }
+    }
+
+    #[test]
+    fn test_forecast_hour_query_list_single_becomes_single() {
+        let query = ForecastHourQuery::parse("6,").unwrap();
+        assert!(matches!(query, ForecastHourQuery::Single(6)));
+    }
+
+    #[test]
+    fn test_forecast_hour_query_range() {
+        let query = ForecastHourQuery::parse("0/24").unwrap();
+        if let ForecastHourQuery::Range { start, end, step } = query {
+            assert_eq!(start, 0);
+            assert_eq!(end, 24);
+            assert!(step.is_none());
+        } else {
+            panic!("Expected Range");
+        }
+        assert!(query.is_range());
+        assert!(query.is_multi());
+    }
+
+    #[test]
+    fn test_forecast_hour_query_range_with_step() {
+        let query = ForecastHourQuery::parse("0/24/6").unwrap();
+        if let ForecastHourQuery::Range { start, end, step } = query {
+            assert_eq!(start, 0);
+            assert_eq!(end, 24);
+            assert_eq!(step, Some(6));
+        } else {
+            panic!("Expected Range");
+        }
+    }
+
+    #[test]
+    fn test_forecast_hour_query_range_invalid_order() {
+        let result = ForecastHourQuery::parse("24/0");
+        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+    }
+
+    #[test]
+    fn test_forecast_hour_query_range_invalid_step() {
+        let result = ForecastHourQuery::parse("0/24/0");
+        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+
+        let result = ForecastHourQuery::parse("0/24/-1");
+        assert!(matches!(result, Err(CoordinateParseError::OutOfRange(_))));
+    }
+
+    #[test]
+    fn test_forecast_hour_query_invalid_value() {
+        let result = ForecastHourQuery::parse("abc");
+        assert!(matches!(
+            result,
+            Err(CoordinateParseError::InvalidCoordinate(_))
+        ));
+    }
+
+    #[test]
+    fn test_forecast_hour_query_expand_single() {
+        let query = ForecastHourQuery::Single(6);
+        let available = vec![0, 1, 2, 3, 6, 12, 24];
+
+        let expanded = query.expand(&available);
+        assert_eq!(expanded, vec![6]);
+
+        // Not available
+        let query = ForecastHourQuery::Single(48);
+        let expanded = query.expand(&available);
+        assert!(expanded.is_empty());
+    }
+
+    #[test]
+    fn test_forecast_hour_query_expand_list() {
+        let query = ForecastHourQuery::List(vec![0, 6, 12, 48]);
+        let available = vec![0, 1, 2, 3, 6, 12, 24];
+
+        let expanded = query.expand(&available);
+        assert_eq!(expanded, vec![0, 6, 12]); // 48 not available
+    }
+
+    #[test]
+    fn test_forecast_hour_query_expand_range_no_step() {
+        let query = ForecastHourQuery::Range {
+            start: 0,
+            end: 12,
+            step: None,
+        };
+        let available = vec![0, 1, 2, 3, 6, 12, 24, 48];
+
+        let expanded = query.expand(&available);
+        assert_eq!(expanded, vec![0, 1, 2, 3, 6, 12]); // All available in range
+    }
+
+    #[test]
+    fn test_forecast_hour_query_expand_range_with_step() {
+        let query = ForecastHourQuery::Range {
+            start: 0,
+            end: 24,
+            step: Some(6),
+        };
+        let available = vec![0, 1, 2, 3, 6, 12, 18, 24, 48];
+
+        let expanded = query.expand(&available);
+        assert_eq!(expanded, vec![0, 6, 12, 18, 24]);
+    }
+
+    #[test]
+    fn test_forecast_hour_query_expand_range_with_step_missing() {
+        let query = ForecastHourQuery::Range {
+            start: 0,
+            end: 24,
+            step: Some(6),
+        };
+        // Missing hour 18
+        let available = vec![0, 1, 2, 3, 6, 12, 24, 48];
+
+        let expanded = query.expand(&available);
+        assert_eq!(expanded, vec![0, 6, 12, 24]); // 18 skipped
+    }
+
+    #[test]
+    fn test_forecast_hour_query_to_vec() {
+        let single = ForecastHourQuery::Single(6);
+        assert_eq!(single.to_vec(), vec![6]);
+
+        let list = ForecastHourQuery::List(vec![0, 6, 12]);
+        assert_eq!(list.to_vec(), vec![0, 6, 12]);
+
+        let range_no_step = ForecastHourQuery::Range {
+            start: 0,
+            end: 24,
+            step: None,
+        };
+        assert_eq!(range_no_step.to_vec(), vec![0, 24]); // Just bounds
+
+        let range_with_step = ForecastHourQuery::Range {
+            start: 0,
+            end: 12,
+            step: Some(3),
+        };
+        assert_eq!(range_with_step.to_vec(), vec![0, 3, 6, 9, 12]);
     }
 }

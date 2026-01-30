@@ -122,8 +122,12 @@ services:
       MEMORY_PRESSURE_TARGET: ${MEMORY_PRESSURE_TARGET:-0.60}
       # Ingester service URL (for proxying ingestion requests)
       INGESTER_URL: ${INGESTER_URL:-http://ingester:8082}
+      # CITE test data for OGC WMS compliance testing
+      ENABLE_CITE_DATA: ${ENABLE_CITE_DATA:-true}
+      CITE_DATA_DIR: /app/validation/ogc-compliance/cite-data
     volumes:
       - ./validation/load-test/results:/app/validation/load-test/results:ro
+      - ./validation/ogc-compliance/cite-data:/app/validation/ogc-compliance/cite-data:ro
       - ./config:/app/config:ro
       - downloader_data:/data/downloads:ro
     depends_on:

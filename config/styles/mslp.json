@@ -6,7 +6,6 @@
   },
   "styles": {
     "isolines": {
-      "default": true,
       "name": "MSLP Contours",
       "description": "Mean sea level pressure contour lines at 4 hPa intervals",
       "type": "contour",
@@ -41,6 +40,7 @@
       }
     },
     "gradient": {
+      "default": true,
       "name": "MSLP Gradient",
       "description": "Mean sea level pressure as filled color gradient",
       "type": "gradient",

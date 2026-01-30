@@ -170,22 +170,38 @@ function updateEndpointStatus(status, text) {
 const OGC_SPEC_URL = 'https://portal.ogc.org/files/?artifact_id=35326';
 
 // Spec section references for tooltips
+// References: OGC WMTS 1.0.0 (07-057r7), OWS Common 1.1.0 (06-121r3)
 const SPEC_REFS = {
-    // GetCapabilities
+    // CommonOperations (per OWS Common 1.1.0)
+    'common-invalid-querystring': { section: 'OWS 11.5', title: 'Invalid Query String', desc: 'Server shall return HTTP 400 for malformed query strings' },
+    'common-invalid-service': { section: 'OWS 7.3.1', title: 'Invalid SERVICE', desc: 'Server shall return exception for invalid SERVICE parameter value' },
+    'common-invalid-request': { section: 'OWS 7.3.2', title: 'Invalid REQUEST', desc: 'Server shall return exception for invalid REQUEST parameter value' },
+    'common-case-insensitive': { section: 'OWS 11.5.2', title: 'Case-insensitive KVP', desc: 'Parameter names shall be case-insensitive per OWS Common' },
+    
+    // GetCapabilities (per OGC 07-057r7 Section 7.1)
     'caps-version-no-version': { section: '7.1.1', title: 'Version negotiation', desc: 'Server shall respond with supported version if none specified' },
     'caps-version-1.0.0': { section: '7.1.1', title: 'Version number', desc: 'WMTS implementations shall use value "1.0.0"' },
+    'caps-accept-versions': { section: '7.1.1', title: 'AcceptVersions', desc: 'Server shall negotiate version using AcceptVersions parameter' },
     'caps-service-wmts': { section: '7.1.1', title: 'SERVICE parameter', desc: 'SERVICE=WMTS is mandatory for KVP requests' },
+    'caps-no-service': { section: '7.1.1', title: 'Missing SERVICE', desc: 'Server shall return MissingParameterValue when SERVICE is missing' },
     'caps-xml-valid': { section: '7.1.2', title: 'GetCapabilities response', desc: 'Response shall be XML document per WMTS schema' },
+    'caps-schema-valid': { section: '7.1.2', title: 'Schema validation', desc: 'Capabilities document shall validate against WMTS schema' },
+    'caps-has-service-identification': { section: '7.1.2', title: 'ServiceIdentification', desc: 'Capabilities shall include ows:ServiceIdentification section' },
+    'caps-has-service-provider': { section: '7.1.2', title: 'ServiceProvider', desc: 'Capabilities shall include ows:ServiceProvider section' },
+    'caps-has-operations-metadata': { section: '7.1.2', title: 'OperationsMetadata', desc: 'Capabilities shall include ows:OperationsMetadata section' },
     'caps-has-contents': { section: '7.1.2', title: 'Contents element', desc: 'Capabilities shall include Contents with Layers and TileMatrixSets' },
     'caps-has-tilematrixset': { section: '6.1', title: 'TileMatrixSet', desc: 'Server shall define at least one TileMatrixSet' },
     'caps-layer-has-identifier': { section: '7.1.2.2', title: 'Layer Identifier', desc: 'Each Layer shall have unique ows:Identifier' },
+    'caps-layer-identifiers-unique': { section: '7.1.2.2', title: 'Unique Layer IDs', desc: 'All Layer identifiers shall be unique within the Contents' },
     'caps-layer-has-tilematrixsetlink': { section: '7.1.2.2', title: 'TileMatrixSetLink', desc: 'Each Layer shall reference at least one TileMatrixSet' },
     'caps-layer-has-format': { section: '7.1.2.2', title: 'Layer Format', desc: 'Each Layer shall specify supported output formats' },
     'caps-extra-param-ignored': { section: '7.1.1', title: 'Parameter handling', desc: 'WMTS shall ignore unrecognized parameters' },
+    'caps-encoding-constraint': { section: '7.1.2.1', title: 'GetEncoding Constraint', desc: 'OperationsMetadata shall advertise supported encodings (KVP, REST, SOAP)' },
     
-    // GetTile
+    // GetTile (per OGC 07-057r7 Section 7.2)
     'gettile-basic-kvp': { section: '7.2.1', title: 'GetTile KVP', desc: 'GetTile via KVP encoding shall return tile or exception' },
     'gettile-basic-rest': { section: '10', title: 'GetTile REST', desc: 'GetTile via RESTful encoding if supported' },
+    'gettile-missing-params': { section: '7.2.1', title: 'Missing Parameters', desc: 'Server shall return MissingParameterValue for missing required parameters' },
     'gettile-invalid-layer': { section: '7.2.1', title: 'Invalid LAYER', desc: 'Server shall return exception for undefined layer' },
     'gettile-invalid-style': { section: '7.2.1', title: 'Invalid STYLE', desc: 'Server shall return exception for undefined style' },
     'gettile-invalid-format': { section: '7.2.1', title: 'Invalid FORMAT', desc: 'Server shall return exception for unsupported format' },
@@ -193,6 +209,8 @@ const SPEC_REFS = {
     'gettile-invalid-tilematrix': { section: '7.2.1', title: 'Invalid TileMatrix', desc: 'Server shall return exception for invalid zoom level' },
     'gettile-invalid-tilerow': { section: '7.2.1', title: 'Invalid TileRow', desc: 'Server shall return exception for row out of bounds' },
     'gettile-invalid-tilecol': { section: '7.2.1', title: 'Invalid TileCol', desc: 'Server shall return exception for column out of bounds' },
+    'gettile-invalid-dimension': { section: '7.2.1', title: 'Invalid Dimension', desc: 'Server shall return InvalidParameterValue for invalid dimension values' },
+    'gettile-tile-size': { section: '6.1', title: 'Tile Size', desc: 'Returned tiles shall match advertised TileWidth and TileHeight (typically 256x256)' },
     'gettile-png-format': { section: '7.2.1', title: 'PNG format', desc: 'Server shall return Content-Type: image/png and valid PNG data when FORMAT=image/png' },
     'gettile-jpeg-format': { section: '7.2.1', title: 'JPEG format', desc: 'Server shall return Content-Type: image/jpeg and valid JPEG data when FORMAT=image/jpeg (if supported)' },
     'gettile-webp-format': { section: '7.2.1', title: 'WebP format', desc: 'Server shall return Content-Type: image/webp and valid WebP data when FORMAT=image/webp (if supported)' },
@@ -207,14 +225,86 @@ const SPEC_REFS = {
     'dim-forecast-default': { section: '7.2.1', title: 'FORECAST dimension', desc: 'Server shall use default FORECAST (forecast hour) if not specified' },
     'dim-forecast-explicit': { section: '7.2.1', title: 'FORECAST dimension', desc: 'Server shall respect explicit FORECAST value' },
     
-    // TileMatrixSet
-    'tms-webmercator': { section: '6.1', title: 'WebMercatorQuad', desc: 'Well-known TileMatrixSet for web mapping' },
-    'tms-wgs84': { section: '6.1', title: 'WorldCRS84Quad', desc: 'Well-known TileMatrixSet for WGS84' },
-    'tms-structure': { section: '6.1', title: 'TileMatrixSet structure', desc: 'TileMatrixSet shall define identifier, CRS, and TileMatrix levels' }
+    // TileMatrixSet (OGC 07-057r7 Section 6.1)
+    'tms-webmercator': { section: '6.1 / Annex E', title: 'WebMercatorQuad', desc: 'Well-known TileMatrixSet for web mapping (EPSG:3857)' },
+    'tms-wgs84': { section: '6.1 / Annex E', title: 'WorldCRS84Quad', desc: 'Well-known TileMatrixSet for WGS84 (CRS:84)' },
+    'tms-structure': { section: '6.1', title: 'TileMatrixSet structure', desc: 'TileMatrixSet shall define identifier, CRS, and TileMatrix levels' },
+    'tms-identifiers-unique': { section: '6.1', title: 'Unique TileMatrixSet IDs', desc: 'All TileMatrixSet identifiers shall be unique' },
+    'tms-matrix-identifiers-unique': { section: '6.1', title: 'Unique TileMatrix IDs', desc: 'TileMatrix identifiers shall be unique within a TileMatrixSet' },
+    'tms-scale-denominators': { section: '6.1', title: 'Scale Denominators', desc: 'Each TileMatrix shall have unique ScaleDenominator within its TileMatrixSet' }
 };
 
 // Test definitions organized by category
+// Aligned with OGC TEAM ENGINE WMTS 1.0.0 test suite
 const OGC_TESTS = {
+    commonoperations: {
+        name: 'CommonOperations',
+        tests: [
+            {
+                id: 'common-invalid-querystring',
+                desc: 'Invalid query string returns HTTP 400',
+                run: async () => {
+                    // Malformed query - missing REQUEST value
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=`;
+                    const resp = await fetchWithAuth(url);
+                    // Should return 400 or an exception
+                    if (resp.status === 400) {
+                        return {httpStatus: 400, url};
+                    }
+                    const text = await resp.text();
+                    if (text.includes('Exception') || text.includes('error')) {
+                        return {exception: true, httpStatus: resp.status, url};
+                    }
+                    throw new Error(`Expected HTTP 400 or exception, got ${resp.status}`);
+                }
+            },
+            {
+                id: 'common-invalid-service',
+                desc: 'Invalid SERVICE parameter returns exception',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=INVALID&REQUEST=GetCapabilities`;
+                    const resp = await fetchWithAuth(url);
+                    if (resp.status === 400) {
+                        return {httpStatus: 400, url};
+                    }
+                    const text = await resp.text();
+                    if (text.includes('Exception') || text.includes('InvalidParameterValue')) {
+                        return {exception: 'InvalidParameterValue', url};
+                    }
+                    throw new Error('Expected exception for invalid SERVICE');
+                }
+            },
+            {
+                id: 'common-invalid-request',
+                desc: 'Invalid REQUEST parameter returns exception',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=InvalidRequest`;
+                    const resp = await fetchWithAuth(url);
+                    if (resp.status === 400) {
+                        return {httpStatus: 400, url};
+                    }
+                    const text = await resp.text();
+                    if (text.includes('Exception') || text.includes('InvalidParameterValue') || text.includes('OperationNotSupported')) {
+                        return {exception: true, url};
+                    }
+                    throw new Error('Expected exception for invalid REQUEST');
+                }
+            },
+            {
+                id: 'common-case-insensitive',
+                desc: 'KVP parameter names are case-insensitive',
+                run: async () => {
+                    // Test with mixed case parameter names
+                    const url = `${getWmtsUrl()}?sErViCe=WMTS&ReQuEsT=GetCapabilities&VeRsIoN=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status} - case-insensitive KVP not supported`);
+                    const text = await resp.text();
+                    if (!text.includes('Capabilities')) throw new Error('Invalid response');
+                    return {caseInsensitive: true, url};
+                }
+            }
+        ]
+    },
     getcapabilities: {
         name: 'GetCapabilities',
         tests: [
@@ -363,6 +453,111 @@ const OGC_TESTS = {
                     const text = await resp.text();
                     if (!text.includes('Capabilities')) throw new Error('Invalid response');
                     return {ignored: true, url};
+                }
+            },
+            {
+                id: 'caps-no-service',
+                desc: 'Missing SERVICE parameter returns MissingParameterValue',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (text.includes('MissingParameterValue') || (resp.status === 400 && text.includes('Exception'))) {
+                        return {exception: 'MissingParameterValue', url};
+                    }
+                    // Some servers may be lenient
+                    if (text.includes('Capabilities')) {
+                        return {lenient: true, note: 'Server accepted request without SERVICE', url};
+                    }
+                    throw new Error('Expected MissingParameterValue exception');
+                }
+            },
+            {
+                id: 'caps-accept-versions',
+                desc: 'AcceptVersions parameter for version negotiation',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&AcceptVersions=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) {
+                        return {skipped: 'AcceptVersions not supported', url};
+                    }
+                    const text = await resp.text();
+                    if (!text.includes('Capabilities')) throw new Error('Invalid response');
+                    return {supported: true, url};
+                }
+            },
+            {
+                id: 'caps-has-service-identification',
+                desc: 'Capabilities includes ServiceIdentification',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('ServiceIdentification')) throw new Error('Missing ows:ServiceIdentification');
+                    return {found: true, url};
+                }
+            },
+            {
+                id: 'caps-has-service-provider',
+                desc: 'Capabilities includes ServiceProvider',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('ServiceProvider')) throw new Error('Missing ows:ServiceProvider');
+                    return {found: true, url};
+                }
+            },
+            {
+                id: 'caps-has-operations-metadata',
+                desc: 'Capabilities includes OperationsMetadata',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (!text.includes('OperationsMetadata')) throw new Error('Missing ows:OperationsMetadata');
+                    return {found: true, url};
+                }
+            },
+            {
+                id: 'caps-encoding-constraint',
+                desc: 'OperationsMetadata advertises GetEncoding constraint',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    // Check for GetEncoding constraint with KVP value
+                    if (text.includes('GetEncoding') && text.includes('KVP')) {
+                        return {found: true, encoding: 'KVP', url};
+                    }
+                    // May also support REST
+                    if (text.includes('GetEncoding')) {
+                        return {found: true, url};
+                    }
+                    return {skipped: 'GetEncoding constraint not found', url};
+                }
+            },
+            {
+                id: 'caps-layer-identifiers-unique',
+                desc: 'All Layer identifiers are unique',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    const layers = doc.querySelectorAll('Contents > Layer');
+                    const ids = new Set();
+                    let duplicates = [];
+                    layers.forEach(layer => {
+                        const id = layer.querySelector('Identifier')?.textContent;
+                        if (id) {
+                            if (ids.has(id)) duplicates.push(id);
+                            ids.add(id);
+                        }
+                    });
+                    if (duplicates.length > 0) throw new Error(`Duplicate layer IDs: ${duplicates.join(', ')}`);
+                    return {unique: true, count: ids.size, url};
                 }
             }
         ]
@@ -659,6 +854,73 @@ const OGC_TESTS = {
                         return {skipped: 'WebP format not supported', url};
                     }
                     throw new Error(`Expected Content-Type 'image/webp', got '${ct}'`);
+                }
+            },
+            {
+                id: 'gettile-missing-params',
+                desc: 'Missing required parameters return MissingParameterValue',
+                run: async (ctx) => {
+                    // Test missing LAYER parameter
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&STYLE=default&FORMAT=image/png&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=2&TILEROW=1&TILECOL=1`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    if (text.includes('MissingParameterValue') || (resp.status === 400 && text.includes('Exception'))) {
+                        return {exception: 'MissingParameterValue', missing: 'LAYER', url};
+                    }
+                    throw new Error('Expected MissingParameterValue exception for missing LAYER');
+                }
+            },
+            {
+                id: 'gettile-invalid-dimension',
+                desc: 'Invalid dimension value returns InvalidParameterValue',
+                run: async (ctx) => {
+                    const layer = ctx.layerWithElevation || ctx.sampleLayer;
+                    if (!layer) return {skipped: 'No layer available'};
+                    const style = ctx.sampleStyle || 'default';
+                    const tms = ctx.sampleTileMatrixSet || 'WebMercatorQuad';
+                    
+                    // Use an invalid elevation value
+                    let url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer.name}&STYLE=${style}&FORMAT=image/png&TILEMATRIXSET=${tms}&TILEMATRIX=2&TILEROW=1&TILECOL=1&ELEVATION=invalid_level_xyz`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const ct = resp.headers.get('content-type') || '';
+                    
+                    // Should return exception for invalid dimension
+                    if (ct.includes('image/')) {
+                        // Server may ignore unknown dimension values (per spec)
+                        return {behavior: 'ignored', note: 'Server ignored invalid dimension value (allowed by spec)', url};
+                    }
+                    if (text.includes('InvalidParameterValue') || text.includes('Exception')) {
+                        return {exception: 'InvalidParameterValue', url};
+                    }
+                    return {behavior: 'accepted', note: 'Server processed request despite invalid dimension', url};
+                }
+            },
+            {
+                id: 'gettile-tile-size',
+                desc: 'Returned tiles have correct size (256x256)',
+                run: async (ctx) => {
+                    const layer = ctx.sampleLayer;
+                    const style = ctx.sampleStyle || 'default';
+                    const tms = ctx.sampleTileMatrixSet || 'WebMercatorQuad';
+                    let url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer.name}&STYLE=${style}&FORMAT=image/png&TILEMATRIXSET=${tms}&TILEMATRIX=2&TILEROW=1&TILECOL=1`;
+                    const dims = buildRandomDimensionParams(layer);
+                    Object.entries(dims).forEach(([key, value]) => {
+                        url += `&${key}=${encodeURIComponent(value)}`;
+                    });
+                    const resp = await fetchWithAuth(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    
+                    // Load image and check dimensions
+                    const blob = await resp.blob();
+                    const bitmap = await createImageBitmap(blob);
+                    const width = bitmap.width;
+                    const height = bitmap.height;
+                    
+                    if (width !== 256 || height !== 256) {
+                        throw new Error(`Expected 256x256 tile, got ${width}x${height}`);
+                    }
+                    return {width, height, dimensions: dims, url};
                 }
             }
         ]
@@ -964,6 +1226,116 @@ const OGC_TESTS = {
                         hasMatrix: true,
                         url
                     };
+                }
+            },
+            {
+                id: 'tms-identifiers-unique',
+                desc: 'All TileMatrixSet identifiers are unique',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    
+                    // Find all TileMatrixSets with TileMatrix children (actual definitions, not links)
+                    const allTms = doc.querySelectorAll('TileMatrixSet');
+                    const ids = new Set();
+                    let duplicates = [];
+                    
+                    allTms.forEach(tms => {
+                        if (tms.querySelector('TileMatrix')) {
+                            const id = tms.querySelector('Identifier')?.textContent 
+                                     || tms.getElementsByTagNameNS('*', 'Identifier')[0]?.textContent;
+                            if (id) {
+                                if (ids.has(id)) duplicates.push(id);
+                                ids.add(id);
+                            }
+                        }
+                    });
+                    
+                    if (duplicates.length > 0) throw new Error(`Duplicate TileMatrixSet IDs: ${duplicates.join(', ')}`);
+                    return {unique: true, count: ids.size, url};
+                }
+            },
+            {
+                id: 'tms-matrix-identifiers-unique',
+                desc: 'TileMatrix identifiers are unique within each TileMatrixSet',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    
+                    const allTms = doc.querySelectorAll('TileMatrixSet');
+                    let issues = [];
+                    
+                    allTms.forEach(tms => {
+                        const matrices = tms.querySelectorAll('TileMatrix');
+                        if (matrices.length > 0) {
+                            const tmsId = tms.querySelector('Identifier')?.textContent 
+                                       || tms.getElementsByTagNameNS('*', 'Identifier')[0]?.textContent;
+                            const matrixIds = new Set();
+                            
+                            matrices.forEach(matrix => {
+                                const id = matrix.querySelector('Identifier')?.textContent
+                                        || matrix.getElementsByTagNameNS('*', 'Identifier')[0]?.textContent;
+                                if (id && matrixIds.has(id)) {
+                                    issues.push(`${tmsId}:${id}`);
+                                }
+                                if (id) matrixIds.add(id);
+                            });
+                        }
+                    });
+                    
+                    if (issues.length > 0) throw new Error(`Duplicate TileMatrix IDs: ${issues.join(', ')}`);
+                    return {unique: true, url};
+                }
+            },
+            {
+                id: 'tms-scale-denominators',
+                desc: 'TileMatrix levels have valid ScaleDenominators',
+                run: async () => {
+                    const url = `${getWmtsUrl()}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0`;
+                    const resp = await fetchWithAuth(url);
+                    const text = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(text, 'text/xml');
+                    
+                    // Find first TileMatrixSet with matrices
+                    const allTms = doc.querySelectorAll('TileMatrixSet');
+                    let tms = null;
+                    for (const t of allTms) {
+                        if (t.querySelector('TileMatrix')) {
+                            tms = t;
+                            break;
+                        }
+                    }
+                    if (!tms) throw new Error('No TileMatrixSet found');
+                    
+                    const matrices = tms.querySelectorAll('TileMatrix');
+                    let scales = [];
+                    
+                    matrices.forEach(matrix => {
+                        const scaleEl = matrix.querySelector('ScaleDenominator');
+                        if (scaleEl) {
+                            const scale = parseFloat(scaleEl.textContent);
+                            if (isNaN(scale) || scale <= 0) {
+                                throw new Error(`Invalid ScaleDenominator: ${scaleEl.textContent}`);
+                            }
+                            scales.push(scale);
+                        }
+                    });
+                    
+                    // Check scales are in descending order (larger scales = more zoomed out)
+                    for (let i = 1; i < scales.length; i++) {
+                        if (scales[i] >= scales[i-1]) {
+                            throw new Error('ScaleDenominators should decrease as zoom level increases');
+                        }
+                    }
+                    
+                    return {valid: true, matrixCount: matrices.length, url};
                 }
             }
         ]

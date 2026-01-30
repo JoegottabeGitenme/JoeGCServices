@@ -9,7 +9,7 @@ model:
   id: nbm-puertorico
   name: "NBM - National Blend of Models (Puerto Rico)"
   description: "NOAA/MDL National Blend of Models for Puerto Rico & USVI, ~2.5km resolution"
-  enabled: true
+  enabled: false  # Disabled for minimal OGC compliance testing
 
 dimensions:
   type: forecast

@@ -45,8 +45,8 @@ schedule:
   # This ensures historical data is downloaded up to the retention limit on startup.
 
 retention:
-  hours: 3 # Keep 3 hours of imagery
-  keep_latest_observations: 24 # Always keep ~2 hours of observations (updates every ~5 min)
+  hours: 0.5 # Reduced for testing: 30 minutes (was: 3 hours)
+  keep_latest_observations: 6 # Reduced for testing (was: 24)
 
 # Precaching configuration - disabled for now
 precaching:
