@@ -412,8 +412,7 @@ impl ModelRunner {
             self.latest_available_cycle(&model.schedule.cycles, model.schedule.delay_hours);
 
         // Determine if this is an HTTP source (vs S3)
-        let is_http_source =
-            model.source.source_type == "http" || model.source.base_url.is_some();
+        let is_http_source = model.source.source_type == "http" || model.source.base_url.is_some();
 
         // Get file types to expand (default to single empty string for no expansion)
         // This allows models like AIGFS to specify ["pres", "sfc"] to download
