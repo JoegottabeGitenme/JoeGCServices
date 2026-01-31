@@ -87,6 +87,9 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         }
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
+    } else if lower.starts_with("aigefs") || lower.contains("aigefs") {
+        // AIGEFS - AI GFS Ensemble System (must check before AIGFS since name contains "aigfs")
+        Some("aigefs".to_string())
     } else if lower.starts_with("aigfs") || lower.contains("aigfs") {
         // AIGFS - AI Global Forecast System (must check before GFS since name contains "gfs")
         Some("aigfs".to_string())

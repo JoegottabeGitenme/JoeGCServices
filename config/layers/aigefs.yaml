@@ -1,0 +1,240 @@
+# AIGEFS Layer Configuration
+# Defines WMS/WMTS layers exposed for the AIGEFS (AI GFS Ensemble) model
+# Each layer maps to a parameter and defines available styles
+#
+# Pressure levels available for ELEVATION dimension (in mb):
+# Surface/Near-surface: 2m above ground, 10m above ground
+# Troposphere: 1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150
+# Stratosphere: 100, 50
+
+model: aigefs
+display_name: "AIGEFS - AI GFS Ensemble (Mean)"
+
+# Default bounding box for all layers (can be overridden per layer)
+default_bbox:
+  west: -180.0
+  south: -90.0
+  east: 180.0
+  north: 90.0
+
+layers:
+  # ==========================================================================
+  # Temperature Layers
+  # ==========================================================================
+  
+  - id: aigefs_TMP
+    parameter: TMP
+    title: "Temperature (Ensemble Mean)"
+    abstract: "Air temperature at various levels - ensemble mean"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+      # Troposphere
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "500 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      # Stratosphere
+      - value: "100 mb"
+      - value: "50 mb"
+
+  # ==========================================================================
+  # Precipitation Layers
+  # ==========================================================================
+  
+  - id: aigefs_APCP
+    parameter: APCP
+    title: "Total Precipitation (Ensemble Mean)"
+    abstract: "6-hour accumulated total precipitation - ensemble mean"
+    style_file: precipitation.json
+    units:
+      native: kg/m^2
+      display: mm
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Wind Layers
+  # ==========================================================================
+  
+  - id: aigefs_UGRD
+    parameter: UGRD
+    title: "U-Component of Wind (Ensemble Mean)"
+    abstract: "Eastward wind component - ensemble mean"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+      # Troposphere
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "500 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      # Stratosphere
+      - value: "100 mb"
+      - value: "50 mb"
+
+  - id: aigefs_VGRD
+    parameter: VGRD
+    title: "V-Component of Wind (Ensemble Mean)"
+    abstract: "Northward wind component - ensemble mean"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+      # Troposphere
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "500 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      # Stratosphere
+      - value: "100 mb"
+      - value: "50 mb"
+
+  - id: aigefs_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Wind Barbs (Ensemble Mean)"
+    abstract: "Wind direction and speed barbs - ensemble mean (composite of UGRD/VGRD)"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [UGRD, VGRD]
+    levels:
+      - value: "10 m above ground"
+        default: true
+      - value: "1000 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "500 mb"
+      - value: "300 mb"
+      - value: "200 mb"
+      - value: "100 mb"
+
+  # ==========================================================================
+  # Pressure Layers
+  # ==========================================================================
+  
+  - id: aigefs_PRMSL
+    parameter: PRMSL
+    title: "Mean Sea Level Pressure (Ensemble Mean)"
+    abstract: "Atmospheric pressure reduced to mean sea level - ensemble mean"
+    style_file: mslp.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "mean sea level"
+        default: true
+
+  - id: aigefs_HGT
+    parameter: HGT
+    title: "Geopotential Height (Ensemble Mean)"
+    abstract: "Height of pressure surfaces - ensemble mean"
+    style_file: geopotential.json
+    units:
+      native: gpm
+      display: m
+    levels:
+      - value: "500 mb"
+        default: true
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      - value: "100 mb"
+      - value: "50 mb"
+
+  # ==========================================================================
+  # Moisture Layers
+  # ==========================================================================
+  
+  - id: aigefs_SPFH
+    parameter: SPFH
+    title: "Specific Humidity (Ensemble Mean)"
+    abstract: "Mass of water vapor per unit mass of air - ensemble mean"
+    style_file: humidity.json
+    units:
+      native: kg/kg
+      display: g/kg
+    levels:
+      - value: "850 mb"
+        default: true
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "500 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      - value: "100 mb"
+      - value: "50 mb"
+
+  # ==========================================================================
+  # Vertical Motion
+  # ==========================================================================
+  
+  - id: aigefs_VVEL
+    parameter: VVEL
+    title: "Vertical Velocity (Ensemble Mean)"
+    abstract: "Vertical air motion (omega, positive = downward) - ensemble mean"
+    style_file: vvel.json
+    units:
+      native: Pa/s
+      display: Pa/s
+    levels:
+      - value: "500 mb"
+        default: true
+      - value: "1000 mb"
+      - value: "925 mb"
+      - value: "850 mb"
+      - value: "700 mb"
+      - value: "600 mb"
+      - value: "400 mb"
+      - value: "300 mb"
+      - value: "250 mb"
+      - value: "200 mb"
+      - value: "150 mb"
+      - value: "100 mb"
+      - value: "50 mb"
