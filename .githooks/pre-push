@@ -50,7 +50,40 @@ if [ -n "$WHITESPACE_FILES" ]; then
 fi
 echo -e "  ${GREEN}No trailing whitespace${NC}"
 
-# 3. Cargo check
+# 3. Validate config files
+echo "  Validating model configs..."
+if ! python3 config/models/validate.py -q > /dev/null 2>&1; then
+    echo -e "${RED}Model config validation failed!${NC}"
+    python3 config/models/validate.py
+    exit 1
+fi
+echo -e "  ${GREEN}Model configs OK${NC}"
+
+echo "  Validating layer configs..."
+if ! python3 config/layers/validate_layers.py > /dev/null 2>&1; then
+    echo -e "${RED}Layer config validation failed!${NC}"
+    python3 config/layers/validate_layers.py
+    exit 1
+fi
+echo -e "  ${GREEN}Layer configs OK${NC}"
+
+echo "  Validating style configs..."
+if ! python3 config/styles/validate_styles.py > /dev/null 2>&1; then
+    echo -e "${RED}Style config validation failed!${NC}"
+    python3 config/styles/validate_styles.py
+    exit 1
+fi
+echo -e "  ${GREEN}Style configs OK${NC}"
+
+echo "  Validating EDR configs..."
+if ! python3 config/edr/validate_edr.py -q > /dev/null 2>&1; then
+    echo -e "${RED}EDR config validation failed!${NC}"
+    python3 config/edr/validate_edr.py
+    exit 1
+fi
+echo -e "  ${GREEN}EDR configs OK${NC}"
+
+# 4. Cargo check
 echo "  Running cargo check..."
 if ! cargo check --workspace --quiet 2>/dev/null; then
     echo -e "${RED}Cargo check failed!${NC}"
@@ -60,7 +93,7 @@ if ! cargo check --workspace --quiet 2>/dev/null; then
 fi
 echo -e "  ${GREEN}Cargo check OK${NC}"
 
-# 4. Run tests
+# 5. Run tests
 echo "  Running tests..."
 if ! cargo test --workspace --quiet 2>/dev/null; then
     echo -e "${RED}Tests failed!${NC}"
