@@ -3,6 +3,7 @@
 # Hemisphere coverage
 
 model: goes19-fulldisk
+layer_prefix: goes19fd
 display_name: "GOES-19 Full Disk - GOES East"
 
 # GOES-19 (East) Full Disk sector coverage

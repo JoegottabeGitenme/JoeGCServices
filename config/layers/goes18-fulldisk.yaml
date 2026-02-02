@@ -3,6 +3,7 @@
 # Hemisphere coverage
 
 model: goes18-fulldisk
+layer_prefix: goes18fd
 display_name: "GOES-18 Full Disk - GOES West"
 
 # GOES-18 (West) Full Disk sector coverage
