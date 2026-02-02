@@ -1,0 +1,249 @@
+# AIGFS - AI Global Forecast System Configuration
+# NCEP AI Global Forecast System, 0.25° resolution
+#
+# AIGFS is an AI-based global forecast model that produces forecasts
+# out to 16 days (384 hours) at 6-hour intervals.
+#
+# Data is split into two file types per forecast hour:
+#   - pres: Pressure level data (HGT, TMP, SPFH, UGRD, VGRD, VVEL)
+#   - sfc: Surface data (TMP 2m, UGRD/VGRD 10m, PRMSL)
+#
+# Pressure levels available (13 levels):
+# 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 mb
+
+model:
+  id: aigfs
+  name: "AIGFS - AI Global Forecast System"
+  description: "NCEP AI Global Forecast System, 0.25° resolution"
+  enabled: true
+
+# WMS/WMTS dimension configuration
+dimensions:
+  type: forecast # "forecast" = RUN+FORECAST dimensions
+  run: true # RUN dimension - model initialization time (ISO8601)
+  forecast: true # FORECAST dimension - hours ahead from run time
+  elevation: true # ELEVATION dimension - vertical levels (from parameter definitions)
+
+source:
+  type: http
+  base_url: "https://nomads.ncep.noaa.gov"
+  prefix_template: "pub/data/nccf/com/aigfs/prod/aigfs.{date}/{cycle:02}/model/atmos/grib2"
+  file_pattern: "aigfs.t{cycle:02}z.{file_type}.f{forecast:03}.grib2"
+  file_types: [pres, sfc]
+  # Enable selective download via .idx files to reduce bandwidth
+  use_index_file: true
+
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  cycles: [0, 6, 12, 18] # All 4 daily cycles
+  forecast_hours:
+    start: 0
+    end: 384 # 16-day forecast
+    step: 6 # 6-hourly intervals
+  poll_interval_secs: 3600 # Check for new data every hour
+  delay_hours: 4 # Data typically available ~4 hours after cycle time
+  max_concurrent: 3 # Allow up to 3 concurrent downloads
+
+retention:
+  hours: 48 # Keep 48 hours of data (covers 2+ model runs)
+  keep_latest_runs: 2 # Always keep at least 2 complete runs
+
+# Precaching configuration - disabled for now
+precaching:
+  enabled: false
+
+# GRIB2 level type codes reference (Table 4.5):
+#   1 = surface
+#   100 = isobaric (pressure level in Pa, displayed as mb)
+#   101 = mean sea level
+#   103 = height above ground (in m)
+
+parameters:
+  # ==========================================================================
+  # Surface File Parameters (sfc)
+  # ==========================================================================
+
+  # 2m Temperature
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "{value} m above ground"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [150, 350]
+
+  # 10m U-component wind
+  - name: UGRD
+    description: "U-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 2
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "{value} m above ground"
+    units: m/s
+    valid_range: [-200, 200]
+
+  # 10m V-component wind
+  - name: VGRD
+    description: "V-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 3
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "{value} m above ground"
+    units: m/s
+    valid_range: [-200, 200]
+
+  # Mean sea level pressure
+  - name: PRMSL
+    description: "Pressure Reduced to MSL"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 1
+    downsample: mean
+    levels:
+      - type: mean_sea_level
+        level_code: 101
+        display: "mean sea level"
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+    valid_range: [85000, 110000]
+
+  # ==========================================================================
+  # Pressure Level File Parameters (pres)
+  # ==========================================================================
+
+  # Geopotential height at pressure levels
+  # Note: GRIB2 isobaric levels use Pa, not mb (1000 mb = 100000 Pa)
+  - name: HGT
+    description: "Geopotential Height"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 5
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: gpm
+    valid_range: [-500, 35000]
+
+  # Temperature at pressure levels
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [150, 350]
+
+  # Specific humidity at pressure levels
+  - name: SPFH
+    description: "Specific Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 0
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: kg/kg
+    valid_range: [0, 0.05]
+
+  # U-component wind at pressure levels
+  - name: UGRD
+    description: "U-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 2
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: m/s
+    valid_range: [-200, 200]
+
+  # V-component wind at pressure levels
+  - name: VGRD
+    description: "V-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 3
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: m/s
+    valid_range: [-200, 200]
+
+  # Vertical velocity (omega) at pressure levels
+  - name: VVEL
+    description: "Vertical Velocity"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 8
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [100000, 92500, 85000, 70000, 60000, 50000, 40000, 30000, 25000, 20000, 15000, 10000, 5000]
+        display_template: "{value_mb} mb"
+    units: Pa/s
+    valid_range: [-10, 10]
+
+# Composite layers (derived from multiple parameters)
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs

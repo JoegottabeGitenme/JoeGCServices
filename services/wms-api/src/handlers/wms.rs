@@ -1198,8 +1198,10 @@ async fn render_weather_data(
         dimensions.parse_for_layer(model, &state.model_dimensions);
 
     // Get default level if not specified
+    // Preserve original elevation value - do NOT convert spaces to underscores
+    // URL encoding uses %20 for space, which becomes a space when parsed
     let level = match &dimensions.elevation {
-        Some(elev) => Some(elev.replace(" ", "_")),
+        Some(elev) => Some(elev.to_string()),
         None => {
             let configs = state.layer_configs.read().await;
             configs

@@ -758,9 +758,11 @@ async fn wmts_get_tile(
         (layer, "".to_string())
     };
 
-    // Get effective elevation
+    // Get effective elevation - preserve original value for data lookup
+    // URL encoding uses %20 for space, which becomes a space when parsed
+    // We must NOT convert spaces to underscores here - that breaks catalog lookup
     let effective_elevation: Option<String> = match elevation {
-        Some(elev) => Some(elev.replace(" ", "_")),
+        Some(elev) => Some(elev.to_string()),
         None => {
             let configs = state.layer_configs.read().await;
             configs

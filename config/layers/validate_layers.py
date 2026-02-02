@@ -44,6 +44,7 @@ def load_yaml_file(filepath: Path) -> dict | None:
 def validate_layer(
     layer: dict[str, Any],
     model: str,
+    layer_prefix: str,
     style_dir: Path,
     errors: list[str],
     warnings: list[str],
@@ -69,7 +70,7 @@ def validate_layer(
 
     # Check layer ID naming convention
     if "id" in layer and "parameter" in layer:
-        expected_prefix = f"{model}_"
+        expected_prefix = f"{layer_prefix}_"
         if not layer_id.startswith(expected_prefix):
             warnings.append(
                 f"Layer '{layer_id}': ID should start with '{expected_prefix}'"
@@ -121,6 +122,10 @@ def validate_file(
     model = data.get("model", "unknown")
     layers = data.get("layers", [])
 
+    # Determine layer prefix: use explicit layer_prefix if provided,
+    # otherwise convert model name (replace hyphens with underscores)
+    layer_prefix = data.get("layer_prefix", model.replace("-", "_"))
+
     if not isinstance(layers, list):
         errors.append("'layers' must be a list")
         layers = []
@@ -131,7 +136,9 @@ def validate_file(
             errors.append(f"Layer entry must be an object, got: {type(layer).__name__}")
             continue
 
-        layer_id = validate_layer(layer, model, style_dir, errors, warnings)
+        layer_id = validate_layer(
+            layer, model, layer_prefix, style_dir, errors, warnings
+        )
 
         if layer_id:
             # Check for duplicate IDs

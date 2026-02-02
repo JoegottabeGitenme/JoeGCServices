@@ -2,6 +2,7 @@
 # Defines WMS/WMTS layers exposed for the NBM model (Puerto Rico & USVI region)
 
 model: nbm-puertorico
+layer_prefix: nbm_pr
 display_name: "NBM - National Blend of Models (Puerto Rico)"
 
 default_bbox:

@@ -87,6 +87,12 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         }
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
+    } else if lower.starts_with("aigefs") || lower.contains("aigefs") {
+        // AIGEFS - AI GFS Ensemble System (must check before AIGFS since name contains "aigfs")
+        Some("aigefs".to_string())
+    } else if lower.starts_with("aigfs") || lower.contains("aigfs") {
+        // AIGFS - AI Global Forecast System (must check before GFS since name contains "gfs")
+        Some("aigfs".to_string())
     } else if lower.starts_with("gfs") || lower.contains("gfs") {
         Some("gfs".to_string())
     } else if lower.starts_with("mrms_") || lower.contains("mrms") {
@@ -427,6 +433,22 @@ mod tests {
         assert_eq!(
             extract_model_from_filename("/data/gfs/gfs.t00z.pgrb2.grib2"),
             Some("gfs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_aigfs() {
+        assert_eq!(
+            extract_model_from_filename("aigfs_pres_20260130_00z_f000.grib2"),
+            Some("aigfs".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("aigfs_sfc_20260130_00z_f006.grib2"),
+            Some("aigfs".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("/data/downloads/aigfs_pres_20260130_12z_f012.grib2"),
+            Some("aigfs".to_string())
         );
     }
 

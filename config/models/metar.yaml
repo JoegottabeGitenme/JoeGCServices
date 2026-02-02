@@ -7,6 +7,13 @@ model:
   description: "Routine aviation surface weather observations from airports"
   enabled: true
 
+dimensions:
+  type: observation       # TIME dimension (valid time based)
+  run: false              # No RUN dimension - NDFD updates continuously
+  forecast: false         # No FORECAST dimension
+  time: true              # TIME dimension - forecast valid times
+  elevation: true         # ELEVATION dimension for levels
+
 # Source configuration for Aviation Weather API
 source:
   type: aviation_weather_api

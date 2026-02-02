@@ -36,14 +36,23 @@ except ImportError:
 # =============================================================================
 
 # Valid values for enumerated fields
-VALID_DIMENSION_TYPES = {"forecast", "observation"}
-VALID_SOURCE_TYPES = {"aws_s3", "aws_s3_goes", "aws_s3_grib2", "local", "http"}
+VALID_DIMENSION_TYPES = {"forecast", "observation", "static"}
+VALID_SOURCE_TYPES = {
+    "aws_s3",
+    "aws_s3_goes",
+    "aws_s3_grib2",
+    "local",
+    "http",
+    "aviation_weather_api",
+    "aviation_weather_api_taf",
+}
 VALID_PROJECTION_TYPES = {
     "geographic",
     "latlon",
     "geostationary",
     "lambert_conformal",
     "mercator",
+    "polar_stereographic",
 }
 VALID_SCHEDULE_TYPES = {"forecast", "observation"}
 VALID_LEVEL_TYPES = {
@@ -57,6 +66,8 @@ VALID_LEVEL_TYPES = {
     "low_cloud_layer",
     "middle_cloud_layer",
     "high_cloud_layer",
+    "cloud_layer",  # Generic cloud layer
+    "cloud_base",  # Cloud base height
     "cloud_top",
     "top_of_atmosphere",
     "depth_below_surface",
@@ -85,6 +96,7 @@ VALID_STYLES = {
     "geopotential",
 }
 VALID_CONVERSIONS = {
+    "none",  # No conversion needed
     "K_to_C",
     "K_to_F",
     "Pa_to_hPa",
@@ -92,6 +104,7 @@ VALID_CONVERSIONS = {
     "m_to_km",
     "m_to_ft",
     "m_to_kft",  # meters to kilofeet (for cloud tops)
+    "m_to_in",  # meters to inches (for precipitation)
     "ms_to_kt",
     "ms_to_mph",
 }
@@ -170,8 +183,8 @@ class ModelValidator:
         self._require_string(
             model,
             "model.id",
-            r"^[a-z][a-z0-9_]*$",
-            "Must be lowercase alphanumeric with underscores, starting with letter",
+            r"^[a-z][a-z0-9_-]*$",
+            "Must be lowercase alphanumeric with underscores/hyphens, starting with letter",
         )
         self._require_string(model, "model.name")
 
@@ -441,9 +454,20 @@ class ModelValidator:
             # Optional: description
             self._optional_string(param, f"{path}.description")
 
-            # Required: levels
+            # Levels: required for gridded data, optional for point/static data
             if "levels" not in param:
-                self.add_error(f"{path}.levels", "Missing required field 'levels'")
+                # Only warn if this looks like gridded data (not aviation/static sources)
+                source_type = self.data.get("source", {}).get("type", "")
+                dim_type = self.data.get("dimensions", {}).get("type", "")
+                if (
+                    source_type
+                    not in ("aviation_weather_api", "aviation_weather_api_taf")
+                    and dim_type != "static"
+                ):
+                    self.add_warning(
+                        f"{path}.levels",
+                        "Missing 'levels' field (required for gridded data)",
+                    )
             else:
                 self._validate_levels(param["levels"], f"{path}.levels")
 

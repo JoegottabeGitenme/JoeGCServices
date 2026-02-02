@@ -35,6 +35,7 @@ VALID_TRANSFORM_TYPES = {
     "pa_to_hpa",
     "mps_to_knots",
     "k_to_c",
+    "k_to_f",  # Kelvin to Fahrenheit
     "m_to_km",
 }
 
@@ -42,7 +43,7 @@ VALID_TRANSFORM_TYPES = {
 VALID_INTERPOLATION_TYPES = {"linear", "step", "nearest"}
 
 # Valid out_of_range types
-VALID_OUT_OF_RANGE_TYPES = {"clamp", "extend", "transparent"}
+VALID_OUT_OF_RANGE_TYPES = {"clamp", "extend", "transparent", "wrap"}
 
 # Hex color pattern
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
@@ -174,7 +175,7 @@ def validate_range(range_obj: Any, path: str, errors: list, file: str):
 
     if "min" in range_obj and "max" in range_obj:
         if isinstance(range_obj["min"], (int, float)) and isinstance(
-                range_obj["max"], (int, float)
+            range_obj["max"], (int, float)
         ):
             if range_obj["min"] >= range_obj["max"]:
                 errors.append(
@@ -387,8 +388,8 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
                 validate_stop(stop, i, f"{path}.stops", errors, file)
 
         if (
-                "interpolation" in style
-                and style["interpolation"] not in VALID_INTERPOLATION_TYPES
+            "interpolation" in style
+            and style["interpolation"] not in VALID_INTERPOLATION_TYPES
         ):
             errors.append(
                 ValidationError(
@@ -399,8 +400,8 @@ def validate_style(style_id: str, style: Any, path: str, errors: list, file: str
             )
 
         if (
-                "out_of_range" in style
-                and style["out_of_range"] not in VALID_OUT_OF_RANGE_TYPES
+            "out_of_range" in style
+            and style["out_of_range"] not in VALID_OUT_OF_RANGE_TYPES
         ):
             errors.append(
                 ValidationError(
