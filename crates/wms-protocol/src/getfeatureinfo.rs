@@ -269,27 +269,8 @@ pub fn mercator_to_wgs84(x: f64, y: f64) -> (f64, f64) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_pixel_to_geographic() {
-        // Center of 256x256 map with bbox [-180, -90, 180, 90]
-        let (lon, lat) = pixel_to_geographic(128, 128, 256, 256, [-180.0, -90.0, 180.0, 90.0]);
-        assert!((lon - 0.0).abs() < 1.0);
-        assert!((lat - 0.0).abs() < 1.0);
-    }
-
-    #[test]
-    fn test_info_format_parsing() {
-        assert_eq!(
-            InfoFormat::from_mime("application/json"),
-            Some(InfoFormat::Json)
-        );
-        assert_eq!(InfoFormat::from_mime("text/html"), Some(InfoFormat::Html));
-        assert_eq!(InfoFormat::from_mime("TEXT/HTML"), Some(InfoFormat::Html));
-    }
-
-    #[test]
-    fn test_feature_info_response_json() {
-        let response = FeatureInfoResponse::new(vec![FeatureInfo {
+    fn create_test_feature() -> FeatureInfo {
+        FeatureInfo {
             layer_name: "test_layer".to_string(),
             parameter: "Temperature".to_string(),
             value: 15.5,
@@ -303,11 +284,183 @@ mod tests {
             forecast_hour: Some(3),
             reference_time: Some("2025-11-26T12:00:00Z".to_string()),
             level: Some("500 mb".to_string()),
-        }]);
+        }
+    }
+
+    #[test]
+    fn test_pixel_to_geographic() {
+        // Center of 256x256 map with bbox [-180, -90, 180, 90]
+        let (lon, lat) = pixel_to_geographic(128, 128, 256, 256, [-180.0, -90.0, 180.0, 90.0]);
+        assert!((lon - 0.0).abs() < 1.0);
+        assert!((lat - 0.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_pixel_to_geographic_corners() {
+        let bbox = [-180.0, -90.0, 180.0, 90.0];
+
+        // Top-left corner (0, 0) - should be near (-180, 90)
+        let (lon, lat) = pixel_to_geographic(0, 0, 256, 256, bbox);
+        assert!(lon < -170.0, "Top-left lon should be near -180");
+        assert!(lat > 80.0, "Top-left lat should be near 90");
+
+        // Bottom-right corner (255, 255) - should be near (180, -90)
+        let (lon, lat) = pixel_to_geographic(255, 255, 256, 256, bbox);
+        assert!(lon > 170.0, "Bottom-right lon should be near 180");
+        assert!(lat < -80.0, "Bottom-right lat should be near -90");
+    }
+
+    #[test]
+    fn test_pixel_to_geographic_conus() {
+        // Typical CONUS bbox
+        let bbox = [-130.0, 20.0, -60.0, 55.0];
+        let (lon, lat) = pixel_to_geographic(128, 128, 256, 256, bbox);
+        assert!(lon > -100.0 && lon < -90.0, "Should be in central US");
+        assert!(lat > 35.0 && lat < 40.0, "Should be in central US");
+    }
+
+    #[test]
+    fn test_info_format_parsing() {
+        assert_eq!(
+            InfoFormat::from_mime("application/json"),
+            Some(InfoFormat::Json)
+        );
+        assert_eq!(InfoFormat::from_mime("text/html"), Some(InfoFormat::Html));
+        assert_eq!(InfoFormat::from_mime("TEXT/HTML"), Some(InfoFormat::Html));
+        assert_eq!(InfoFormat::from_mime("text/xml"), Some(InfoFormat::Xml));
+        assert_eq!(InfoFormat::from_mime("text/plain"), Some(InfoFormat::Text));
+        assert_eq!(InfoFormat::from_mime("unknown"), None);
+    }
+
+    #[test]
+    fn test_info_format_to_mime() {
+        assert_eq!(InfoFormat::Json.to_mime(), "application/json");
+        assert_eq!(InfoFormat::Html.to_mime(), "text/html");
+        assert_eq!(InfoFormat::Xml.to_mime(), "text/xml");
+        assert_eq!(InfoFormat::Text.to_mime(), "text/plain");
+    }
+
+    #[test]
+    fn test_info_format_default() {
+        let format: InfoFormat = Default::default();
+        assert_eq!(format, InfoFormat::Html);
+    }
+
+    #[test]
+    fn test_feature_info_response_json() {
+        let response = FeatureInfoResponse::new(vec![create_test_feature()]);
 
         let json = response.to_json().unwrap();
         assert!(json.contains("FeatureInfoResponse"));
         assert!(json.contains("Temperature"));
         assert!(json.contains("500 mb"));
+        assert!(json.contains("test_layer"));
+    }
+
+    #[test]
+    fn test_feature_info_response_html() {
+        let response = FeatureInfoResponse::new(vec![create_test_feature()]);
+
+        let html = response.to_html();
+        assert!(html.contains("<div class=\"feature-info\">"));
+        assert!(html.contains("<h4>test_layer</h4>"));
+        assert!(html.contains("Temperature"));
+        assert!(html.contains("15.50"));
+        assert!(html.contains("500 mb"));
+        assert!(html.contains("+3 hours"));
+    }
+
+    #[test]
+    fn test_feature_info_response_text() {
+        let response = FeatureInfoResponse::new(vec![create_test_feature()]);
+
+        let text = response.to_text();
+        assert!(text.contains("Layer: test_layer"));
+        assert!(text.contains("Parameter: Temperature"));
+        assert!(text.contains("Value: 15.50 °C"));
+        assert!(text.contains("Level: 500 mb"));
+        assert!(text.contains("Forecast: +3 hours"));
+    }
+
+    #[test]
+    fn test_feature_info_response_xml() {
+        let response = FeatureInfoResponse::new(vec![create_test_feature()]);
+
+        let xml = response.to_xml();
+        assert!(xml.contains("<?xml version=\"1.0\""));
+        assert!(xml.contains("<FeatureInfoResponse>"));
+        assert!(xml.contains("<LayerName>test_layer</LayerName>"));
+        assert!(xml.contains("<Parameter>Temperature</Parameter>"));
+        assert!(xml.contains("<Value>15.50</Value>"));
+        assert!(xml.contains("<Level>500 mb</Level>"));
+        assert!(xml.contains("<ForecastHour>3</ForecastHour>"));
+    }
+
+    #[test]
+    fn test_feature_info_response_multiple_features() {
+        let mut feature2 = create_test_feature();
+        feature2.layer_name = "second_layer".to_string();
+        feature2.parameter = "Wind".to_string();
+
+        let response = FeatureInfoResponse::new(vec![create_test_feature(), feature2]);
+
+        // Test text format with separator
+        let text = response.to_text();
+        assert!(text.contains("---")); // Separator between features
+        assert!(text.contains("test_layer"));
+        assert!(text.contains("second_layer"));
+    }
+
+    #[test]
+    fn test_feature_info_without_optional_fields() {
+        let feature = FeatureInfo {
+            layer_name: "test".to_string(),
+            parameter: "Test".to_string(),
+            value: 10.0,
+            unit: "m/s".to_string(),
+            raw_value: 10.0,
+            raw_unit: "m/s".to_string(),
+            location: Location {
+                longitude: 0.0,
+                latitude: 0.0,
+            },
+            forecast_hour: None,
+            reference_time: None,
+            level: None,
+        };
+
+        let response = FeatureInfoResponse::new(vec![feature]);
+
+        // Should not contain optional fields
+        let json = response.to_json().unwrap();
+        assert!(!json.contains("forecast_hour"));
+        assert!(!json.contains("level"));
+    }
+
+    #[test]
+    fn test_mercator_to_wgs84_origin() {
+        let (lon, lat) = mercator_to_wgs84(0.0, 0.0);
+        assert!((lon - 0.0).abs() < 0.001);
+        assert!((lat - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mercator_to_wgs84_bounds() {
+        // Test at Web Mercator bounds
+        let (lon, _lat) = mercator_to_wgs84(20037508.34, 0.0);
+        assert!((lon - 180.0).abs() < 0.01);
+
+        let (lon, _lat) = mercator_to_wgs84(-20037508.34, 0.0);
+        assert!((lon - (-180.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_location_struct() {
+        let loc = Location {
+            longitude: -95.5,
+            latitude: 40.0,
+        };
+        assert_eq!(loc.longitude, -95.5);
+        assert_eq!(loc.latitude, 40.0);
     }
 }
