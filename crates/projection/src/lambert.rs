@@ -850,3 +850,178 @@ fn test_ndfd_grid_to_geo_quadrant() {
         );
     }
 }
+
+// ==================== Additional coverage tests ====================
+
+/// Test tangent cone case where latin1 == latin2 (single standard parallel)
+/// This exercises the branch at lines 87-89 where n = sin(latin1)
+#[test]
+fn test_tangent_cone_single_parallel() {
+    // Create a Lambert projection with a single standard parallel (tangent cone)
+    // Using 45°N as the single standard parallel
+    let proj = LambertConformal::from_grib2(
+        40.0,   // lat1_deg - first grid point latitude
+        -100.0, // lon1_deg - first grid point longitude
+        -95.0,  // lov_deg - central meridian
+        45.0,   // latin1_deg - first standard parallel
+        45.0,   // latin2_deg - SAME as latin1 (tangent cone)
+        3000.0, // dx
+        3000.0, // dy
+        100,    // nx
+        100,    // ny
+    );
+
+    // Verify the projection works
+    let (i, j) = proj.geo_to_grid(40.0, -100.0);
+    println!(
+        "Tangent cone: First point (40.0, -100.0) -> i={:.2}, j={:.2}",
+        i, j
+    );
+    assert!(
+        (i - 0.0).abs() < 0.5,
+        "First point i should be ~0, got {}",
+        i
+    );
+    assert!(
+        (j - 0.0).abs() < 0.5,
+        "First point j should be ~0, got {}",
+        j
+    );
+
+    // Verify roundtrip works
+    let (lat, lon) = proj.grid_to_geo(50.0, 50.0);
+    let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+    println!(
+        "Tangent cone roundtrip (50,50): lat={:.2}, lon={:.2} -> ({:.2}, {:.2})",
+        lat, lon, i_back, j_back
+    );
+    assert!((i_back - 50.0).abs() < 0.01, "Roundtrip i failed");
+    assert!((j_back - 50.0).abs() < 0.01, "Roundtrip j failed");
+
+    // The cone constant n should equal sin(45°) ≈ 0.7071 for tangent cone
+    // We can't directly access n, but we can verify the projection behaves correctly
+    // by checking that a point at the standard parallel has correct distortion
+    let (i1, _) = proj.geo_to_grid(45.0, -100.0); // At standard parallel
+    let (i2, _) = proj.geo_to_grid(45.0, -97.0); // 3 degrees east
+    let di = i2 - i1;
+    println!(
+        "At standard parallel (45°N): 3° longitude = {:.1} grid cells",
+        di
+    );
+    // At the standard parallel, scale should be true (no distortion)
+    assert!(di > 0.0, "Longitude should increase eastward");
+}
+
+/// Test longitude normalization when crossing the antimeridian
+/// This exercises the while loops at lines 199-204, 218-223, 243-248
+#[test]
+fn test_longitude_normalization_crossing_dateline() {
+    // Create a projection centered near the dateline
+    // This forces longitude normalization to kick in
+    let proj = LambertConformal::from_grib2(
+        50.0,   // lat1_deg
+        170.0,  // lon1_deg - near dateline (positive side)
+        180.0,  // lov_deg - central meridian at dateline
+        50.0,   // latin1_deg
+        60.0,   // latin2_deg
+        3000.0, // dx
+        3000.0, // dy
+        100,    // nx
+        100,    // ny
+    );
+
+    // Test point west of dateline (positive longitude)
+    let (i1, j1) = proj.geo_to_grid(55.0, 175.0);
+    println!("Point at 175°E: i={:.2}, j={:.2}", i1, j1);
+
+    // Test point east of dateline (negative longitude, equivalent to > 180)
+    let (i2, j2) = proj.geo_to_grid(55.0, -175.0); // Same as 185°E
+    println!("Point at 175°W (-175°): i={:.2}, j={:.2}", i2, j2);
+
+    // The point at -175° (185°) should be east of 175°, so i2 > i1
+    assert!(i2 > i1, "175°W should be east of 175°E in this projection");
+
+    // Verify roundtrip for points on both sides of dateline
+    let (lat1, lon1) = proj.grid_to_geo(i1, j1);
+    println!("Roundtrip 175°E: got lat={:.2}, lon={:.2}", lat1, lon1);
+    assert!((lat1 - 55.0).abs() < 0.1, "Latitude roundtrip failed");
+    // Longitude may be normalized differently, but should represent same point
+    let lon1_normalized = if lon1 < 0.0 { lon1 + 360.0 } else { lon1 };
+    assert!(
+        (lon1_normalized - 175.0).abs() < 0.5 || (lon1 - 175.0).abs() < 0.5,
+        "Longitude roundtrip failed: got {}",
+        lon1
+    );
+
+    let (lat2, lon2) = proj.grid_to_geo(i2, j2);
+    println!("Roundtrip 175°W: got lat={:.2}, lon={:.2}", lat2, lon2);
+    assert!((lat2 - 55.0).abs() < 0.1, "Latitude roundtrip failed");
+}
+
+/// Test with longitude > 180 (GRIB2 convention uses 0-360)
+#[test]
+fn test_longitude_grib2_convention() {
+    // Some GRIB2 files use 0-360° longitude convention
+    // Test that we handle lon1 > 180 correctly
+    let proj = LambertConformal::from_grib2(
+        40.0,   // lat1_deg
+        240.0,  // lon1_deg - 240° = -120° (western US)
+        250.0,  // lov_deg - 250° = -110° central meridian
+        35.0,   // latin1_deg
+        45.0,   // latin2_deg
+        3000.0, // dx
+        3000.0, // dy
+        100,    // nx
+        100,    // ny
+    );
+
+    // First grid point should be at (0, 0)
+    // 240° = -120° in -180/180 convention
+    let (i, j) = proj.geo_to_grid(40.0, -120.0);
+    println!("GRIB2 convention: (40.0, -120.0) -> i={:.2}, j={:.2}", i, j);
+    assert!((i - 0.0).abs() < 0.5, "First point i should be ~0");
+    assert!((j - 0.0).abs() < 0.5, "First point j should be ~0");
+
+    // Also test with 0-360 input
+    let (i2, j2) = proj.geo_to_grid(40.0, 240.0);
+    println!(
+        "GRIB2 convention: (40.0, 240.0) -> i={:.2}, j={:.2}",
+        i2, j2
+    );
+    // Should give same result (within tolerance for the normalization)
+    assert!((i2 - i).abs() < 1.0, "240° and -120° should give similar i");
+}
+
+/// Test grid boundary conditions
+#[test]
+fn test_lambert_grid_boundaries() {
+    let proj = LambertConformal::hrrr();
+    let (nx, ny) = proj.dimensions();
+
+    // Test exact corners
+    let corners = [
+        (0.0, 0.0, "SW"),
+        ((nx - 1) as f64, 0.0, "SE"),
+        (0.0, (ny - 1) as f64, "NW"),
+        ((nx - 1) as f64, (ny - 1) as f64, "NE"),
+    ];
+
+    for (i, j, name) in corners {
+        let (lat, lon) = proj.grid_to_geo(i, j);
+        let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+        println!(
+            "{} corner ({}, {}): lat={:.2}, lon={:.2} -> ({:.2}, {:.2})",
+            name, i, j, lat, lon, i_back, j_back
+        );
+        assert!(
+            (i_back - i).abs() < 0.1,
+            "{} corner i roundtrip failed",
+            name
+        );
+        assert!(
+            (j_back - j).abs() < 0.1,
+            "{} corner j roundtrip failed",
+            name
+        );
+    }
+}

@@ -373,4 +373,164 @@ mod tests {
             lat_back
         );
     }
+
+    // ==================== Additional coverage tests ====================
+
+    /// Test longitude normalization for -180/180 grid with >180° input
+    /// This exercises line 136-137: `self.lon1 < 0.0 && lon > 180.0`
+    #[test]
+    fn test_longitude_normalization_negative_grid_positive_input() {
+        // Puerto Rico uses negative longitude convention (lon1 = -68.0...)
+        let proj = Mercator::nbm_puertorico();
+
+        // Input longitude > 180° should be normalized to negative
+        // 295° = -65° (roughly middle of PR grid)
+        let (i1, j1) = proj.geo_to_grid(18.0, -65.0);
+        let (i2, j2) = proj.geo_to_grid(18.0, 295.0); // 295° = -65°
+
+        println!("PR with -65°: i={:.2}, j={:.2}", i1, j1);
+        println!("PR with 295°: i={:.2}, j={:.2}", i2, j2);
+
+        // Both should give approximately the same result
+        assert!(
+            (i1 - i2).abs() < 1.0,
+            "Longitude normalization failed for positive input"
+        );
+        assert!((j1 - j2).abs() < 0.01, "j values should match");
+    }
+
+    /// Test contains() method with various points
+    #[test]
+    fn test_mercator_contains() {
+        let proj = Mercator::nbm_hawaii();
+
+        // Point inside the grid
+        assert!(
+            proj.contains(20.0, -157.0),
+            "Honolulu should be in Hawaii grid"
+        );
+
+        // Point outside the grid (too far north)
+        assert!(
+            !proj.contains(30.0, -157.0),
+            "30°N should be outside Hawaii grid"
+        );
+
+        // Point outside the grid (too far east)
+        assert!(
+            !proj.contains(20.0, -150.0),
+            "150°W should be outside Hawaii grid"
+        );
+
+        // Point outside the grid (too far west)
+        assert!(
+            !proj.contains(20.0, -165.0),
+            "165°W might be outside Hawaii grid"
+        );
+
+        // Point outside the grid (too far south)
+        assert!(
+            !proj.contains(10.0, -157.0),
+            "10°N should be outside Hawaii grid"
+        );
+    }
+
+    /// Test Mercator projection at various latitudes including near-polar
+    #[test]
+    fn test_mercator_y_various_latitudes() {
+        let earth_radius = 6371200.0;
+
+        // Test positive and negative latitudes
+        for lat in [-45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0, 60.0] {
+            let y = Mercator::lat_to_mercator_y(lat, earth_radius);
+            let lat_back = Mercator::mercator_y_to_lat(y, earth_radius);
+            println!("Lat {:.0}°: Y={:.0}m, roundtrip={:.4}°", lat, y, lat_back);
+            assert!(
+                (lat_back - lat).abs() < 0.0001,
+                "Roundtrip failed for lat {}",
+                lat
+            );
+        }
+
+        // Verify Y increases with latitude
+        let y_30 = Mercator::lat_to_mercator_y(30.0, earth_radius);
+        let y_45 = Mercator::lat_to_mercator_y(45.0, earth_radius);
+        assert!(y_45 > y_30, "Mercator Y should increase with latitude");
+
+        // Verify symmetry around equator
+        let y_pos = Mercator::lat_to_mercator_y(30.0, earth_radius);
+        let y_neg = Mercator::lat_to_mercator_y(-30.0, earth_radius);
+        assert!(
+            (y_pos + y_neg).abs() < 1.0,
+            "Mercator Y should be symmetric: {} vs {}",
+            y_pos,
+            y_neg
+        );
+    }
+
+    /// Test with a custom Mercator grid using 0-360° longitude convention
+    #[test]
+    fn test_mercator_360_longitude_convention() {
+        // Create a Mercator grid similar to how GRIB2 might encode it
+        // Using 0-360° longitude (e.g., Hawaii could be at 203° instead of -157°)
+        let proj = Mercator::from_grib2(
+            14.35, // lat1
+            195.0, // lon1 - using 0-360 convention (195° = -165°)
+            22.0,  // lat2
+            206.0, // lon2 (206° = -154°)
+            18.0,  // lat_d (reference latitude)
+            625,   // nx
+            561,   // ny
+        );
+
+        // Test that we can query with both conventions
+        let (i1, j1) = proj.geo_to_grid(18.0, 200.0); // Using 0-360
+        let (i2, j2) = proj.geo_to_grid(18.0, -160.0); // Using -180/180 (same point)
+
+        println!("Query with 200°: i={:.2}, j={:.2}", i1, j1);
+        println!("Query with -160°: i={:.2}, j={:.2}", i2, j2);
+
+        // Should be equivalent (200° = -160°)
+        // Note: May need tolerance due to longitude normalization
+        assert!(
+            (i1 - i2).abs() < 1.0 || (625.0 - (i1 - i2).abs()) < 1.0,
+            "Both longitude conventions should work"
+        );
+    }
+
+    /// Test grid boundary roundtrip
+    #[test]
+    fn test_mercator_grid_boundaries() {
+        let proj = Mercator::nbm_hawaii();
+        // Hawaii grid: 625 x 561
+        let nx = 625;
+        let ny = 561;
+
+        // Test corners
+        let corners = [
+            (0.0, 0.0, "SW"),
+            ((nx - 1) as f64, 0.0, "SE"),
+            (0.0, (ny - 1) as f64, "NW"),
+            ((nx - 1) as f64, (ny - 1) as f64, "NE"),
+        ];
+
+        for (i, j, name) in corners {
+            let (lat, lon) = proj.grid_to_geo(i, j);
+            let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+            println!(
+                "{} corner ({}, {}): lat={:.2}, lon={:.2} -> ({:.2}, {:.2})",
+                name, i, j, lat, lon, i_back, j_back
+            );
+            assert!(
+                (i_back - i).abs() < 0.01,
+                "{} corner i roundtrip failed",
+                name
+            );
+            assert!(
+                (j_back - j).abs() < 0.01,
+                "{} corner j roundtrip failed",
+                name
+            );
+        }
+    }
 }

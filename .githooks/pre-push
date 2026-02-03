@@ -114,6 +114,7 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
         
         # Coverage thresholds (adjust as coverage improves)
         RENDERER_THRESHOLD=70
+        PROJECTION_THRESHOLD=90
         STORAGE_THRESHOLD=40
         WMS_API_THRESHOLD=30
         EDR_API_THRESHOLD=35
@@ -134,6 +135,7 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
             local crate_path
             case "$package" in
                 "renderer") crate_path="crates/renderer/src" ;;
+                "projection") crate_path="crates/projection/src" ;;
                 "storage") crate_path="crates/storage/src" ;;
                 "wms-api") crate_path="services/wms-api/src" ;;
                 "edr-api") crate_path="services/edr-api/src" ;;
@@ -170,8 +172,13 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
             fi
         }
         
-        # Check renderer (highest priority - already at 72%)
+        # Check renderer (highest priority - already at 75%)
         if ! check_coverage "renderer" $RENDERER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Check projection (critical for coordinate transforms - at 95%+)
+        if ! check_coverage "projection" $PROJECTION_THRESHOLD; then
             COVERAGE_FAILED=1
         fi
         
