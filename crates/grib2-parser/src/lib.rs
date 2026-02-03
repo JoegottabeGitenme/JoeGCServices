@@ -388,6 +388,7 @@ impl<'a> Iterator for MessageIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Datelike, TimeZone, Timelike};
 
     fn create_test_tables() -> Arc<Grib2Tables> {
         let mut tables = Grib2Tables::new();
@@ -411,5 +412,143 @@ mod tests {
         let reader = Grib2Reader::new(data, tables);
         assert_eq!(reader.position(), 0);
         assert!(reader.has_more());
+    }
+
+    #[test]
+    fn test_reader_empty_data() {
+        let tables = create_test_tables();
+        let data = Bytes::new();
+        let reader = Grib2Reader::new(data, tables);
+        assert_eq!(reader.size(), 0);
+        assert_eq!(reader.position(), 0);
+        assert!(!reader.has_more());
+    }
+
+    #[test]
+    fn test_grib2_error_display() {
+        let err = Grib2Error::InvalidFormat("test error".to_string());
+        assert!(err.to_string().contains("test error"));
+
+        let err = Grib2Error::UnexpectedEnd;
+        assert!(err.to_string().contains("Unexpected end"));
+
+        let err = Grib2Error::InvalidSection {
+            section: 3,
+            reason: "bad data".to_string(),
+        };
+        assert!(err.to_string().contains("section 3"));
+
+        let err = Grib2Error::UnsupportedTemplate {
+            template_number: 99,
+            reason: "unknown".to_string(),
+        };
+        assert!(err.to_string().contains("99"));
+
+        let err = Grib2Error::UnpackingError("decode failed".to_string());
+        assert!(err.to_string().contains("decode failed"));
+
+        let err = Grib2Error::ParseError {
+            offset: 100,
+            reason: "bad byte".to_string(),
+        };
+        assert!(err.to_string().contains("100"));
+
+        let err = Grib2Error::InvalidGrid("grid error".to_string());
+        assert!(err.to_string().contains("grid error"));
+
+        let err = Grib2Error::Other("misc".to_string());
+        assert!(err.to_string().contains("misc"));
+    }
+
+    #[test]
+    fn test_grib2_message_methods() {
+        // Create a mock Grib2Message
+        let msg = Grib2Message {
+            offset: 0,
+            indicator: sections::Indicator {
+                magic: *b"GRIB",
+                reserved: 0,
+                edition: 2,
+                discipline: 0,
+                message_length: 100,
+            },
+            identification: sections::Identification {
+                center: 7,
+                sub_center: 0,
+                table_version: 2,
+                local_table_version: 1,
+                significance_of_reference_time: 1,
+                reference_time: chrono::Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
+                production_status: 0,
+                data_type: 1,
+            },
+            grid_definition: sections::GridDefinition {
+                grid_shape: 6,
+                num_points_latitude: 721,
+                num_points_longitude: 1440,
+                first_latitude_millidegrees: -90000,
+                first_longitude_millidegrees: 0,
+                last_latitude_millidegrees: 90000,
+                last_longitude_millidegrees: 359750,
+                latitude_increment_millidegrees: 250,
+                longitude_increment_millidegrees: 250,
+                scanning_mode: 0,
+            },
+            product_definition: sections::ProductDefinition {
+                parameter_category: 0,
+                parameter_number: 0,
+                parameter_short_name: "TMP".to_string(),
+                level_type: 103,
+                level_value: 2,
+                level_description: "2 m above ground".to_string(),
+                forecast_hour: 6,
+            },
+            data_representation: sections::DataRepresentation {
+                num_data_points: 1038240,
+                packing_method: 0,
+                original_data_type: 0,
+                reference_value: 250.0,
+                binary_scale_factor: -2,
+                decimal_scale_factor: 0,
+                bits_per_value: 16,
+            },
+            bitmap: None,
+            data_section: sections::DataSection { data: Bytes::new() },
+            raw_data: Bytes::new(),
+        };
+
+        // Test valid_time()
+        let valid_time = msg.valid_time();
+        assert_eq!(valid_time.hour(), 18); // 12 UTC + 6h forecast
+
+        // Test parameter()
+        assert_eq!(msg.parameter(), "TMP");
+
+        // Test level()
+        assert_eq!(msg.level(), "2 m above ground");
+
+        // Test grid_dims()
+        let (lat, lon) = msg.grid_dims();
+        assert_eq!(lat, 721);
+        assert_eq!(lon, 1440);
+    }
+
+    #[test]
+    fn test_next_message_empty() {
+        let tables = create_test_tables();
+        let data = Bytes::new();
+        let mut reader = Grib2Reader::new(data, tables);
+        let result = reader.next_message();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_next_message_too_short() {
+        let tables = create_test_tables();
+        let data = Bytes::from(vec![0u8; 10]); // Less than 16 bytes
+        let mut reader = Grib2Reader::new(data, tables);
+        let result = reader.next_message();
+        assert!(result.is_err());
     }
 }

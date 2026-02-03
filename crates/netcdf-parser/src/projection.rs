@@ -225,4 +225,77 @@ mod tests {
             "GOES-18 should be at ~-137°W"
         );
     }
+
+    #[test]
+    fn test_default_projection() {
+        let proj = GoesProjection::default();
+        // Default is GOES-19 (GOES-East)
+        assert!((proj.longitude_origin - (-75.2)).abs() < 0.1);
+        assert!((proj.latitude_origin - 0.0).abs() < 0.001);
+        assert_eq!(proj.sweep_angle_axis, "x");
+    }
+
+    #[test]
+    fn test_projection_distant_point() {
+        let proj = GoesProjection::goes19();
+
+        // Test a point far from the satellite's view
+        // The function should handle this without panicking
+        // (whether it returns Some or None depends on the exact geometry)
+        let _ = proj.from_geographic(110.0, 35.0);
+        let _ = proj.from_geographic(150.0, 0.0);
+        let _ = proj.from_geographic(-170.0, -30.0);
+    }
+
+    #[test]
+    fn test_projection_at_nadir() {
+        let proj = GoesProjection::goes19();
+
+        // Nadir point (directly below satellite)
+        let (lon, lat) = (-75.2, 0.0); // Satellite longitude, equator
+
+        if let Some((x, y)) = proj.from_geographic(lon, lat) {
+            // At nadir, scan angles should be close to zero
+            assert!(x.abs() < 0.01, "X at nadir should be ~0, got {}", x);
+            assert!(y.abs() < 0.01, "Y at nadir should be ~0, got {}", y);
+        } else {
+            panic!("Nadir should be visible");
+        }
+    }
+
+    #[test]
+    fn test_projection_equator_points() {
+        let proj = GoesProjection::goes19();
+
+        // Test various points along the equator
+        for lon_offset in [-30.0, -15.0, 0.0, 15.0, 30.0] {
+            let test_lon = proj.longitude_origin + lon_offset;
+            let test_lat = 0.0;
+
+            if let Some((x, y)) = proj.from_geographic(test_lon, test_lat) {
+                if let Some((lon2, lat2)) = proj.to_geographic(x, y) {
+                    assert!(
+                        (lat2 - test_lat).abs() < 0.1,
+                        "Equator latitude should stay 0"
+                    );
+                    assert!(
+                        (lon2 - test_lon).abs() < 0.5,
+                        "Longitude roundtrip failed at {}",
+                        test_lon
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_projection_clone_debug() {
+        let proj = GoesProjection::goes19();
+        let proj2 = proj.clone();
+        assert!((proj.longitude_origin - proj2.longitude_origin).abs() < 0.001);
+
+        // Test Debug trait
+        let debug_str = format!("{:?}", proj);
+        assert!(debug_str.contains("GoesProjection"));
+    }
 }
