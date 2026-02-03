@@ -961,4 +961,305 @@ mod tests {
             render_wind_barbs_from_speed_direction(&speed_data, &direction_data, 100, 100, &config);
         assert_eq!(canvas.len(), 100 * 100 * 4, "Canvas should be correct size");
     }
+
+    // ==================== lat_to_mercator_y tests ====================
+
+    #[test]
+    fn test_lat_to_mercator_y_equator() {
+        // At equator (0°), Mercator Y should be 0
+        let y = lat_to_mercator_y(0.0);
+        assert!(
+            y.abs() < 1e-10,
+            "Mercator Y at equator should be 0, got {}",
+            y
+        );
+    }
+
+    #[test]
+    fn test_lat_to_mercator_y_positive_latitude() {
+        // Positive latitudes should give positive Mercator Y
+        let y = lat_to_mercator_y(45.0);
+        assert!(y > 0.0, "Mercator Y at 45°N should be positive, got {}", y);
+    }
+
+    #[test]
+    fn test_lat_to_mercator_y_negative_latitude() {
+        // Negative latitudes should give negative Mercator Y
+        let y = lat_to_mercator_y(-45.0);
+        assert!(y < 0.0, "Mercator Y at 45°S should be negative, got {}", y);
+    }
+
+    #[test]
+    fn test_lat_to_mercator_y_symmetry() {
+        // Mercator Y should be symmetric around equator
+        let y_north = lat_to_mercator_y(30.0);
+        let y_south = lat_to_mercator_y(-30.0);
+        assert!(
+            (y_north + y_south).abs() < 1e-10,
+            "Mercator should be symmetric: {} vs {}",
+            y_north,
+            y_south
+        );
+    }
+
+    #[test]
+    fn test_lat_to_mercator_y_increases_with_latitude() {
+        // Higher latitudes should give larger Mercator Y values
+        let y_30 = lat_to_mercator_y(30.0);
+        let y_60 = lat_to_mercator_y(60.0);
+        assert!(
+            y_60 > y_30,
+            "Mercator Y at 60° should be > 30°: {} vs {}",
+            y_60,
+            y_30
+        );
+    }
+
+    #[test]
+    fn test_lat_to_mercator_y_known_value() {
+        // At 45° latitude, asinh(tan(45°)) = asinh(1) ≈ 0.8814
+        let y = lat_to_mercator_y(45.0);
+        assert!(
+            (y - 0.8814).abs() < 0.001,
+            "Mercator Y at 45° should be ~0.8814, got {}",
+            y
+        );
+    }
+
+    // ==================== calculate_barb_positions_geographic tests ====================
+
+    #[test]
+    fn test_calculate_barb_positions_geographic_basic() {
+        // A 10° x 10° tile with 5° spacing should have ~4 barbs
+        let positions = calculate_barb_positions_geographic(
+            256,
+            256,
+            [-10.0, 40.0, 0.0, 50.0], // 10° x 10° bbox
+            5.0,                      // 5° spacing
+        );
+        assert!(!positions.is_empty(), "Should generate positions");
+        // Expect roughly 4 positions (at -10,40; -10,45; -5,40; -5,45)
+        assert!(
+            positions.len() >= 2 && positions.len() <= 6,
+            "Expected 2-6 positions for 10x10 tile with 5° spacing, got {}",
+            positions.len()
+        );
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_geographic_empty_for_small_tile() {
+        // A tiny tile smaller than spacing should have 0 or 1 barbs
+        let positions = calculate_barb_positions_geographic(
+            256,
+            256,
+            [0.0, 0.0, 0.1, 0.1], // 0.1° x 0.1° bbox
+            5.0,                  // 5° spacing (much larger than tile)
+        );
+        // May have 0 or 1 depending on alignment
+        assert!(
+            positions.len() <= 1,
+            "Tiny tile should have at most 1 barb, got {}",
+            positions.len()
+        );
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_geographic_grid_alignment() {
+        // Positions should align to global grid (multiples of spacing_degrees)
+        let positions = calculate_barb_positions_geographic(
+            256,
+            256,
+            [-12.5, 37.5, -2.5, 47.5], // Offset bbox
+            5.0,
+        );
+        assert!(!positions.is_empty());
+        // All positions should be within tile bounds
+        for (x, y) in &positions {
+            assert!(*x < 256, "X position {} out of bounds", x);
+            assert!(*y < 256, "Y position {} out of bounds", y);
+        }
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_geographic_y_inversion() {
+        // Higher latitudes should have smaller Y pixel values (top of image)
+        let positions = calculate_barb_positions_geographic(256, 256, [0.0, 0.0, 10.0, 10.0], 5.0);
+        if positions.len() >= 2 {
+            // Find positions at different latitudes
+            // Due to Y inversion, positions at higher latitudes should have lower Y values
+            // This is implicit in the calculation - just verify positions are valid
+            for (x, y) in &positions {
+                assert!(*x < 256 && *y < 256);
+            }
+        }
+    }
+
+    // ==================== calculate_barb_positions_mercator tests ====================
+
+    #[test]
+    fn test_calculate_barb_positions_mercator_basic() {
+        let positions = calculate_barb_positions_mercator(256, 256, [-10.0, 40.0, 0.0, 50.0], 5.0);
+        assert!(!positions.is_empty(), "Should generate positions");
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_mercator_within_bounds() {
+        let positions =
+            calculate_barb_positions_mercator(256, 256, [-180.0, -60.0, 180.0, 60.0], 30.0);
+        for (x, y) in &positions {
+            assert!(*x < 256, "X position {} out of bounds", x);
+            assert!(*y < 256, "Y position {} out of bounds", y);
+        }
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_mercator_vs_geographic_at_equator() {
+        // Near equator, Mercator and geographic should give similar results
+        let merc_positions = calculate_barb_positions_mercator(
+            256,
+            256,
+            [-10.0, -5.0, 10.0, 5.0], // Near equator
+            5.0,
+        );
+        let geo_positions =
+            calculate_barb_positions_geographic(256, 256, [-10.0, -5.0, 10.0, 5.0], 5.0);
+        // Should have similar number of positions
+        assert_eq!(
+            merc_positions.len(),
+            geo_positions.len(),
+            "Near equator, Mercator and geographic should have same count"
+        );
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_mercator_high_latitude_distortion() {
+        // At high latitudes, Mercator Y spacing is different from geographic
+        let positions = calculate_barb_positions_mercator(
+            256,
+            256,
+            [0.0, 60.0, 10.0, 70.0], // High latitude
+            5.0,
+        );
+        assert!(!positions.is_empty());
+        // Verify all positions are valid
+        for (x, y) in &positions {
+            assert!(*x < 256 && *y < 256);
+        }
+    }
+
+    // ==================== Additional edge case tests ====================
+
+    #[test]
+    fn test_uv_to_speed_direction_calm() {
+        // Calm wind: U=0, V=0
+        let (speed, _dir) = uv_to_speed_direction(0.0, 0.0);
+        assert!(speed.abs() < 0.01, "Calm wind should have ~0 speed");
+    }
+
+    #[test]
+    fn test_uv_to_speed_direction_south_wind() {
+        // South wind: U=0, V=10 (wind FROM south)
+        let (speed, dir) = uv_to_speed_direction(0.0, 10.0);
+        assert!((speed - 10.0).abs() < 0.01);
+        assert!(
+            (dir - 3.0 * PI / 2.0).abs() < 0.1,
+            "South wind should be ~3π/2, got {}",
+            dir
+        );
+    }
+
+    #[test]
+    fn test_uv_to_speed_direction_west_wind() {
+        // West wind: U=10, V=0 (wind FROM west)
+        let (speed, dir) = uv_to_speed_direction(10.0, 0.0);
+        assert!((speed - 10.0).abs() < 0.01);
+        assert!(
+            (dir - PI).abs() < 0.1,
+            "West wind should be ~π, got {}",
+            dir
+        );
+    }
+
+    #[test]
+    fn test_uv_to_speed_direction_diagonal() {
+        // NE wind: U=-7.07, V=-7.07 (wind FROM northeast, 45°)
+        let (speed, dir) = uv_to_speed_direction(-7.07, -7.07);
+        assert!((speed - 10.0).abs() < 0.1, "Speed should be ~10 m/s");
+        // Direction should be ~π/4 (45° in math convention)
+        assert!(
+            (dir - PI / 4.0).abs() < 0.1,
+            "NE wind should be ~π/4, got {}",
+            dir
+        );
+    }
+
+    #[test]
+    fn test_met_degrees_to_radians_negative() {
+        // Negative degrees should still work (normalized to positive)
+        let rad = met_degrees_to_radians(-90.0);
+        assert!(rad >= 0.0 && rad < 2.0 * PI, "Should normalize to [0, 2π)");
+    }
+
+    #[test]
+    fn test_met_degrees_to_radians_over_360() {
+        // Degrees > 360 should be normalized
+        let rad = met_degrees_to_radians(450.0); // Same as 90°
+        let expected = met_degrees_to_radians(90.0);
+        assert!(
+            (rad - expected).abs() < 0.01,
+            "450° should equal 90°: {} vs {}",
+            rad,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_select_barb_svg_boundary_conditions() {
+        // Test at exact boundaries based on SPEED_RANGES_MS
+        // Boundaries: 0-1, 1-2.5, 2.5-5, 5-7.5, etc.
+        assert_eq!(select_barb_svg(0.0), "0");
+        assert_eq!(select_barb_svg(0.99), "0");
+        assert_eq!(select_barb_svg(1.0), "2"); // >= 1.0 is "2"
+        assert_eq!(select_barb_svg(2.49), "2");
+        assert_eq!(select_barb_svg(2.5), "5"); // >= 2.5 is "5"
+        assert_eq!(select_barb_svg(4.99), "5");
+        assert_eq!(select_barb_svg(5.0), "10"); // >= 5.0 is "10"
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_small_grid() {
+        // Very small grid
+        let positions = calculate_barb_positions(10, 10, 50);
+        // With 50px spacing on a 10x10 grid, should get 0 or 1 positions
+        assert!(
+            positions.len() <= 1,
+            "Small grid should have few positions: {}",
+            positions.len()
+        );
+    }
+
+    #[test]
+    fn test_calculate_barb_positions_spacing_equals_size() {
+        // Spacing equals dimensions
+        let positions = calculate_barb_positions(100, 100, 100);
+        // Should get exactly 1 position at center-ish
+        assert_eq!(
+            positions.len(),
+            1,
+            "Should have exactly 1 position at center"
+        );
+        assert_eq!(
+            positions[0],
+            (50, 50),
+            "Position should be at offset (50, 50)"
+        );
+    }
+
+    #[test]
+    fn test_get_barb_svg_content_returns_some() {
+        // Valid speeds should return Some SVG content
+        assert!(get_barb_svg_content(0.0).is_some());
+        assert!(get_barb_svg_content(10.0).is_some());
+        assert!(get_barb_svg_content(50.0).is_some());
+    }
 }

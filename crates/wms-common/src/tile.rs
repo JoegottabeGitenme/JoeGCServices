@@ -442,7 +442,7 @@ impl TileBufferConfig {
     /// Expanded bounding box with buffer margin added
     pub fn expanded_bbox(&self, tile_bbox: &BoundingBox) -> BoundingBox {
         if self.buffer_pixels == 0 {
-            return tile_bbox.clone();
+            return *tile_bbox;
         }
 
         // Calculate degrees per pixel for this tile

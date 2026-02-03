@@ -349,4 +349,237 @@ fn crc32_checksum(data: &[u8]) -> u32 {
     crc32fast::hash(data)
 }
 
-// Tests have been moved to tests/png_tests.rs
+// Integration tests are in tests/png_tests.rs
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== pack_color / unpack_color tests ====================
+
+    #[test]
+    fn test_pack_color_basic() {
+        let packed = pack_color(255, 0, 0, 255);
+        // R=255 in lowest byte, A=255 in highest byte
+        assert_eq!(packed & 0xFF, 255); // R
+        assert_eq!((packed >> 8) & 0xFF, 0); // G
+        assert_eq!((packed >> 16) & 0xFF, 0); // B
+        assert_eq!((packed >> 24) & 0xFF, 255); // A
+    }
+
+    #[test]
+    fn test_pack_color_all_channels() {
+        let packed = pack_color(0x11, 0x22, 0x33, 0x44);
+        assert_eq!(packed, 0x44332211);
+    }
+
+    #[test]
+    fn test_unpack_color_basic() {
+        let (r, g, b, a) = unpack_color(0xFF0000FF);
+        assert_eq!(r, 255);
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
+        assert_eq!(a, 255);
+    }
+
+    #[test]
+    fn test_pack_unpack_roundtrip() {
+        // Test that pack and unpack are inverses
+        let test_colors = [
+            (0, 0, 0, 0),
+            (255, 255, 255, 255),
+            (255, 0, 0, 255),
+            (0, 255, 0, 255),
+            (0, 0, 255, 255),
+            (128, 64, 32, 200),
+            (1, 2, 3, 4),
+        ];
+
+        for (r, g, b, a) in test_colors {
+            let packed = pack_color(r, g, b, a);
+            let unpacked = unpack_color(packed);
+            assert_eq!(
+                unpacked,
+                (r, g, b, a),
+                "Roundtrip failed for ({}, {}, {}, {})",
+                r,
+                g,
+                b,
+                a
+            );
+        }
+    }
+
+    #[test]
+    fn test_pack_color_deterministic() {
+        // Same input should always give same output
+        let packed1 = pack_color(100, 150, 200, 250);
+        let packed2 = pack_color(100, 150, 200, 250);
+        assert_eq!(packed1, packed2);
+    }
+
+    #[test]
+    fn test_pack_color_different_colors_differ() {
+        // Different colors should give different packed values
+        let red = pack_color(255, 0, 0, 255);
+        let green = pack_color(0, 255, 0, 255);
+        let blue = pack_color(0, 0, 255, 255);
+        assert_ne!(red, green);
+        assert_ne!(green, blue);
+        assert_ne!(red, blue);
+    }
+
+    // ==================== extract_palette_sequential tests ====================
+
+    #[test]
+    fn test_extract_palette_single_color() {
+        // 4 pixels, all the same color
+        let pixels = [
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+        ];
+
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_some());
+        let (palette, indices) = result.unwrap();
+        assert_eq!(palette.len(), 1, "Should have 1 unique color");
+        assert_eq!(palette[0], (255, 0, 0, 255));
+        assert_eq!(
+            indices,
+            vec![0, 0, 0, 0],
+            "All pixels should map to index 0"
+        );
+    }
+
+    #[test]
+    fn test_extract_palette_two_colors() {
+        let pixels = [
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+        ];
+
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_some());
+        let (palette, indices) = result.unwrap();
+        assert_eq!(palette.len(), 2);
+        // First occurrence determines order
+        assert_eq!(palette[0], (255, 0, 0, 255)); // red first
+        assert_eq!(palette[1], (0, 255, 0, 255)); // green second
+        assert_eq!(indices, vec![0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn test_extract_palette_256_colors() {
+        // Create exactly 256 unique colors
+        let mut pixels = Vec::with_capacity(256 * 4);
+        for i in 0..256 {
+            pixels.extend_from_slice(&[i as u8, 0, 0, 255]);
+        }
+
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_some());
+        let (palette, indices) = result.unwrap();
+        assert_eq!(palette.len(), 256);
+        // Each pixel should have unique index
+        for (i, &idx) in indices.iter().enumerate() {
+            assert_eq!(idx as usize, i);
+        }
+    }
+
+    #[test]
+    fn test_extract_palette_257_colors_fails() {
+        // Create 257 unique colors - should fail
+        let mut pixels = Vec::with_capacity(257 * 4);
+        for i in 0..256 {
+            pixels.extend_from_slice(&[i as u8, 0, 0, 255]);
+        }
+        // Add one more unique color
+        pixels.extend_from_slice(&[0, 1, 0, 255]);
+
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_none(), "Should fail with >256 colors");
+    }
+
+    #[test]
+    fn test_extract_palette_empty() {
+        let pixels: [u8; 0] = [];
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_some());
+        let (palette, indices) = result.unwrap();
+        assert_eq!(palette.len(), 0);
+        assert_eq!(indices.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_palette_with_transparency() {
+        // Different alpha values should be different colors
+        let pixels = [
+            255, 0, 0, 255, // red, opaque
+            255, 0, 0, 128, // red, 50% transparent
+            255, 0, 0, 0, // red, fully transparent
+        ];
+
+        let result = extract_palette_sequential(&pixels);
+        assert!(result.is_some());
+        let (palette, indices) = result.unwrap();
+        assert_eq!(palette.len(), 3, "Different alphas = different colors");
+        assert_eq!(indices, vec![0, 1, 2]);
+    }
+
+    // ==================== write_chunk tests ====================
+
+    #[test]
+    fn test_write_chunk_format() {
+        let mut buf = Vec::new();
+        write_chunk(&mut buf, b"tEXt", b"test data");
+
+        // Check length (4 bytes, big-endian)
+        assert_eq!(buf[0..4], [0, 0, 0, 9]); // "test data" = 9 bytes
+
+        // Check chunk type
+        assert_eq!(&buf[4..8], b"tEXt");
+
+        // Check data
+        assert_eq!(&buf[8..17], b"test data");
+
+        // Check CRC exists (4 bytes at end)
+        assert_eq!(buf.len(), 4 + 4 + 9 + 4); // length + type + data + crc
+    }
+
+    #[test]
+    fn test_write_chunk_empty_data() {
+        let mut buf = Vec::new();
+        write_chunk(&mut buf, b"IEND", b"");
+
+        // Length should be 0
+        assert_eq!(buf[0..4], [0, 0, 0, 0]);
+        // Type
+        assert_eq!(&buf[4..8], b"IEND");
+        // Total: 4 + 4 + 0 + 4 = 12 bytes
+        assert_eq!(buf.len(), 12);
+    }
+
+    // ==================== crc32_checksum tests ====================
+
+    #[test]
+    fn test_crc32_checksum_deterministic() {
+        let data = b"test data for crc";
+        let crc1 = crc32_checksum(data);
+        let crc2 = crc32_checksum(data);
+        assert_eq!(crc1, crc2);
+    }
+
+    #[test]
+    fn test_crc32_checksum_different_data() {
+        let crc1 = crc32_checksum(b"hello");
+        let crc2 = crc32_checksum(b"world");
+        assert_ne!(crc1, crc2);
+    }
+
+    #[test]
+    fn test_crc32_checksum_empty() {
+        let crc = crc32_checksum(b"");
+        assert_eq!(crc, 0); // CRC32 of empty data is 0
+    }
+}

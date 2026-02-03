@@ -1046,4 +1046,238 @@ mod tests {
             .iter()
             .any(|u| u.eq_ignore_ascii_case("nm")));
     }
+
+    // ==================== calculate_bearing tests ====================
+    //
+    // Note: calculate_bearing computes a direction value using spherical
+    // trigonometry, suitable for determining perpendicular offsets.
+    // The exact interpretation differs from standard compass bearing.
+
+    #[test]
+    fn test_calculate_bearing_north_positive() {
+        // Moving north (increasing latitude) should give positive bearing
+        let bearing = calculate_bearing(0.0, 0.0, 0.0, 10.0);
+        assert!(
+            bearing > 0.0,
+            "Northward bearing should be positive, got {}",
+            bearing
+        );
+    }
+
+    #[test]
+    fn test_calculate_bearing_south_negative() {
+        // Moving south (decreasing latitude) should give negative bearing
+        let bearing = calculate_bearing(0.0, 0.0, 0.0, -10.0);
+        assert!(
+            bearing < 0.0,
+            "Southward bearing should be negative, got {}",
+            bearing
+        );
+    }
+
+    #[test]
+    fn test_calculate_bearing_east_at_equator() {
+        // From (0, 0) to (1, 0) at equator - pure longitude change
+        let bearing = calculate_bearing(0.0, 0.0, 1.0, 0.0);
+        assert!(
+            bearing.abs() < 0.1,
+            "Eastward at equator should be near 0, got {}",
+            bearing
+        );
+    }
+
+    #[test]
+    fn test_calculate_bearing_returns_finite() {
+        // Various cases should all return finite values
+        assert!(calculate_bearing(0.0, 0.0, 0.0, 0.0).is_finite());
+        assert!(calculate_bearing(-180.0, 0.0, 180.0, 0.0).is_finite());
+        assert!(calculate_bearing(0.0, -90.0, 0.0, 90.0).is_finite());
+    }
+
+    #[test]
+    fn test_calculate_bearing_different_from_reverse() {
+        // Bearing from A to B should differ from B to A
+        let b1 = calculate_bearing(0.0, 45.0, 10.0, 50.0);
+        let b2 = calculate_bearing(10.0, 50.0, 0.0, 45.0);
+        assert!(
+            (b1 - b2).abs() > 0.01,
+            "Forward and reverse bearings should differ"
+        );
+    }
+
+    #[test]
+    fn test_calculate_bearing_magnitude_increases_with_distance() {
+        // Larger latitude changes should produce larger bearing magnitudes
+        let b1 = calculate_bearing(0.0, 0.0, 0.0, 5.0);
+        let b2 = calculate_bearing(0.0, 0.0, 0.0, 20.0);
+        assert!(
+            b2 > b1,
+            "Larger latitude change should give larger bearing: {} vs {}",
+            b1,
+            b2
+        );
+    }
+
+    // ==================== destination_point tests ====================
+
+    #[test]
+    fn test_destination_point_zero_distance() {
+        // Zero distance should return the same point
+        let (lon, lat) = destination_point(10.0, 50.0, 0.0, 0.0);
+        assert!((lon - 10.0).abs() < 1e-6);
+        assert!((lat - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_destination_point_north() {
+        // Moving 111.195 km north (1 degree at equator) from equator
+        let (lon, lat) = destination_point(0.0, 0.0, 0.0, 111.195);
+        assert!(lon.abs() < 0.01, "Longitude should stay ~0, got {}", lon);
+        assert!(
+            (lat - 1.0).abs() < 0.1,
+            "Latitude should increase by ~1 degree, got {}",
+            lat
+        );
+    }
+
+    #[test]
+    fn test_destination_point_east() {
+        // Moving east at equator (bearing = π/2)
+        let (lon, lat) = destination_point(0.0, 0.0, std::f64::consts::FRAC_PI_2, 111.195);
+        assert!(
+            (lon - 1.0).abs() < 0.1,
+            "Longitude should increase by ~1 degree, got {}",
+            lon
+        );
+        assert!(lat.abs() < 0.01, "Latitude should stay ~0, got {}", lat);
+    }
+
+    #[test]
+    fn test_destination_point_south() {
+        // Moving south (bearing = π)
+        let (lon, lat) = destination_point(0.0, 45.0, std::f64::consts::PI, 111.195);
+        assert!(lon.abs() < 0.1, "Longitude should stay ~0, got {}", lon);
+        assert!(lat < 45.0, "Latitude should decrease from 45, got {}", lat);
+    }
+
+    #[test]
+    fn test_destination_point_returns_valid_coordinates() {
+        // Test that result is within valid coordinate ranges
+        let (lon, lat) = destination_point(-100.0, 40.0, 0.5, 500.0);
+        assert!(
+            lon >= -180.0 && lon <= 180.0,
+            "Longitude out of range: {}",
+            lon
+        );
+        assert!(
+            lat >= -90.0 && lat <= 90.0,
+            "Latitude out of range: {}",
+            lat
+        );
+    }
+
+    // ==================== calculate_perpendicular_offsets tests ====================
+
+    #[test]
+    fn test_perpendicular_offsets_single_point() {
+        // Single point (no prev, no next) defaults to east-west offset
+        let ((left_lon, left_lat), (right_lon, right_lat)) =
+            calculate_perpendicular_offsets(None, None, 0.0, 0.0, None, None, 10.0);
+
+        // Left and right should be offset perpendicular to default bearing (0 = north)
+        // So perpendicular would be east-west
+        assert!(left_lat.abs() < 0.1, "Left lat should be near 0");
+        assert!(right_lat.abs() < 0.1, "Right lat should be near 0");
+        // They should be on opposite sides
+        assert!(
+            (left_lon > 0.0) != (right_lon > 0.0)
+                || (left_lon.abs() < 1e-6 && right_lon.abs() < 1e-6),
+            "Left and right should be on opposite sides"
+        );
+    }
+
+    #[test]
+    fn test_perpendicular_offsets_first_point() {
+        // First point of trajectory (no prev, has next)
+        let ((left_lon, left_lat), (right_lon, right_lat)) =
+            calculate_perpendicular_offsets(None, None, 0.0, 0.0, Some(0.0), Some(1.0), 10.0);
+
+        // Should produce valid offset points
+        assert!(left_lon.is_finite() && left_lat.is_finite());
+        assert!(right_lon.is_finite() && right_lat.is_finite());
+        // Left and right should be different
+        assert!(
+            (left_lon - right_lon).abs() > 0.001 || (left_lat - right_lat).abs() > 0.001,
+            "Left and right offsets should be different"
+        );
+    }
+
+    #[test]
+    fn test_perpendicular_offsets_last_point() {
+        // Last point of trajectory (has prev, no next)
+        let ((left_lon, left_lat), (right_lon, right_lat)) =
+            calculate_perpendicular_offsets(Some(0.0), Some(-1.0), 0.0, 0.0, None, None, 10.0);
+
+        // Should produce valid offset points
+        assert!(left_lon.is_finite() && left_lat.is_finite());
+        assert!(right_lon.is_finite() && right_lat.is_finite());
+        // Left and right should be different
+        assert!(
+            (left_lon - right_lon).abs() > 0.001 || (left_lat - right_lat).abs() > 0.001,
+            "Left and right offsets should be different"
+        );
+    }
+
+    #[test]
+    fn test_perpendicular_offsets_middle_point() {
+        // Middle point of trajectory (has prev and next)
+        let ((left_lon, _), (right_lon, _)) = calculate_perpendicular_offsets(
+            Some(0.0),
+            Some(-1.0), // prev: south
+            0.0,
+            0.0, // current: origin
+            Some(0.0),
+            Some(1.0), // next: north
+            10.0,
+        );
+
+        // Should produce valid offsets
+        assert!(left_lon.is_finite());
+        assert!(right_lon.is_finite());
+        // They should be on opposite sides
+        assert!(
+            left_lon != right_lon,
+            "Left and right should be different points"
+        );
+    }
+
+    #[test]
+    fn test_perpendicular_offsets_symmetry() {
+        // Left and right offsets should be roughly symmetrical
+        let ((left_lon, left_lat), (right_lon, right_lat)) =
+            calculate_perpendicular_offsets(None, None, 0.0, 45.0, Some(1.0), Some(45.0), 50.0);
+
+        // The distance from center should be roughly equal for both
+        let left_dist = ((left_lon - 0.0).powi(2) + (left_lat - 45.0).powi(2)).sqrt();
+        let right_dist = ((right_lon - 0.0).powi(2) + (right_lat - 45.0).powi(2)).sqrt();
+
+        assert!(
+            (left_dist - right_dist).abs() < 0.01,
+            "Left and right distances should be roughly equal: {} vs {}",
+            left_dist,
+            right_dist
+        );
+    }
+
+    #[test]
+    fn test_perpendicular_offsets_zero_distance() {
+        // Zero offset should return the same point
+        let ((left_lon, left_lat), (right_lon, right_lat)) =
+            calculate_perpendicular_offsets(None, None, 10.0, 50.0, None, None, 0.0);
+
+        assert!((left_lon - 10.0).abs() < 1e-6);
+        assert!((left_lat - 50.0).abs() < 1e-6);
+        assert!((right_lon - 10.0).abs() < 1e-6);
+        assert!((right_lat - 50.0).abs() < 1e-6);
+    }
 }

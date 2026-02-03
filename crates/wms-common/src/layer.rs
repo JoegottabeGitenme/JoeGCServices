@@ -221,3 +221,177 @@ impl Layer {
         self.styles.iter().find(|s| s.name == name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // LayerId Tests
+    // =========================================================================
+
+    #[test]
+    fn test_layer_id_new() {
+        let id = LayerId::new("gfs:temperature_2m");
+        assert_eq!(id.0, "gfs:temperature_2m");
+    }
+
+    #[test]
+    fn test_layer_id_display() {
+        let id = LayerId::new("hrrr:wind_speed");
+        assert_eq!(format!("{}", id), "hrrr:wind_speed");
+    }
+
+    #[test]
+    fn test_layer_id_parse_compound() {
+        let (model, param) = LayerId::parse("gfs:temperature_2m");
+        assert_eq!(model, Some("gfs"));
+        assert_eq!(param, "temperature_2m");
+    }
+
+    #[test]
+    fn test_layer_id_parse_compound_with_colons() {
+        // Only splits on first colon
+        let (model, param) = LayerId::parse("model:param:extra");
+        assert_eq!(model, Some("model"));
+        assert_eq!(param, "param:extra");
+    }
+
+    #[test]
+    fn test_layer_id_parse_simple() {
+        let (model, param) = LayerId::parse("temperature_2m");
+        assert_eq!(model, None);
+        assert_eq!(param, "temperature_2m");
+    }
+
+    #[test]
+    fn test_layer_id_parse_empty() {
+        let (model, param) = LayerId::parse("");
+        assert_eq!(model, None);
+        assert_eq!(param, "");
+    }
+
+    #[test]
+    fn test_layer_id_equality() {
+        let id1 = LayerId::new("gfs:temp");
+        let id2 = LayerId::new("gfs:temp");
+        let id3 = LayerId::new("hrrr:temp");
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+    }
+
+    // =========================================================================
+    // Layer Tests
+    // =========================================================================
+
+    /// Helper to create a test layer
+    fn create_test_layer(styles: Vec<LayerStyle>, supported_crs: Vec<CrsCode>) -> Layer {
+        Layer {
+            id: LayerId::new("test:layer"),
+            title: "Test Layer".to_string(),
+            description: Some("A test layer".to_string()),
+            supported_crs,
+            geographic_bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
+            styles,
+            time_dimension: None,
+            elevation_dimension: None,
+            metadata: LayerMetadata {
+                model: "TEST".to_string(),
+                parameter: "test_param".to_string(),
+                level: "surface".to_string(),
+                native_grid: None,
+                update_frequency: None,
+                attribution: None,
+            },
+        }
+    }
+
+    /// Helper to create a test style
+    fn create_test_style(name: &str) -> LayerStyle {
+        LayerStyle {
+            name: name.to_string(),
+            title: format!("{} Style", name),
+            config: StyleConfig::Gradient {
+                color_stops: vec![
+                    ColorStop {
+                        value: 0.0,
+                        r: 0,
+                        g: 0,
+                        b: 255,
+                        a: 255,
+                    },
+                    ColorStop {
+                        value: 100.0,
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    },
+                ],
+                units: "units".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_layer_supports_crs_found() {
+        let layer = create_test_layer(vec![], vec![CrsCode::Epsg4326, CrsCode::Epsg3857]);
+        assert!(layer.supports_crs(&CrsCode::Epsg4326));
+        assert!(layer.supports_crs(&CrsCode::Epsg3857));
+    }
+
+    #[test]
+    fn test_layer_supports_crs_not_found() {
+        let layer = create_test_layer(vec![], vec![CrsCode::Epsg4326]);
+        assert!(!layer.supports_crs(&CrsCode::Epsg3857));
+        assert!(!layer.supports_crs(&CrsCode::Epsg5070));
+    }
+
+    #[test]
+    fn test_layer_supports_crs_empty() {
+        let layer = create_test_layer(vec![], vec![]);
+        assert!(!layer.supports_crs(&CrsCode::Epsg4326));
+    }
+
+    #[test]
+    fn test_layer_default_style_with_styles() {
+        let styles = vec![create_test_style("default"), create_test_style("alternate")];
+        let layer = create_test_layer(styles, vec![]);
+
+        let default = layer.default_style().unwrap();
+        assert_eq!(default.name, "default");
+    }
+
+    #[test]
+    fn test_layer_default_style_empty() {
+        let layer = create_test_layer(vec![], vec![]);
+        assert!(layer.default_style().is_none());
+    }
+
+    #[test]
+    fn test_layer_get_style_found() {
+        let styles = vec![
+            create_test_style("style_a"),
+            create_test_style("style_b"),
+            create_test_style("style_c"),
+        ];
+        let layer = create_test_layer(styles, vec![]);
+
+        let style = layer.get_style("style_b").unwrap();
+        assert_eq!(style.name, "style_b");
+    }
+
+    #[test]
+    fn test_layer_get_style_not_found() {
+        let styles = vec![create_test_style("existing")];
+        let layer = create_test_layer(styles, vec![]);
+
+        assert!(layer.get_style("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_layer_get_style_empty() {
+        let layer = create_test_layer(vec![], vec![]);
+        assert!(layer.get_style("any").is_none());
+    }
+}

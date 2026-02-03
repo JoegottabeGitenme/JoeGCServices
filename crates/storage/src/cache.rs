@@ -246,4 +246,162 @@ mod tests {
         assert!(key_str.starts_with("wms:gfs:temperature_2m:gradient:EPSG:3857"));
         assert!(key_str.contains("512x512"));
     }
+
+    #[test]
+    fn test_cache_key_no_time() {
+        let key = CacheKey::new(
+            "metar:temperature",
+            "default",
+            CrsCode::Epsg4326,
+            BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        let key_str = key.to_string();
+        assert!(key_str.contains(":current:"));
+    }
+
+    #[test]
+    fn test_cache_key_different_crs() {
+        let key_3857 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg3857,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        let key_4326 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        assert_ne!(key_3857.to_string(), key_4326.to_string());
+        assert!(key_3857.to_string().contains("EPSG:3857"));
+        assert!(key_4326.to_string().contains("EPSG:4326"));
+    }
+
+    #[test]
+    fn test_cache_key_different_dimensions() {
+        let key_256 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        let key_512 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            512,
+            512,
+            None,
+            "png",
+        );
+
+        assert_ne!(key_256.to_string(), key_512.to_string());
+        assert!(key_256.to_string().contains("256x256"));
+        assert!(key_512.to_string().contains("512x512"));
+    }
+
+    #[test]
+    fn test_cache_key_different_formats() {
+        let key_png = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        let key_webp = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 100.0, 100.0),
+            256,
+            256,
+            None,
+            "webp",
+        );
+
+        assert_ne!(key_png.to_string(), key_webp.to_string());
+        assert!(key_png.to_string().ends_with(":png"));
+        assert!(key_webp.to_string().ends_with(":webp"));
+    }
+
+    #[test]
+    fn test_cache_key_deterministic() {
+        let key1 = CacheKey::new(
+            "gfs:wind",
+            "arrows",
+            CrsCode::Epsg3857,
+            BoundingBox::new(-100.0, 30.0, -90.0, 40.0),
+            512,
+            512,
+            Some("2024-01-15T00:00:00Z".to_string()),
+            "png",
+        );
+
+        let key2 = CacheKey::new(
+            "gfs:wind",
+            "arrows",
+            CrsCode::Epsg3857,
+            BoundingBox::new(-100.0, 30.0, -90.0, 40.0),
+            512,
+            512,
+            Some("2024-01-15T00:00:00Z".to_string()),
+            "png",
+        );
+
+        assert_eq!(key1.to_string(), key2.to_string());
+    }
+
+    #[test]
+    fn test_cache_key_different_bbox() {
+        let key1 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 10.0, 10.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        let key2 = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(10.0, 10.0, 20.0, 20.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        assert_ne!(key1.to_string(), key2.to_string());
+    }
 }

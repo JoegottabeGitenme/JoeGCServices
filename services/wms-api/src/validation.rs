@@ -494,20 +494,180 @@ pub async fn run_validation(base_url: &str) -> ValidationStatus {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_check_result_creation() {
-        let pass = CheckResult::pass("test");
-        assert_eq!(pass.status, CheckStatus::Pass);
-        assert_eq!(pass.message, "test");
+    // =========================================================================
+    // CheckResult Tests
+    // =========================================================================
 
-        let fail = CheckResult::fail("error");
-        assert_eq!(fail.status, CheckStatus::Fail);
-        assert_eq!(fail.message, "error");
+    #[test]
+    fn test_check_result_pass() {
+        let pass = CheckResult::pass("test message");
+        assert_eq!(pass.status, CheckStatus::Pass);
+        assert_eq!(pass.message, "test message");
     }
 
     #[test]
-    fn test_validation_status_overall() {
+    fn test_check_result_fail() {
+        let fail = CheckResult::fail("error occurred");
+        assert_eq!(fail.status, CheckStatus::Fail);
+        assert_eq!(fail.message, "error occurred");
+    }
+
+    #[test]
+    fn test_check_result_skip() {
+        let skip = CheckResult::skip("not applicable");
+        assert_eq!(skip.status, CheckStatus::Skip);
+        assert_eq!(skip.message, "not applicable");
+    }
+
+    #[test]
+    fn test_check_result_from_string_type() {
+        // Test that Into<String> works
+        let result = CheckResult::pass(String::from("dynamic message"));
+        assert_eq!(result.message, "dynamic message");
+    }
+
+    // =========================================================================
+    // CheckStatus Tests
+    // =========================================================================
+
+    #[test]
+    fn test_check_status_equality() {
+        assert_eq!(CheckStatus::Pass, CheckStatus::Pass);
+        assert_eq!(CheckStatus::Fail, CheckStatus::Fail);
+        assert_eq!(CheckStatus::Skip, CheckStatus::Skip);
+        assert_ne!(CheckStatus::Pass, CheckStatus::Fail);
+    }
+
+    // =========================================================================
+    // ValidationStatus Tests - Overall Status Logic
+    // =========================================================================
+
+    #[test]
+    fn test_validation_status_both_compliant() {
+        let wms = create_compliant_wms();
+        let wmts = create_compliant_wmts();
+
+        let status = ValidationStatus::new(wms, wmts);
+        assert_eq!(status.overall_status, "compliant");
+        assert!(!status.timestamp.is_empty());
+        assert!(status.last_full_test.is_none());
+        assert!(status.full_test_results.is_none());
+    }
+
+    #[test]
+    fn test_validation_status_wms_only_compliant() {
+        let wms = create_compliant_wms();
+        let wmts = create_non_compliant_wmts();
+
+        let status = ValidationStatus::new(wms, wmts);
+        assert_eq!(status.overall_status, "partial");
+    }
+
+    #[test]
+    fn test_validation_status_wmts_only_compliant() {
+        let wms = create_non_compliant_wms();
+        let wmts = create_compliant_wmts();
+
+        let status = ValidationStatus::new(wms, wmts);
+        assert_eq!(status.overall_status, "partial");
+    }
+
+    #[test]
+    fn test_validation_status_neither_compliant() {
+        let wms = create_non_compliant_wms();
+        let wmts = create_non_compliant_wmts();
+
+        let status = ValidationStatus::new(wms, wmts);
+        assert_eq!(status.overall_status, "non-compliant");
+    }
+
+    #[test]
+    fn test_validation_status_has_valid_timestamp() {
+        let wms = create_compliant_wms();
+        let wmts = create_compliant_wmts();
+
+        let status = ValidationStatus::new(wms, wmts);
+        // Timestamp should be ISO8601 format
+        assert!(status.timestamp.contains("-"));
+        assert!(status.timestamp.contains("T"));
+        assert!(status.timestamp.ends_with("Z"));
+    }
+
+    // =========================================================================
+    // WmsValidation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_wms_validation_structure() {
         let wms = WmsValidation {
+            status: "compliant".to_string(),
+            version: "1.3.0".to_string(),
+            checks: WmsChecks {
+                capabilities: CheckResult::pass("Valid WMS 1.3.0 capabilities"),
+                getmap: CheckResult::pass("GetMap returns valid PNG"),
+                getfeatureinfo: CheckResult::pass("GetFeatureInfo returns valid JSON"),
+                exceptions: CheckResult::pass("Returns ServiceException for errors"),
+                crs_support: CheckResult::pass("EPSG:3857 supported"),
+            },
+            layers_tested: 10,
+            layers_passed: 8,
+        };
+
+        assert_eq!(wms.version, "1.3.0");
+        assert_eq!(wms.layers_tested, 10);
+        assert_eq!(wms.layers_passed, 8);
+    }
+
+    // =========================================================================
+    // WmtsValidation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_wmts_validation_structure() {
+        let wmts = WmtsValidation {
+            status: "compliant".to_string(),
+            version: "1.0.0".to_string(),
+            checks: WmtsChecks {
+                capabilities: CheckResult::pass("Valid WMTS 1.0.0 capabilities"),
+                gettile_rest: CheckResult::pass("REST tiles working"),
+                gettile_kvp: CheckResult::pass("KVP tiles working"),
+                tilematrixset: CheckResult::pass("WebMercatorQuad defined"),
+            },
+        };
+
+        assert_eq!(wmts.version, "1.0.0");
+        assert_eq!(wmts.checks.capabilities.status, CheckStatus::Pass);
+    }
+
+    // =========================================================================
+    // FullTestResults Tests
+    // =========================================================================
+
+    #[test]
+    fn test_full_test_results() {
+        let results = FullTestResults {
+            total: 100,
+            passed: 95,
+            failed: 3,
+            skipped: 2,
+        };
+
+        assert_eq!(results.total, 100);
+        assert_eq!(results.passed, 95);
+        assert_eq!(results.failed, 3);
+        assert_eq!(results.skipped, 2);
+        assert_eq!(
+            results.passed + results.failed + results.skipped,
+            results.total
+        );
+    }
+
+    // =========================================================================
+    // Helper Functions for Tests
+    // =========================================================================
+
+    fn create_compliant_wms() -> WmsValidation {
+        WmsValidation {
             status: "compliant".to_string(),
             version: "1.3.0".to_string(),
             checks: WmsChecks {
@@ -519,9 +679,27 @@ mod tests {
             },
             layers_tested: 5,
             layers_passed: 5,
-        };
+        }
+    }
 
-        let wmts = WmtsValidation {
+    fn create_non_compliant_wms() -> WmsValidation {
+        WmsValidation {
+            status: "non-compliant".to_string(),
+            version: "1.3.0".to_string(),
+            checks: WmsChecks {
+                capabilities: CheckResult::fail("Invalid capabilities"),
+                getmap: CheckResult::fail("GetMap failed"),
+                getfeatureinfo: CheckResult::pass("ok"),
+                exceptions: CheckResult::pass("ok"),
+                crs_support: CheckResult::pass("ok"),
+            },
+            layers_tested: 5,
+            layers_passed: 3,
+        }
+    }
+
+    fn create_compliant_wmts() -> WmtsValidation {
+        WmtsValidation {
             status: "compliant".to_string(),
             version: "1.0.0".to_string(),
             checks: WmtsChecks {
@@ -530,9 +708,19 @@ mod tests {
                 gettile_kvp: CheckResult::pass("ok"),
                 tilematrixset: CheckResult::pass("ok"),
             },
-        };
+        }
+    }
 
-        let status = ValidationStatus::new(wms, wmts);
-        assert_eq!(status.overall_status, "compliant");
+    fn create_non_compliant_wmts() -> WmtsValidation {
+        WmtsValidation {
+            status: "non-compliant".to_string(),
+            version: "1.0.0".to_string(),
+            checks: WmtsChecks {
+                capabilities: CheckResult::fail("Invalid capabilities"),
+                gettile_rest: CheckResult::fail("REST failed"),
+                gettile_kvp: CheckResult::pass("ok"),
+                tilematrixset: CheckResult::pass("ok"),
+            },
+        }
     }
 }

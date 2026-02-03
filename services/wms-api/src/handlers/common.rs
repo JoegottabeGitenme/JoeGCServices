@@ -658,4 +658,154 @@ mod tests {
         // Not a strict requirement as it depends on content, but useful to verify
         assert!(webp_data.len() > 0);
     }
+
+    // =========================================================================
+    // DimensionParams Tests
+    // =========================================================================
+
+    #[test]
+    fn test_dimension_params_default() {
+        let params = DimensionParams::default();
+        assert!(params.time.is_none());
+        assert!(params.run.is_none());
+        assert!(params.forecast.is_none());
+        assert!(params.elevation.is_none());
+    }
+
+    #[test]
+    fn test_dimension_params_effective_elevation_some() {
+        let params = DimensionParams {
+            elevation: Some("500 mb".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(params.effective_elevation(), Some("500 mb"));
+    }
+
+    #[test]
+    fn test_dimension_params_effective_elevation_none() {
+        let params = DimensionParams::default();
+        assert_eq!(params.effective_elevation(), None);
+    }
+
+    #[test]
+    fn test_dimension_params_effective_elevation_default_value() {
+        let params = DimensionParams {
+            elevation: Some("default".to_string()),
+            ..Default::default()
+        };
+        // "default" should return None (use advertised default)
+        assert_eq!(params.effective_elevation(), None);
+    }
+
+    #[test]
+    fn test_dimension_params_effective_elevation_default_case_insensitive() {
+        let params = DimensionParams {
+            elevation: Some("DEFAULT".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(params.effective_elevation(), None);
+
+        let params2 = DimensionParams {
+            elevation: Some("Default".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(params2.effective_elevation(), None);
+    }
+
+    // =========================================================================
+    // is_default_dimension_value Tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_default_dimension_value_lowercase() {
+        assert!(is_default_dimension_value("default"));
+    }
+
+    #[test]
+    fn test_is_default_dimension_value_uppercase() {
+        assert!(is_default_dimension_value("DEFAULT"));
+    }
+
+    #[test]
+    fn test_is_default_dimension_value_mixed_case() {
+        assert!(is_default_dimension_value("Default"));
+        assert!(is_default_dimension_value("dEfAuLt"));
+    }
+
+    #[test]
+    fn test_is_default_dimension_value_not_default() {
+        assert!(!is_default_dimension_value("500 mb"));
+        assert!(!is_default_dimension_value("2024-01-15T12:00:00Z"));
+        assert!(!is_default_dimension_value("latest"));
+        assert!(!is_default_dimension_value(""));
+    }
+
+    // =========================================================================
+    // WMTS Exception Tests
+    // =========================================================================
+
+    #[test]
+    fn test_wmts_exception_with_locator() {
+        let resp = wmts_exception_with_locator(
+            "InvalidParameterValue",
+            "Invalid layer",
+            Some("LAYER"),
+            StatusCode::BAD_REQUEST,
+        );
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_wmts_exception_without_locator() {
+        let resp = wmts_exception_with_locator(
+            "OperationNotSupported",
+            "Not supported",
+            None,
+            StatusCode::NOT_IMPLEMENTED,
+        );
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    // =========================================================================
+    // write_chunk Tests
+    // =========================================================================
+
+    #[test]
+    fn test_write_chunk_creates_valid_chunk() {
+        let mut out = Vec::new();
+        write_chunk(&mut out, b"TEST", b"data");
+
+        // Length (4 bytes big-endian)
+        assert_eq!(&out[0..4], &[0, 0, 0, 4]); // 4 bytes of data
+                                               // Chunk name
+        assert_eq!(&out[4..8], b"TEST");
+        // Data
+        assert_eq!(&out[8..12], b"data");
+        // CRC (4 bytes)
+        assert_eq!(out.len(), 16); // 4 + 4 + 4 + 4
+    }
+
+    #[test]
+    fn test_write_chunk_empty_data() {
+        let mut out = Vec::new();
+        write_chunk(&mut out, b"IEND", &[]);
+
+        // Length should be 0
+        assert_eq!(&out[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&out[4..8], b"IEND");
+        assert_eq!(out.len(), 12); // 4 + 4 + 0 + 4
+    }
+
+    // =========================================================================
+    // WmtsDimensionParams Tests
+    // =========================================================================
+
+    #[test]
+    fn test_wmts_dimension_params_default() {
+        let params = WmtsDimensionParams::default();
+        assert!(params.time.is_none());
+        assert!(params.run.is_none());
+        assert!(params.forecast.is_none());
+        assert!(params.elevation.is_none());
+    }
 }

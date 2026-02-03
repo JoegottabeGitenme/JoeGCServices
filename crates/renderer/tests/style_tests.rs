@@ -736,3 +736,379 @@ fn test_style_version_parsing() {
     let config = StyleConfig::from_json(json).unwrap();
     assert_eq!(config.version, "2.0");
 }
+
+// ============================================================================
+// hex_to_rgba tests
+// ============================================================================
+
+use renderer::style::hex_to_rgba;
+
+#[test]
+fn test_hex_to_rgba_6_char() {
+    let rgba = hex_to_rgba("#FF0000").unwrap();
+    assert_eq!(rgba, (255, 0, 0, 255)); // Red, fully opaque
+}
+
+#[test]
+fn test_hex_to_rgba_8_char() {
+    let rgba = hex_to_rgba("#FF000080").unwrap();
+    assert_eq!(rgba, (255, 0, 0, 128)); // Red, 50% transparent
+}
+
+#[test]
+fn test_hex_to_rgba_without_hash() {
+    let rgba = hex_to_rgba("00FF00").unwrap();
+    assert_eq!(rgba, (0, 255, 0, 255)); // Green, fully opaque
+}
+
+#[test]
+fn test_hex_to_rgba_lowercase() {
+    let rgba = hex_to_rgba("#aabbcc").unwrap();
+    assert_eq!(rgba, (0xaa, 0xbb, 0xcc, 255));
+}
+
+#[test]
+fn test_hex_to_rgba_mixed_case() {
+    let rgba = hex_to_rgba("#AaBbCc").unwrap();
+    assert_eq!(rgba, (0xaa, 0xbb, 0xcc, 255));
+}
+
+#[test]
+fn test_hex_to_rgba_invalid_length() {
+    // 3-char hex not supported
+    assert!(hex_to_rgba("#FFF").is_none());
+    // 5-char hex not supported
+    assert!(hex_to_rgba("#FFFFF").is_none());
+    // 7-char hex not supported
+    assert!(hex_to_rgba("#FFFFFFF").is_none());
+}
+
+#[test]
+fn test_hex_to_rgba_invalid_chars() {
+    assert!(hex_to_rgba("#GGGGGG").is_none());
+    assert!(hex_to_rgba("#ZZZZZZ").is_none());
+}
+
+#[test]
+fn test_hex_to_rgba_empty() {
+    assert!(hex_to_rgba("").is_none());
+    assert!(hex_to_rgba("#").is_none());
+}
+
+#[test]
+fn test_hex_to_rgba_black_and_white() {
+    assert_eq!(hex_to_rgba("#000000").unwrap(), (0, 0, 0, 255));
+    assert_eq!(hex_to_rgba("#FFFFFF").unwrap(), (255, 255, 255, 255));
+}
+
+#[test]
+fn test_hex_to_rgba_fully_transparent() {
+    let rgba = hex_to_rgba("#FF000000").unwrap();
+    assert_eq!(rgba, (255, 0, 0, 0)); // Red, fully transparent
+}
+
+// ============================================================================
+// Transform type tests
+// ============================================================================
+
+#[test]
+fn test_transform_pa_to_hpa() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "pa_to_hpa"},
+                "stops": [{"value": 900, "color": "#000"}, {"value": 1100, "color": "#FFF"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 101325 Pa = 1013.25 hPa
+    let result = apply_transform(101325.0, style.transform.as_ref());
+    assert!(
+        (result - 1013.25).abs() < 0.01,
+        "Expected 1013.25 hPa, got {}",
+        result
+    );
+}
+
+#[test]
+fn test_transform_k_to_c() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "k_to_c"},
+                "stops": [{"value": -50, "color": "#00F"}, {"value": 50, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 273.15 K = 0 C
+    let result = apply_transform(273.15, style.transform.as_ref());
+    assert!(result.abs() < 0.01, "Expected 0 C, got {}", result);
+
+    // 300 K = 26.85 C
+    let result2 = apply_transform(300.0, style.transform.as_ref());
+    assert!(
+        (result2 - 26.85).abs() < 0.01,
+        "Expected 26.85 C, got {}",
+        result2
+    );
+}
+
+#[test]
+fn test_transform_kelvin_to_celsius() {
+    // Test alternate name
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "kelvin_to_celsius"},
+                "stops": [{"value": -50, "color": "#00F"}, {"value": 50, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    let result = apply_transform(373.15, style.transform.as_ref());
+    assert!(
+        (result - 100.0).abs() < 0.01,
+        "Expected 100 C (boiling point), got {}",
+        result
+    );
+}
+
+#[test]
+fn test_transform_k_to_f() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "k_to_f"},
+                "stops": [{"value": -50, "color": "#00F"}, {"value": 150, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 273.15 K = 32 F (freezing point)
+    let result = apply_transform(273.15, style.transform.as_ref());
+    assert!(
+        (result - 32.0).abs() < 0.01,
+        "Expected 32 F, got {}",
+        result
+    );
+
+    // 373.15 K = 212 F (boiling point)
+    let result2 = apply_transform(373.15, style.transform.as_ref());
+    assert!(
+        (result2 - 212.0).abs() < 0.1,
+        "Expected 212 F, got {}",
+        result2
+    );
+}
+
+#[test]
+fn test_transform_m_to_km() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "m_to_km"},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 20, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 5000 m = 5 km
+    let result = apply_transform(5000.0, style.transform.as_ref());
+    assert!((result - 5.0).abs() < 0.01, "Expected 5 km, got {}", result);
+}
+
+#[test]
+fn test_transform_ms_to_mph() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "ms_to_mph"},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 100, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 10 m/s ≈ 22.37 mph
+    let result = apply_transform(10.0, style.transform.as_ref());
+    assert!(
+        (result - 22.3694).abs() < 0.01,
+        "Expected 22.37 mph, got {}",
+        result
+    );
+}
+
+#[test]
+fn test_transform_mps_to_mph() {
+    // Test alternate name
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "mps_to_mph"},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 100, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    let result = apply_transform(10.0, style.transform.as_ref());
+    assert!(
+        (result - 22.3694).abs() < 0.01,
+        "mps_to_mph should work same as ms_to_mph"
+    );
+}
+
+#[test]
+fn test_transform_mps_to_knots() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "mps_to_knots"},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 100, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // 10 m/s ≈ 19.44 knots
+    let result = apply_transform(10.0, style.transform.as_ref());
+    assert!(
+        (result - 19.4384).abs() < 0.01,
+        "Expected 19.44 knots, got {}",
+        result
+    );
+}
+
+#[test]
+fn test_transform_none() {
+    // No transform should return value unchanged
+    let result = apply_transform(42.0, None);
+    assert_eq!(result, 42.0);
+}
+
+#[test]
+fn test_transform_unknown_type() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "unknown_transform"},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 100, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Unknown transform should return value unchanged
+    let result = apply_transform(42.0, style.transform.as_ref());
+    assert_eq!(result, 42.0, "Unknown transform should pass through");
+}
+
+#[test]
+fn test_transform_linear_scale_only() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "linear", "scale": 2.0},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 200, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    let result = apply_transform(50.0, style.transform.as_ref());
+    assert!(
+        (result - 100.0).abs() < 0.01,
+        "50 * 2 = 100, got {}",
+        result
+    );
+}
+
+#[test]
+fn test_transform_linear_offset_only() {
+    let json = r##"{
+        "version": "1.0",
+        "styles": {
+            "test": {
+                "default": true,
+                "name": "Test",
+                "type": "gradient",
+                "transform": {"type": "linear", "offset": 10.0},
+                "stops": [{"value": 0, "color": "#00F"}, {"value": 100, "color": "#F00"}]
+            }
+        }
+    }"##;
+
+    let config = StyleConfig::from_json(json).unwrap();
+    let style = config.get_style("test").unwrap();
+
+    // Default scale is 1.0, so: 50 * 1 + 10 = 60
+    let result = apply_transform(50.0, style.transform.as_ref());
+    assert!((result - 60.0).abs() < 0.01, "50 + 10 = 60, got {}", result);
+}
