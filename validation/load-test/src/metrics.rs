@@ -273,3 +273,234 @@ impl GitInfo {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics_collector_new() {
+        let collector = MetricsCollector::new();
+        // Verify initial state
+        let results = collector.results(
+            "test".to_string(),
+            "scenario".to_string(),
+            vec!["layer1".to_string()],
+            1,
+            None,
+        );
+        assert_eq!(results.total_requests, 0);
+        assert_eq!(results.successful_requests, 0);
+        assert_eq!(results.failed_requests, 0);
+    }
+
+    #[test]
+    fn test_metrics_collector_default() {
+        let collector = MetricsCollector::default();
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+        assert_eq!(results.total_requests, 0);
+    }
+
+    #[test]
+    fn test_record_success() {
+        let mut collector = MetricsCollector::new();
+
+        collector.record_success(1000, 1024, true); // 1ms, 1KB, cache hit
+        collector.record_success(2000, 2048, false); // 2ms, 2KB, cache miss
+
+        let results = collector.results(
+            "test".to_string(),
+            "scenario".to_string(),
+            vec!["layer1".to_string()],
+            1,
+            None,
+        );
+
+        assert_eq!(results.total_requests, 2);
+        assert_eq!(results.successful_requests, 2);
+        assert_eq!(results.failed_requests, 0);
+    }
+
+    #[test]
+    fn test_record_failure() {
+        let mut collector = MetricsCollector::new();
+
+        collector.record_failure();
+        collector.record_failure();
+        collector.record_success(1000, 1024, false);
+
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+
+        assert_eq!(results.total_requests, 3);
+        assert_eq!(results.successful_requests, 1);
+        assert_eq!(results.failed_requests, 2);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_calculation() {
+        let mut collector = MetricsCollector::new();
+
+        // 3 hits, 1 miss = 75% hit rate
+        collector.record_success(1000, 100, true);
+        collector.record_success(1000, 100, true);
+        collector.record_success(1000, 100, true);
+        collector.record_success(1000, 100, false);
+
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+
+        assert!((results.cache_hit_rate - 75.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_all_hits() {
+        let mut collector = MetricsCollector::new();
+
+        collector.record_success(1000, 100, true);
+        collector.record_success(1000, 100, true);
+
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+
+        assert!((results.cache_hit_rate - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_no_requests() {
+        let collector = MetricsCollector::new();
+
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+
+        // No requests = 0% hit rate
+        assert_eq!(results.cache_hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_results_includes_layers() {
+        let collector = MetricsCollector::new();
+        let layers = vec!["gfs_TMP".to_string(), "hrrr_WIND".to_string()];
+
+        let results = collector.results(
+            "config".to_string(),
+            "scenario".to_string(),
+            layers.clone(),
+            5,
+            None,
+        );
+
+        assert_eq!(results.layers, layers);
+        assert_eq!(results.concurrency, 5);
+    }
+
+    #[test]
+    fn test_results_includes_system_config() {
+        let collector = MetricsCollector::new();
+        let sys_config = SystemConfig {
+            l1_cache_enabled: true,
+            l1_cache_size: 1000,
+            l1_cache_ttl_secs: 300,
+            l2_cache_enabled: false,
+            chunk_cache_enabled: true,
+            chunk_cache_size_mb: 512,
+            prefetch_enabled: true,
+            prefetch_rings: 2,
+            prefetch_min_zoom: 4,
+            prefetch_max_zoom: 10,
+            cache_warming_enabled: false,
+        };
+
+        let results = collector.results(
+            "config".to_string(),
+            "scenario".to_string(),
+            vec![],
+            1,
+            Some(sys_config.clone()),
+        );
+
+        let returned_config = results.system_config.unwrap();
+        assert!(returned_config.l1_cache_enabled);
+        assert_eq!(returned_config.l1_cache_size, 1000);
+        assert!(returned_config.chunk_cache_enabled);
+    }
+
+    #[test]
+    fn test_results_has_timestamp() {
+        let collector = MetricsCollector::new();
+        let results =
+            collector.results("test".to_string(), "scenario".to_string(), vec![], 1, None);
+
+        // Timestamp should be valid RFC3339
+        assert!(results.timestamp.contains('T'));
+        assert!(results.timestamp.contains('-'));
+    }
+
+    #[test]
+    fn test_test_results_serialize() {
+        let results = TestResults {
+            timestamp: "2026-01-15T12:00:00Z".to_string(),
+            scenario_name: "test".to_string(),
+            config_name: "config".to_string(),
+            duration_secs: 60.0,
+            total_requests: 1000,
+            successful_requests: 990,
+            failed_requests: 10,
+            requests_per_second: 16.5,
+            latency_p50: 50.0,
+            latency_p75: 75.0,
+            latency_p90: 90.0,
+            latency_p95: 95.0,
+            latency_p99: 150.0,
+            latency_min: 10.0,
+            latency_max: 500.0,
+            latency_avg: 55.0,
+            cache_hit_rate: 80.0,
+            bytes_per_second: 1024.0,
+            tiles_per_second: 16.5,
+            layers: vec!["layer1".to_string()],
+            concurrency: 10,
+            system_config: None,
+            git_info: None,
+        };
+
+        let json = serde_json::to_string(&results).unwrap();
+        assert!(json.contains("\"total_requests\":1000"));
+        assert!(json.contains("\"cache_hit_rate\":80.0"));
+    }
+
+    #[test]
+    fn test_git_info_capture() {
+        // This test should work in a git repository
+        let info = GitInfo::capture();
+        // In a git repo, this should succeed
+        if let Some(git) = info {
+            assert!(!git.commit_hash.is_empty());
+            assert_eq!(git.commit_short.len(), 7);
+            assert!(!git.branch.is_empty());
+        }
+        // If not in a git repo, the function returns None, which is also valid
+    }
+
+    #[test]
+    fn test_system_config_serialize() {
+        let config = SystemConfig {
+            l1_cache_enabled: true,
+            l1_cache_size: 100,
+            l1_cache_ttl_secs: 60,
+            l2_cache_enabled: false,
+            chunk_cache_enabled: true,
+            chunk_cache_size_mb: 256,
+            prefetch_enabled: false,
+            prefetch_rings: 1,
+            prefetch_min_zoom: 5,
+            prefetch_max_zoom: 12,
+            cache_warming_enabled: true,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"l1_cache_enabled\":true"));
+        assert!(json.contains("\"chunk_cache_size_mb\":256"));
+    }
+}
