@@ -113,8 +113,20 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
         echo "  Checking code coverage for critical crates..."
         
         # Coverage thresholds (adjust as coverage improves)
+        # Core crates
         RENDERER_THRESHOLD=70
         PROJECTION_THRESHOLD=90
+        WMS_COMMON_THRESHOLD=60
+        
+        # Parser crates
+        GRIB2_PARSER_THRESHOLD=55
+        NETCDF_PARSER_THRESHOLD=30
+        
+        # Processing crates
+        INGESTION_THRESHOLD=30
+        GRID_PROCESSOR_THRESHOLD=40
+        
+        # Storage & services
         STORAGE_THRESHOLD=40
         WMS_API_THRESHOLD=30
         EDR_API_THRESHOLD=35
@@ -136,6 +148,11 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
             case "$package" in
                 "renderer") crate_path="crates/renderer/src" ;;
                 "projection") crate_path="crates/projection/src" ;;
+                "wms-common") crate_path="crates/wms-common/src" ;;
+                "grib2-parser") crate_path="crates/grib2-parser/src" ;;
+                "netcdf-parser") crate_path="crates/netcdf-parser/src" ;;
+                "ingestion") crate_path="crates/ingestion/src" ;;
+                "grid-processor") crate_path="crates/grid-processor/src" ;;
                 "storage") crate_path="crates/storage/src" ;;
                 "wms-api") crate_path="services/wms-api/src" ;;
                 "edr-api") crate_path="services/edr-api/src" ;;
@@ -172,30 +189,49 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
             fi
         }
         
-        # Check renderer (highest priority - already at 75%)
+        # Core crates
         if ! check_coverage "renderer" $RENDERER_THRESHOLD; then
             COVERAGE_FAILED=1
         fi
         
-        # Check projection (critical for coordinate transforms - at 95%+)
         if ! check_coverage "projection" $PROJECTION_THRESHOLD; then
             COVERAGE_FAILED=1
         fi
         
-        # Note: storage, wms-api, edr-api checks disabled until coverage improves
-        # Uncomment these as you improve coverage:
-        #
-        # if ! check_coverage "storage" $STORAGE_THRESHOLD; then
-        #     COVERAGE_FAILED=1
-        # fi
-        #
-        # if ! check_coverage "wms-api" $WMS_API_THRESHOLD; then
-        #     COVERAGE_FAILED=1
-        # fi
-        #
-        # if ! check_coverage "edr-api" $EDR_API_THRESHOLD; then
-        #     COVERAGE_FAILED=1
-        # fi
+        if ! check_coverage "wms-common" $WMS_COMMON_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Parser crates
+        if ! check_coverage "grib2-parser" $GRIB2_PARSER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "netcdf-parser" $NETCDF_PARSER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Processing crates
+        if ! check_coverage "ingestion" $INGESTION_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "grid-processor" $GRID_PROCESSOR_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Storage & services
+        if ! check_coverage "storage" $STORAGE_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "wms-api" $WMS_API_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "edr-api" $EDR_API_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
         
         if [ $COVERAGE_FAILED -eq 1 ]; then
             if [ "$COVERAGE_CHECK" = "strict" ]; then
