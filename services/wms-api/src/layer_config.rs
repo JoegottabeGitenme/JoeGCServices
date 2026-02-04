@@ -823,4 +823,141 @@ mod tests {
         };
         assert_eq!(config_no_display.effective_display(), "m/s");
     }
+
+    #[test]
+    fn test_unit_conversion_display_symbol() {
+        assert_eq!(UnitConversion::KToC.display_symbol(), "°C");
+        assert_eq!(UnitConversion::KToF.display_symbol(), "°F");
+        assert_eq!(UnitConversion::PaToHPa.display_symbol(), "hPa");
+        assert_eq!(UnitConversion::MToKm.display_symbol(), "km");
+        assert_eq!(UnitConversion::MsToMph.display_symbol(), "mph");
+        assert_eq!(UnitConversion::None.display_symbol(), "");
+    }
+
+    #[test]
+    fn test_unit_conversion_fahrenheit() {
+        let eps = 0.1;
+        // 273.15 K = 32°F (freezing point)
+        assert!((UnitConversion::KToF.apply(273.15) - 32.0).abs() < eps);
+        // 373.15 K = 212°F (boiling point)
+        assert!((UnitConversion::KToF.apply(373.15) - 212.0).abs() < eps);
+        // 300 K ≈ 80°F
+        assert!((UnitConversion::KToF.apply(300.0) - 80.33).abs() < eps);
+    }
+
+    #[test]
+    fn test_unit_conversion_speed() {
+        let eps = 0.01;
+        // 10 m/s ≈ 22.37 mph
+        assert!((UnitConversion::MsToMph.apply(10.0) - 22.3694).abs() < eps);
+        // 0 m/s = 0 mph
+        assert!((UnitConversion::MsToMph.apply(0.0) - 0.0).abs() < eps);
+    }
+
+    #[test]
+    fn test_unit_config_default() {
+        let config = UnitConfig::default();
+        assert!(config.native.is_empty());
+        assert!(config.display.is_empty());
+        assert_eq!(config.conversion, UnitConversion::None);
+    }
+
+    #[test]
+    fn test_unit_config_has_units() {
+        // Both native and display
+        let config = UnitConfig {
+            native: "K".to_string(),
+            display: "°C".to_string(),
+            conversion: UnitConversion::KToC,
+        };
+        assert!(config.has_units());
+
+        // Only native
+        let config_native_only = UnitConfig {
+            native: "Pa".to_string(),
+            display: String::new(),
+            conversion: UnitConversion::None,
+        };
+        assert!(config_native_only.has_units());
+
+        // Empty - no units
+        let empty_config = UnitConfig::default();
+        assert!(!empty_config.has_units());
+    }
+
+    #[test]
+    fn test_layer_config_level_values() {
+        let layer = LayerConfig {
+            id: "test".to_string(),
+            parameter: "TMP".to_string(),
+            title: "Temperature".to_string(),
+            abstract_text: None,
+            style_file: "temperature.json".to_string(),
+            units: UnitConfig::default(),
+            levels: vec![
+                LevelConfig {
+                    value: "surface".to_string(),
+                    default: true,
+                },
+                LevelConfig {
+                    value: "850 mb".to_string(),
+                    default: false,
+                },
+                LevelConfig {
+                    value: "500 mb".to_string(),
+                    default: false,
+                },
+            ],
+            composite: false,
+            requires: vec![],
+            accumulation: false,
+        };
+
+        let values = layer.level_values();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], "surface");
+        assert_eq!(values[1], "850 mb");
+        assert_eq!(values[2], "500 mb");
+    }
+
+    #[test]
+    fn test_layer_config_no_default_level() {
+        let layer = LayerConfig {
+            id: "test".to_string(),
+            parameter: "TMP".to_string(),
+            title: "Temperature".to_string(),
+            abstract_text: None,
+            style_file: "temperature.json".to_string(),
+            units: UnitConfig::default(),
+            levels: vec![LevelConfig {
+                value: "surface".to_string(),
+                default: false,
+            }],
+            composite: false,
+            requires: vec![],
+            accumulation: false,
+        };
+
+        // No default - returns first level
+        assert_eq!(layer.default_level(), Some("surface"));
+    }
+
+    #[test]
+    fn test_layer_config_empty_levels() {
+        let layer = LayerConfig {
+            id: "test".to_string(),
+            parameter: "TMP".to_string(),
+            title: "Temperature".to_string(),
+            abstract_text: None,
+            style_file: "temperature.json".to_string(),
+            units: UnitConfig::default(),
+            levels: vec![],
+            composite: false,
+            requires: vec![],
+            accumulation: false,
+        };
+
+        assert!(layer.default_level().is_none());
+        assert!(layer.level_values().is_empty());
+    }
 }
