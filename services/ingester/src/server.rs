@@ -794,3 +794,290 @@ pub async fn start_server(state: Arc<ServerState>, port: u16) -> anyhow::Result<
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // IngestionTracker tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_tracker_new() {
+        let tracker = IngestionTracker::new();
+        let status = tracker.get_status().await;
+        assert!(status.active.is_empty());
+        assert!(status.recent.is_empty());
+        assert_eq!(status.total_completed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_start() {
+        let tracker = IngestionTracker::new();
+        tracker.start("test-id", "/path/to/file.grib2").await;
+
+        let status = tracker.get_status().await;
+        assert_eq!(status.active.len(), 1);
+        assert_eq!(status.active[0].id, "test-id");
+        assert_eq!(status.active[0].file_path, "/path/to/file.grib2");
+        assert_eq!(status.active[0].status, "processing");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_complete_success() {
+        let tracker = IngestionTracker::new();
+        tracker.start("test-id", "/path/to/file.grib2").await;
+
+        tracker
+            .complete(
+                "test-id",
+                true,
+                5,
+                vec!["TMP".to_string(), "UGRD".to_string()],
+                None,
+            )
+            .await;
+
+        let status = tracker.get_status().await;
+        assert!(status.active.is_empty());
+        assert_eq!(status.recent.len(), 1);
+        assert_eq!(status.recent[0].id, "test-id");
+        assert!(status.recent[0].success);
+        assert_eq!(status.recent[0].datasets_registered, 5);
+        assert_eq!(status.recent[0].parameters.len(), 2);
+        assert!(status.recent[0].error_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_complete_failure() {
+        let tracker = IngestionTracker::new();
+        tracker.start("test-id", "/path/to/file.grib2").await;
+
+        tracker
+            .complete(
+                "test-id",
+                false,
+                0,
+                vec![],
+                Some("Parse error".to_string()),
+            )
+            .await;
+
+        let status = tracker.get_status().await;
+        assert!(status.active.is_empty());
+        assert_eq!(status.recent.len(), 1);
+        assert!(!status.recent[0].success);
+        assert_eq!(status.recent[0].datasets_registered, 0);
+        assert_eq!(
+            status.recent[0].error_message,
+            Some("Parse error".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracker_multiple_ingestions() {
+        let tracker = IngestionTracker::new();
+
+        // Start multiple ingestions
+        tracker.start("id-1", "/file1.grib2").await;
+        tracker.start("id-2", "/file2.grib2").await;
+        tracker.start("id-3", "/file3.grib2").await;
+
+        let status = tracker.get_status().await;
+        assert_eq!(status.active.len(), 3);
+
+        // Complete some
+        tracker.complete("id-1", true, 3, vec!["A".into()], None).await;
+        tracker.complete("id-2", false, 0, vec![], Some("err".into())).await;
+
+        let status = tracker.get_status().await;
+        assert_eq!(status.active.len(), 1); // id-3 still active
+        assert_eq!(status.recent.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_max_completed_limit() {
+        let tracker = IngestionTracker::new();
+
+        // Complete more than max_completed (100)
+        for i in 0..150 {
+            let id = format!("id-{}", i);
+            tracker.start(&id, &format!("/file{}.grib2", i)).await;
+            tracker.complete(&id, true, 1, vec![], None).await;
+        }
+
+        let status = tracker.get_status().await;
+        // Should be capped at max_completed (100)
+        assert_eq!(status.total_completed, 100);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_complete_nonexistent() {
+        let tracker = IngestionTracker::new();
+
+        // Try to complete an ingestion that was never started
+        tracker
+            .complete("nonexistent", true, 1, vec![], None)
+            .await;
+
+        let status = tracker.get_status().await;
+        assert!(status.active.is_empty());
+        assert!(status.recent.is_empty()); // Should not add anything
+    }
+
+    #[tokio::test]
+    async fn test_tracker_duration_calculation() {
+        let tracker = IngestionTracker::new();
+        tracker.start("test-id", "/file.grib2").await;
+
+        // Small delay to ensure duration > 0
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        tracker.complete("test-id", true, 1, vec![], None).await;
+
+        let status = tracker.get_status().await;
+        assert!(status.recent[0].duration_ms >= 10);
+    }
+
+    // =========================================================================
+    // IngestResponse tests
+    // =========================================================================
+
+    #[test]
+    fn test_ingest_response_from_result() {
+        let result = IngestionResult {
+            datasets_registered: 10,
+            model: "gfs".to_string(),
+            reference_time: Utc::now(),
+            parameters: vec!["TMP".to_string(), "UGRD".to_string(), "VGRD".to_string()],
+            bytes_written: 1024 * 1024,
+        };
+
+        let response = IngestResponse::from(result);
+        assert!(response.success);
+        assert_eq!(response.datasets_registered, 10);
+        assert_eq!(response.model, Some("gfs".to_string()));
+        assert!(response.reference_time.is_some());
+        assert_eq!(response.parameters.len(), 3);
+        assert!(response.message.contains("10 datasets"));
+    }
+
+    // =========================================================================
+    // Request/Response struct tests
+    // =========================================================================
+
+    #[test]
+    fn test_ingest_request_deserialize() {
+        let json = r#"{
+            "file_path": "/data/gfs.grib2",
+            "source_url": "https://nomads.ncep.noaa.gov/gfs.grib2",
+            "model": "gfs",
+            "forecast_hour": 6
+        }"#;
+
+        let request: IngestRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.file_path, "/data/gfs.grib2");
+        assert_eq!(request.model, Some("gfs".to_string()));
+        assert_eq!(request.forecast_hour, Some(6));
+    }
+
+    #[test]
+    fn test_ingest_request_deserialize_minimal() {
+        let json = r#"{"file_path": "/data/file.grib2"}"#;
+
+        let request: IngestRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.file_path, "/data/file.grib2");
+        assert!(request.model.is_none());
+        assert!(request.forecast_hour.is_none());
+    }
+
+    #[test]
+    fn test_observation_ingest_request_deserialize() {
+        let json = r#"{
+            "source": "metar",
+            "observations": [
+                {
+                    "location_id": "KJFK",
+                    "longitude": -73.7789,
+                    "latitude": 40.6397,
+                    "obs_time": "2024-01-15T12:00:00Z",
+                    "temperature_k": 280.0
+                }
+            ]
+        }"#;
+
+        let request: ObservationIngestRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.source, "metar");
+        assert_eq!(request.observations.len(), 1);
+        assert_eq!(request.observations[0].location_id, "KJFK");
+        assert_eq!(request.observations[0].temperature_k, Some(280.0));
+    }
+
+    #[test]
+    fn test_health_response_serialize() {
+        let response = HealthResponse {
+            status: "ok".to_string(),
+            service: "ingester".to_string(),
+            version: "0.1.0".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"status\":\"ok\""));
+        assert!(json.contains("\"service\":\"ingester\""));
+    }
+
+    #[test]
+    fn test_status_response_serialize() {
+        let response = StatusResponse {
+            active: vec![ActiveIngestion {
+                id: "test".to_string(),
+                file_path: "/file.grib2".to_string(),
+                started_at: Utc::now(),
+                status: "processing".to_string(),
+            }],
+            recent: vec![],
+            total_completed: 0,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"active\""));
+        assert!(json.contains("\"recent\""));
+        assert!(json.contains("\"total_completed\""));
+    }
+
+    #[test]
+    fn test_active_ingestion_serialize() {
+        let ingestion = ActiveIngestion {
+            id: "abc-123".to_string(),
+            file_path: "/data/test.grib2".to_string(),
+            started_at: Utc::now(),
+            status: "processing".to_string(),
+        };
+
+        let json = serde_json::to_string(&ingestion).unwrap();
+        assert!(json.contains("\"id\":\"abc-123\""));
+        assert!(json.contains("\"status\":\"processing\""));
+    }
+
+    #[test]
+    fn test_completed_ingestion_serialize() {
+        let now = Utc::now();
+        let completed = CompletedIngestion {
+            id: "xyz-789".to_string(),
+            file_path: "/data/test.grib2".to_string(),
+            started_at: now,
+            completed_at: now,
+            duration_ms: 1500,
+            success: true,
+            datasets_registered: 5,
+            parameters: vec!["TMP".to_string()],
+            error_message: None,
+        };
+
+        let json = serde_json::to_string(&completed).unwrap();
+        assert!(json.contains("\"duration_ms\":1500"));
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"datasets_registered\":5"));
+    }
+}
