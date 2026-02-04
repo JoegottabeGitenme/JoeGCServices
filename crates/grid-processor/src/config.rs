@@ -306,4 +306,220 @@ mod tests {
             ZarrCompression::BloscZstd
         );
     }
+
+    #[test]
+    fn test_chunk_cache_size_bytes() {
+        let config = GridProcessorConfig::default();
+        assert_eq!(config.chunk_cache_size_bytes(), 1024 * 1024 * 1024);
+
+        let config = GridProcessorConfig {
+            chunk_cache_size_mb: 512,
+            ..Default::default()
+        };
+        assert_eq!(config.chunk_cache_size_bytes(), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_zarr_compression_as_str() {
+        assert_eq!(ZarrCompression::None.as_str(), "none");
+        assert_eq!(ZarrCompression::Lz4.as_str(), "lz4");
+        assert_eq!(ZarrCompression::Zstd.as_str(), "zstd");
+        assert_eq!(ZarrCompression::BloscLz4.as_str(), "blosc_lz4");
+        assert_eq!(ZarrCompression::BloscZstd.as_str(), "blosc_zstd");
+    }
+
+    #[test]
+    fn test_zarr_compression_display() {
+        assert_eq!(format!("{}", ZarrCompression::None), "none");
+        assert_eq!(format!("{}", ZarrCompression::Lz4), "lz4");
+        assert_eq!(format!("{}", ZarrCompression::Zstd), "zstd");
+        assert_eq!(format!("{}", ZarrCompression::BloscLz4), "blosc_lz4");
+        assert_eq!(format!("{}", ZarrCompression::BloscZstd), "blosc_zstd");
+    }
+
+    #[test]
+    fn test_zarr_compression_default() {
+        assert_eq!(ZarrCompression::default(), ZarrCompression::BloscZstd);
+    }
+
+    #[test]
+    fn test_zarr_compression_eq() {
+        assert_eq!(ZarrCompression::None, ZarrCompression::None);
+        assert_ne!(ZarrCompression::None, ZarrCompression::Lz4);
+    }
+
+    #[test]
+    fn test_zarr_compression_clone() {
+        let compression = ZarrCompression::Zstd;
+        let cloned = compression.clone();
+        assert_eq!(compression, cloned);
+    }
+
+    #[test]
+    fn test_zarr_compression_debug() {
+        let debug_str = format!("{:?}", ZarrCompression::BloscZstd);
+        assert!(debug_str.contains("BloscZstd"));
+    }
+
+    // PyramidConfig tests
+    #[test]
+    fn test_pyramid_config_default() {
+        let config = PyramidConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.min_dimension, 256);
+        assert_eq!(config.downscale_factor, 2);
+        assert_eq!(config.default_method, DownsampleMethod::Mean);
+    }
+
+    #[test]
+    fn test_pyramid_config_validate_ok() {
+        let config = PyramidConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_pyramid_config_validate_zero_min_dimension() {
+        let config = PyramidConfig {
+            min_dimension: 0,
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("min_dimension"));
+    }
+
+    #[test]
+    fn test_pyramid_config_validate_small_downscale_factor() {
+        let config = PyramidConfig {
+            downscale_factor: 1,
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("downscale_factor"));
+    }
+
+    #[test]
+    fn test_calculate_num_levels_disabled() {
+        let config = PyramidConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert_eq!(config.calculate_num_levels(4096, 4096), 1);
+        assert_eq!(config.calculate_num_levels(256, 256), 1);
+    }
+
+    #[test]
+    fn test_calculate_num_levels_small_grid() {
+        let config = PyramidConfig {
+            enabled: true,
+            min_dimension: 256,
+            downscale_factor: 2,
+            ..Default::default()
+        };
+        // Grid smaller than min_dimension - only native level
+        assert_eq!(config.calculate_num_levels(128, 128), 1);
+    }
+
+    #[test]
+    fn test_calculate_num_levels_exact_threshold() {
+        let config = PyramidConfig {
+            enabled: true,
+            min_dimension: 256,
+            downscale_factor: 2,
+            ..Default::default()
+        };
+        // 512x512 (native, level 0)
+        // 512 >= 256, divide: 256x256 (level 1)
+        // 256 >= 256, divide: 128x128 (level 2)
+        // 128 < 256, stop
+        // Total: 3 levels
+        assert_eq!(config.calculate_num_levels(512, 512), 3);
+    }
+
+    #[test]
+    fn test_calculate_num_levels_large_grid() {
+        let config = PyramidConfig {
+            enabled: true,
+            min_dimension: 256,
+            downscale_factor: 2,
+            ..Default::default()
+        };
+        // 4096x4096 (native, level 0)
+        // 4096 >= 256, divide: 2048x2048 (level 1)
+        // 2048 >= 256, divide: 1024x1024 (level 2)
+        // 1024 >= 256, divide: 512x512 (level 3)
+        // 512 >= 256, divide: 256x256 (level 4)
+        // 256 >= 256, divide: 128x128 (level 5)
+        // 128 < 256, stop
+        // Total: 6 levels
+        assert_eq!(config.calculate_num_levels(4096, 4096), 6);
+    }
+
+    #[test]
+    fn test_calculate_num_levels_rectangular() {
+        let config = PyramidConfig {
+            enabled: true,
+            min_dimension: 256,
+            downscale_factor: 2,
+            ..Default::default()
+        };
+        // Uses the smaller dimension (height)
+        // 4096x512 (native, level 0)
+        // min(4096,512)=512 >= 256, divide: 2048x256 (level 1)
+        // min(2048,256)=256 >= 256, divide: 1024x128 (level 2)
+        // min(1024,128)=128 < 256, stop
+        // Total: 3 levels
+        assert_eq!(config.calculate_num_levels(4096, 512), 3);
+    }
+
+    #[test]
+    fn test_calculate_num_levels_factor_3() {
+        let config = PyramidConfig {
+            enabled: true,
+            min_dimension: 100,
+            downscale_factor: 3,
+            ..Default::default()
+        };
+        // 2700x2700 (native, level 0)
+        // 2700 >= 100, divide: 900x900 (level 1)
+        // 900 >= 100, divide: 300x300 (level 2)
+        // 300 >= 100, divide: 100x100 (level 3)
+        // 100 >= 100, divide: 33x33 (level 4)
+        // 33 < 100, stop
+        // Total: 5 levels
+        assert_eq!(config.calculate_num_levels(2700, 2700), 5);
+    }
+
+    #[test]
+    fn test_grid_processor_config_clone() {
+        let config = GridProcessorConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.chunk_cache_size_mb, cloned.chunk_cache_size_mb);
+        assert_eq!(config.zarr_chunk_size, cloned.zarr_chunk_size);
+    }
+
+    #[test]
+    fn test_grid_processor_config_debug() {
+        let config = GridProcessorConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("GridProcessorConfig"));
+        assert!(debug_str.contains("chunk_cache_size_mb"));
+    }
+
+    #[test]
+    fn test_pyramid_config_clone() {
+        let config = PyramidConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.enabled, cloned.enabled);
+        assert_eq!(config.min_dimension, cloned.min_dimension);
+    }
+
+    #[test]
+    fn test_pyramid_config_debug() {
+        let config = PyramidConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("PyramidConfig"));
+        assert!(debug_str.contains("enabled"));
+    }
 }

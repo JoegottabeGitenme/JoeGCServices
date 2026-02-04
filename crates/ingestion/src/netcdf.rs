@@ -362,3 +362,219 @@ fn extract_band_from_filename(filename: &str) -> Option<u8> {
             band_str.parse::<u8>().ok()
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for band_to_parameter
+    #[test]
+    fn test_band_to_parameter_visible_bands() {
+        // Blue visible band
+        let (param, level) = band_to_parameter(1);
+        assert_eq!(param, "CMI_C01");
+        assert_eq!(level, "visible_blue");
+
+        // Red visible band (most common)
+        let (param, level) = band_to_parameter(2);
+        assert_eq!(param, "CMI_C02");
+        assert_eq!(level, "visible_red");
+
+        // Vegetation band
+        let (param, level) = band_to_parameter(3);
+        assert_eq!(param, "CMI_C03");
+        assert_eq!(level, "visible_veggie");
+    }
+
+    #[test]
+    fn test_band_to_parameter_near_ir_bands() {
+        // Cirrus band
+        let (param, level) = band_to_parameter(4);
+        assert_eq!(param, "CMI_C04");
+        assert_eq!(level, "cirrus");
+
+        // Snow/ice band
+        let (param, level) = band_to_parameter(5);
+        assert_eq!(param, "CMI_C05");
+        assert_eq!(level, "snow_ice");
+
+        // Cloud particle size
+        let (param, level) = band_to_parameter(6);
+        assert_eq!(param, "CMI_C06");
+        assert_eq!(level, "cloud_particle");
+    }
+
+    #[test]
+    fn test_band_to_parameter_ir_bands() {
+        // Shortwave IR
+        let (param, level) = band_to_parameter(7);
+        assert_eq!(param, "CMI_C07");
+        assert_eq!(level, "shortwave_ir");
+
+        // Upper water vapor
+        let (param, level) = band_to_parameter(8);
+        assert_eq!(param, "CMI_C08");
+        assert_eq!(level, "upper_vapor");
+
+        // Mid water vapor
+        let (param, level) = band_to_parameter(9);
+        assert_eq!(param, "CMI_C09");
+        assert_eq!(level, "mid_vapor");
+
+        // Lower water vapor
+        let (param, level) = band_to_parameter(10);
+        assert_eq!(param, "CMI_C10");
+        assert_eq!(level, "low_vapor");
+    }
+
+    #[test]
+    fn test_band_to_parameter_longwave_ir_bands() {
+        // Cloud top phase
+        let (param, level) = band_to_parameter(11);
+        assert_eq!(param, "CMI_C11");
+        assert_eq!(level, "cloud_phase");
+
+        // Ozone
+        let (param, level) = band_to_parameter(12);
+        assert_eq!(param, "CMI_C12");
+        assert_eq!(level, "ozone");
+
+        // Clean longwave IR
+        let (param, level) = band_to_parameter(13);
+        assert_eq!(param, "CMI_C13");
+        assert_eq!(level, "clean_ir");
+
+        // Longwave IR
+        let (param, level) = band_to_parameter(14);
+        assert_eq!(param, "CMI_C14");
+        assert_eq!(level, "ir");
+
+        // Dirty longwave IR
+        let (param, level) = band_to_parameter(15);
+        assert_eq!(param, "CMI_C15");
+        assert_eq!(level, "dirty_ir");
+
+        // CO2
+        let (param, level) = band_to_parameter(16);
+        assert_eq!(param, "CMI_C16");
+        assert_eq!(level, "co2");
+    }
+
+    #[test]
+    fn test_band_to_parameter_invalid_band_defaults() {
+        // Invalid band numbers should default to band 2
+        let (param, level) = band_to_parameter(0);
+        assert_eq!(param, "CMI_C02");
+        assert_eq!(level, "visible_red");
+
+        let (param, level) = band_to_parameter(17);
+        assert_eq!(param, "CMI_C02");
+        assert_eq!(level, "visible_red");
+
+        let (param, level) = band_to_parameter(255);
+        assert_eq!(param, "CMI_C02");
+        assert_eq!(level, "visible_red");
+    }
+
+    // Tests for extract_satellite_from_filename
+    #[test]
+    fn test_extract_satellite_goes18() {
+        // GOES-18 (GOES-West) with _G18_ pattern
+        assert_eq!(
+            extract_satellite_from_filename("OR_ABI-L2-CMIPF-M6C02_G18_s20240101200.nc"),
+            "goes18"
+        );
+
+        // GOES-18 with goes18 in name (lowercase)
+        assert_eq!(
+            extract_satellite_from_filename("goes18_visible_band02.nc"),
+            "goes18"
+        );
+
+        // GOES-18 with GOES18 in name (uppercase)
+        assert_eq!(
+            extract_satellite_from_filename("GOES18_CMI_2024.nc"),
+            "goes18"
+        );
+    }
+
+    #[test]
+    fn test_extract_satellite_goes19() {
+        // GOES-19 with _G19_ pattern
+        assert_eq!(
+            extract_satellite_from_filename("OR_ABI-L2-CMIPF-M6C02_G19_s20240101200.nc"),
+            "goes19"
+        );
+
+        // GOES-19 with goes19 in name (lowercase)
+        assert_eq!(
+            extract_satellite_from_filename("goes19_visible_band02.nc"),
+            "goes19"
+        );
+    }
+
+    #[test]
+    fn test_extract_satellite_default_to_goes18() {
+        // Unrecognized satellite defaults to GOES-18 (GOES-West)
+        assert_eq!(extract_satellite_from_filename("unknown_satellite.nc"), "goes18");
+        assert_eq!(extract_satellite_from_filename("satellite_data.nc"), "goes18");
+        assert_eq!(extract_satellite_from_filename("OR_ABI-L2-CMIPF.nc"), "goes18");
+    }
+
+    // Tests for extract_band_from_filename
+    #[test]
+    fn test_extract_band_m6c_pattern() {
+        // Mode 6 scan mode (common for full disk)
+        assert_eq!(
+            extract_band_from_filename("OR_ABI-L2-CMIPF-M6C02_G18_s2024.nc"),
+            Some(2)
+        );
+        assert_eq!(
+            extract_band_from_filename("OR_ABI-L2-CMIPF-M6C13_G18_s2024.nc"),
+            Some(13)
+        );
+        assert_eq!(
+            extract_band_from_filename("OR_ABI-L2-CMIPF-M6C16_G18_s2024.nc"),
+            Some(16)
+        );
+        assert_eq!(
+            extract_band_from_filename("test_M6C01_file.nc"),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_extract_band_m3c_pattern() {
+        // Mode 3 scan mode (CONUS)
+        assert_eq!(
+            extract_band_from_filename("OR_ABI-L2-CMIPC-M3C02_G18_s2024.nc"),
+            Some(2)
+        );
+        assert_eq!(
+            extract_band_from_filename("OR_ABI-L2-CMIPC-M3C07_G18_s2024.nc"),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn test_extract_band_no_pattern() {
+        // No M6C or M3C pattern
+        assert_eq!(extract_band_from_filename("goes_data.nc"), None);
+        assert_eq!(extract_band_from_filename("satellite_2024.nc"), None);
+        assert_eq!(extract_band_from_filename(""), None);
+    }
+
+    #[test]
+    fn test_extract_band_invalid_number() {
+        // Pattern found but number cannot be parsed
+        assert_eq!(extract_band_from_filename("M6Cxx_test.nc"), None);
+        assert_eq!(extract_band_from_filename("M3C__test.nc"), None);
+    }
+
+    #[test]
+    fn test_extract_band_truncated() {
+        // Filename truncated after pattern - not enough characters
+        assert_eq!(extract_band_from_filename("M6C0"), None);
+        assert_eq!(extract_band_from_filename("M6C"), None);
+    }
+}
