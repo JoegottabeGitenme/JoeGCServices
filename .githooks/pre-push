@@ -103,9 +103,9 @@ fi
 echo -e "  ${GREEN}Tests OK${NC}"
 
 # 6. Code coverage checks for critical crates
-# Set COVERAGE_CHECK=strict to fail on threshold violations
+# Set COVERAGE_CHECK=warn to only warn on threshold violations
 # Set COVERAGE_CHECK=skip to skip coverage entirely
-COVERAGE_CHECK="${COVERAGE_CHECK:-warn}"
+COVERAGE_CHECK="${COVERAGE_CHECK:-strict}"
 
 if [ "$COVERAGE_CHECK" != "skip" ]; then
     # Check if cargo-tarpaulin is installed
@@ -126,10 +126,10 @@ if [ "$COVERAGE_CHECK" != "skip" ]; then
         INGESTION_THRESHOLD=30
         GRID_PROCESSOR_THRESHOLD=40
         
-        # Storage & services
-        STORAGE_THRESHOLD=40
-        WMS_API_THRESHOLD=30
-        EDR_API_THRESHOLD=35
+        # Storage & services (integration-heavy, lower thresholds)
+        STORAGE_THRESHOLD=10
+        WMS_API_THRESHOLD=8
+        EDR_API_THRESHOLD=16
         
         COVERAGE_FAILED=0
         

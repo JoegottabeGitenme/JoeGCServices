@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn test_limit_exceeded_display() {
+    fn test_limit_exceeded_display_parameters() {
         let err = LimitExceeded::TooManyParameters {
             requested: 20,
             limit: 10,
@@ -296,6 +296,80 @@ mod tests {
         let display = format!("{}", err);
         assert!(display.contains("20"));
         assert!(display.contains("10"));
+        assert!(display.contains("parameters"));
+    }
+
+    #[test]
+    fn test_limit_exceeded_display_time_steps() {
+        let err = LimitExceeded::TooManyTimeSteps {
+            requested: 100,
+            limit: 48,
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("100"));
+        assert!(display.contains("48"));
+        assert!(display.contains("time steps"));
+    }
+
+    #[test]
+    fn test_limit_exceeded_display_levels() {
+        let err = LimitExceeded::TooManyLevels {
+            requested: 50,
+            limit: 20,
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("50"));
+        assert!(display.contains("20"));
+        assert!(display.contains("vertical levels"));
+    }
+
+    #[test]
+    fn test_limit_exceeded_display_response_size() {
+        let err = LimitExceeded::ResponseTooLarge {
+            estimated_mb: 150.5,
+            limit_mb: 100,
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("150.5"));
+        assert!(display.contains("100"));
+        assert!(display.contains("Response too large"));
+    }
+
+    #[test]
+    fn test_limit_exceeded_is_error() {
+        // Verify that LimitExceeded implements std::error::Error
+        let err: Box<dyn std::error::Error> = Box::new(LimitExceeded::TooManyParameters {
+            requested: 5,
+            limit: 3,
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_check_limits_too_many_time_steps() {
+        let estimate = ResponseSizeEstimate::for_position(1, 100, 1);
+        let limits = LimitsConfig {
+            max_time_steps: 48,
+            ..Default::default()
+        };
+
+        let result = estimate.check_limits(&limits);
+        assert!(matches!(
+            result,
+            Err(LimitExceeded::TooManyTimeSteps { .. })
+        ));
+    }
+
+    #[test]
+    fn test_check_limits_too_many_levels() {
+        let estimate = ResponseSizeEstimate::for_position(1, 1, 50);
+        let limits = LimitsConfig {
+            max_vertical_levels: 20,
+            ..Default::default()
+        };
+
+        let result = estimate.check_limits(&limits);
+        assert!(matches!(result, Err(LimitExceeded::TooManyLevels { .. })));
     }
 
     #[test]
