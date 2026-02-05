@@ -855,13 +855,7 @@ mod tests {
         tracker.start("test-id", "/path/to/file.grib2").await;
 
         tracker
-            .complete(
-                "test-id",
-                false,
-                0,
-                vec![],
-                Some("Parse error".to_string()),
-            )
+            .complete("test-id", false, 0, vec![], Some("Parse error".to_string()))
             .await;
 
         let status = tracker.get_status().await;
@@ -888,8 +882,12 @@ mod tests {
         assert_eq!(status.active.len(), 3);
 
         // Complete some
-        tracker.complete("id-1", true, 3, vec!["A".into()], None).await;
-        tracker.complete("id-2", false, 0, vec![], Some("err".into())).await;
+        tracker
+            .complete("id-1", true, 3, vec!["A".into()], None)
+            .await;
+        tracker
+            .complete("id-2", false, 0, vec![], Some("err".into()))
+            .await;
 
         let status = tracker.get_status().await;
         assert_eq!(status.active.len(), 1); // id-3 still active
@@ -917,9 +915,7 @@ mod tests {
         let tracker = IngestionTracker::new();
 
         // Try to complete an ingestion that was never started
-        tracker
-            .complete("nonexistent", true, 1, vec![], None)
-            .await;
+        tracker.complete("nonexistent", true, 1, vec![], None).await;
 
         let status = tracker.get_status().await;
         assert!(status.active.is_empty());

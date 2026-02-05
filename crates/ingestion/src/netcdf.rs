@@ -516,9 +516,18 @@ mod tests {
     #[test]
     fn test_extract_satellite_default_to_goes18() {
         // Unrecognized satellite defaults to GOES-18 (GOES-West)
-        assert_eq!(extract_satellite_from_filename("unknown_satellite.nc"), "goes18");
-        assert_eq!(extract_satellite_from_filename("satellite_data.nc"), "goes18");
-        assert_eq!(extract_satellite_from_filename("OR_ABI-L2-CMIPF.nc"), "goes18");
+        assert_eq!(
+            extract_satellite_from_filename("unknown_satellite.nc"),
+            "goes18"
+        );
+        assert_eq!(
+            extract_satellite_from_filename("satellite_data.nc"),
+            "goes18"
+        );
+        assert_eq!(
+            extract_satellite_from_filename("OR_ABI-L2-CMIPF.nc"),
+            "goes18"
+        );
     }
 
     // Tests for extract_band_from_filename
@@ -537,10 +546,7 @@ mod tests {
             extract_band_from_filename("OR_ABI-L2-CMIPF-M6C16_G18_s2024.nc"),
             Some(16)
         );
-        assert_eq!(
-            extract_band_from_filename("test_M6C01_file.nc"),
-            Some(1)
-        );
+        assert_eq!(extract_band_from_filename("test_M6C01_file.nc"), Some(1));
     }
 
     #[test]

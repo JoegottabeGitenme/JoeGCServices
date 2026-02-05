@@ -327,9 +327,7 @@ mod tests {
 
     #[test]
     fn test_ingestion_result_many_parameters() {
-        let params: Vec<String> = (1..=16)
-            .map(|i| format!("CMI_C{:02}", i))
-            .collect();
+        let params: Vec<String> = (1..=16).map(|i| format!("CMI_C{:02}", i)).collect();
 
         let result = IngestionResult {
             datasets_registered: 16,
