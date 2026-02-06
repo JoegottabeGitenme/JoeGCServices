@@ -155,7 +155,7 @@ pub struct IndexedRenderResult {
 /// or an error if the style cannot be loaded.
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// let result = render_with_style_file_indexed(&data, "config/styles/temperature.json", None, 256, 256)?;
 /// let png = renderer::png::create_png_from_precomputed(&result.indices, 256, 256, &result.palette)?;
 /// ```

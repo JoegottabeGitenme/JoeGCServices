@@ -7,7 +7,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```text
 //! use grid_processor::{GridProcessorFactory, MinioConfig};
 //!
 //! let minio_config = MinioConfig::from_env();
@@ -36,7 +36,7 @@ use crate::writer::ZarrMetadata;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// let factory = GridProcessorFactory::new(minio_config, 1024);
 ///
 /// // All processors share the same cache

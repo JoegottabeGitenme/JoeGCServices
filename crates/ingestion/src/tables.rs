@@ -185,7 +185,7 @@ impl IngestionFilter {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// let filter = build_filter_for_model("gfs")?;
 /// if filter.should_ingest("TMP", 103, 2) {
 ///     // Ingest 2m temperature
