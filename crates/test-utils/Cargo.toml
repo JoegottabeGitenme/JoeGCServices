@@ -5,10 +5,18 @@ edition = "2021"
 description = "Shared test utilities for weather-wms workspace"
 publish = false
 
+[features]
+default = []
+containers = ["testcontainers", "testcontainers-modules"]
+
 [dependencies]
 # Only include dependencies needed for test utilities
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
+
+# Container support for integration tests (optional)
+testcontainers = { workspace = true, optional = true }
+testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

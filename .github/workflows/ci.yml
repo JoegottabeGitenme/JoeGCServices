@@ -243,6 +243,64 @@ jobs:
             tarpaulin-report.json
           retention-days: 30
 
+  # Integration tests (require Docker)
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config curl
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run integration tests
+        run: |
+          # Run integration tests with Docker containers
+          # --test-threads=1 ensures tests don't compete for container resources
+          cargo test --workspace \
+            --features test-utils/containers \
+            -- --ignored --test-threads=1 --nocapture 2>&1 | tee integration_output.txt
+
+      - name: Parse integration test results
+        id: integration_results
+        if: always()
+        run: |
+          PASSED=$(grep -E '^test .+ \.\.\. ok$' integration_output.txt | wc -l | tr -d ' ')
+          FAILED=$(grep -E '^test .+ \.\.\. FAILED$' integration_output.txt | wc -l | tr -d ' ')
+          IGNORED=$(grep -E '^test .+ \.\.\. ignored$' integration_output.txt | wc -l | tr -d ' ')
+          
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          IGNORED=${IGNORED:-0}
+          TOTAL=$((PASSED + FAILED + IGNORED))
+          
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+
+      - name: Integration Test Summary
+        if: always()
+        run: |
+          echo "## Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| :white_check_mark: Passed | ${{ steps.integration_results.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :x: Failed | ${{ steps.integration_results.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | ${{ steps.integration_results.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Integration tests use Docker containers for PostgreSQL, Redis, and MinIO.*" >> $GITHUB_STEP_SUMMARY
+
   # Documentation build check
   docs:
     name: Docs
@@ -269,7 +327,7 @@ jobs:
   # Summary job
   ci-status:
     name: CI Status
-    needs: [ lint, test, coverage, docs ]
+    needs: [ lint, test, coverage, integration, docs ]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -296,6 +354,12 @@ jobs:
             echo "| Coverage | :white_check_mark: Generated |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Coverage | :x: ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.integration.result }}" == "success" ]]; then
+            echo "| Integration | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Integration | :x: ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [[ "${{ needs.docs.result }}" == "success" ]]; then
