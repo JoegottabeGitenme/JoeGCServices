@@ -114,6 +114,10 @@ impl WmsError {
         {
             return WmsError::MissingData(err);
         }
+        // Detect data unavailable (storage data missing/expired while catalog entry exists)
+        if err.contains("data unavailable") || err.contains("No grid data found") {
+            return WmsError::MissingData(err);
+        }
         // Default to rendering error
         WmsError::RenderingError(err)
     }

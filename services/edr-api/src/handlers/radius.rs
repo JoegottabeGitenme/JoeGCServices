@@ -17,7 +17,7 @@ use edr_protocol::{
     responses::ExceptionResponse, CoverageJson, DistanceUnit, EdrFeatureCollection, ParsedCoords,
     PositionQuery, RadiusQuery,
 };
-use grid_processor::BoundingBox;
+use grid_processor::{BoundingBox, GridProcessorError};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -531,11 +531,7 @@ async fn radius_query(
     {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!("Failed to read region: {}", e);
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ExceptionResponse::internal_error(format!("Failed to read data: {}", e)),
-            );
+            return handle_grid_read_error(e, "read region");
         }
     };
 
@@ -769,6 +765,34 @@ fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(json.into())
         .unwrap()
+}
+
+/// Handle a GridProcessorError from a read_region/read_point call, returning
+/// an appropriate HTTP response. DataUnavailable errors get a 404 instead of 500.
+fn handle_grid_read_error(e: GridProcessorError, context: &str) -> Response {
+    if e.is_data_unavailable() {
+        tracing::warn!("Data unavailable during {}: {}", context, e);
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "No data currently available. The data may not have been ingested yet \
+                 or may have expired. Details: {}",
+                e
+            )),
+        );
+    }
+    if matches!(e, GridProcessorError::NotFound(_)) {
+        tracing::warn!("Dataset not found during {}: {}", context, e);
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(e.to_string()),
+        );
+    }
+    tracing::error!("Failed to {}: {}", context, e);
+    error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        ExceptionResponse::internal_error(format!("Failed to {}: {}", context, e)),
+    )
 }
 
 #[cfg(test)]
