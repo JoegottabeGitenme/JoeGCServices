@@ -7,7 +7,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```text
 //! use grid_processor::{GridDataService, DatasetQuery, BoundingBox};
 //!
 //! // Create service (typically at application startup)
@@ -48,7 +48,7 @@ use crate::writer::ZarrMetadata;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// let service = GridDataService::new(catalog, minio_config, 1024);
 ///
 /// let query = DatasetQuery::forecast("gfs", "TMP")
@@ -102,7 +102,7 @@ impl GridDataService {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```text
     /// let query = DatasetQuery::forecast("gfs", "TMP")
     ///     .at_level("2 m above ground")
     ///     .at_forecast_hour(6);

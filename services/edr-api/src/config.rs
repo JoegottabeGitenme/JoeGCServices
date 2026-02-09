@@ -578,6 +578,180 @@ fn default_max_corridor_length() -> Option<f64> {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // DataType Tests
+    // =========================================================================
+
+    #[test]
+    fn test_data_type_default() {
+        let dt = DataType::default();
+        assert!(matches!(dt, DataType::Forecast));
+    }
+
+    #[test]
+    fn test_data_type_is_observation() {
+        assert!(!DataType::Forecast.is_observation());
+        assert!(DataType::Observation.is_observation());
+        assert!(!DataType::PointObservation.is_observation());
+        assert!(!DataType::PointForecast.is_observation());
+    }
+
+    #[test]
+    fn test_data_type_is_point_observation() {
+        assert!(!DataType::Forecast.is_point_observation());
+        assert!(!DataType::Observation.is_point_observation());
+        assert!(DataType::PointObservation.is_point_observation());
+        assert!(!DataType::PointForecast.is_point_observation());
+    }
+
+    #[test]
+    fn test_data_type_is_point_forecast() {
+        assert!(!DataType::Forecast.is_point_forecast());
+        assert!(!DataType::Observation.is_point_forecast());
+        assert!(!DataType::PointObservation.is_point_forecast());
+        assert!(DataType::PointForecast.is_point_forecast());
+    }
+
+    #[test]
+    fn test_data_type_is_point_data() {
+        assert!(!DataType::Forecast.is_point_data());
+        assert!(!DataType::Observation.is_point_data());
+        assert!(DataType::PointObservation.is_point_data());
+        assert!(DataType::PointForecast.is_point_data());
+    }
+
+    // =========================================================================
+    // build_level_string Tests
+    // =========================================================================
+
+    #[test]
+    fn test_build_level_string_surface() {
+        let filter = LevelFilter {
+            level_type: "surface".to_string(),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("surface".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_mean_sea_level() {
+        let filter = LevelFilter {
+            level_type: "mean_sea_level".to_string(),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("mean sea level".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_entire_atmosphere() {
+        let filter = LevelFilter {
+            level_type: "entire_atmosphere".to_string(),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("entire atmosphere".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_isobaric_with_z_value() {
+        let filter = LevelFilter {
+            level_type: "isobaric".to_string(),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, Some(500.0));
+        assert_eq!(result, Some("500 mb".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_isobaric_from_param() {
+        let filter = LevelFilter {
+            level_type: "isobaric".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "TMP".to_string(),
+            levels: vec![LevelValue::Numeric(850.0)],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), None);
+        assert_eq!(result, Some("850 mb".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_height_above_ground() {
+        let filter = LevelFilter {
+            level_type: "height_above_ground".to_string(),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, Some(2.0));
+        assert_eq!(result, Some("2 m above ground".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_cloud_layer_low() {
+        let filter = LevelFilter {
+            level_type: "cloud_layer".to_string(),
+            level_code: Some(214),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("low cloud layer".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_cloud_layer_middle() {
+        let filter = LevelFilter {
+            level_type: "cloud_layer".to_string(),
+            level_code: Some(224),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("middle cloud layer".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_cloud_layer_high() {
+        let filter = LevelFilter {
+            level_type: "cloud_layer".to_string(),
+            level_code: Some(234),
+            ..Default::default()
+        };
+        let result = build_level_string(&filter, None, None);
+        assert_eq!(result, Some("high cloud layer".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_named_level() {
+        let filter = LevelFilter {
+            level_type: "custom".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "PRES".to_string(),
+            levels: vec![LevelValue::Named("cloud_base".to_string())],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), None);
+        assert_eq!(result, Some("cloud base".to_string()));
+    }
+
+    // =========================================================================
+    // GlobalLimitsConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_global_limits_default() {
+        let limits = GlobalLimitsConfig::default();
+        assert_eq!(limits.max_collections_per_location_request, 10);
+        assert_eq!(limits.max_location_response_size_mb, 50);
+    }
+
+    // =========================================================================
+    // LevelFilter Tests
+    // =========================================================================
+
     #[test]
     fn test_level_filter_single_code() {
         let filter = LevelFilter {

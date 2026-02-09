@@ -1176,4 +1176,186 @@ mod tests {
         let base_m = first_layer["base_m"].as_f64().unwrap();
         assert!((base_m - 609.6).abs() < 0.1); // 2000 ft = 609.6 m
     }
+
+    // =========================================================================
+    // Visibility parsing edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_visibility_number() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test numeric visibility (5 SM)
+        let vis = runner.parse_visibility(&Some(serde_json::json!(5)));
+        assert!(vis.is_some());
+        let vis_m = vis.unwrap();
+        assert!((vis_m - 8046.7).abs() < 1.0); // 5 SM = 8046.7 m
+    }
+
+    #[test]
+    fn test_parse_visibility_plus_string() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test "10+" visibility (common for clear conditions)
+        let vis = runner.parse_visibility(&Some(serde_json::json!("10+")));
+        assert!(vis.is_some());
+        let vis_m = vis.unwrap();
+        assert!((vis_m - 16093.4).abs() < 1.0); // 10 SM = 16093.4 m
+    }
+
+    #[test]
+    fn test_parse_visibility_string_number() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test string number without plus
+        let vis = runner.parse_visibility(&Some(serde_json::json!("3")));
+        assert!(vis.is_some());
+        let vis_m = vis.unwrap();
+        assert!((vis_m - 4828.0).abs() < 1.0); // 3 SM = 4828 m
+    }
+
+    #[test]
+    fn test_parse_visibility_none() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test None visibility
+        let vis = runner.parse_visibility(&None);
+        assert!(vis.is_none());
+    }
+
+    // =========================================================================
+    // Wind direction parsing edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_wind_direction_number() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test numeric wind direction
+        let wdir = runner.parse_wind_direction(&Some(serde_json::json!(270)));
+        assert_eq!(wdir, Some(270));
+    }
+
+    #[test]
+    fn test_parse_wind_direction_vrb() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // VRB (variable) should return None
+        let wdir = runner.parse_wind_direction(&Some(serde_json::json!("VRB")));
+        assert!(wdir.is_none());
+    }
+
+    #[test]
+    fn test_parse_wind_direction_string_number() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test string number
+        let wdir = runner.parse_wind_direction(&Some(serde_json::json!("180")));
+        assert_eq!(wdir, Some(180));
+    }
+
+    #[test]
+    fn test_parse_wind_direction_none() {
+        let config = ObservationConfig {
+            id: "test".to_string(),
+            base_url: "http://test".to_string(),
+            poll_interval_secs: 300,
+            bbox: BoundingBox {
+                min_lon: -130.0,
+                min_lat: 20.0,
+                max_lon: -60.0,
+                max_lat: 55.0,
+            },
+            ingester_url: "http://test".to_string(),
+        };
+        let runner = ObservationRunner::new(config).unwrap();
+
+        // Test None
+        let wdir = runner.parse_wind_direction(&None);
+        assert!(wdir.is_none());
+    }
 }

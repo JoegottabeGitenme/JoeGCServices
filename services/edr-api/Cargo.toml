@@ -48,6 +48,9 @@ sunrise-sunset-calculator = "1.0"
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
+test-utils = { path = "../../crates/test-utils", features = ["containers"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
 
 [[bench]]
 name = "edr_api_benchmarks"

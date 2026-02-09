@@ -21,7 +21,7 @@
 //! The recommended interface for most use cases. Handles catalog queries,
 //! storage access, and model-specific quirks automatically.
 //!
-//! ```rust,ignore
+//! ```text
 //! use grid_processor::{GridDataService, DatasetQuery, BoundingBox};
 //!
 //! // Create service (typically at application startup)
@@ -44,7 +44,7 @@
 //!
 //! For cases where you have a catalog entry and want direct control:
 //!
-//! ```rust,ignore
+//! ```text
 //! use grid_processor::{GridProcessorFactory, BoundingBox};
 //!
 //! let factory = GridProcessorFactory::new(storage, 1024);
@@ -56,7 +56,7 @@
 //!
 //! For custom implementations or direct Zarr access:
 //!
-//! ```rust,ignore
+//! ```text
 //! use grid_processor::{GridProcessor, ZarrGridProcessor, GridProcessorConfig};
 //!
 //! let processor = ZarrGridProcessor::open(store, "/path/to/array.zarr", config)?;

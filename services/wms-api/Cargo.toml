@@ -55,3 +55,9 @@ imageproc = { workspace = true }
 rusttype = { workspace = true }
 webp = { workspace = true }
 once_cell = "1.19"
+
+[dev-dependencies]
+test-utils = { path = "../../crates/test-utils", features = ["containers"] }
+tokio-test = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }

@@ -3,6 +3,10 @@ name = "storage"
 version.workspace = true
 edition.workspace = true
 
+[dev-dependencies]
+test-utils = { path = "../test-utils", features = ["containers"] }
+tokio-test = { workspace = true }
+
 [dependencies]
 wms-common = { path = "../wms-common" }
 

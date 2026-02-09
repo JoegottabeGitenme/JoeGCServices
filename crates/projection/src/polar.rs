@@ -530,4 +530,237 @@ mod tests {
         assert!((lat - 60.0).abs() < 0.01, "Lat roundtrip failed: {}", lat);
         assert!(lon.abs() < 0.01, "Lon roundtrip failed: {}", lon);
     }
+
+    // ==================== Additional coverage tests ====================
+
+    /// Test south pole stereographic projection
+    /// This exercises the `is_north = false` code paths at lines 86, 135-138, 172-173, 184
+    #[test]
+    fn test_south_pole_projection_basic() {
+        // Create a south pole stereographic projection (like for Antarctica)
+        let proj = PolarStereographic::from_grib2(
+            -60.0,  // lat1 - first grid point at 60°S
+            0.0,    // lon1 - prime meridian
+            -90.0,  // lat_d - true latitude at south pole
+            0.0,    // lon_v - orientation pointing to prime meridian
+            5000.0, // dx
+            5000.0, // dy
+            100,    // nx
+            100,    // ny
+            false,  // is_north = FALSE (south pole)
+        );
+
+        // First grid point should map to (0, 0)
+        let (i, j) = proj.geo_to_grid(-60.0, 0.0);
+        println!(
+            "South pole: First point (-60°, 0°) -> i={:.2}, j={:.2}",
+            i, j
+        );
+        assert!(
+            (i - 0.0).abs() < 0.5,
+            "First point i should be ~0, got {}",
+            i
+        );
+        assert!(
+            (j - 0.0).abs() < 0.5,
+            "First point j should be ~0, got {}",
+            j
+        );
+    }
+
+    /// Test south pole stereographic roundtrip
+    #[test]
+    fn test_south_pole_projection_roundtrip() {
+        // Use realistic true latitude (-60°) instead of -90° which causes k0=0
+        let proj =
+            PolarStereographic::from_grib2(-70.0, 0.0, -60.0, 0.0, 5000.0, 5000.0, 100, 100, false);
+
+        // Test roundtrip at various grid points
+        for (test_i, test_j) in [(0.0, 0.0), (50.0, 50.0), (99.0, 99.0), (25.0, 75.0)] {
+            let (lat, lon) = proj.grid_to_geo(test_i, test_j);
+            let (i, j) = proj.geo_to_grid(lat, lon);
+            println!(
+                "South pole roundtrip ({}, {}): lat={:.2}, lon={:.2} -> ({:.2}, {:.2})",
+                test_i, test_j, lat, lon, i, j
+            );
+            assert!(
+                (i - test_i).abs() < 0.01,
+                "i roundtrip failed for ({}, {})",
+                test_i,
+                test_j
+            );
+            assert!(
+                (j - test_j).abs() < 0.01,
+                "j roundtrip failed for ({}, {})",
+                test_i,
+                test_j
+            );
+        }
+    }
+
+    /// Test south pole internal projection math
+    #[test]
+    fn test_south_pole_internal_math() {
+        let earth_radius = 6371200.0;
+        // k0 for south pole: (1 - sin(lat_d)) / 2
+        let k0 = (1.0 - (-60.0_f64 * PI / 180.0).sin().abs()) / 2.0;
+
+        // Point at 60°S, 0°E
+        let (x, y) =
+            PolarStereographic::geo_to_proj_internal(-60.0, 0.0, 0.0, false, earth_radius, k0);
+        println!("60°S, 0°E (south pole proj) -> x={:.0}, y={:.0}", x, y);
+
+        // At 60°S with lon_v=0, x should be 0
+        assert!(x.abs() < 100.0, "x should be ~0 at lon=0");
+
+        // For south pole projection, y is positive when moving away from pole
+        // (opposite of north pole convention)
+
+        // Roundtrip
+        let (lat, lon) =
+            PolarStereographic::proj_to_geo_internal(x, y, 0.0, false, earth_radius, k0);
+        println!("Roundtrip: lat={:.2}, lon={:.2}", lat, lon);
+        assert!((lat - (-60.0)).abs() < 0.1, "Lat roundtrip failed: {}", lat);
+    }
+
+    /// Test behavior exactly at the north pole
+    /// This exercises the special case at lines 154-158 where rho < 1e-10
+    #[test]
+    fn test_exactly_at_north_pole() {
+        let earth_radius = 6371200.0;
+        let k0 = (1.0 + (60.0_f64 * PI / 180.0).sin()) / 2.0;
+
+        // At exactly 90°N, any longitude
+        let (x, y) =
+            PolarStereographic::geo_to_proj_internal(90.0, 0.0, 0.0, true, earth_radius, k0);
+        println!("North pole (90°N) -> x={:.6}, y={:.6}", x, y);
+
+        // At the pole, x and y should both be ~0 (the pole is the center)
+        assert!(x.abs() < 1.0, "x should be ~0 at pole, got {}", x);
+        assert!(y.abs() < 1.0, "y should be ~0 at pole, got {}", y);
+
+        // Roundtrip from pole
+        let (lat, lon) =
+            PolarStereographic::proj_to_geo_internal(x, y, 0.0, true, earth_radius, k0);
+        println!("Pole roundtrip: lat={:.2}, lon={:.2}", lat, lon);
+        assert!(
+            (lat - 90.0).abs() < 0.01,
+            "Lat should be 90 at pole, got {}",
+            lat
+        );
+        // Longitude is undefined at pole, so we don't check it
+    }
+
+    /// Test behavior exactly at the south pole
+    #[test]
+    fn test_exactly_at_south_pole() {
+        let earth_radius = 6371200.0;
+        let k0 = (1.0 - (60.0_f64 * PI / 180.0).sin()) / 2.0;
+
+        // At exactly 90°S, any longitude
+        let (x, y) =
+            PolarStereographic::geo_to_proj_internal(-90.0, 0.0, 0.0, false, earth_radius, k0);
+        println!("South pole (-90°S) -> x={:.6}, y={:.6}", x, y);
+
+        // At the pole, x and y should both be ~0
+        assert!(x.abs() < 1.0, "x should be ~0 at south pole, got {}", x);
+        assert!(y.abs() < 1.0, "y should be ~0 at south pole, got {}", y);
+
+        // Roundtrip from south pole
+        let (lat, lon) =
+            PolarStereographic::proj_to_geo_internal(x, y, 0.0, false, earth_radius, k0);
+        println!("South pole roundtrip: lat={:.2}, lon={:.2}", lat, lon);
+        assert!(
+            (lat - (-90.0)).abs() < 0.01,
+            "Lat should be -90 at south pole, got {}",
+            lat
+        );
+    }
+
+    /// Test longitude normalization for polar projection
+    /// Exercises the update_lon_bounds and normalization logic
+    #[test]
+    fn test_polar_longitude_normalization() {
+        let proj = PolarStereographic::nbm_alaska();
+
+        // Test with longitude > 180 (GRIB2 convention)
+        let (i1, j1) = proj.geo_to_grid(65.0, 200.0); // 200° = -160°
+        let (i2, j2) = proj.geo_to_grid(65.0, -160.0);
+
+        println!("Alaska 200° -> i={:.2}, j={:.2}", i1, j1);
+        println!("Alaska -160° -> i={:.2}, j={:.2}", i2, j2);
+
+        // Should give same result
+        assert!(
+            (i1 - i2).abs() < 1.0,
+            "200° and -160° should give same i: {} vs {}",
+            i1,
+            i2
+        );
+        assert!(
+            (j1 - j2).abs() < 1.0,
+            "200° and -160° should give same j: {} vs {}",
+            j1,
+            j2
+        );
+    }
+
+    /// Test contains method for polar projection
+    #[test]
+    fn test_polar_contains() {
+        let proj = PolarStereographic::nbm_alaska();
+
+        // Fairbanks should be in the grid
+        assert!(
+            proj.contains(64.8, -147.7),
+            "Fairbanks should be in Alaska grid"
+        );
+
+        // Hawaii should not be in the grid
+        assert!(
+            !proj.contains(21.0, -157.0),
+            "Hawaii should not be in Alaska grid"
+        );
+
+        // North pole area should be in (or near) the grid
+        // The Alaska grid extends quite far north
+        let contains_70n = proj.contains(70.0, -150.0);
+        println!("Alaska grid contains 70°N, -150°: {}", contains_70n);
+    }
+
+    /// Test grid boundaries for polar projection
+    #[test]
+    fn test_polar_grid_boundaries() {
+        let proj = PolarStereographic::nbm_alaska();
+        // Alaska grid: 1649 x 1105
+        let nx = 1649;
+        let ny = 1105;
+
+        // Test corners roundtrip
+        let corners = [
+            (0.0, 0.0, "SW"),
+            ((nx - 1) as f64, 0.0, "SE"),
+            (0.0, (ny - 1) as f64, "NW"),
+            ((nx - 1) as f64, (ny - 1) as f64, "NE"),
+        ];
+
+        for (i, j, name) in corners {
+            let (lat, lon) = proj.grid_to_geo(i, j);
+            let (i_back, j_back) = proj.geo_to_grid(lat, lon);
+            println!(
+                "Alaska {} ({}, {}): lat={:.2}, lon={:.2} -> ({:.2}, {:.2})",
+                name, i, j, lat, lon, i_back, j_back
+            );
+            assert!(
+                (i_back - i).abs() < 0.1,
+                "{} corner i roundtrip failed",
+                name
+            );
+            assert!(
+                (j_back - j).abs() < 0.1,
+                "{} corner j roundtrip failed",
+                name
+            );
+        }
+    }
 }

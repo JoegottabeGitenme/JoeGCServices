@@ -194,13 +194,76 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_iso8601_without_timezone() {
+        let dt = ValidTime::from_iso8601("2024-01-15T12:00:00").unwrap();
+        assert_eq!(dt.year(), 2024);
+        assert_eq!(dt.hour(), 12);
+    }
+
+    #[test]
+    fn test_parse_iso8601_date_only() {
+        let dt = ValidTime::from_iso8601("2024-01-15").unwrap();
+        assert_eq!(dt.year(), 2024);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 15);
+        assert_eq!(dt.hour(), 0);
+    }
+
+    #[test]
+    fn test_parse_iso8601_invalid() {
+        let err = ValidTime::from_iso8601("not-a-date");
+        assert!(err.is_err());
+        let err = err.unwrap_err();
+        assert!(matches!(err, TimeParseError::InvalidFormat(_)));
+    }
+
+    #[test]
     fn test_parse_wms_time_range() {
         let spec = TimeRange::from_wms_time("2024-01-15T00:00:00Z/2024-01-16T00:00:00Z").unwrap();
         match spec {
-            TimeSpec::Range(_r) => {
-                // Successfully parsed as range
+            TimeSpec::Range(r) => {
+                assert_eq!(r.start.day(), 15);
+                assert_eq!(r.end.day(), 16);
             }
             _ => panic!("Expected range"),
+        }
+    }
+
+    #[test]
+    fn test_parse_wms_time_current() {
+        let spec = TimeRange::from_wms_time("current").unwrap();
+        assert!(matches!(spec, TimeSpec::Current));
+
+        // Test case-insensitivity
+        let spec2 = TimeRange::from_wms_time("CURRENT").unwrap();
+        assert!(matches!(spec2, TimeSpec::Current));
+    }
+
+    #[test]
+    fn test_parse_wms_time_single() {
+        let spec = TimeRange::from_wms_time("2024-01-15T12:00:00Z").unwrap();
+        match spec {
+            TimeSpec::Single(dt) => {
+                assert_eq!(dt.hour(), 12);
+            }
+            _ => panic!("Expected single time"),
+        }
+    }
+
+    #[test]
+    fn test_parse_wms_time_list() {
+        let spec = TimeRange::from_wms_time(
+            "2024-01-15T00:00:00Z,2024-01-15T06:00:00Z,2024-01-15T12:00:00Z",
+        )
+        .unwrap();
+        match spec {
+            TimeSpec::List(times) => {
+                assert_eq!(times.len(), 3);
+                assert_eq!(times[0].hour(), 0);
+                assert_eq!(times[1].hour(), 6);
+                assert_eq!(times[2].hour(), 12);
+            }
+            _ => panic!("Expected list"),
         }
     }
 
@@ -208,5 +271,100 @@ mod tests {
     fn test_valid_time_storage_path() {
         let vt = ValidTime::new(Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(), 6);
         assert_eq!(vt.storage_path(), "2024/01/15/12z/006");
+    }
+
+    #[test]
+    fn test_valid_time_analysis() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let vt = ValidTime::analysis(ref_time);
+        assert_eq!(vt.reference_time, ref_time);
+        assert_eq!(vt.forecast_hour, 0);
+    }
+
+    #[test]
+    fn test_valid_time_valid_datetime() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let vt = ValidTime::new(ref_time, 6);
+        let valid = vt.valid_datetime();
+        assert_eq!(valid.hour(), 18); // 12 + 6 = 18
+        assert_eq!(valid.day(), 15);
+    }
+
+    #[test]
+    fn test_valid_time_valid_datetime_next_day() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
+        let vt = ValidTime::new(ref_time, 12);
+        let valid = vt.valid_datetime();
+        assert_eq!(valid.hour(), 6); // 18 + 12 = 30 = 6 next day
+        assert_eq!(valid.day(), 16);
+    }
+
+    #[test]
+    fn test_time_range_new() {
+        let start = Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 16, 0, 0, 0).unwrap();
+        let range = TimeRange::new(start, end);
+        assert_eq!(range.start, start);
+        assert_eq!(range.end, end);
+    }
+
+    #[test]
+    fn test_time_range_contains() {
+        let start = Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 16, 0, 0, 0).unwrap();
+        let range = TimeRange::new(start, end);
+
+        // Test inside range
+        let inside = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        assert!(range.contains(&inside));
+
+        // Test at boundaries
+        assert!(range.contains(&start));
+        assert!(range.contains(&end));
+
+        // Test outside range
+        let before = Utc.with_ymd_and_hms(2024, 1, 14, 23, 0, 0).unwrap();
+        let after = Utc.with_ymd_and_hms(2024, 1, 16, 1, 0, 0).unwrap();
+        assert!(!range.contains(&before));
+        assert!(!range.contains(&after));
+    }
+
+    #[test]
+    fn test_model_cycle_from_hour() {
+        assert_eq!(ModelCycle::from_hour(0), Some(ModelCycle::Z00));
+        assert_eq!(ModelCycle::from_hour(6), Some(ModelCycle::Z06));
+        assert_eq!(ModelCycle::from_hour(12), Some(ModelCycle::Z12));
+        assert_eq!(ModelCycle::from_hour(18), Some(ModelCycle::Z18));
+
+        // Invalid hours
+        assert_eq!(ModelCycle::from_hour(3), None);
+        assert_eq!(ModelCycle::from_hour(9), None);
+        assert_eq!(ModelCycle::from_hour(24), None);
+    }
+
+    #[test]
+    fn test_model_cycle_hour() {
+        assert_eq!(ModelCycle::Z00.hour(), 0);
+        assert_eq!(ModelCycle::Z06.hour(), 6);
+        assert_eq!(ModelCycle::Z12.hour(), 12);
+        assert_eq!(ModelCycle::Z18.hour(), 18);
+    }
+
+    #[test]
+    fn test_model_cycle_all_4x_daily() {
+        let cycles = ModelCycle::all_4x_daily();
+        assert_eq!(cycles.len(), 4);
+        assert_eq!(cycles[0], ModelCycle::Z00);
+        assert_eq!(cycles[1], ModelCycle::Z06);
+        assert_eq!(cycles[2], ModelCycle::Z12);
+        assert_eq!(cycles[3], ModelCycle::Z18);
+    }
+
+    #[test]
+    fn test_time_parse_error_display() {
+        let err = TimeParseError::InvalidFormat("bad-time".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Invalid time format"));
+        assert!(msg.contains("bad-time"));
     }
 }

@@ -1040,4 +1040,112 @@ mod tests {
         assert_eq!(files[2].filename, "old.grib2");
         assert_eq!(files[3].filename, "no_timestamp.grib2");
     }
+
+    // =========================================================================
+    // MRMS timestamp parsing edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_mrms_timestamp_different_products() {
+        // Test with different MRMS products
+        let key1 = "CONUS/MergedReflectivityQC_00.50/20251215/MRMS_MergedReflectivityQC_00.50_20251215-120000.grib2.gz";
+        let ts1 = ModelRunner::parse_mrms_timestamp(key1).unwrap();
+        assert_eq!(ts1.year(), 2025);
+        assert_eq!(ts1.month(), 12);
+        assert_eq!(ts1.day(), 15);
+        assert_eq!(ts1.hour(), 12);
+        assert_eq!(ts1.minute(), 0);
+        assert_eq!(ts1.second(), 0);
+    }
+
+    #[test]
+    fn test_parse_mrms_timestamp_invalid() {
+        // Invalid timestamp - too short
+        let key = "CONUS/SeamlessHSR_00.00/20251202/MRMS_SeamlessHSR_00.00_short.grib2.gz";
+        let ts = ModelRunner::parse_mrms_timestamp(key);
+        assert!(ts.is_none());
+    }
+
+    #[test]
+    fn test_parse_mrms_timestamp_no_underscore() {
+        // Key without proper underscore pattern
+        let key = "some/random/path.grib2.gz";
+        let ts = ModelRunner::parse_mrms_timestamp(key);
+        assert!(ts.is_none());
+    }
+
+    // =========================================================================
+    // GOES timestamp parsing edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_goes_timestamp_different_bands() {
+        // Test band 02 (visible)
+        let key1 = "ABI-L2-CMIPC/2025/001/12/OR_ABI-L2-CMIPC-M6C02_G18_s20250011200000_e20250011202373_c20250011202449.nc";
+        let ts1 = ModelRunner::parse_goes_timestamp(key1).unwrap();
+        assert_eq!(ts1.year(), 2025);
+        assert_eq!(ts1.hour(), 12);
+        assert_eq!(ts1.minute(), 0);
+        assert_eq!(ts1.second(), 0);
+
+        // Test band 13 (IR)
+        let key2 = "ABI-L2-CMIPC/2025/365/23/OR_ABI-L2-CMIPC-M6C13_G19_s20253652359450_e20253652359599_c20253652359599.nc";
+        let ts2 = ModelRunner::parse_goes_timestamp(key2).unwrap();
+        assert_eq!(ts2.year(), 2025);
+        assert_eq!(ts2.hour(), 23);
+        assert_eq!(ts2.minute(), 59);
+        assert_eq!(ts2.second(), 45);
+    }
+
+    #[test]
+    fn test_parse_goes_timestamp_invalid_no_s() {
+        // Missing _s marker
+        let key = "ABI-L2-CMIPC/2025/001/12/OR_ABI-L2-CMIPC-M6C02_G18_20250011200000.nc";
+        let ts = ModelRunner::parse_goes_timestamp(key);
+        assert!(ts.is_none());
+    }
+
+    #[test]
+    fn test_parse_goes_timestamp_truncated() {
+        // Truncated after _s
+        let key = "ABI-L2-CMIPC/2025/001/12/OR_ABI-L2-CMIPC-M6C02_G18_s2025.nc";
+        let ts = ModelRunner::parse_goes_timestamp(key);
+        assert!(ts.is_none());
+    }
+
+    #[test]
+    fn test_parse_goes_timestamp_fulldisk() {
+        // Full disk product (different prefix)
+        let key = "ABI-L2-CMIPF/2025/100/06/OR_ABI-L2-CMIPF-M6C02_G18_s20251000600000_e20251000609599_c20251000609599.nc";
+        let ts = ModelRunner::parse_goes_timestamp(key).unwrap();
+        assert_eq!(ts.year(), 2025);
+        // Day 100
+        assert_eq!(ts.hour(), 6);
+        assert_eq!(ts.minute(), 0);
+    }
+
+    // =========================================================================
+    // DownloadFile struct tests
+    // =========================================================================
+
+    #[test]
+    fn test_download_file_struct() {
+        let file = DownloadFile {
+            url: "https://example.com/data.grib2".to_string(),
+            filename: "data.grib2".to_string(),
+            timestamp: Some(Utc::now()),
+        };
+        assert!(file.url.starts_with("https://"));
+        assert!(file.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_download_file_without_timestamp() {
+        let file = DownloadFile {
+            url: "https://example.com/data.grib2".to_string(),
+            filename: "data.grib2".to_string(),
+            timestamp: None,
+        };
+        assert!(file.timestamp.is_none());
+    }
 }

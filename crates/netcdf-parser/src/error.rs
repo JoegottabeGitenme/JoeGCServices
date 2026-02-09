@@ -24,3 +24,27 @@ pub enum NetCdfError {
     #[error("Command execution failed: {0}")]
     CommandError(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_netcdf_error_display() {
+        let err = NetCdfError::MissingData("CMI variable".to_string());
+        assert!(err.to_string().contains("CMI variable"));
+
+        let err = NetCdfError::InvalidFormat("bad header".to_string());
+        assert!(err.to_string().contains("bad header"));
+
+        let err = NetCdfError::CommandError("ncdump failed".to_string());
+        assert!(err.to_string().contains("ncdump failed"));
+    }
+
+    #[test]
+    fn test_netcdf_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: NetCdfError = io_err.into();
+        assert!(err.to_string().contains("file not found"));
+    }
+}

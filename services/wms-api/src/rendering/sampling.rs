@@ -827,3 +827,227 @@ fn get_parameter_display_name(parameter: &str) -> String {
         _ => parameter.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer_config::{UnitConfig, UnitConversion};
+
+    // ==================== get_parameter_display_name tests ====================
+
+    #[test]
+    fn test_get_parameter_display_name_temperature() {
+        assert_eq!(get_parameter_display_name("TMP"), "Temperature");
+        assert_eq!(get_parameter_display_name("tmp"), "Temperature");
+        assert_eq!(get_parameter_display_name("Tmp"), "Temperature");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_dew_point() {
+        assert_eq!(get_parameter_display_name("DPT"), "Dew Point Temperature");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_humidity() {
+        assert_eq!(get_parameter_display_name("RH"), "Relative Humidity");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_wind_components() {
+        assert_eq!(get_parameter_display_name("UGRD"), "U Wind Component");
+        assert_eq!(get_parameter_display_name("VGRD"), "V Wind Component");
+        assert_eq!(get_parameter_display_name("GUST"), "Wind Gust");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_pressure() {
+        assert_eq!(get_parameter_display_name("PRES"), "Pressure");
+        assert_eq!(get_parameter_display_name("PRMSL"), "Pressure");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_height() {
+        assert_eq!(get_parameter_display_name("HGT"), "Geopotential Height");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_precipitation() {
+        assert_eq!(get_parameter_display_name("APCP"), "Precipitation");
+        assert_eq!(get_parameter_display_name("PWAT"), "Precipitable Water");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_instability() {
+        assert_eq!(get_parameter_display_name("CAPE"), "CAPE");
+        assert_eq!(get_parameter_display_name("CIN"), "CIN");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_visibility() {
+        assert_eq!(get_parameter_display_name("VIS"), "Visibility");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_cloud_cover() {
+        assert_eq!(get_parameter_display_name("TCDC"), "Total Cloud Cover");
+        assert_eq!(get_parameter_display_name("LCDC"), "Low Cloud Cover");
+        assert_eq!(get_parameter_display_name("MCDC"), "Medium Cloud Cover");
+        assert_eq!(get_parameter_display_name("HCDC"), "High Cloud Cover");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_reflectivity() {
+        assert_eq!(get_parameter_display_name("REFC"), "Composite Reflectivity");
+    }
+
+    #[test]
+    fn test_get_parameter_display_name_unknown_returns_original() {
+        assert_eq!(get_parameter_display_name("UNKNOWN"), "UNKNOWN");
+        assert_eq!(get_parameter_display_name("custom_param"), "custom_param");
+        assert_eq!(get_parameter_display_name("XYZ123"), "XYZ123");
+    }
+
+    // ==================== convert_value_with_config tests ====================
+
+    #[test]
+    fn test_convert_value_with_config_kelvin_to_celsius() {
+        let unit_config = UnitConfig {
+            native: "K".to_string(),
+            display: "°C".to_string(),
+            conversion: UnitConversion::KToC,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(300.0, &unit_config, "TMP");
+
+        // 300K - 273.15 = 26.85°C
+        assert!((converted - 26.85).abs() < 0.01);
+        assert_eq!(display_unit, "°C");
+        assert_eq!(native_unit, "K");
+        assert_eq!(param_name, "Temperature");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_kelvin_to_fahrenheit() {
+        let unit_config = UnitConfig {
+            native: "K".to_string(),
+            display: "°F".to_string(),
+            conversion: UnitConversion::KToF,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(300.0, &unit_config, "TMP");
+
+        // (300 - 273.15) * 9/5 + 32 = 80.33°F
+        assert!((converted - 80.33).abs() < 0.01);
+        assert_eq!(display_unit, "°F");
+        assert_eq!(native_unit, "K");
+        assert_eq!(param_name, "Temperature");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_pascal_to_hpa() {
+        let unit_config = UnitConfig {
+            native: "Pa".to_string(),
+            display: "hPa".to_string(),
+            conversion: UnitConversion::PaToHPa,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(101325.0, &unit_config, "PRMSL");
+
+        // 101325 Pa / 100 = 1013.25 hPa
+        assert!((converted - 1013.25).abs() < 0.01);
+        assert_eq!(display_unit, "hPa");
+        assert_eq!(native_unit, "Pa");
+        assert_eq!(param_name, "Pressure");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_no_conversion() {
+        let unit_config = UnitConfig {
+            native: "%".to_string(),
+            display: "%".to_string(),
+            conversion: UnitConversion::None,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(75.0, &unit_config, "RH");
+
+        assert!((converted - 75.0).abs() < 0.01);
+        assert_eq!(display_unit, "%");
+        assert_eq!(native_unit, "%");
+        assert_eq!(param_name, "Relative Humidity");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_meters_to_km() {
+        let unit_config = UnitConfig {
+            native: "m".to_string(),
+            display: "km".to_string(),
+            conversion: UnitConversion::MToKm,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(5000.0, &unit_config, "VIS");
+
+        // 5000m / 1000 = 5km
+        assert!((converted - 5.0).abs() < 0.01);
+        assert_eq!(display_unit, "km");
+        assert_eq!(native_unit, "m");
+        assert_eq!(param_name, "Visibility");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_ms_to_mph() {
+        let unit_config = UnitConfig {
+            native: "m/s".to_string(),
+            display: "mph".to_string(),
+            conversion: UnitConversion::MsToMph,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(10.0, &unit_config, "GUST");
+
+        // 10 m/s * 2.237 = 22.37 mph
+        assert!((converted - 22.37).abs() < 0.1);
+        assert_eq!(display_unit, "mph");
+        assert_eq!(native_unit, "m/s");
+        assert_eq!(param_name, "Wind Gust");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_uses_effective_display() {
+        // When display is empty, effective_display returns native
+        let unit_config = UnitConfig {
+            native: "K".to_string(),
+            display: String::new(),
+            conversion: UnitConversion::None,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(300.0, &unit_config, "TMP");
+
+        assert!((converted - 300.0).abs() < 0.01);
+        assert_eq!(display_unit, "K"); // Falls back to native
+        assert_eq!(native_unit, "K");
+        assert_eq!(param_name, "Temperature");
+    }
+
+    #[test]
+    fn test_convert_value_with_config_unknown_parameter() {
+        let unit_config = UnitConfig {
+            native: "units".to_string(),
+            display: "units".to_string(),
+            conversion: UnitConversion::None,
+        };
+
+        let (converted, display_unit, native_unit, param_name) =
+            convert_value_with_config(42.0, &unit_config, "CUSTOM_PARAM");
+
+        assert!((converted - 42.0).abs() < 0.01);
+        assert_eq!(display_unit, "units");
+        assert_eq!(native_unit, "units");
+        assert_eq!(param_name, "CUSTOM_PARAM"); // Returns original for unknown
+    }
+}

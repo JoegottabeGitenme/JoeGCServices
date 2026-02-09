@@ -190,3 +190,155 @@ impl Ingester {
         &self.catalog
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Datelike, TimeZone};
+
+    // Tests for IngestOptions
+    #[test]
+    fn test_ingest_options_default() {
+        let opts = IngestOptions::default();
+        assert!(opts.model.is_none());
+        assert!(opts.forecast_hour.is_none());
+    }
+
+    #[test]
+    fn test_ingest_options_with_model() {
+        let opts = IngestOptions {
+            model: Some("gfs".to_string()),
+            forecast_hour: None,
+        };
+        assert_eq!(opts.model, Some("gfs".to_string()));
+        assert!(opts.forecast_hour.is_none());
+    }
+
+    #[test]
+    fn test_ingest_options_with_forecast_hour() {
+        let opts = IngestOptions {
+            model: None,
+            forecast_hour: Some(12),
+        };
+        assert!(opts.model.is_none());
+        assert_eq!(opts.forecast_hour, Some(12));
+    }
+
+    #[test]
+    fn test_ingest_options_fully_specified() {
+        let opts = IngestOptions {
+            model: Some("hrrr".to_string()),
+            forecast_hour: Some(6),
+        };
+        assert_eq!(opts.model, Some("hrrr".to_string()));
+        assert_eq!(opts.forecast_hour, Some(6));
+    }
+
+    #[test]
+    fn test_ingest_options_clone() {
+        let opts = IngestOptions {
+            model: Some("nam".to_string()),
+            forecast_hour: Some(18),
+        };
+        let cloned = opts.clone();
+        assert_eq!(cloned.model, opts.model);
+        assert_eq!(cloned.forecast_hour, opts.forecast_hour);
+    }
+
+    #[test]
+    fn test_ingest_options_debug() {
+        let opts = IngestOptions {
+            model: Some("test".to_string()),
+            forecast_hour: Some(3),
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("IngestOptions"));
+        assert!(debug_str.contains("test"));
+        assert!(debug_str.contains("3"));
+    }
+
+    // Tests for IngestionResult
+    #[test]
+    fn test_ingestion_result_creation() {
+        let result = IngestionResult {
+            datasets_registered: 5,
+            model: "gfs".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
+            parameters: vec!["TMP".to_string(), "UGRD".to_string()],
+            bytes_written: 1024 * 1024,
+        };
+
+        assert_eq!(result.datasets_registered, 5);
+        assert_eq!(result.model, "gfs");
+        assert_eq!(result.reference_time.year(), 2024);
+        assert_eq!(result.parameters.len(), 2);
+        assert_eq!(result.bytes_written, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_ingestion_result_empty_parameters() {
+        let result = IngestionResult {
+            datasets_registered: 0,
+            model: "empty".to_string(),
+            reference_time: Utc::now(),
+            parameters: vec![],
+            bytes_written: 0,
+        };
+
+        assert_eq!(result.datasets_registered, 0);
+        assert!(result.parameters.is_empty());
+        assert_eq!(result.bytes_written, 0);
+    }
+
+    #[test]
+    fn test_ingestion_result_clone() {
+        let result = IngestionResult {
+            datasets_registered: 3,
+            model: "hrrr".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap(),
+            parameters: vec!["APCP".to_string()],
+            bytes_written: 2048,
+        };
+
+        let cloned = result.clone();
+        assert_eq!(cloned.datasets_registered, result.datasets_registered);
+        assert_eq!(cloned.model, result.model);
+        assert_eq!(cloned.reference_time, result.reference_time);
+        assert_eq!(cloned.parameters, result.parameters);
+        assert_eq!(cloned.bytes_written, result.bytes_written);
+    }
+
+    #[test]
+    fn test_ingestion_result_debug() {
+        let result = IngestionResult {
+            datasets_registered: 10,
+            model: "goes18".to_string(),
+            reference_time: Utc::now(),
+            parameters: vec!["CMI_C02".to_string()],
+            bytes_written: 500_000,
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("IngestionResult"));
+        assert!(debug_str.contains("goes18"));
+        assert!(debug_str.contains("CMI_C02"));
+        assert!(debug_str.contains("500000"));
+    }
+
+    #[test]
+    fn test_ingestion_result_many_parameters() {
+        let params: Vec<String> = (1..=16).map(|i| format!("CMI_C{:02}", i)).collect();
+
+        let result = IngestionResult {
+            datasets_registered: 16,
+            model: "goes19".to_string(),
+            reference_time: Utc::now(),
+            parameters: params.clone(),
+            bytes_written: 16 * 1024 * 1024,
+        };
+
+        assert_eq!(result.parameters.len(), 16);
+        assert!(result.parameters.contains(&"CMI_C01".to_string()));
+        assert!(result.parameters.contains(&"CMI_C16".to_string()));
+    }
+}

@@ -5,6 +5,7 @@
 //! - Skip macros for optional test data
 //! - Grid data generators
 //! - Common test fixtures
+//! - Docker container management (with `containers` feature)
 //!
 //! # Usage
 //!
@@ -13,6 +14,13 @@
 //! ```toml
 //! [dev-dependencies]
 //! test-utils = { path = "../test-utils" }
+//! ```
+//!
+//! For integration tests with Docker containers:
+//!
+//! ```toml
+//! [dev-dependencies]
+//! test-utils = { path = "../test-utils", features = ["containers"] }
 //! ```
 //!
 //! Then import in your tests:
@@ -24,6 +32,9 @@
 pub mod fixtures;
 pub mod generators;
 pub mod paths;
+
+#[cfg(feature = "containers")]
+pub mod containers;
 
 // Re-export commonly used items at the crate root
 pub use fixtures::*;

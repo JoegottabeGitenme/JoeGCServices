@@ -927,4 +927,153 @@ mod tests {
         let segments = march_squares(&data, 3, 3, 5.0);
         assert!(!segments.is_empty()); // Should generate contour around peak
     }
+
+    // ==================== contour_length tests ====================
+
+    #[test]
+    fn test_contour_length_single_point() {
+        let contour = Contour {
+            level: 0.0,
+            points: vec![Point::new(0.0, 0.0)],
+            closed: false,
+        };
+        assert_eq!(contour_length(&contour), 0.0);
+    }
+
+    #[test]
+    fn test_contour_length_two_points() {
+        let contour = Contour {
+            level: 0.0,
+            points: vec![Point::new(0.0, 0.0), Point::new(3.0, 4.0)],
+            closed: false,
+        };
+        // 3-4-5 triangle, so length should be 5
+        assert!((contour_length(&contour) - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_contour_length_horizontal_line() {
+        let contour = Contour {
+            level: 0.0,
+            points: vec![Point::new(0.0, 0.0), Point::new(10.0, 0.0)],
+            closed: false,
+        };
+        assert!((contour_length(&contour) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_contour_length_vertical_line() {
+        let contour = Contour {
+            level: 0.0,
+            points: vec![Point::new(0.0, 0.0), Point::new(0.0, 10.0)],
+            closed: false,
+        };
+        assert!((contour_length(&contour) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_contour_length_multi_segment() {
+        // Square path: (0,0) -> (10,0) -> (10,10) -> (0,10) = 30 total
+        let contour = Contour {
+            level: 0.0,
+            points: vec![
+                Point::new(0.0, 0.0),
+                Point::new(10.0, 0.0),
+                Point::new(10.0, 10.0),
+                Point::new(0.0, 10.0),
+            ],
+            closed: false,
+        };
+        assert!((contour_length(&contour) - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_contour_length_empty() {
+        let contour = Contour {
+            level: 0.0,
+            points: vec![],
+            closed: false,
+        };
+        assert_eq!(contour_length(&contour), 0.0);
+    }
+
+    // ==================== interpolate_edge additional tests ====================
+
+    #[test]
+    fn test_interpolate_edge_at_start() {
+        // Level equals val1, should return start point
+        let p = interpolate_edge(0.0, 0.0, 10.0, 0.0, 5.0, 15.0, 5.0);
+        assert!((p.x - 0.0).abs() < 0.01);
+        assert!((p.y - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_at_end() {
+        // Level equals val2, should return end point
+        let p = interpolate_edge(0.0, 0.0, 10.0, 0.0, 5.0, 15.0, 15.0);
+        assert!((p.x - 10.0).abs() < 0.01);
+        assert!((p.y - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_quarter() {
+        // Level is 25% between val1 and val2
+        let p = interpolate_edge(0.0, 0.0, 10.0, 0.0, 0.0, 100.0, 25.0);
+        assert!((p.x - 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_equal_values() {
+        // When val1 == val2, should return midpoint
+        let p = interpolate_edge(0.0, 0.0, 10.0, 10.0, 5.0, 5.0, 5.0);
+        assert!((p.x - 5.0).abs() < 0.01);
+        assert!((p.y - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_vertical() {
+        // Vertical edge
+        let p = interpolate_edge(5.0, 0.0, 5.0, 10.0, 0.0, 10.0, 5.0);
+        assert!((p.x - 5.0).abs() < 0.01);
+        assert!((p.y - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_diagonal() {
+        // Diagonal edge
+        let p = interpolate_edge(0.0, 0.0, 10.0, 10.0, 0.0, 10.0, 5.0);
+        assert!((p.x - 5.0).abs() < 0.01);
+        assert!((p.y - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_clamped_below() {
+        // Level below val1 should clamp to start
+        let p = interpolate_edge(0.0, 0.0, 10.0, 0.0, 10.0, 20.0, 5.0);
+        assert!((p.x - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_interpolate_edge_clamped_above() {
+        // Level above val2 should clamp to end
+        let p = interpolate_edge(0.0, 0.0, 10.0, 0.0, 10.0, 20.0, 25.0);
+        assert!((p.x - 10.0).abs() < 0.01);
+    }
+
+    // ==================== Point tests ====================
+
+    #[test]
+    fn test_point_new() {
+        let p = Point::new(3.5, 7.2);
+        assert!((p.x - 3.5).abs() < 0.001);
+        assert!((p.y - 7.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_point_copy() {
+        let p1 = Point::new(1.0, 2.0);
+        let p2 = p1; // Copy
+        assert!((p2.x - 1.0).abs() < 0.001);
+        assert!((p2.y - 2.0).abs() < 0.001);
+    }
 }

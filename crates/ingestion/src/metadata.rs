@@ -983,4 +983,133 @@ mod tests {
         let debug_str = format!("{:?}", ft);
         assert!(debug_str.contains("Grib2"));
     }
+
+    #[test]
+    fn test_file_type_copy_clone() {
+        let ft = FileType::NetCdf;
+        let ft2 = ft; // Copy
+        let ft3 = ft.clone(); // Clone
+        assert_eq!(ft, ft2);
+        assert_eq!(ft, ft3);
+    }
+
+    #[test]
+    fn test_goes_file_info_debug_clone() {
+        let info = GoesFileInfo {
+            satellite: "goes19".to_string(),
+            band: 2,
+            scan_mode: "M6".to_string(),
+            observation_time: Utc::now(),
+            product: "CMIPC".to_string(),
+        };
+        let cloned = info.clone();
+        assert_eq!(info.satellite, cloned.satellite);
+        assert_eq!(info.band, cloned.band);
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("GoesFileInfo"));
+        assert!(debug_str.contains("goes19"));
+    }
+
+    #[test]
+    fn test_extract_model_aigefs() {
+        // AIGEFS must be tested before AIGFS due to string matching order
+        assert_eq!(
+            extract_model_from_filename("aigefs_pres_20260130_00z_f000.grib2"),
+            Some("aigefs".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("AIGEFS_sfc_20260130_12z_f012.grib2"),
+            Some("aigefs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_goes_filename_timestamp_edge_cases() {
+        // Test with different days of year
+        // Day 1 = January 1
+        let filename =
+            "OR_ABI-L2-CMIPC-M6C02_G19_s20240011200000_e20240011200000_c20240011200000.nc";
+        let info = parse_goes_filename(filename).expect("Should parse");
+        assert_eq!(info.observation_time.month(), 1);
+        assert_eq!(info.observation_time.day(), 1);
+
+        // Day 365 = December 31 (non-leap year) or December 30 (leap year 2024)
+        let filename =
+            "OR_ABI-L2-CMIPC-M6C02_G19_s20243660000000_e20243660000000_c20243660000000.nc";
+        let info = parse_goes_filename(filename).expect("Should parse leap year day 366");
+        assert_eq!(info.observation_time.month(), 12);
+        assert_eq!(info.observation_time.day(), 31); // 2024 is leap year, day 366 = Dec 31
+    }
+
+    #[test]
+    fn test_extract_forecast_hour_edge_cases() {
+        // Test with leading zeros
+        assert_eq!(extract_forecast_hour("model_f000.grib2"), Some(0));
+        assert_eq!(extract_forecast_hour("model_f001.grib2"), Some(1));
+
+        // Test pattern at different positions
+        assert_eq!(
+            extract_forecast_hour("prefix_model_f024_suffix.grib2"),
+            Some(24)
+        );
+    }
+
+    #[test]
+    fn test_extract_mrms_param_none() {
+        // Files without MRMS pattern
+        assert_eq!(extract_mrms_param("gfs_temperature.grib2"), None);
+        assert_eq!(extract_mrms_param("random_file.nc"), None);
+    }
+
+    #[test]
+    fn test_get_bbox_from_grid_longitude_wrapping() {
+        use grib2_parser::sections::GridDefinition;
+
+        // Test grid with longitude > 180 (0-360 format)
+        let grid = GridDefinition {
+            grid_shape: 0,
+            num_points_latitude: 50,
+            num_points_longitude: 100,
+            first_latitude_millidegrees: 40000,   // 40°N
+            first_longitude_millidegrees: 200000, // 200° (should become -160°)
+            last_latitude_millidegrees: 50000,    // 50°N
+            last_longitude_millidegrees: 250000,  // 250° (should become -110°)
+            latitude_increment_millidegrees: 500,
+            longitude_increment_millidegrees: 500,
+            scanning_mode: 0,
+        };
+
+        let bbox = get_bbox_from_grid(&grid);
+        assert!(bbox.min_x < 0.0, "Longitude should be wrapped to negative");
+        assert!(bbox.max_x < 0.0, "Longitude should be wrapped to negative");
+        assert_eq!(bbox.min_x, -160.0);
+        assert_eq!(bbox.max_x, -110.0);
+    }
+
+    #[test]
+    fn test_get_bbox_from_grid_reversed_scan() {
+        use grib2_parser::sections::GridDefinition;
+
+        // Test grid where first > last (scanning in opposite direction)
+        let grid = GridDefinition {
+            grid_shape: 0,
+            num_points_latitude: 50,
+            num_points_longitude: 100,
+            first_latitude_millidegrees: 50000,   // 50°N (higher)
+            first_longitude_millidegrees: -60000, // -60°
+            last_latitude_millidegrees: 20000,    // 20°N (lower)
+            last_longitude_millidegrees: -130000, // -130°
+            latitude_increment_millidegrees: 500,
+            longitude_increment_millidegrees: 500,
+            scanning_mode: 0,
+        };
+
+        let bbox = get_bbox_from_grid(&grid);
+        // min/max should be sorted correctly regardless of scan order
+        assert_eq!(bbox.min_y, 20.0);
+        assert_eq!(bbox.max_y, 50.0);
+        assert_eq!(bbox.min_x, -130.0);
+        assert_eq!(bbox.max_x, -60.0);
+    }
 }

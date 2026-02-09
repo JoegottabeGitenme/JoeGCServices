@@ -114,6 +114,42 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_bits_across_bytes() {
+        // Test extracting bits that span multiple bytes
+        let data = vec![0b11110000, 0b00001111];
+
+        // Extract 4 bits from position 4 (should span both bytes)
+        let result = extract_bits(&data, 4, 4).unwrap();
+        assert_eq!(result, 0b0000); // last 4 bits of first byte
+
+        // Extract 8 bits starting at position 4
+        let result = extract_bits(&data, 4, 8).unwrap();
+        assert_eq!(result, 0b00000000); // 0000 from byte 0 + 0000 from byte 1
+    }
+
+    #[test]
+    fn test_extract_bits_invalid_num_bits() {
+        let data = vec![0xFF];
+
+        // 0 bits is invalid
+        let result = extract_bits(&data, 0, 0);
+        assert!(result.is_err());
+
+        // > 32 bits is invalid
+        let result = extract_bits(&data, 0, 33);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_bits_not_enough_data() {
+        let data = vec![0xFF];
+
+        // Try to extract beyond the data
+        let result = extract_bits(&data, 8, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_simple_unpacking() {
         // Simple test: 2 data points, 8 bits per value
         let packed = vec![100, 200];
@@ -133,5 +169,71 @@ mod tests {
         assert!((vals[0].unwrap() - 100.0).abs() < 0.1);
         // Second value should be close to 200.0
         assert!((vals[1].unwrap() - 200.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_simple_unpacking_zero_bits() {
+        // When bits_per_value is 0, all values equal reference_value
+        let packed = vec![];
+        let values = unpack_simple(
+            &packed, 5,     // 5 data points
+            0,     // 0 bits per value
+            273.0, // reference value
+            0, 0, None,
+        );
+
+        assert!(values.is_ok());
+        let vals = values.unwrap();
+        assert_eq!(vals.len(), 5);
+        for v in vals {
+            assert!((v.unwrap() - 273.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_simple_unpacking_with_scale_factors() {
+        // Test with scale factors
+        let packed = vec![0, 1, 2, 3]; // 4 values, 8 bits each
+        let values = unpack_simple(
+            &packed, 4, 8, 100.0, // reference value
+            1,     // binary scale = 2^1 = 2
+            1,     // decimal scale = 10^-1 = 0.1
+            None,
+        );
+
+        assert!(values.is_ok());
+        let vals = values.unwrap();
+        assert_eq!(vals.len(), 4);
+        // value = (reference + packed * 2^binary_scale) * 10^(-decimal_scale)
+        // val[0] = (100 + 0 * 2) * 0.1 = 10.0
+        // val[1] = (100 + 1 * 2) * 0.1 = 10.2
+        assert!((vals[0].unwrap() - 10.0).abs() < 0.01);
+        assert!((vals[1].unwrap() - 10.2).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_simple_unpacking_with_bitmap() {
+        // Test with a bitmap indicating missing values
+        // The current implementation still reads packed data for all points
+        // (advancing bit_position even for missing values), so we need enough data
+        let packed = vec![100, 0, 200, 0]; // 4 values worth of data, 8 bits each
+        let bitmap = vec![0b10100000]; // bits: 1,0,1,0,0,0,0,0 - values at positions 0 and 2
+        let values = unpack_simple(
+            &packed,
+            4, // 4 data points
+            8, // 8 bits per value
+            0.0,
+            0,
+            0,
+            Some(&bitmap),
+        );
+
+        assert!(values.is_ok(), "Unpacking failed: {:?}", values);
+        let vals = values.unwrap();
+        assert_eq!(vals.len(), 4);
+        assert!(vals[0].is_some()); // Present
+        assert!(vals[1].is_none()); // Missing (bitmap bit = 0)
+        assert!(vals[2].is_some()); // Present
+        assert!(vals[3].is_none()); // Missing
     }
 }

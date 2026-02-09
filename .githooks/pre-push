@@ -102,5 +102,154 @@ if ! cargo test --workspace --quiet 2>/dev/null; then
 fi
 echo -e "  ${GREEN}Tests OK${NC}"
 
+# 6. Code coverage checks for critical crates
+# Set COVERAGE_CHECK=warn to only warn on threshold violations
+# Set COVERAGE_CHECK=skip to skip coverage entirely
+COVERAGE_CHECK="${COVERAGE_CHECK:-strict}"
+
+if [ "$COVERAGE_CHECK" != "skip" ]; then
+    # Check if cargo-tarpaulin is installed
+    if command -v cargo-tarpaulin &> /dev/null; then
+        echo "  Checking code coverage for critical crates..."
+        
+        # Coverage thresholds (adjust as coverage improves)
+        # Core crates
+        RENDERER_THRESHOLD=70
+        PROJECTION_THRESHOLD=90
+        WMS_COMMON_THRESHOLD=60
+        
+        # Parser crates
+        GRIB2_PARSER_THRESHOLD=55
+        NETCDF_PARSER_THRESHOLD=30
+        
+        # Processing crates
+        INGESTION_THRESHOLD=30
+        GRID_PROCESSOR_THRESHOLD=40
+        
+        # Storage & services (integration-heavy, lower thresholds)
+        STORAGE_THRESHOLD=10
+        WMS_API_THRESHOLD=8
+        EDR_API_THRESHOLD=16
+        
+        COVERAGE_FAILED=0
+        
+        # Function to check coverage for a package
+        # Calculates coverage for just the crate's own files, not dependencies
+        check_coverage() {
+            local package=$1
+            local threshold=$2
+            local output
+            local total_covered=0
+            local total_lines=0
+            local coverage
+            
+            # Determine the crate path based on package name
+            local crate_path
+            case "$package" in
+                "renderer") crate_path="crates/renderer/src" ;;
+                "projection") crate_path="crates/projection/src" ;;
+                "wms-common") crate_path="crates/wms-common/src" ;;
+                "grib2-parser") crate_path="crates/grib2-parser/src" ;;
+                "netcdf-parser") crate_path="crates/netcdf-parser/src" ;;
+                "ingestion") crate_path="crates/ingestion/src" ;;
+                "grid-processor") crate_path="crates/grid-processor/src" ;;
+                "storage") crate_path="crates/storage/src" ;;
+                "wms-api") crate_path="services/wms-api/src" ;;
+                "edr-api") crate_path="services/edr-api/src" ;;
+                *) crate_path="crates/$package/src" ;;
+            esac
+            
+            output=$(cargo tarpaulin --package "$package" --skip-clean --out Stdout 2>&1)
+            
+            # Parse per-file coverage lines for just the target crate
+            # Format: "|| path/to/file.rs: 123/456 +0.00%"
+            while IFS= read -r line; do
+                if [[ "$line" =~ \|\|\ ${crate_path}/.*:\ ([0-9]+)/([0-9]+) ]]; then
+                    local covered="${BASH_REMATCH[1]}"
+                    local total="${BASH_REMATCH[2]}"
+                    total_covered=$((total_covered + covered))
+                    total_lines=$((total_lines + total))
+                fi
+            done <<< "$output"
+            
+            if [ "$total_lines" -eq 0 ]; then
+                echo -e "    ${YELLOW}$package: No coverage data found${NC}"
+                return 0
+            fi
+            
+            # Calculate percentage (integer math, multiply first to avoid truncation)
+            local coverage_pct=$((total_covered * 100 / total_lines))
+            
+            if [ "$coverage_pct" -lt "$threshold" ]; then
+                echo -e "    ${RED}$package: ${coverage_pct}% (${total_covered}/${total_lines}) < ${threshold}% threshold${NC}"
+                return 1
+            else
+                echo -e "    ${GREEN}$package: ${coverage_pct}% (${total_covered}/${total_lines}) >= ${threshold}% threshold${NC}"
+                return 0
+            fi
+        }
+        
+        # Core crates
+        if ! check_coverage "renderer" $RENDERER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "projection" $PROJECTION_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "wms-common" $WMS_COMMON_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Parser crates
+        if ! check_coverage "grib2-parser" $GRIB2_PARSER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "netcdf-parser" $NETCDF_PARSER_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Processing crates
+        if ! check_coverage "ingestion" $INGESTION_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "grid-processor" $GRID_PROCESSOR_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        # Storage & services
+        if ! check_coverage "storage" $STORAGE_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "wms-api" $WMS_API_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if ! check_coverage "edr-api" $EDR_API_THRESHOLD; then
+            COVERAGE_FAILED=1
+        fi
+        
+        if [ $COVERAGE_FAILED -eq 1 ]; then
+            if [ "$COVERAGE_CHECK" = "strict" ]; then
+                echo -e "${RED}Coverage check failed!${NC}"
+                echo "Improve test coverage or set COVERAGE_CHECK=warn to continue."
+                exit 1
+            else
+                echo -e "${YELLOW}Coverage below threshold (warning only)${NC}"
+                echo "Set COVERAGE_CHECK=strict to enforce thresholds."
+            fi
+        else
+            echo -e "  ${GREEN}Coverage OK${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}Skipping coverage (cargo-tarpaulin not installed)${NC}"
+        echo "  Install with: cargo install cargo-tarpaulin"
+    fi
+fi
+
 echo -e "${GREEN}All pre-push checks passed!${NC}"
 exit 0

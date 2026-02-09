@@ -1909,3 +1909,244 @@ CREATE TABLE IF NOT EXISTS taf_periods (
 CREATE INDEX IF NOT EXISTS idx_taf_periods_taf ON taf_periods(taf_id);
 CREATE INDEX IF NOT EXISTS idx_taf_periods_time ON taf_periods(period_from, period_to)
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    // =========================================================================
+    // CatalogEntry Tests
+    // =========================================================================
+
+    fn create_test_entry(reference_time: DateTime<Utc>, forecast_hour: u32) -> CatalogEntry {
+        CatalogEntry {
+            model: "gfs".to_string(),
+            parameter: "temperature_2m".to_string(),
+            level: "surface".to_string(),
+            reference_time,
+            forecast_hour,
+            bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
+            storage_path: "/data/gfs/2024/01/15/12z/000/temperature_2m.zarr".to_string(),
+            file_size: 1024 * 1024,
+            zarr_metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_catalog_entry_valid_time_analysis() {
+        // Analysis (F00) - valid_time equals reference_time
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let entry = create_test_entry(ref_time, 0);
+        assert_eq!(entry.valid_time(), ref_time);
+    }
+
+    #[test]
+    fn test_catalog_entry_valid_time_forecast() {
+        // F006 - valid_time is 6 hours after reference_time
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let entry = create_test_entry(ref_time, 6);
+        let expected = Utc.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
+        assert_eq!(entry.valid_time(), expected);
+    }
+
+    #[test]
+    fn test_catalog_entry_valid_time_next_day() {
+        // F024 - valid_time crosses to next day
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let entry = create_test_entry(ref_time, 24);
+        let expected = Utc.with_ymd_and_hms(2024, 1, 16, 12, 0, 0).unwrap();
+        assert_eq!(entry.valid_time(), expected);
+    }
+
+    #[test]
+    fn test_catalog_entry_valid_time_long_range() {
+        // F384 (16 days) - long range forecast
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap();
+        let entry = create_test_entry(ref_time, 384);
+        let expected = Utc.with_ymd_and_hms(2024, 1, 31, 0, 0, 0).unwrap();
+        assert_eq!(entry.valid_time(), expected);
+    }
+
+    #[test]
+    fn test_catalog_entry_layer_id() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let entry = create_test_entry(ref_time, 0);
+        let layer_id = entry.layer_id();
+        assert_eq!(layer_id.0, "gfs:temperature_2m");
+    }
+
+    #[test]
+    fn test_catalog_entry_layer_id_different_model() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let mut entry = create_test_entry(ref_time, 0);
+        entry.model = "hrrr".to_string();
+        entry.parameter = "wind_speed".to_string();
+        let layer_id = entry.layer_id();
+        assert_eq!(layer_id.0, "hrrr:wind_speed");
+    }
+
+    // =========================================================================
+    // DatasetQuery Tests
+    // =========================================================================
+
+    #[test]
+    fn test_dataset_query_default() {
+        let query = DatasetQuery::default();
+        assert!(query.model.is_none());
+        assert!(query.parameter.is_none());
+        assert!(query.level.is_none());
+        assert!(query.time_range.is_none());
+        assert!(query.bbox.is_none());
+    }
+
+    #[test]
+    fn test_dataset_query_with_filters() {
+        let query = DatasetQuery {
+            model: Some("gfs".to_string()),
+            parameter: Some("temperature_2m".to_string()),
+            level: None,
+            time_range: None,
+            bbox: None,
+        };
+        assert_eq!(query.model.as_deref(), Some("gfs"));
+        assert_eq!(query.parameter.as_deref(), Some("temperature_2m"));
+    }
+
+    // =========================================================================
+    // PurgePreview Tests
+    // =========================================================================
+
+    #[test]
+    fn test_purge_preview_default() {
+        let preview = PurgePreview::default();
+        assert_eq!(preview.dataset_count, 0);
+        assert_eq!(preview.total_size_bytes, 0);
+    }
+
+    // =========================================================================
+    // ModelStats Tests
+    // =========================================================================
+
+    #[test]
+    fn test_model_stats_creation() {
+        let stats = ModelStats {
+            model: "gfs".to_string(),
+            dataset_count: 1000,
+            parameter_count: 25,
+            last_ingest: Some(Utc::now()),
+            parameters: vec!["temperature_2m".to_string(), "wind_speed".to_string()],
+        };
+        assert_eq!(stats.model, "gfs");
+        assert_eq!(stats.dataset_count, 1000);
+        assert_eq!(stats.parameters.len(), 2);
+    }
+
+    // =========================================================================
+    // ParameterAvailability Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parameter_availability_forecast_model() {
+        let avail = ParameterAvailability {
+            times: vec![
+                "2024-01-15T00:00:00Z".to_string(),
+                "2024-01-15T06:00:00Z".to_string(),
+            ],
+            forecast_hours: vec![0, 6, 12, 18, 24],
+            levels: vec!["surface".to_string()],
+            bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
+        };
+        assert_eq!(avail.times.len(), 2);
+        assert_eq!(avail.forecast_hours.len(), 5);
+    }
+
+    #[test]
+    fn test_parameter_availability_observation_model() {
+        // Observation models have times but no forecast hours
+        let avail = ParameterAvailability {
+            times: vec![
+                "2024-01-15T12:00:00Z".to_string(),
+                "2024-01-15T12:15:00Z".to_string(),
+            ],
+            forecast_hours: vec![], // Empty for observations
+            levels: vec!["surface".to_string()],
+            bbox: BoundingBox::new(-125.0, 24.0, -66.0, 50.0),
+        };
+        assert!(avail.forecast_hours.is_empty());
+        assert_eq!(avail.times.len(), 2);
+    }
+
+    // =========================================================================
+    // DatasetInfo Tests
+    // =========================================================================
+
+    #[test]
+    fn test_dataset_info_creation() {
+        let info = DatasetInfo {
+            model: "hrrr".to_string(),
+            parameter: "reflectivity".to_string(),
+            level: "surface".to_string(),
+            reference_time: Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
+            forecast_hour: 3,
+            valid_time: Utc.with_ymd_and_hms(2024, 1, 15, 15, 0, 0).unwrap(),
+            storage_path: "/data/hrrr/reflectivity.zarr".to_string(),
+            file_size: 512 * 1024,
+        };
+        assert_eq!(info.model, "hrrr");
+        assert_eq!(info.forecast_hour, 3);
+    }
+
+    // =========================================================================
+    // LatestRunInfo Tests
+    // =========================================================================
+
+    #[test]
+    fn test_latest_run_info_creation() {
+        let ref_time = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
+        let info = LatestRunInfo {
+            reference_time: ref_time,
+            forecast_hours: vec![0, 1, 2, 3, 6, 12, 18, 24],
+            valid_time_start: ref_time,
+            valid_time_end: ref_time + chrono::Duration::hours(24),
+        };
+        assert_eq!(info.forecast_hours.len(), 8);
+        assert_eq!(
+            info.valid_time_end - info.valid_time_start,
+            chrono::Duration::hours(24)
+        );
+    }
+
+    // =========================================================================
+    // ParameterStats Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parameter_stats_with_data() {
+        let stats = ParameterStats {
+            model: "gfs".to_string(),
+            parameter: "temperature_2m".to_string(),
+            count: 500,
+            oldest: Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+            newest: Some(Utc.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap()),
+            total_size_bytes: 1024 * 1024 * 500, // 500 MB
+        };
+        assert!(stats.oldest.is_some());
+        assert!(stats.newest.is_some());
+        assert!(stats.newest.unwrap() > stats.oldest.unwrap());
+    }
+
+    #[test]
+    fn test_parameter_stats_empty() {
+        let stats = ParameterStats {
+            model: "new_model".to_string(),
+            parameter: "new_param".to_string(),
+            count: 0,
+            oldest: None,
+            newest: None,
+            total_size_bytes: 0,
+        };
+        assert_eq!(stats.count, 0);
+        assert!(stats.oldest.is_none());
+    }
+}

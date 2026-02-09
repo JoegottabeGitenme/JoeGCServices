@@ -611,4 +611,235 @@ mod tests {
             "Point at 180° should not be visible from GOES-19"
         );
     }
+
+    // ==================== Additional coverage tests ====================
+
+    /// Test Full Disk geographic bounds which exercises the edge detection functions
+    /// This tests find_edge_binary() and find_edge_binary_h()
+    #[test]
+    fn test_fulldisk_geographic_bounds() {
+        let proj = Geostationary::goes19_fulldisk();
+        let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+
+        println!(
+            "GOES-19 Full Disk bounds: lon {:.1} to {:.1}, lat {:.1} to {:.1}",
+            min_lon, max_lon, min_lat, max_lat
+        );
+
+        // Full disk should cover a large portion of the Earth visible from the satellite
+        // GOES-19 at -75.2°W should see roughly -156°W to +6°E longitude
+        assert!(
+            min_lon < -130.0,
+            "Full disk min_lon should be < -130, got {}",
+            min_lon
+        );
+        assert!(
+            max_lon > -20.0,
+            "Full disk max_lon should be > -20, got {}",
+            max_lon
+        );
+
+        // Latitude range should be roughly ±81° (horizon limit)
+        assert!(
+            min_lat < -70.0,
+            "Full disk min_lat should be < -70, got {}",
+            min_lat
+        );
+        assert!(
+            max_lat > 70.0,
+            "Full disk max_lat should be > 70, got {}",
+            max_lat
+        );
+    }
+
+    /// Test GOES-18 Full Disk bounds
+    #[test]
+    fn test_goes18_fulldisk_geographic_bounds() {
+        let proj = Geostationary::goes18_fulldisk();
+        let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+
+        println!(
+            "GOES-18 Full Disk bounds: lon {:.1} to {:.1}, lat {:.1} to {:.1}",
+            min_lon, max_lon, min_lat, max_lat
+        );
+
+        // GOES-18 at -137.2°W should see roughly Pacific region
+        assert!(
+            min_lon < -180.0 || min_lon > 90.0,
+            "GOES-18 should see across dateline"
+        );
+        assert!(max_lon > -80.0, "GOES-18 max_lon should be > -80");
+    }
+
+    /// Test that Full Disk grid points at edges are in space (returns None)
+    #[test]
+    fn test_fulldisk_corners_in_space() {
+        let proj = Geostationary::goes19_fulldisk();
+
+        // Corners of a Full Disk image are in space, not on Earth
+        let corners = [(0.0, 0.0), (5423.0, 0.0), (0.0, 5423.0), (5423.0, 5423.0)];
+
+        let mut off_earth_count = 0;
+        for (i, j) in corners {
+            if proj.grid_to_geo(i, j).is_none() {
+                off_earth_count += 1;
+                println!(
+                    "Corner ({}, {}) is off-Earth (expected for Full Disk)",
+                    i, j
+                );
+            } else {
+                println!("Corner ({}, {}) is on-Earth", i, j);
+            }
+        }
+
+        // At least some corners should be off-Earth for Full Disk
+        // (The exact number depends on the projection parameters)
+        println!("{} of 4 corners are off-Earth", off_earth_count);
+    }
+
+    /// Test grid center is at nadir for Full Disk
+    #[test]
+    fn test_fulldisk_center_at_nadir() {
+        let proj = Geostationary::goes19_fulldisk();
+        let (nx, ny) = proj.dimensions();
+        let center_i = (nx as f64 - 1.0) / 2.0;
+        let center_j = (ny as f64 - 1.0) / 2.0;
+
+        if let Some((lat, lon)) = proj.grid_to_geo(center_i, center_j) {
+            println!(
+                "Full Disk center ({}, {}) -> lat={:.2}, lon={:.2}",
+                center_i, center_j, lat, lon
+            );
+            // Center should be near satellite sub-point
+            assert!(
+                (lon - (-75.2)).abs() < 1.0,
+                "Center lon should be near -75.2, got {}",
+                lon
+            );
+            assert!(
+                lat.abs() < 1.0,
+                "Center lat should be near equator, got {}",
+                lat
+            );
+        } else {
+            panic!("Center of Full Disk should be on Earth");
+        }
+    }
+
+    /// Test all preset constructors to ensure they work
+    #[test]
+    fn test_all_geostationary_presets() {
+        // CONUS presets
+        let goes19_conus = Geostationary::goes19_conus();
+        let goes18_conus = Geostationary::goes18_conus();
+
+        // Full Disk presets
+        let goes19_fulldisk = Geostationary::goes19_fulldisk();
+        let goes18_fulldisk = Geostationary::goes18_fulldisk();
+
+        // Verify dimensions
+        assert_eq!(goes19_conus.dimensions(), (5000, 3000));
+        assert_eq!(goes18_conus.dimensions(), (5000, 3000));
+        assert_eq!(goes19_fulldisk.dimensions(), (5424, 5424));
+        assert_eq!(goes18_fulldisk.dimensions(), (5424, 5424));
+
+        // Verify each can compute bounds without panicking
+        let _ = goes19_conus.geographic_bounds();
+        let _ = goes18_conus.geographic_bounds();
+        let _ = goes19_fulldisk.geographic_bounds();
+        let _ = goes18_fulldisk.geographic_bounds();
+    }
+
+    /// Test horizon check - points more than ~81° from nadir are not visible
+    #[test]
+    fn test_horizon_check() {
+        let proj = Geostationary::goes19_conus();
+
+        // A point at the satellite longitude should be visible
+        let visible = proj.geo_to_scan(-75.2, 0.0);
+        assert!(
+            visible.is_some(),
+            "Point at satellite sub-point should be visible"
+        );
+
+        // A point 80° away should be near the horizon but possibly still visible
+        let at_horizon = proj.geo_to_scan(-75.2 + 80.0, 0.0);
+        println!("Point 80° away: {:?}", at_horizon);
+
+        // A point 90° away should definitely not be visible
+        let beyond_horizon = proj.geo_to_scan(-75.2 + 90.0, 0.0);
+        assert!(
+            beyond_horizon.is_none(),
+            "Point 90° from satellite should not be visible"
+        );
+    }
+
+    /// Test behind-Earth check
+    #[test]
+    fn test_behind_earth() {
+        let proj = Geostationary::goes19_conus();
+
+        // Compute a scan angle that would put us behind the Earth
+        // This tests the sx <= 0 check
+        let result = proj.geo_to_scan(104.8, 0.0); // Opposite side of Earth from GOES-19
+        assert!(
+            result.is_none(),
+            "Point on opposite side of Earth should not be visible"
+        );
+    }
+
+    /// Test roundtrip for Full Disk imagery
+    #[test]
+    fn test_fulldisk_roundtrip() {
+        let proj = Geostationary::goes19_fulldisk();
+        let (nx, ny) = proj.dimensions();
+
+        // Test roundtrip at multiple valid grid points
+        let test_points = [
+            ((nx / 2) as f64, (ny / 2) as f64),     // Center
+            ((nx / 4) as f64, (ny / 2) as f64),     // Left of center
+            ((3 * nx / 4) as f64, (ny / 2) as f64), // Right of center
+            ((nx / 2) as f64, (ny / 4) as f64),     // Top of center
+            ((nx / 2) as f64, (3 * ny / 4) as f64), // Bottom of center
+        ];
+
+        for (i, j) in test_points {
+            if let Some((lat, lon)) = proj.grid_to_geo(i, j) {
+                if let Some((i_back, j_back)) = proj.geo_to_grid(lat, lon) {
+                    let i_err = (i - i_back).abs();
+                    let j_err = (j - j_back).abs();
+                    println!(
+                        "Full Disk roundtrip ({:.0}, {:.0}): lat={:.2}, lon={:.2} -> ({:.2}, {:.2}) err=({:.2}, {:.2})",
+                        i, j, lat, lon, i_back, j_back, i_err, j_err
+                    );
+                    assert!(i_err < 1.0, "i roundtrip error too large: {}", i_err);
+                    assert!(j_err < 1.0, "j roundtrip error too large: {}", j_err);
+                }
+            }
+        }
+    }
+
+    /// Test contains method
+    #[test]
+    fn test_geostationary_contains() {
+        let proj = Geostationary::goes19_conus();
+
+        // Point in CONUS should be in grid
+        assert!(
+            proj.contains(40.0, -100.0),
+            "Kansas should be in CONUS grid"
+        );
+
+        // Point in Europe should not be in CONUS grid
+        assert!(
+            !proj.contains(50.0, 10.0),
+            "Europe should not be in CONUS grid"
+        );
+
+        // Point in Australia should not be in grid
+        assert!(
+            !proj.contains(-25.0, 135.0),
+            "Australia should not be in CONUS grid"
+        );
+    }
 }

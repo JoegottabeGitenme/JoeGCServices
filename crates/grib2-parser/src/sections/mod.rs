@@ -769,3 +769,162 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_grib2_signed_positive() {
+        // Positive value: 0x00000001 = 1
+        let bytes = [0x00, 0x00, 0x00, 0x01];
+        assert_eq!(decode_grib2_signed(&bytes), 1);
+
+        // Positive value: 0x7FFFFFFF = 2147483647
+        let bytes = [0x7F, 0xFF, 0xFF, 0xFF];
+        assert_eq!(decode_grib2_signed(&bytes), 2147483647);
+
+        // Zero
+        let bytes = [0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode_grib2_signed(&bytes), 0);
+    }
+
+    #[test]
+    fn test_decode_grib2_signed_negative() {
+        // Negative value: 0x80000001 = -1 (sign bit set, magnitude = 1)
+        let bytes = [0x80, 0x00, 0x00, 0x01];
+        assert_eq!(decode_grib2_signed(&bytes), -1);
+
+        // Negative zero (sign bit set, magnitude = 0)
+        let bytes = [0x80, 0x00, 0x00, 0x00];
+        assert_eq!(decode_grib2_signed(&bytes), 0);
+
+        // Large negative: 0x80000064 = -100
+        let bytes = [0x80, 0x00, 0x00, 0x64];
+        assert_eq!(decode_grib2_signed(&bytes), -100);
+    }
+
+    #[test]
+    fn test_decode_grib2_signed_wrong_size() {
+        // Wrong size should return 0
+        let bytes = [0x00, 0x00, 0x01]; // 3 bytes
+        assert_eq!(decode_grib2_signed(&bytes), 0);
+
+        let bytes: [u8; 0] = []; // 0 bytes
+        assert_eq!(decode_grib2_signed(&bytes), 0);
+    }
+
+    #[test]
+    fn test_parse_indicator_valid() {
+        // Create a valid Section 0 (Indicator)
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(b"GRIB");
+        data[4] = 0; // reserved
+        data[5] = 0; // reserved
+        data[6] = 0; // discipline (meteorological)
+        data[7] = 2; // edition (GRIB2)
+                     // Message length = 20 at bytes 8-15 (8-byte big-endian)
+        data[12..16].copy_from_slice(&20u32.to_be_bytes());
+
+        let result = parse_indicator(&data);
+        assert!(result.is_ok());
+        let indicator = result.unwrap();
+        assert_eq!(&indicator.magic, b"GRIB");
+        assert_eq!(indicator.edition, 2);
+        assert_eq!(indicator.discipline, 0);
+        assert_eq!(indicator.message_length, 20);
+    }
+
+    #[test]
+    fn test_parse_indicator_too_short() {
+        let data = vec![0u8; 10]; // Less than 16 bytes
+        let result = parse_indicator(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_indicator_bad_magic() {
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(b"XRIB"); // Wrong magic
+        let result = parse_indicator(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_indicator_wrong_edition() {
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(b"GRIB");
+        data[7] = 1; // GRIB1, not GRIB2
+        let result = parse_indicator(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grid_definition_struct() {
+        let gd = GridDefinition {
+            grid_shape: 6, // spherical Earth
+            num_points_latitude: 721,
+            num_points_longitude: 1440,
+            first_latitude_millidegrees: -90000,
+            first_longitude_millidegrees: 0,
+            last_latitude_millidegrees: 90000,
+            last_longitude_millidegrees: 359750,
+            latitude_increment_millidegrees: 250,
+            longitude_increment_millidegrees: 250,
+            scanning_mode: 0,
+        };
+
+        assert_eq!(gd.num_points_latitude, 721);
+        assert_eq!(gd.num_points_longitude, 1440);
+    }
+
+    #[test]
+    fn test_product_definition_struct() {
+        let pd = ProductDefinition {
+            parameter_category: 0,
+            parameter_number: 0,
+            parameter_short_name: "TMP".to_string(),
+            level_type: 103,
+            level_value: 2,
+            level_description: "2 m above ground".to_string(),
+            forecast_hour: 6,
+        };
+
+        assert_eq!(pd.parameter_short_name, "TMP");
+        assert_eq!(pd.forecast_hour, 6);
+    }
+
+    #[test]
+    fn test_data_representation_struct() {
+        let dr = DataRepresentation {
+            num_data_points: 1038240,
+            packing_method: 0, // simple packing
+            original_data_type: 0,
+            reference_value: 250.0,
+            binary_scale_factor: -2,
+            decimal_scale_factor: 0,
+            bits_per_value: 16,
+        };
+
+        assert_eq!(dr.num_data_points, 1038240);
+        assert_eq!(dr.bits_per_value, 16);
+    }
+
+    #[test]
+    fn test_identification_struct() {
+        use chrono::{Datelike, TimeZone};
+        let id = Identification {
+            center: 7, // NCEP
+            sub_center: 0,
+            table_version: 2,
+            local_table_version: 1,
+            significance_of_reference_time: 1, // Start of forecast
+            reference_time: Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
+            production_status: 0, // Operational
+            data_type: 1,         // Forecast
+        };
+
+        assert_eq!(id.center, 7);
+        assert_eq!(id.reference_time.year(), 2024);
+    }
+}

@@ -152,11 +152,137 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_crs_all_supported() {
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:4269").unwrap(),
+            CrsCode::Epsg4269
+        );
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:5070").unwrap(),
+            CrsCode::Epsg5070
+        );
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:3413").unwrap(),
+            CrsCode::Epsg3413
+        );
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:3031").unwrap(),
+            CrsCode::Epsg3031
+        );
+    }
+
+    #[test]
+    fn test_parse_crs_web_mercator_alias() {
+        // EPSG:900913 is the legacy code for Web Mercator
+        assert_eq!(
+            CrsCode::from_wms_string("EPSG:900913").unwrap(),
+            CrsCode::Epsg3857
+        );
+    }
+
+    #[test]
+    fn test_parse_crs_error() {
+        let err = CrsCode::from_wms_string("INVALID:CRS").unwrap_err();
+        assert!(matches!(err, CrsParseError::UnsupportedCrs(_)));
+        let msg = format!("{}", err);
+        assert!(msg.contains("Unsupported CRS"));
+    }
+
+    #[test]
     fn test_axis_order() {
         assert_eq!(CrsCode::Epsg4326.axis_order_wms_1_3(), AxisOrder::LatLon);
         assert_eq!(CrsCode::Epsg3857.axis_order_wms_1_3(), AxisOrder::XY);
 
         // WMS 1.1.1 always uses X,Y
         assert_eq!(CrsCode::Epsg4326.axis_order_wms_1_1(), AxisOrder::XY);
+    }
+
+    #[test]
+    fn test_axis_order_geographic_crs() {
+        // Geographic CRS use lat/lon in WMS 1.3.0
+        assert_eq!(CrsCode::Epsg4326.axis_order_wms_1_3(), AxisOrder::LatLon);
+        assert_eq!(CrsCode::Epsg4269.axis_order_wms_1_3(), AxisOrder::LatLon);
+
+        // Projected CRS use X/Y
+        assert_eq!(CrsCode::Epsg5070.axis_order_wms_1_3(), AxisOrder::XY);
+        assert_eq!(CrsCode::Epsg3413.axis_order_wms_1_3(), AxisOrder::XY);
+        assert_eq!(CrsCode::Epsg3031.axis_order_wms_1_3(), AxisOrder::XY);
+    }
+
+    #[test]
+    fn test_is_geographic() {
+        assert!(CrsCode::Epsg4326.is_geographic());
+        assert!(CrsCode::Epsg4269.is_geographic());
+        assert!(!CrsCode::Epsg3857.is_geographic());
+        assert!(!CrsCode::Epsg5070.is_geographic());
+        assert!(!CrsCode::Epsg3413.is_geographic());
+        assert!(!CrsCode::Epsg3031.is_geographic());
+    }
+
+    #[test]
+    fn test_crs_display() {
+        assert_eq!(format!("{}", CrsCode::Epsg4326), "EPSG:4326");
+        assert_eq!(format!("{}", CrsCode::Epsg3857), "EPSG:3857");
+        assert_eq!(format!("{}", CrsCode::Epsg4269), "EPSG:4269");
+        assert_eq!(format!("{}", CrsCode::Epsg5070), "EPSG:5070");
+        assert_eq!(format!("{}", CrsCode::Epsg3413), "EPSG:3413");
+        assert_eq!(format!("{}", CrsCode::Epsg3031), "EPSG:3031");
+    }
+
+    #[test]
+    fn test_crs_new() {
+        let crs = Crs::new(CrsCode::Epsg4326);
+        assert_eq!(crs.code, CrsCode::Epsg4326);
+    }
+
+    #[test]
+    fn test_crs_valid_bounds_geographic() {
+        let crs = Crs::new(CrsCode::Epsg4326);
+        let bounds = crs.valid_bounds();
+        assert_eq!(bounds.min_x, -180.0);
+        assert_eq!(bounds.max_x, 180.0);
+        assert_eq!(bounds.min_y, -90.0);
+        assert_eq!(bounds.max_y, 90.0);
+
+        // NAD83 has same geographic bounds
+        let crs = Crs::new(CrsCode::Epsg4269);
+        let bounds = crs.valid_bounds();
+        assert_eq!(bounds.min_x, -180.0);
+        assert_eq!(bounds.max_x, 180.0);
+    }
+
+    #[test]
+    fn test_crs_valid_bounds_web_mercator() {
+        let crs = Crs::new(CrsCode::Epsg3857);
+        let bounds = crs.valid_bounds();
+        // Web Mercator extends to approximately ±20037508 meters
+        assert!(bounds.min_x < -20_000_000.0);
+        assert!(bounds.max_x > 20_000_000.0);
+        assert_eq!(bounds.min_x, -bounds.max_x); // Symmetric
+        assert_eq!(bounds.min_y, -bounds.max_y); // Symmetric
+    }
+
+    #[test]
+    fn test_crs_valid_bounds_albers() {
+        let crs = Crs::new(CrsCode::Epsg5070);
+        let bounds = crs.valid_bounds();
+        // CONUS Albers Equal Area
+        assert_eq!(bounds.min_x, -2500000.0);
+        assert_eq!(bounds.max_x, 2500000.0);
+    }
+
+    #[test]
+    fn test_crs_valid_bounds_polar() {
+        // North polar
+        let crs = Crs::new(CrsCode::Epsg3413);
+        let bounds = crs.valid_bounds();
+        assert_eq!(bounds.min_x, -4000000.0);
+        assert_eq!(bounds.max_x, 4000000.0);
+
+        // South polar
+        let crs = Crs::new(CrsCode::Epsg3031);
+        let bounds = crs.valid_bounds();
+        assert_eq!(bounds.min_x, -4000000.0);
+        assert_eq!(bounds.max_x, 4000000.0);
     }
 }

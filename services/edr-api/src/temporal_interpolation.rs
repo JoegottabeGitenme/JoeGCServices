@@ -325,4 +325,138 @@ mod tests {
         assert_eq!(parse_iso8601_duration("P1DT12H"), Some(Duration::hours(36)));
         assert_eq!(parse_iso8601_duration("invalid"), None);
     }
+
+    // =========================================================================
+    // Additional edge case tests
+    // =========================================================================
+
+    #[test]
+    fn test_find_bracketing_times_empty() {
+        let times: Vec<DateTime<Utc>> = vec![];
+        let target = Utc::now();
+        let (before, after) = find_bracketing_times(target, &times);
+        assert!(before.is_none());
+        assert!(after.is_none());
+    }
+
+    #[test]
+    fn test_find_bracketing_times_single_element() {
+        let times = vec![Utc.with_ymd_and_hms(2026, 1, 13, 0, 0, 0).unwrap()];
+
+        // Target before
+        let target = Utc.with_ymd_and_hms(2026, 1, 12, 23, 0, 0).unwrap();
+        let (before, after) = find_bracketing_times(target, &times);
+        assert!(before.is_none());
+        assert_eq!(after, Some(times[0]));
+
+        // Target after
+        let target = Utc.with_ymd_and_hms(2026, 1, 13, 1, 0, 0).unwrap();
+        let (before, after) = find_bracketing_times(target, &times);
+        assert_eq!(before, Some(times[0]));
+        assert!(after.is_none());
+
+        // Target exactly on
+        let target = times[0];
+        let (before, after) = find_bracketing_times(target, &times);
+        assert_eq!(before, Some(times[0]));
+        assert!(after.is_none());
+    }
+
+    #[test]
+    fn test_linear_interpolate_f32_infinity() {
+        // Infinite values should return NaN
+        assert!(linear_interpolate_f32(f32::INFINITY, 10.0, 0.5).is_nan());
+        assert!(linear_interpolate_f32(0.0, f32::NEG_INFINITY, 0.5).is_nan());
+        assert!(linear_interpolate_f32(f32::INFINITY, f32::NEG_INFINITY, 0.5).is_nan());
+    }
+
+    #[test]
+    fn test_linear_interpolate_f32_negative_values() {
+        // Negative values should work correctly
+        assert!((linear_interpolate_f32(-10.0, 10.0, 0.5) - 0.0).abs() < 1e-6);
+        assert!((linear_interpolate_f32(-10.0, 10.0, 0.0) - (-10.0)).abs() < 1e-6);
+        assert!((linear_interpolate_f32(-10.0, 10.0, 1.0) - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_expand_interval_start_equals_end() {
+        let start = Utc.with_ymd_and_hms(2026, 1, 13, 0, 0, 0).unwrap();
+        let end = start; // Same as start
+        let step = Duration::minutes(10);
+
+        let times = expand_interval_with_step(start, end, step);
+        assert_eq!(times.len(), 1);
+        assert_eq!(times[0], start);
+    }
+
+    #[test]
+    fn test_expand_interval_start_after_end() {
+        let start = Utc.with_ymd_and_hms(2026, 1, 13, 1, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 13, 0, 0, 0).unwrap(); // Before start
+        let step = Duration::minutes(10);
+
+        let times = expand_interval_with_step(start, end, step);
+        assert!(times.is_empty());
+    }
+
+    #[test]
+    fn test_expand_interval_zero_step() {
+        let start = Utc.with_ymd_and_hms(2026, 1, 13, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 13, 1, 0, 0).unwrap();
+        let step = Duration::zero();
+
+        // Zero step should return just start to avoid infinite loop
+        let times = expand_interval_with_step(start, end, step);
+        assert_eq!(times.len(), 1);
+        assert_eq!(times[0], start);
+    }
+
+    #[test]
+    fn test_expand_interval_negative_step() {
+        let start = Utc.with_ymd_and_hms(2026, 1, 13, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 13, 1, 0, 0).unwrap();
+        let step = Duration::minutes(-10);
+
+        // Negative step should return just start
+        let times = expand_interval_with_step(start, end, step);
+        assert_eq!(times.len(), 1);
+        assert_eq!(times[0], start);
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_seconds() {
+        assert_eq!(parse_iso8601_duration("PT30S"), Some(Duration::seconds(30)));
+        assert_eq!(parse_iso8601_duration("PT90S"), Some(Duration::seconds(90)));
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_complex() {
+        // 1 hour, 30 minutes, 45 seconds
+        assert_eq!(
+            parse_iso8601_duration("PT1H30M45S"),
+            Some(Duration::seconds(5445))
+        );
+
+        // 2 days, 6 hours
+        assert_eq!(parse_iso8601_duration("P2DT6H"), Some(Duration::hours(54)));
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_invalid_formats() {
+        // Missing P prefix
+        assert_eq!(parse_iso8601_duration("T10M"), None);
+        // Empty after P
+        assert_eq!(parse_iso8601_duration("PT"), Some(Duration::seconds(0)));
+        // Non-numeric values
+        assert_eq!(parse_iso8601_duration("PTxM"), None);
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_whitespace() {
+        // Should handle leading/trailing whitespace
+        assert_eq!(
+            parse_iso8601_duration("  PT10M  "),
+            Some(Duration::minutes(10))
+        );
+    }
 }
