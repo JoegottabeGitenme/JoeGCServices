@@ -62,9 +62,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             Err(e) => {
                 // Might be a group (pyramid store), try level 0
                 let level0_path = format!("{}/0", path.trim_end_matches('/'));
-                Array::open(store, &level0_path).map_err(|e2| {
-                    Self::classify_open_error(path, &e, &e2)
-                })?
+                Array::open(store, &level0_path)
+                    .map_err(|e2| Self::classify_open_error(path, &e, &e2))?
             }
         };
 
@@ -172,7 +171,9 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let primary_msg = primary_error.to_string();
         let fallback_msg = fallback_error.to_string();
 
-        if primary_msg.contains("metadata is missing") || fallback_msg.contains("metadata is missing") {
+        if primary_msg.contains("metadata is missing")
+            || fallback_msg.contains("metadata is missing")
+        {
             GridProcessorError::data_unavailable(format!(
                 "No grid data found at '{}' — the data may not have been ingested yet \
                  or may have expired and been cleaned up",
