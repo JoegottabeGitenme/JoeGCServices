@@ -64,6 +64,10 @@ pub enum GridProcessorError {
     /// Dataset not found.
     #[error("dataset not found: {0}")]
     NotFound(String),
+
+    /// Data unavailable — catalog entry exists but storage data is missing or expired.
+    #[error("data unavailable: {0}")]
+    DataUnavailable(String),
 }
 
 impl GridProcessorError {
@@ -98,6 +102,16 @@ impl GridProcessorError {
     /// Create a StorageError.
     pub fn storage_error(msg: impl Into<String>) -> Self {
         Self::StorageError(msg.into())
+    }
+
+    /// Create a DataUnavailable error.
+    pub fn data_unavailable(msg: impl Into<String>) -> Self {
+        Self::DataUnavailable(msg.into())
+    }
+
+    /// Check if this error indicates data is unavailable (missing from storage).
+    pub fn is_data_unavailable(&self) -> bool {
+        matches!(self, Self::DataUnavailable(_))
     }
 }
 
@@ -224,6 +238,12 @@ mod tests {
         assert_eq!(err.to_string(), "dataset not found: gfs/TMP/2024-01-01");
     }
 
+    #[test]
+    fn test_error_display_data_unavailable() {
+        let err = GridProcessorError::DataUnavailable("data expired".to_string());
+        assert_eq!(err.to_string(), "data unavailable: data expired");
+    }
+
     // Test helper constructors
     #[test]
     fn test_open_failed_helper() {
@@ -266,6 +286,25 @@ mod tests {
         let err = GridProcessorError::storage_error("io failure");
         assert!(matches!(err, GridProcessorError::StorageError(_)));
         assert!(err.to_string().contains("io failure"));
+    }
+
+    #[test]
+    fn test_data_unavailable_helper() {
+        let err = GridProcessorError::data_unavailable("no data at path");
+        assert!(matches!(err, GridProcessorError::DataUnavailable(_)));
+        assert!(err.to_string().contains("no data at path"));
+    }
+
+    #[test]
+    fn test_is_data_unavailable() {
+        let unavailable = GridProcessorError::data_unavailable("expired");
+        assert!(unavailable.is_data_unavailable());
+
+        let not_found = GridProcessorError::NotFound("missing".to_string());
+        assert!(!not_found.is_data_unavailable());
+
+        let open_failed = GridProcessorError::open_failed("io error");
+        assert!(!open_failed.is_data_unavailable());
     }
 
     // Test From implementations
