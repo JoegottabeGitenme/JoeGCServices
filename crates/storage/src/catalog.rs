@@ -1839,6 +1839,14 @@ CREATE TABLE IF NOT EXISTS observations (
     wx_string VARCHAR(100),
     cloud_layers JSONB,
 
+    -- Ocean/marine parameters (SI units, for NDBC buoy data)
+    wave_height_m REAL,             -- Significant wave height (meters)
+    dominant_wave_period_s REAL,    -- Dominant wave period (seconds)
+    average_wave_period_s REAL,     -- Average wave period (seconds)
+    mean_wave_direction_deg SMALLINT, -- Mean wave direction (degrees true)
+    water_temp_k REAL,              -- Sea surface temperature (Kelvin)
+    tide_m REAL,                    -- Water level above/below MLLW (meters)
+
     -- QC flags (MADIS convention: V=valid, S=suspect, X=failed, C=coarse)
     temperature_qc CHAR(1),
     dewpoint_qc CHAR(1),

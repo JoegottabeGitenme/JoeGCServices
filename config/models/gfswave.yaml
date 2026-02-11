@@ -1,0 +1,207 @@
+# GFS-Wave (WAVEWATCH III) Configuration
+# NCEP Global Wave Forecast System, 0.25° resolution
+#
+# Uses the same S3 bucket as GFS atmospheric (noaa-gfs-bdp-pds)
+# but a different path under wave/gridded/
+#
+# Available grids (we use global 0.25°):
+#   global.0p25 (~28 km) - Global coverage
+#   global.0p16 (~18 km) - Global high-res
+#   arctic.9km - Arctic region
+#   atlocn.0p16 - Atlantic Ocean
+#   epacif.0p16 - East Pacific
+#   wcoast.0p16 - US West Coast
+#
+# Wave parameters use GRIB2 discipline 10 (Oceanographic products)
+
+model:
+  id: gfswave
+  name: "GFS-Wave (WAVEWATCH III)"
+  description: "NCEP Global Wave Forecast System, 0.25° resolution"
+  enabled: true
+
+dimensions:
+  type: forecast
+  run: true
+  forecast: true
+  elevation: false  # No vertical levels for wave data
+
+source:
+  type: aws_s3
+  bucket: noaa-gfs-bdp-pds
+  prefix_template: "gfs.{date}/{cycle:02}/wave/gridded"
+  file_pattern: "gfswave.t{cycle:02}z.global.0p25.f{forecast:03}.grib2"
+  region: us-east-1
+  use_index_file: true
+
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  cycles: [0, 6, 12, 18]
+  forecast_hours:
+    start: 0
+    end: 120
+    step: 3       # Wave data at 3-hourly intervals is sufficient
+  poll_interval_secs: 3600
+  delay_hours: 5  # Wave data typically available ~5 hours after cycle
+  max_concurrent: 2
+
+retention:
+  hours: 48
+  keep_latest_runs: 2
+
+precaching:
+  enabled: false
+
+parameters:
+  # === Combined Sea State ===
+  - name: HTSGW
+    description: "Significant Height of Combined Wind Waves and Swell"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 3
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    valid_range: [0, 25]
+
+  - name: PERPW
+    description: "Primary Wave Mean Period"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 11
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: s
+    valid_range: [0, 30]
+
+  - name: DIRPW
+    description: "Primary Wave Direction"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 10
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: degrees
+    valid_range: [0, 360]
+
+  # === Wind Waves (locally generated) ===
+  - name: WVHGT
+    description: "Significant Height of Wind Waves"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 5
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    valid_range: [0, 20]
+
+  - name: WVPER
+    description: "Mean Period of Wind Waves"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 6
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: s
+    valid_range: [0, 25]
+
+  - name: WVDIR
+    description: "Direction of Wind Waves"
+    grib2:
+      discipline: 10
+      category: 0
+      number: 4
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: degrees
+    valid_range: [0, 360]
+
+  # === Surface Wind (from wave model) ===
+  - name: WIND
+    description: "Wind Speed at Surface"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 1
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m/s
+    valid_range: [0, 80]
+
+  - name: WDIR
+    description: "Wind Direction at Surface"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: degrees
+    valid_range: [0, 360]
+
+  # === U/V Wind Components (for wind barb rendering) ===
+  - name: UGRD
+    description: "U-Component of Wind"
+    grib2: { discipline: 0, category: 2, number: 2 }
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m/s
+    valid_range: [-100, 100]
+
+  - name: VGRD
+    description: "V-Component of Wind"
+    grib2: { discipline: 0, category: 2, number: 3 }
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m/s
+    valid_range: [-100, 100]
+
+# Composite layers
+composites:
+  - name: WIND_BARBS
+    description: "Surface wind barbs from wave model"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs

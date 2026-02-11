@@ -135,6 +135,18 @@ pub struct ObservationProperties {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sea_level_pressure_pa: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub wave_height_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_wave_period_s: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_wave_period_s: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_wave_direction_deg: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_temp_k: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tide_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flight_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_text: Option<String>,
@@ -811,6 +823,12 @@ fn observation_to_feature(loc: &Location, obs: &Observation) -> ObservationFeatu
             visibility_m: obs.visibility_m,
             altimeter_pa: obs.altimeter_pa,
             sea_level_pressure_pa: obs.sea_level_pressure_pa,
+            wave_height_m: obs.wave_height_m,
+            dominant_wave_period_s: obs.dominant_wave_period_s,
+            average_wave_period_s: obs.average_wave_period_s,
+            mean_wave_direction_deg: obs.mean_wave_direction_deg,
+            water_temp_k: obs.water_temp_k,
+            tide_m: obs.tide_m,
             flight_category: obs.flight_category.clone(),
             raw_text: obs.raw_text.clone(),
         },

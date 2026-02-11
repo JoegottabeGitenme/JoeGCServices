@@ -1,0 +1,103 @@
+# NDBC - National Data Buoy Center
+# Point observations from buoys, CMAN stations, and coastal platforms
+#
+# Data source: NDBC latest_obs.txt (all stations, single file)
+# ~1,366 active stations reporting standard meteorological data
+# Update cadence: ~5 minutes (observations less than 2 hours old)
+#
+# Reference: docs/ocean_data.md
+# API docs: https://www.ndbc.noaa.gov/docs/ndbc_web_data_guide.pdf
+
+model:
+  id: ndbc
+  name: "NDBC - National Data Buoy Center"
+  description: "Marine surface observations from buoys and coastal stations"
+  enabled: true
+
+dimensions:
+  type: observation
+  run: false
+  forecast: false
+  time: true
+  elevation: false
+
+source:
+  type: ndbc_latest_obs
+  base_url: "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt"
+  # Station metadata for bootstrap
+  stations_url: "https://www.ndbc.noaa.gov/activestations.xml"
+  format: fixed_width_text
+
+grid:
+  projection: geographic
+  resolution: "point"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 600  # 10 minutes (data updates every ~5 min)
+  lookback_minutes: 120    # Only include obs less than 2 hours old
+
+retention:
+  hours: 48
+
+parameters:
+  # Standard meteorological (shared with METAR)
+  - name: temperature
+    description: "Air temperature"
+    units: "K"
+    display_units: "°C"
+  - name: dewpoint
+    description: "Dewpoint temperature"
+    units: "K"
+    display_units: "°C"
+  - name: wind_direction
+    description: "Wind direction (true)"
+    units: "degrees"
+    display_units: "°"
+  - name: wind_speed
+    description: "Wind speed"
+    units: "m/s"
+    display_units: "kt"
+  - name: wind_gust
+    description: "Wind gust speed"
+    units: "m/s"
+    display_units: "kt"
+  - name: sea_level_pressure
+    description: "Sea level pressure"
+    units: "Pa"
+    display_units: "hPa"
+  - name: visibility
+    description: "Visibility"
+    units: "m"
+    display_units: "NM"
+
+  # Ocean-specific parameters (new columns in observations table)
+  - name: wave_height
+    description: "Significant wave height"
+    units: "m"
+    display_units: "m"
+  - name: dominant_wave_period
+    description: "Dominant wave period"
+    units: "s"
+    display_units: "s"
+  - name: average_wave_period
+    description: "Average wave period"
+    units: "s"
+    display_units: "s"
+  - name: mean_wave_direction
+    description: "Mean wave direction (from)"
+    units: "degrees"
+    display_units: "°"
+  - name: water_temperature
+    description: "Sea surface temperature"
+    units: "K"
+    display_units: "°C"
+  - name: tide
+    description: "Water level (above/below MLLW)"
+    units: "m"
+    display_units: "ft"

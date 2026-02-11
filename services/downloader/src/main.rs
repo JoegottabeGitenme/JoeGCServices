@@ -14,6 +14,7 @@ mod config;
 mod download;
 mod grib_index;
 mod model_runner;
+mod ndbc_runner;
 mod observation_runner;
 mod scheduler;
 mod server;

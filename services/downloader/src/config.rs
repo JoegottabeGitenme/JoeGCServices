@@ -97,6 +97,9 @@ pub struct SourceConfig {
     /// Index file suffix (default: ".idx")
     #[serde(default = "default_index_suffix")]
     pub index_suffix: String,
+    /// Station metadata URL (for NDBC activestations.xml).
+    #[serde(default)]
+    pub stations_url: Option<String>,
 }
 
 fn default_index_suffix() -> String {

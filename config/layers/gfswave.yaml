@@ -1,0 +1,124 @@
+# GFS-Wave Layer Configuration
+# Defines WMS/WMTS layers for wave forecast data from WAVEWATCH III
+# All parameters are at the ocean surface (no vertical levels)
+
+model: gfswave
+display_name: "GFS-Wave (WAVEWATCH III)"
+
+default_bbox:
+  west: -180.0
+  south: -90.0
+  east: 180.0
+  north: 90.0
+
+layers:
+  # === Wave Height ===
+  - id: gfswave_HTSGW
+    parameter: HTSGW
+    title: "Significant Wave Height"
+    abstract: "Significant height of combined wind waves and swell. The average height of the highest one-third of waves."
+    style_file: wave_height.json
+    units:
+      native: m
+      display: m
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfswave_WVHGT
+    parameter: WVHGT
+    title: "Wind Wave Height"
+    abstract: "Significant height of locally-generated wind waves (excludes swell)"
+    style_file: wave_height.json
+    units:
+      native: m
+      display: m
+    levels:
+      - value: "surface"
+        default: true
+
+  # === Wave Period ===
+  - id: gfswave_PERPW
+    parameter: PERPW
+    title: "Primary Wave Period"
+    abstract: "Mean period of the primary (dominant) wave system"
+    style_file: wave_period.json
+    units:
+      native: s
+      display: s
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfswave_WVPER
+    parameter: WVPER
+    title: "Wind Wave Period"
+    abstract: "Mean period of locally-generated wind waves"
+    style_file: wave_period.json
+    units:
+      native: s
+      display: s
+    levels:
+      - value: "surface"
+        default: true
+
+  # === Wave Direction ===
+  - id: gfswave_DIRPW
+    parameter: DIRPW
+    title: "Primary Wave Direction"
+    abstract: "Direction from which the primary (dominant) waves are coming (degrees true)"
+    style_file: wind_direction.json
+    units:
+      native: degrees
+      display: "\u00b0"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfswave_WVDIR
+    parameter: WVDIR
+    title: "Wind Wave Direction"
+    abstract: "Direction from which locally-generated wind waves are coming (degrees true)"
+    style_file: wind_direction.json
+    units:
+      native: degrees
+      display: "\u00b0"
+    levels:
+      - value: "surface"
+        default: true
+
+  # === Surface Wind (from wave model) ===
+  - id: gfswave_WIND
+    parameter: WIND
+    title: "Surface Wind Speed"
+    abstract: "Wind speed at the ocean surface from the wave model"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfswave_WDIR
+    parameter: WDIR
+    title: "Surface Wind Direction"
+    abstract: "Wind direction at the ocean surface from the wave model"
+    style_file: wind_direction.json
+    units:
+      native: degrees
+      display: "\u00b0"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfswave_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Surface Wind Barbs"
+    abstract: "Wind barbs at the ocean surface from the wave model"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [UGRD, VGRD]
+    levels:
+      - value: "surface"
+        default: true

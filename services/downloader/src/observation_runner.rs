@@ -160,6 +160,18 @@ pub struct IngestObservation {
     pub altimeter_pa: Option<f32>,
     /// Sea level pressure in Pascals
     pub sea_level_pressure_pa: Option<f32>,
+    /// Significant wave height in meters
+    pub wave_height_m: Option<f32>,
+    /// Dominant wave period in seconds
+    pub dominant_wave_period_s: Option<f32>,
+    /// Average wave period in seconds
+    pub average_wave_period_s: Option<f32>,
+    /// Mean wave direction in degrees
+    pub mean_wave_direction_deg: Option<i16>,
+    /// Water temperature in Kelvin
+    pub water_temp_k: Option<f32>,
+    /// Tide / water level in meters
+    pub tide_m: Option<f32>,
     /// Cloud layers as JSON array
     pub cloud_layers: Option<serde_json::Value>,
     /// Flight category
@@ -371,6 +383,12 @@ impl ObservationRunner {
             visibility_m,
             altimeter_pa,
             sea_level_pressure_pa,
+            wave_height_m: None,
+            dominant_wave_period_s: None,
+            average_wave_period_s: None,
+            mean_wave_direction_deg: None,
+            water_temp_k: None,
+            tide_m: None,
             cloud_layers,
             flight_category: obs.flt_cat,
             wx_string: obs.wx_string,

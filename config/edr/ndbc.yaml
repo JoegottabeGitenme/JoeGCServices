@@ -1,0 +1,75 @@
+# NDBC EDR Configuration
+# Marine surface observations from NDBC buoys and coastal stations
+#
+# This is point observation data (not gridded), sourced from PostgreSQL.
+# Locations are dynamic (queried from the database), not static config.
+#
+# Supported EDR queries:
+# - /collections/ndbc/locations - List all buoy stations with recent observations
+# - /collections/ndbc/locations/{id} - Get observations at a specific station
+# - /collections/ndbc/radius - Get observations within radius of a point
+# - /collections/ndbc/area - Get observations within a bounding box
+#
+# Note: Position queries are not supported (use radius with small radius instead)
+#
+# Data includes standard meteorological parameters plus ocean-specific
+# measurements: wave height, wave period, wave direction, sea surface
+# temperature, and tide level.
+
+model: ndbc
+data_type: pointobservation
+observation_source: ndbc
+
+collections:
+  - id: ndbc
+    title: "NDBC - Marine Surface Observations"
+    description: "Surface weather and ocean observations from National Data Buoy Center stations including buoys, C-MAN stations, and coastal platforms. Reports wind, pressure, air/water temperature, wave conditions, and tide levels."
+    parameters:
+      # Standard met (same field names as METAR for cross-compatibility)
+      - name: temperature
+        levels: [surface]
+      - name: dewpoint
+        levels: [surface]
+      - name: wind_speed
+        levels: [surface]
+      - name: wind_direction
+        levels: [surface]
+      - name: wind_gust
+        levels: [surface]
+      - name: sea_level_pressure
+        levels: [surface]
+      - name: visibility
+        levels: [surface]
+      # Ocean-specific parameters
+      - name: wave_height
+        levels: [surface]
+      - name: dominant_wave_period
+        levels: [surface]
+      - name: average_wave_period
+        levels: [surface]
+      - name: mean_wave_direction
+        levels: [surface]
+      - name: water_temperature
+        levels: [surface]
+      - name: tide
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+    - application/vnd.cov+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 300  # 5 minutes - NDBC updates less frequently than METAR
+
+# Response size limits for observation queries
+limits:
+  max_parameters_per_request: 15
+  max_time_steps: 48         # 48 hours of hourly observations
+  max_vertical_levels: 1     # Surface only
+  max_response_size_mb: 20   # More stations than METAR
+  max_radius_km: 1000        # 1000 km radius queries (ocean areas are large)
+  max_area_sq_degrees: 500   # Large ocean areas

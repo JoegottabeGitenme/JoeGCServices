@@ -366,3 +366,57 @@ layers:
     levels:
       - value: "surface"
         default: true
+
+  # ==========================================================================
+  # Ocean / Ice Parameters
+  # ==========================================================================
+
+  - id: gfs_SST
+    parameter: TMP
+    title: "Sea Surface Temperature"
+    abstract: "Skin temperature at the surface - represents SST over ocean grid points"
+    style_file: sst.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_ICEC
+    parameter: ICEC
+    title: "Sea Ice Concentration"
+    abstract: "Fraction of grid cell covered by sea ice (0 = open water, 1 = full ice cover)"
+    style_file: sea_ice.json
+    units:
+      native: fraction
+      display: "%"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_ICETK
+    parameter: ICETK
+    title: "Sea Ice Thickness"
+    abstract: "Average thickness of sea ice in the grid cell"
+    style_file: sea_ice.json
+    units:
+      native: m
+      display: m
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gfs_ICETMP
+    parameter: ICETMP
+    title: "Sea Ice Temperature"
+    abstract: "Temperature at the surface of sea ice"
+    style_file: sst.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "surface"
+        default: true
