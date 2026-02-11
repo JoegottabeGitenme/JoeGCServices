@@ -220,6 +220,13 @@ pub struct ModelEdrConfig {
     /// Only used when data_type is "point_observation".
     #[serde(default)]
     pub observation_source: Option<String>,
+
+    /// How many hours of recency to require when listing locations.
+    /// The locations endpoint only shows stations with observations within this window.
+    /// Defaults to 2 hours (suitable for METAR). Set higher for sources with
+    /// longer data latency (e.g., 12 for DART, 6 for NDBC).
+    #[serde(default)]
+    pub locations_recency_hours: Option<u32>,
 }
 
 impl ModelEdrConfig {

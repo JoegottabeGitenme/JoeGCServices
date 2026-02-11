@@ -172,6 +172,8 @@ pub struct IngestObservation {
     pub water_temp_k: Option<f32>,
     /// Tide / water level in meters
     pub tide_m: Option<f32>,
+    /// Water column height in meters (DART tsunami buoys)
+    pub water_column_height_m: Option<f32>,
     /// Cloud layers as JSON array
     pub cloud_layers: Option<serde_json::Value>,
     /// Flight category
@@ -389,6 +391,7 @@ impl ObservationRunner {
             mean_wave_direction_deg: None,
             water_temp_k: None,
             tide_m: None,
+            water_column_height_m: None,
             cloud_layers,
             flight_category: obs.flt_cat,
             wx_string: obs.wx_string,

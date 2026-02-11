@@ -100,6 +100,10 @@ pub struct SourceConfig {
     /// Station metadata URL (for NDBC activestations.xml).
     #[serde(default)]
     pub stations_url: Option<String>,
+    /// Per-station data base URL (for DART realtime2 data files).
+    /// Individual station files are at `{data_base_url}/{STATION_ID}.dart`
+    #[serde(default)]
+    pub data_base_url: Option<String>,
 }
 
 fn default_index_suffix() -> String {

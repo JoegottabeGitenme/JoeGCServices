@@ -145,6 +145,8 @@ pub struct Observation {
     pub water_temp_k: Option<f32>,
     /// Water level (tide) above/below MLLW in meters.
     pub tide_m: Option<f32>,
+    /// Water column height in meters (DART tsunami buoys).
+    pub water_column_height_m: Option<f32>,
 
     // Aviation-specific fields
     /// Raw observation text (e.g., METAR string).
@@ -556,13 +558,13 @@ impl ObservationCatalog {
                 temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                 altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
                 wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                mean_wave_direction_deg, water_temp_k, tide_m,
+                mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
                 raw_text, flight_category, wx_string, cloud_layers,
                 temperature_qc, dewpoint_qc, wind_qc, pressure_qc
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27, $28
+                $15, $16, $17, $18, $19, $20, $21,
+                $22, $23, $24, $25, $26, $27, $28, $29
             )
             ON CONFLICT (location_id, source, obs_time) DO NOTHING
             "#,
@@ -587,6 +589,7 @@ impl ObservationCatalog {
         .bind(obs.mean_wave_direction_deg)
         .bind(obs.water_temp_k)
         .bind(obs.tide_m)
+        .bind(obs.water_column_height_m)
         .bind(&obs.raw_text)
         .bind(&obs.flight_category)
         .bind(&obs.wx_string)
@@ -650,6 +653,7 @@ impl ObservationCatalog {
             mean_wave_direction_deg: Option<i16>,
             water_temp_k: Option<f32>,
             tide_m: Option<f32>,
+            water_column_height_m: Option<f32>,
             raw_text: Option<String>,
             flight_category: Option<String>,
             wx_string: Option<String>,
@@ -667,10 +671,10 @@ impl ObservationCatalog {
                      SELECT id, location_id, source, obs_time, receipt_time,
                            temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                            altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                           wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                           mean_wave_direction_deg, water_temp_k, tide_m,
-                           raw_text, flight_category, wx_string, cloud_layers,
-                           temperature_qc, dewpoint_qc, wind_qc, pressure_qc
+                            wave_height_m, dominant_wave_period_s, average_wave_period_s,
+                            mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
+                            raw_text, flight_category, wx_string, cloud_layers,
+                            temperature_qc, dewpoint_qc, wind_qc, pressure_qc
                     FROM observations
                     WHERE location_id = $1 AND source = $2 AND obs_time >= $3 AND obs_time <= $4
                     ORDER BY obs_time DESC
@@ -691,10 +695,10 @@ impl ObservationCatalog {
                      SELECT id, location_id, source, obs_time, receipt_time,
                            temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                            altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                           wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                           mean_wave_direction_deg, water_temp_k, tide_m,
-                           raw_text, flight_category, wx_string, cloud_layers,
-                           temperature_qc, dewpoint_qc, wind_qc, pressure_qc
+                            wave_height_m, dominant_wave_period_s, average_wave_period_s,
+                            mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
+                            raw_text, flight_category, wx_string, cloud_layers,
+                            temperature_qc, dewpoint_qc, wind_qc, pressure_qc
                     FROM observations
                     WHERE location_id = $1 AND obs_time >= $2 AND obs_time <= $3
                     ORDER BY obs_time DESC
@@ -714,10 +718,10 @@ impl ObservationCatalog {
                      SELECT id, location_id, source, obs_time, receipt_time,
                            temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                            altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                           wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                           mean_wave_direction_deg, water_temp_k, tide_m,
-                           raw_text, flight_category, wx_string, cloud_layers,
-                           temperature_qc, dewpoint_qc, wind_qc, pressure_qc
+                            wave_height_m, dominant_wave_period_s, average_wave_period_s,
+                            mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
+                            raw_text, flight_category, wx_string, cloud_layers,
+                            temperature_qc, dewpoint_qc, wind_qc, pressure_qc
                     FROM observations
                     WHERE location_id = $1 AND source = $2
                     ORDER BY obs_time DESC
@@ -736,10 +740,10 @@ impl ObservationCatalog {
                      SELECT id, location_id, source, obs_time, receipt_time,
                            temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                            altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                           wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                           mean_wave_direction_deg, water_temp_k, tide_m,
-                           raw_text, flight_category, wx_string, cloud_layers,
-                           temperature_qc, dewpoint_qc, wind_qc, pressure_qc
+                            wave_height_m, dominant_wave_period_s, average_wave_period_s,
+                            mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
+                            raw_text, flight_category, wx_string, cloud_layers,
+                            temperature_qc, dewpoint_qc, wind_qc, pressure_qc
                     FROM observations
                     WHERE location_id = $1
                     ORDER BY obs_time DESC
@@ -758,10 +762,10 @@ impl ObservationCatalog {
                      SELECT id, location_id, source, obs_time, receipt_time,
                            temperature_k, dewpoint_k, wind_direction_deg, wind_speed_ms, wind_gust_ms,
                            altimeter_pa, sea_level_pressure_pa, visibility_m, precip_1hr_mm, relative_humidity_pct,
-                           wave_height_m, dominant_wave_period_s, average_wave_period_s,
-                           mean_wave_direction_deg, water_temp_k, tide_m,
-                           raw_text, flight_category, wx_string, cloud_layers,
-                           temperature_qc, dewpoint_qc, wind_qc, pressure_qc
+                            wave_height_m, dominant_wave_period_s, average_wave_period_s,
+                            mean_wave_direction_deg, water_temp_k, tide_m, water_column_height_m,
+                            raw_text, flight_category, wx_string, cloud_layers,
+                            temperature_qc, dewpoint_qc, wind_qc, pressure_qc
                     FROM observations
                     ORDER BY obs_time DESC
                     LIMIT $1
@@ -798,6 +802,7 @@ impl ObservationCatalog {
                 mean_wave_direction_deg: r.mean_wave_direction_deg,
                 water_temp_k: r.water_temp_k,
                 tide_m: r.tide_m,
+                water_column_height_m: r.water_column_height_m,
                 raw_text: r.raw_text,
                 flight_category: r.flight_category,
                 wx_string: r.wx_string,
@@ -874,6 +879,7 @@ impl ObservationCatalog {
             mean_wave_direction_deg: Option<i16>,
             water_temp_k: Option<f32>,
             tide_m: Option<f32>,
+            water_column_height_m: Option<f32>,
             raw_text: Option<String>,
             flight_category: Option<String>,
             wx_string: Option<String>,
@@ -896,7 +902,7 @@ impl ObservationCatalog {
                         o.temperature_k, o.dewpoint_k, o.wind_direction_deg, o.wind_speed_ms, o.wind_gust_ms,
                         o.altimeter_pa, o.sea_level_pressure_pa, o.visibility_m, o.precip_1hr_mm, o.relative_humidity_pct,
                         o.wave_height_m, o.dominant_wave_period_s, o.average_wave_period_s,
-                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m,
+                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m, o.water_column_height_m,
                         o.raw_text, o.flight_category, o.wx_string, o.cloud_layers
                     FROM locations l
                     JOIN observations o ON l.id = o.location_id
@@ -930,7 +936,7 @@ impl ObservationCatalog {
                         o.temperature_k, o.dewpoint_k, o.wind_direction_deg, o.wind_speed_ms, o.wind_gust_ms,
                         o.altimeter_pa, o.sea_level_pressure_pa, o.visibility_m, o.precip_1hr_mm, o.relative_humidity_pct,
                         o.wave_height_m, o.dominant_wave_period_s, o.average_wave_period_s,
-                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m,
+                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m, o.water_column_height_m,
                         o.raw_text, o.flight_category, o.wx_string, o.cloud_layers
                     FROM locations l
                     JOIN observations o ON l.id = o.location_id
@@ -961,7 +967,7 @@ impl ObservationCatalog {
                         o.temperature_k, o.dewpoint_k, o.wind_direction_deg, o.wind_speed_ms, o.wind_gust_ms,
                         o.altimeter_pa, o.sea_level_pressure_pa, o.visibility_m, o.precip_1hr_mm, o.relative_humidity_pct,
                         o.wave_height_m, o.dominant_wave_period_s, o.average_wave_period_s,
-                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m,
+                        o.mean_wave_direction_deg, o.water_temp_k, o.tide_m, o.water_column_height_m,
                         o.raw_text, o.flight_category, o.wx_string, o.cloud_layers
                     FROM locations l
                     JOIN observations o ON l.id = o.location_id
@@ -1017,6 +1023,7 @@ impl ObservationCatalog {
                     mean_wave_direction_deg: r.mean_wave_direction_deg,
                     water_temp_k: r.water_temp_k,
                     tide_m: r.tide_m,
+                    water_column_height_m: r.water_column_height_m,
                     raw_text: r.raw_text,
                     flight_category: r.flight_category,
                     wx_string: r.wx_string,

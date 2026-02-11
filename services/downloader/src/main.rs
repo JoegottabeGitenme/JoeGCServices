@@ -11,6 +11,7 @@
 mod cleanup;
 mod concurrency;
 mod config;
+mod dart_runner;
 mod download;
 mod grib_index;
 mod model_runner;

@@ -1846,6 +1846,7 @@ CREATE TABLE IF NOT EXISTS observations (
     mean_wave_direction_deg SMALLINT, -- Mean wave direction (degrees true)
     water_temp_k REAL,              -- Sea surface temperature (Kelvin)
     tide_m REAL,                    -- Water level above/below MLLW (meters)
+    water_column_height_m REAL,     -- Water column height (meters, for DART tsunami buoys)
 
     -- QC flags (MADIS convention: V=valid, S=suspect, X=failed, C=coarse)
     temperature_qc CHAR(1),

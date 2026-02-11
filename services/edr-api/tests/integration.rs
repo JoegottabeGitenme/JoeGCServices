@@ -312,6 +312,7 @@ async fn test_observation_catalog_observations() {
         mean_wave_direction_deg: None,
         water_temp_k: None,
         tide_m: None,
+        water_column_height_m: None,
         raw_text: Some("METAR KORD 061756Z 31016KT 10SM FEW250 M05/M15 A3040".to_string()),
         flight_category: Some("VFR".to_string()),
         wx_string: None,

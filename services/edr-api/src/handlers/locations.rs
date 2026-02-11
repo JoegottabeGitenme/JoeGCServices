@@ -913,6 +913,8 @@ pub struct MetarData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tide_m: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_column_height_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flight_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cloud_layers: Option<serde_json::Value>,
@@ -1337,9 +1339,15 @@ pub async fn global_location_data_handler(
         std::collections::HashMap::new();
 
     for coll_id in &requested {
-        if coll_id == "metar" || coll_id == "ndbc" {
-            // Fetch observation data (METAR or NDBC)
-            let source = if coll_id == "ndbc" { "ndbc" } else { "metar" };
+        if coll_id == "metar" || coll_id == "ndbc" || coll_id == "dart" {
+            // Fetch observation data (METAR, NDBC, or DART)
+            let source = if coll_id == "ndbc" {
+                "ndbc"
+            } else if coll_id == "dart" {
+                "dart"
+            } else {
+                "metar"
+            };
             if let Ok(Some(obs)) = state
                 .observation_catalog
                 .get_latest_observation(&location_id, Some(source))
@@ -1361,6 +1369,7 @@ pub async fn global_location_data_handler(
                     mean_wave_direction_deg: obs.mean_wave_direction_deg,
                     water_temp_k: obs.water_temp_k,
                     tide_m: obs.tide_m,
+                    water_column_height_m: obs.water_column_height_m,
                     flight_category: obs.flight_category.clone(),
                     cloud_layers: obs.cloud_layers.clone(),
                     raw_observation: obs.raw_text.clone(),

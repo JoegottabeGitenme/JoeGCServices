@@ -236,6 +236,7 @@ impl NdbcRunner {
             mean_wave_direction_deg: mean_wave_dir,
             water_temp_k,
             tide_m,
+            water_column_height_m: None,
             cloud_layers: None,
             flight_category: None,
             wx_string: None,

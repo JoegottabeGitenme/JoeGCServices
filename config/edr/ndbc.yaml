@@ -19,6 +19,7 @@
 model: ndbc
 data_type: pointobservation
 observation_source: ndbc
+locations_recency_hours: 6  # NDBC buoy data has ~1-2 hour processing lag
 
 collections:
   - id: ndbc
