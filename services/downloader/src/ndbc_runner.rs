@@ -250,7 +250,9 @@ impl NdbcRunner {
             observations,
         };
 
-        let url = format!("{}/ingest/observations", self.config.ingester_url);
+        // Handle both http://host:port and http://host:port/ingest base URLs
+        let base = self.config.ingester_url.trim_end_matches("/ingest");
+        let url = format!("{}/ingest/observations", base);
 
         let response = self
             .client
