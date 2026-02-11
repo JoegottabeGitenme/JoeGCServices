@@ -4,85 +4,14 @@
 # This file overrides the base docker-compose.yml for production deployment.
 # It removes exposed ports, adds security, and optimizes for production.
 #
+# The gateway (/opt/gateway) handles nginx, Cloudflare tunnel, and routing.
+# This stack only runs the weather services and infrastructure.
+#
 # Usage:
 #   docker compose -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d
-#
-# Changes from base:
-#   - Nginx reverse proxy as single entry point (ports 80, 443)
-#   - All other service ports removed (internal only)
-#   - pgAdmin removed (security)
-#   - Redis password authentication enabled
-#   - Resource limits added
-#   - Cloudflare DDNS container for dynamic IP
 # =============================================================================
 
 services:
-  # ==========================================================================
-  # NGINX REVERSE PROXY (only public-facing service)
-  # ==========================================================================
-  nginx:
-    build:
-      context: ./deploy/production/nginx
-    container_name: weather-wms-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/production/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./deploy/production/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
-      - ./deploy/production/nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      wms-api:
-        condition: service_healthy
-      edr-api:
-        condition: service_healthy
-      web-dashboard:
-        condition: service_healthy
-    networks:
-      - default
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-
-  # ==========================================================================
-  # CLOUDFLARE TUNNEL (exposes services without port forwarding)
-  # ==========================================================================
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: weather-wms-tunnel
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      - nginx
-    networks:
-      - default
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-
-  # ==========================================================================
-  # CLOUDFLARE DDNS (keeps DNS updated when IP changes)
-  # Note: Not needed when using Cloudflare Tunnel, but kept for reference
-  # ==========================================================================
-  cloudflare-ddns:
-    image: oznu/cloudflare-ddns:latest
-    container_name: weather-wms-ddns
-    restart: unless-stopped
-    environment:
-      API_KEY: ${CLOUDFLARE_API_TOKEN:-}
-      ZONE: ${DOMAIN:-folkweather.com}
-      PROXIED: "true"
-      RRTYPE: A
-    profiles:
-      - ddns
-    networks:
-      - default
-
   # ==========================================================================
   # INFRASTRUCTURE OVERRIDES (remove exposed ports)
   # ==========================================================================
@@ -103,6 +32,9 @@ services:
 
   minio:
     ports: []
+    networks:
+      - default
+      - shared-services
     environment:
       MINIO_BROWSER_REDIRECT_URL: https://${DOMAIN:-folkweather.com}/minio/
     deploy:
@@ -111,10 +43,14 @@ services:
           memory: 2G
 
   # ==========================================================================
-  # APPLICATION SERVICES (remove ports, add Redis password, resource limits)
+  # APPLICATION SERVICES
+  # Services that the gateway needs to reach are on shared-services network.
   # ==========================================================================
   wms-api:
     ports: []
+    networks:
+      - default
+      - shared-services
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -151,6 +87,9 @@ services:
 
   edr-api:
     ports: []
+    networks:
+      - default
+      - shared-services
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-weatherwms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weatherwms}
       S3_ENDPOINT: http://minio:9000
@@ -169,6 +108,9 @@ services:
 
   web-dashboard:
     ports: []
+    networks:
+      - default
+      - shared-services
     deploy:
       resources:
         limits:
@@ -196,6 +138,9 @@ services:
 
   downloader:
     ports: []
+    networks:
+      - default
+      - shared-services
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
@@ -225,6 +170,9 @@ services:
 
   grafana:
     ports: []
+    networks:
+      - default
+      - shared-services
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -242,7 +190,6 @@ services:
         limits:
           memory: 512M
 
-  # promtail - no port changes needed, just resource limits
   promtail:
     deploy:
       resources:
@@ -252,12 +199,13 @@ services:
   # ==========================================================================
   # REMOVED SERVICES
   # ==========================================================================
-  # pgadmin is not included in production - access DB via SSH tunnel if needed
   pgadmin:
     deploy:
-      replicas: 0
+      replicas: 1
 
 # =============================================================================
-# ADDITIONAL VOLUMES
+# NETWORKS
 # =============================================================================
-# (No additional volumes needed - Cloudflare origin certs are mounted directly)
+networks:
+  shared-services:
+    external: true

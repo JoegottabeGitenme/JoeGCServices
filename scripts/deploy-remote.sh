@@ -2,13 +2,14 @@
 #
 # Weather WMS - Remote Production Deployment
 # =============================================================================
-# Deploys weather-wms to a remote server with:
-#   - TLS via Let's Encrypt
-#   - Nginx reverse proxy with rate limiting
-#   - Basic auth for admin endpoints
+# Deploys weather-wms services to a remote server.
+#
+# Architecture:
+#   - Gateway (/opt/gateway) handles nginx, Cloudflare tunnel, TLS, and routing
+#   - This script deploys only the weather services stack (/opt/weather-wms)
+#   - Services join the shared-services Docker network for gateway access
 #   - Firewall configuration (UFW)
 #   - Auto-generated secure passwords
-#   - Cloudflare DDNS for dynamic IP
 #
 # Usage:
 #   ./scripts/deploy-remote.sh              # Full deployment
@@ -18,12 +19,13 @@
 #   ./scripts/deploy-remote.sh --status     # Check deployment status
 #   ./scripts/deploy-remote.sh --logs [svc] # View remote logs
 #   ./scripts/deploy-remote.sh --ssh        # SSH to remote server
-#   ./scripts/deploy-remote.sh --help       # Show help
+#   ./scripts/deploy-remote.sh --help       # Show help/
 #
 # Prerequisites:
 #   - .env.nuc file configured (copy from .env.nuc.example)
 #   - SSH key access to remote server
-#   - Domain DNS pointing to remote server (via Cloudflare)
+#   - Gateway deployed at /opt/gateway on the remote server
+#   - shared-services Docker network created on the remote server
 #   - Docker installed on remote server
 # =============================================================================
 
@@ -71,8 +73,9 @@ Commands:
 Prerequisites:
   1. Copy .env.nuc.example to .env.nuc and fill in your values
   2. Set up SSH key access to your server
-  3. Configure your domain in Cloudflare
-  4. Ensure Docker is installed on the remote server
+  3. Ensure Docker is installed on the remote server
+  4. Deploy the gateway at /opt/gateway (handles nginx + Cloudflare tunnel)
+  5. Create the shared-services Docker network: docker network create shared-services
 
 Example:
   # First deployment
@@ -324,6 +327,10 @@ setup_remote() {
   log_info "Creating deployment directory: $REMOTE_DIR"
   ssh_cmd "sudo mkdir -p $REMOTE_DIR && sudo chown \$USER:\$USER $REMOTE_DIR"
   
+  # Ensure shared-services network exists
+  log_info "Ensuring shared-services Docker network exists..."
+  ssh_cmd "docker network create shared-services 2>/dev/null || true"
+  
   # Configure firewall (UFW)
   # Note: On Debian, ufw is in /usr/sbin which may not be in PATH for non-root users
   log_info "Configuring firewall..."
@@ -356,8 +363,7 @@ build_images() {
   log_info "Building application images (this may take 10-20 minutes for first build)..."
   docker compose build
   
-  log_info "Building nginx image..."
-  docker build -t weather-wms-nginx:latest -f deploy/production/nginx/Dockerfile deploy/production/nginx/
+  # Note: nginx is managed by the gateway (/opt/gateway), not this stack
   
   log_success "All images built successfully"
 }
@@ -371,12 +377,12 @@ transfer_images() {
   
   # Only transfer custom-built images
   # Base images (postgres, redis, minio, grafana, etc.) will be pulled on remote
+  # Note: nginx is managed by the gateway (/opt/gateway), not this stack
   local images=(
     "weather-wms-wms-api:latest"
     "weather-wms-edr-api:latest"
     "weather-wms-ingester:latest"
     "weather-wms-downloader:latest"
-    "weather-wms-nginx:latest"
   )
   
   local archive="/tmp/weather-wms-images.tar.gz"
@@ -399,14 +405,13 @@ transfer_images() {
   
   log_info "Pulling base images on remote (postgres, redis, minio, etc.)..."
   ssh_cmd "docker pull python:3.11-slim" || log_warn "Failed to pull python:3.11-slim"
-  ssh_cmd "docker pull postgres:16-bookworm" || log_warn "Failed to pull postgres"
+  ssh_cmd "docker pull postgis/postgis:16-3.4" || log_warn "Failed to pull postgis"
   ssh_cmd "docker pull redis:7-bookworm" || log_warn "Failed to pull redis"
   ssh_cmd "docker pull minio/minio:latest" || log_warn "Failed to pull minio"
   ssh_cmd "docker pull grafana/grafana:latest" || log_warn "Failed to pull grafana"
   ssh_cmd "docker pull grafana/loki:latest" || log_warn "Failed to pull loki"
   ssh_cmd "docker pull grafana/promtail:latest" || log_warn "Failed to pull promtail"
   ssh_cmd "docker pull prom/prometheus:latest" || log_warn "Failed to pull prometheus"
-  ssh_cmd "docker pull oznu/cloudflare-ddns:latest" || log_warn "Failed to pull cloudflare-ddns"
   ssh_cmd "docker pull minio/mc:latest" || log_warn "Failed to pull minio client"
   
   log_success "Images transferred and base images pulled"
@@ -422,7 +427,7 @@ sync_files() {
   cd "$PROJECT_ROOT"
   
   # Create remote directory structure
-  ssh_cmd "mkdir -p $REMOTE_DIR/deploy/production/nginx"
+  ssh_cmd "mkdir -p $REMOTE_DIR/deploy/production"
   ssh_cmd "mkdir -p $REMOTE_DIR/deploy/grafana/provisioning"
   ssh_cmd "mkdir -p $REMOTE_DIR/deploy/prometheus"
   ssh_cmd "mkdir -p $REMOTE_DIR/deploy/loki"
@@ -443,24 +448,7 @@ sync_files() {
   rsync_cmd deploy/loki/ "$REMOTE_HOST:$REMOTE_DIR/deploy/loki/"
   rsync_cmd deploy/promtail/ "$REMOTE_HOST:$REMOTE_DIR/deploy/promtail/"
   
-  # Sync nginx Dockerfile (needed for compose build context)
-  scp_cmd deploy/production/nginx/Dockerfile "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/"
-  scp_cmd deploy/production/nginx/nginx.conf.template "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/"
-  
-  # Generate nginx.conf from template
-  log_info "Generating nginx.conf..."
-  sed -e "s|__DOMAIN__|$DOMAIN|g" \
-      -e "s|__RATE_LIMIT_PER_MINUTE__|${RATE_LIMIT_PER_MINUTE:-100}|g" \
-      -e "s|__RATE_LIMIT_BURST__|${RATE_LIMIT_BURST:-50}|g" \
-      deploy/production/nginx/nginx.conf.template > /tmp/nginx.conf
-  scp_cmd /tmp/nginx.conf "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/nginx.conf"
-  rm /tmp/nginx.conf
-  
-  # Generate .htpasswd for basic auth (using openssl for portability)
-  log_info "Generating .htpasswd..."
-  printf "%s:%s\n" "${ADMIN_USER:-admin}" "$(openssl passwd -apr1 "$ADMIN_PASSWORD")" > /tmp/.htpasswd
-  scp_cmd /tmp/.htpasswd "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/.htpasswd"
-  rm /tmp/.htpasswd
+  # Note: nginx, TLS certs, and .htpasswd are managed by the gateway (/opt/gateway)
   
   # Generate .env file for remote
   log_info "Generating remote .env..."
@@ -516,12 +504,7 @@ RUST_BACKTRACE=${RUST_BACKTRACE:-0}
 # Monitoring
 PROMETHEUS_RETENTION_DAYS=${PROMETHEUS_RETENTION_DAYS:-30}
 
-# Cloudflare Tunnel (for CGNAT/Starlink)
-CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-
-# DDNS (not needed with Tunnel)
-CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
-ENABLE_DDNS=${ENABLE_DDNS:-false}
+# Note: Cloudflare tunnel/DDNS config is in /opt/gateway/.env
 EOF
   scp_cmd /tmp/.env.remote "$REMOTE_HOST:$REMOTE_DIR/.env"
   rm /tmp/.env.remote
@@ -536,8 +519,9 @@ EOF
 setup_tls() {
   log_step "Phase 8: Setting up TLS (Cloudflare Origin Certificate)..."
   
-  # Check if local certificate files exist
+  # TLS certs are now managed by the gateway at /opt/gateway/ssl/
   local cert_dir="$PROJECT_ROOT/deploy/production/nginx/ssl"
+  local gateway_ssl_dir="/opt/gateway/ssl"
   
   if [[ ! -f "$cert_dir/origin.cert" ]] || [[ ! -f "$cert_dir/origin.key" ]]; then
     log_error "Cloudflare origin certificate files not found!"
@@ -556,17 +540,17 @@ setup_tls() {
   
   log_info "Found Cloudflare origin certificate files"
   
-  # Create ssl directory on remote and copy certs
-  log_info "Uploading certificates to remote server..."
-  ssh_cmd "mkdir -p $REMOTE_DIR/deploy/production/nginx/ssl"
-  scp_cmd "$cert_dir/origin.cert" "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/ssl/origin.cert"
-  scp_cmd "$cert_dir/origin.key" "$REMOTE_HOST:$REMOTE_DIR/deploy/production/nginx/ssl/origin.key"
+  # Upload certs to the gateway's ssl directory
+  log_info "Uploading certificates to gateway ($gateway_ssl_dir)..."
+  ssh_cmd "mkdir -p $gateway_ssl_dir"
+  scp_cmd "$cert_dir/origin.cert" "$REMOTE_HOST:$gateway_ssl_dir/origin.cert"
+  scp_cmd "$cert_dir/origin.key" "$REMOTE_HOST:$gateway_ssl_dir/origin.key"
   
-  # Set proper permissions (readable only by root/docker)
-  ssh_cmd "chmod 600 $REMOTE_DIR/deploy/production/nginx/ssl/origin.key"
-  ssh_cmd "chmod 644 $REMOTE_DIR/deploy/production/nginx/ssl/origin.cert"
+  # Set proper permissions
+  ssh_cmd "chmod 600 $gateway_ssl_dir/origin.key"
+  ssh_cmd "chmod 644 $gateway_ssl_dir/origin.cert"
   
-  log_success "Cloudflare origin certificates installed"
+  log_success "Cloudflare origin certificates installed in gateway"
   log_info "Make sure Cloudflare SSL/TLS mode is set to 'Full (Strict)'"
 }
 
@@ -579,15 +563,12 @@ start_services() {
   
   cd "$PROJECT_ROOT"
   
-  # Determine compose profiles
-  local profiles=""
-  if [[ "${ENABLE_DDNS:-true}" == "true" ]] && [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-    profiles="--profile ddns"
-    log_info "DDNS enabled - Cloudflare DNS will be updated automatically"
-  fi
+  # Ensure shared-services network exists
+  log_info "Ensuring shared-services network exists..."
+  ssh_cmd "docker network create shared-services 2>/dev/null || true"
   
   log_info "Starting all services..."
-  ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml $profiles up -d"
+  ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d"
   
   # Wait for services to be healthy
   log_info "Waiting for services to be healthy (this may take a few minutes)..."
@@ -604,8 +585,8 @@ start_services() {
     
     echo -ne "\r  Services healthy: $healthy (waiting... ${retries}s remaining)"
     
-    # Check if WMS API is responding
-    if ssh_cmd "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities 2>/dev/null" | grep -q "200"; then
+    # Check if WMS API is responding via the gateway
+    if ssh_cmd "curl -s -o /dev/null -w '%{http_code}' http://localhost:80/wms?SERVICE=WMS\\&REQUEST=GetCapabilities 2>/dev/null" | grep -q "200"; then
       echo ""
       log_success "Services are healthy and responding"
       break
@@ -620,9 +601,9 @@ start_services() {
     log_info "Check status with: ./scripts/deploy-remote.sh --status"
   fi
   
-  # Restart nginx to ensure it picks up all upstream services
-  log_info "Restarting nginx to refresh upstream DNS..."
-  ssh_cmd "docker restart weather-wms-nginx"
+  # Restart gateway nginx to refresh upstream DNS for new/restarted services
+  log_info "Restarting gateway nginx to refresh upstream DNS..."
+  ssh_cmd "docker restart gateway-nginx" || log_warn "Could not restart gateway-nginx (is the gateway running?)"
 }
 
 # =============================================================================
@@ -673,15 +654,21 @@ print_summary() {
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
   echo ""
   echo -e "${CYAN}Public Endpoints (no auth required):${NC}"
-  echo "  WMS API:   https://$DOMAIN/wms"
-  echo "  WMTS API:  https://$DOMAIN/wmts"
-  echo "  EDR API:   https://$DOMAIN/edr"
+  echo "  WMS API:       https://$DOMAIN/wms"
+  echo "  WMTS API:      https://$DOMAIN/wmts"
+  echo "  EDR API:       https://$DOMAIN/edr"
+  echo "  FolkWeather:   https://$DOMAIN/app/"
   echo ""
   echo -e "${CYAN}Admin Endpoints (basic auth required):${NC}"
-  echo "  Dashboard: https://$DOMAIN/"
-  echo "  Grafana:   https://$DOMAIN/grafana/"
-  echo "  MinIO:     https://$DOMAIN/minio/"
-  echo "  Downloader: https://$DOMAIN/downloader/"
+  echo "  Dashboard:     https://$DOMAIN/"
+  echo "  Grafana:       https://$DOMAIN/grafana/"
+  echo "  MinIO:         https://$DOMAIN/minio/"
+  echo "  Downloader:    https://$DOMAIN/downloader/"
+  echo ""
+  echo -e "${CYAN}Architecture:${NC}"
+  echo "  Gateway:       /opt/gateway        (nginx + Cloudflare tunnel)"
+  echo "  Weather WMS:   /opt/weather-wms    (weather services)"
+  echo "  FolkWeather:   /opt/folkweather-app (PWA)"
   echo ""
   echo -e "${CYAN}Credentials:${NC}"
   echo "  Admin User:     ${ADMIN_USER:-admin}"
@@ -696,20 +683,6 @@ print_summary() {
   echo "  Update config:  ./scripts/deploy-remote.sh --update"
   echo "  Full rebuild:   ./scripts/deploy-remote.sh --rebuild"
   echo ""
-  echo -e "${CYAN}Cloudflare Setup:${NC}"
-  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-    echo "  DDNS is enabled - your domain will auto-update when IP changes"
-  else
-    echo -e "  ${YELLOW}DDNS not configured!${NC}"
-    echo "  Your Starlink IP may change. To enable DDNS:"
-    echo "  1. Create API token at: https://dash.cloudflare.com/profile/api-tokens"
-    echo "  2. Add to .env.nuc: CLOUDFLARE_API_TOKEN=your_token"
-    echo "  3. Run: ./scripts/deploy-remote.sh --update"
-  fi
-  echo ""
-  echo -e "${CYAN}TLS Certificate:${NC}"
-  echo "  Auto-renewal is configured via cron (daily at 3am)"
-  echo ""
 }
 
 # =============================================================================
@@ -720,8 +693,19 @@ show_status() {
   load_config
   echo ""
   log_info "Deployment Status for $REMOTE_HOST"
+  
   echo ""
-  ssh_cmd "cd $REMOTE_DIR && docker compose -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps"
+  echo -e "${CYAN}--- Gateway (/opt/gateway) ---${NC}"
+  ssh_cmd "cd /opt/gateway && docker compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null" || echo "  Not deployed"
+  
+  echo ""
+  echo -e "${CYAN}--- Weather WMS (/opt/weather-wms) ---${NC}"
+  ssh_cmd "cd $REMOTE_DIR && docker compose -f docker-compose.yml -f deploy/production/docker-compose.prod.yml ps --format 'table {{.Name}}\t{{.Status}}'"
+  
+  echo ""
+  echo -e "${CYAN}--- FolkWeather App (/opt/folkweather-app) ---${NC}"
+  ssh_cmd "cd /opt/folkweather-app && docker compose -f docker-compose.prod.yml ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null" || echo "  Not deployed"
+  
   echo ""
   log_info "Disk Usage:"
   ssh_cmd "df -h $REMOTE_DIR | tail -1"
@@ -758,9 +742,9 @@ do_update() {
   log_info "Restarting EDR API to reload config..."
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml restart edr-api" || true
   
-  # Always restart nginx to refresh DNS cache and pick up config changes
-  log_info "Restarting nginx to refresh upstream DNS..."
-  ssh_cmd "docker restart weather-wms-nginx"
+  # Restart gateway nginx to refresh upstream DNS for restarted services
+  log_info "Restarting gateway nginx to refresh upstream DNS..."
+  ssh_cmd "docker restart gateway-nginx" || log_warn "Could not restart gateway-nginx (is the gateway running?)"
   
   log_success "Update complete!"
 }
@@ -777,9 +761,9 @@ do_rebuild() {
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml down"
   ssh_cmd "cd $REMOTE_DIR && $COMPOSE_CMD -f docker-compose.yml -f deploy/production/docker-compose.prod.yml up -d"
   
-  # Restart nginx to refresh DNS cache and pick up config changes
-  log_info "Restarting nginx to refresh upstream DNS..."
-  ssh_cmd "docker restart weather-wms-nginx"
+  # Restart gateway nginx to refresh upstream DNS for restarted services
+  log_info "Restarting gateway nginx to refresh upstream DNS..."
+  ssh_cmd "docker restart gateway-nginx" || log_warn "Could not restart gateway-nginx (is the gateway running?)"
   
   log_success "Rebuild complete!"
 }
