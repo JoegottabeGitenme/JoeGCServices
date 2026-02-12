@@ -22,6 +22,7 @@ use crate::concurrency::ModelDownloadPermit;
 use crate::config::ModelConfig;
 use crate::download::{DownloadManager, SelectiveDownloadResult};
 use crate::grib_index::ParamFilter;
+use crate::lis_runner;
 use crate::state::DownloadState;
 
 /// File to download with optional timestamp for priority sorting.
@@ -30,6 +31,14 @@ pub struct DownloadFile {
     pub url: String,
     pub filename: String,
     pub timestamp: Option<DateTime<Utc>>,
+}
+
+/// Earthdata authentication context for NASA GES DISC downloads (NLDAS, GLDAS, etc.).
+#[derive(Clone)]
+pub struct EarthdataAuth {
+    pub client: Client,
+    pub username: String,
+    pub password: String,
 }
 
 /// Per-model download runner that operates independently.
@@ -42,6 +51,8 @@ pub struct ModelRunner {
     client: Client,
     s3_client: Option<aws_sdk_s3::Client>,
     output_dir: PathBuf,
+    /// Optional Earthdata-authenticated client for NASA GES DISC sources (NLDAS).
+    earthdata_auth: Option<EarthdataAuth>,
 }
 
 impl ModelRunner {
@@ -66,7 +77,14 @@ impl ModelRunner {
             client,
             s3_client,
             output_dir,
+            earthdata_auth: None,
         }
+    }
+
+    /// Set the Earthdata authentication context for NASA GES DISC downloads.
+    pub fn with_earthdata_auth(mut self, auth: EarthdataAuth) -> Self {
+        self.earthdata_auth = Some(auth);
+        self
     }
 
     /// Get the model ID
@@ -186,7 +204,17 @@ impl ModelRunner {
         );
 
         // 4. Download with permit-based concurrency
-        self.download_files(pending).await
+        // Route NLDAS models through Earthdata download path
+        if self.is_nldas() {
+            self.download_nldas_files(pending).await
+        } else {
+            self.download_files(pending).await
+        }
+    }
+
+    /// Check if this model uses NASA GES DISC (NLDAS) sources.
+    fn is_nldas(&self) -> bool {
+        self.model.model.id.starts_with("nldas")
     }
 
     /// Sort files by priority (newest first).
@@ -521,7 +549,9 @@ impl ModelRunner {
         );
 
         // Route to appropriate discovery method
-        if model.source.source_type == "http" || model.model.id == "ndfd" {
+        if model.model.id.starts_with("nldas") {
+            self.discover_nldas_files().await
+        } else if model.source.source_type == "http" || model.model.id == "ndfd" {
             self.discover_ndfd_files().await
         } else if model.model.id == "mrms" {
             self.discover_mrms_files(now, earliest_time, lookback).await
@@ -530,6 +560,188 @@ impl ModelRunner {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Discover NLDAS-2 files available for download from NASA GES DISC.
+    ///
+    /// Uses `lis_runner::build_nldas_file_list()` to construct hourly file URLs
+    /// based on the configured delay and retention window.
+    async fn discover_nldas_files(&self) -> Result<Vec<DownloadFile>> {
+        let model = &self.model;
+        let now = Utc::now();
+
+        // NLDAS data latency is ~4 days (96 hours) but configurable via delay_hours
+        let delay_hours = model.schedule.delay_hours;
+        let retention_hours = model.retention.hours;
+
+        info!(
+            model = %model.model.id,
+            delay_hours = delay_hours,
+            retention_hours = retention_hours,
+            "Discovering NLDAS files"
+        );
+
+        let files =
+            lis_runner::build_nldas_file_list(&model.model.id, now, delay_hours, retention_hours);
+
+        if !files.is_empty() {
+            info!(
+                model = %model.model.id,
+                count = files.len(),
+                "Found NLDAS files to check"
+            );
+        }
+
+        Ok(files)
+    }
+
+    /// Download NLDAS files using Earthdata authentication.
+    ///
+    /// This is a separate download path from the standard `download_files()` because
+    /// NASA GES DISC requires OAuth2 redirect-based authentication that the standard
+    /// `DownloadManager::download()` doesn't support.
+    async fn download_nldas_files(&self, files: Vec<DownloadFile>) -> Result<()> {
+        let model_id = self.model.model.id.clone();
+        let max_concurrent = self.permit.max_concurrent();
+
+        let earthdata_auth = match &self.earthdata_auth {
+            Some(auth) => auth.clone(),
+            None => {
+                warn!(
+                    model = %model_id,
+                    "No Earthdata credentials configured, skipping NLDAS downloads"
+                );
+                return Ok(());
+            }
+        };
+
+        let results = stream::iter(files)
+            .map(|file| {
+                let permit = self.permit.clone();
+                let state = self.state.clone();
+                let ingester_url = self.ingester_url.clone();
+                let http_client = self.client.clone();
+                let output_dir = self.output_dir.clone();
+                let model_id = model_id.clone();
+                let auth = earthdata_auth.clone();
+
+                async move {
+                    // Acquire a download slot
+                    let _slot = permit.acquire().await;
+
+                    let output_path = output_dir.join(&file.filename);
+
+                    // Skip if file already exists on disk
+                    if output_path.exists() {
+                        debug!(
+                            model = %model_id,
+                            file = %file.filename,
+                            "File already exists on disk, skipping"
+                        );
+                        return Ok(output_path);
+                    }
+
+                    // Download via Earthdata OAuth
+                    match lis_runner::download_earthdata_file(
+                        &auth.client,
+                        &auth.username,
+                        &auth.password,
+                        &file.url,
+                        &output_path,
+                    )
+                    .await
+                    {
+                        Ok(file_size) => {
+                            info!(
+                                model = %model_id,
+                                url = %file.url,
+                                size = file_size,
+                                path = %output_path.display(),
+                                "NLDAS download complete"
+                            );
+
+                            // Mark as completed in state DB
+                            let _ = state
+                                .queue_download(&file.url, &file.filename, &model_id)
+                                .await;
+                            let _ = state
+                                .update_status(&file.url, crate::state::DownloadStatus::Completed)
+                                .await;
+
+                            // Trigger ingestion
+                            if let Some(ref url) = ingester_url {
+                                let file_path = format!("/data/downloads/{}", file.filename);
+                                match http_client
+                                    .post(url)
+                                    .json(&serde_json::json!({
+                                        "file_path": file_path,
+                                        "source_url": file.url
+                                    }))
+                                    .send()
+                                    .await
+                                {
+                                    Ok(response) if response.status().is_success() => {
+                                        info!(
+                                            model = %model_id,
+                                            file = %file.filename,
+                                            "Ingestion triggered successfully"
+                                        );
+                                        let _ = state.mark_ingested(&file.url).await;
+                                        delete_ingested_file(&output_dir, &file.filename).await;
+                                    }
+                                    Ok(response) => {
+                                        warn!(
+                                            model = %model_id,
+                                            file = %file.filename,
+                                            status = %response.status(),
+                                            "Ingestion request failed"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            model = %model_id,
+                                            file = %file.filename,
+                                            error = %e,
+                                            "Failed to trigger ingestion"
+                                        );
+                                    }
+                                }
+                            }
+
+                            Ok(output_path)
+                        }
+                        Err(e) => {
+                            error!(
+                                model = %model_id,
+                                url = %file.url,
+                                error = %e,
+                                "NLDAS download failed"
+                            );
+                            Err(e)
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(max_concurrent)
+            .collect::<Vec<_>>()
+            .await;
+
+        let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+        for failure in &failures {
+            if let Err(e) = failure {
+                warn!(model = %model_id, error = %e, "NLDAS download failure detail");
+            }
+        }
+
+        info!(
+            model = %model_id,
+            success = successes.len(),
+            failed = failures.len(),
+            "NLDAS download cycle complete"
+        );
+
+        Ok(())
     }
 
     /// Discover NDFD files available for download.

@@ -13,6 +13,7 @@ mod concurrency;
 mod config;
 mod download;
 mod grib_index;
+mod lis_runner;
 mod model_runner;
 mod observation_runner;
 mod scheduler;
