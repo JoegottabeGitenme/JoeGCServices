@@ -46,6 +46,8 @@ VALID_SOURCE_TYPES = {
     "aviation_weather_api",
     "aviation_weather_api_taf",
     "nasa_gesdisc",
+    "ndbc_latest_obs",
+    "dart_realtime",
 }
 VALID_PROJECTION_TYPES = {
     "geographic",
@@ -462,7 +464,12 @@ class ModelValidator:
                 dim_type = self.data.get("dimensions", {}).get("type", "")
                 if (
                     source_type
-                    not in ("aviation_weather_api", "aviation_weather_api_taf")
+                    not in (
+                        "aviation_weather_api",
+                        "aviation_weather_api_taf",
+                        "ndbc_latest_obs",
+                        "dart_realtime",
+                    )
                     and dim_type != "static"
                 ):
                     self.add_warning(

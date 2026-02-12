@@ -361,7 +361,7 @@ fn flip_rows(data: &[f32], width: usize, height: usize) -> Vec<f32> {
     flipped
 }
 
-/// Read the time coordinate and convert to DateTime<Utc>.
+/// Read the time coordinate and convert to `DateTime<Utc>`.
 ///
 /// Handles the common "hours since YYYY-MM-DD HH:MM:SS" convention.
 fn read_time(nc_file: &netcdf::File) -> NetCdfResult<DateTime<Utc>> {

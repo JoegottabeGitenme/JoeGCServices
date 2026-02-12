@@ -135,6 +135,20 @@ pub struct ObservationProperties {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sea_level_pressure_pa: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub wave_height_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_wave_period_s: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_wave_period_s: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_wave_direction_deg: Option<i16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_temp_k: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tide_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_column_height_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flight_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_text: Option<String>,
@@ -245,14 +259,15 @@ pub async fn obs_locations_list_handler(
             }
         }
     } else {
-        // METAR: Get locations with recent observations
+        // Point observations: Get locations with recent observations
         let source = model_config
             .observation_source
             .clone()
             .or(params.source.clone())
             .unwrap_or_else(|| "metar".to_string());
 
-        let since = Some(Utc::now() - Duration::hours(2));
+        let recency_hours = model_config.locations_recency_hours.unwrap_or(2) as i64;
+        let since = Some(Utc::now() - Duration::hours(recency_hours));
         match state
             .observation_catalog
             .get_locations_with_observations(&source, since)
@@ -419,8 +434,9 @@ pub async fn obs_location_query_handler(
             .unwrap();
     }
 
-    // METAR: Get observations
-    let (start_time, end_time) = parse_datetime_range(&params.datetime);
+    // Point observations: Get observations at location
+    let recency_hours = model_config.locations_recency_hours.unwrap_or(2) as i64;
+    let (start_time, end_time) = parse_datetime_range(&params.datetime, recency_hours);
 
     let query = ObservationQuery {
         location_id: Some(location_id.clone()),
@@ -548,8 +564,9 @@ pub async fn obs_radius_query_handler(
             .unwrap();
     }
 
-    // METAR: Get observations in radius
-    let (start_time, end_time) = parse_datetime_range(&params.datetime);
+    // Point observations: Get observations in radius
+    let recency_hours = model_config.locations_recency_hours.unwrap_or(2) as i64;
+    let (start_time, end_time) = parse_datetime_range(&params.datetime, recency_hours);
 
     let observations = match state
         .observation_catalog
@@ -671,8 +688,9 @@ pub async fn obs_area_query_handler(
             .unwrap();
     }
 
-    // METAR: Get observations in bbox
-    let (start_time, end_time) = parse_datetime_range(&params.datetime);
+    // Point observations: Get observations in bbox
+    let recency_hours = model_config.locations_recency_hours.unwrap_or(2) as i64;
+    let (start_time, end_time) = parse_datetime_range(&params.datetime, recency_hours);
 
     // Get locations in bbox
     let locations = match state
@@ -811,6 +829,13 @@ fn observation_to_feature(loc: &Location, obs: &Observation) -> ObservationFeatu
             visibility_m: obs.visibility_m,
             altimeter_pa: obs.altimeter_pa,
             sea_level_pressure_pa: obs.sea_level_pressure_pa,
+            wave_height_m: obs.wave_height_m,
+            dominant_wave_period_s: obs.dominant_wave_period_s,
+            average_wave_period_s: obs.average_wave_period_s,
+            mean_wave_direction_deg: obs.mean_wave_direction_deg,
+            water_temp_k: obs.water_temp_k,
+            tide_m: obs.tide_m,
+            water_column_height_m: obs.water_column_height_m,
             flight_category: obs.flight_category.clone(),
             raw_text: obs.raw_text.clone(),
         },
@@ -1036,13 +1061,17 @@ fn parse_bbox(coords: &str) -> Result<(f64, f64, f64, f64), String> {
 }
 
 /// Parse datetime parameter into start/end times.
+///
+/// `default_recency_hours` controls the default lookback window when no datetime
+/// is specified. Defaults to 2 hours (suitable for METAR). Set higher for sources
+/// with longer data latency (e.g., 12 for DART, 6 for NDBC).
 fn parse_datetime_range(
     datetime: &Option<String>,
+    default_recency_hours: i64,
 ) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
     let Some(dt) = datetime else {
-        // Default to last 2 hours
         let end = Utc::now();
-        let start = end - Duration::hours(2);
+        let start = end - Duration::hours(default_recency_hours);
         return (Some(start), Some(end));
     };
 
@@ -1074,9 +1103,9 @@ fn parse_datetime_range(
         );
     }
 
-    // Fallback to last 2 hours
+    // Fallback
     let end = Utc::now();
-    let start = end - Duration::hours(2);
+    let start = end - Duration::hours(default_recency_hours);
     (Some(start), Some(end))
 }
 

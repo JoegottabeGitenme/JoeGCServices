@@ -95,6 +95,20 @@ pub struct ObservationData {
     pub altimeter_pa: Option<f32>,
     /// Sea level pressure in Pascals
     pub sea_level_pressure_pa: Option<f32>,
+    /// Significant wave height in meters
+    pub wave_height_m: Option<f32>,
+    /// Dominant wave period in seconds
+    pub dominant_wave_period_s: Option<f32>,
+    /// Average wave period in seconds
+    pub average_wave_period_s: Option<f32>,
+    /// Mean wave direction in degrees
+    pub mean_wave_direction_deg: Option<i16>,
+    /// Water temperature in Kelvin
+    pub water_temp_k: Option<f32>,
+    /// Tide / water level in meters
+    pub tide_m: Option<f32>,
+    /// Water column height in meters (DART tsunami buoys)
+    pub water_column_height_m: Option<f32>,
     /// Cloud layers as JSON
     pub cloud_layers: Option<serde_json::Value>,
     /// Flight category
@@ -475,6 +489,13 @@ async fn ingest_observations_handler(
             visibility_m: obs_data.visibility_m,
             altimeter_pa: obs_data.altimeter_pa,
             sea_level_pressure_pa: obs_data.sea_level_pressure_pa,
+            wave_height_m: obs_data.wave_height_m,
+            dominant_wave_period_s: obs_data.dominant_wave_period_s,
+            average_wave_period_s: obs_data.average_wave_period_s,
+            mean_wave_direction_deg: obs_data.mean_wave_direction_deg,
+            water_temp_k: obs_data.water_temp_k,
+            tide_m: obs_data.tide_m,
+            water_column_height_m: obs_data.water_column_height_m,
             cloud_layers: obs_data.cloud_layers.clone(),
             flight_category: obs_data.flight_category.clone(),
             wx_string: obs_data.wx_string.clone(),

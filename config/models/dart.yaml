@@ -1,0 +1,54 @@
+# DART - Deep-ocean Assessment and Reporting of Tsunamis
+# Water column height data from DART tsunami buoy stations
+#
+# Data source: NDBC realtime2 per-station .dart files
+# ~54 active DART stations globally
+# Station discovery: activestations.xml (filter type="dart" dart="y")
+# Per-station data: https://www.ndbc.noaa.gov/data/realtime2/{ID}.dart
+#
+# Each station reports 45 days of history (~4,300 readings per station)
+# Standard mode: 15-minute intervals (T=1)
+# Event/tsunami mode: 1-minute (T=2) or 15-second (T=3) intervals
+
+model:
+  id: dart
+  name: "DART - Tsunami Buoy Network"
+  description: "Water column height measurements from deep-ocean tsunami detection buoys"
+  enabled: true
+
+dimensions:
+  type: observation
+  run: false
+  forecast: false
+  time: true
+  elevation: false
+
+source:
+  type: dart_realtime
+  # Station metadata for discovery (filter type="dart" dart="y")
+  stations_url: "https://www.ndbc.noaa.gov/activestations.xml"
+  # Base URL for per-station .dart data files
+  data_base_url: "https://www.ndbc.noaa.gov/data/realtime2"
+
+grid:
+  projection: geographic
+  resolution: "point"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 900  # 15 minutes (matches standard reporting interval)
+  lookback_minutes: 64800  # 45 days in minutes (45 * 24 * 60)
+
+retention:
+  hours: 1080  # 45 days
+
+parameters:
+  - name: water_column_height
+    description: "Water column height (depth-integrated pressure measurement)"
+    units: "m"
+    display_units: "m"

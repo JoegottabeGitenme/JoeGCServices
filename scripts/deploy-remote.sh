@@ -504,6 +504,10 @@ RUST_BACKTRACE=${RUST_BACKTRACE:-0}
 # Monitoring
 PROMETHEUS_RETENTION_DAYS=${PROMETHEUS_RETENTION_DAYS:-30}
 
+# Earthdata credentials (for NLDAS-2 downloads from NASA GES DISC)
+EARTHDATA_USERNAME=${EARTHDATA_USERNAME:-}
+EARTHDATA_PASSWORD=${EARTHDATA_PASSWORD:-}
+
 # Note: Cloudflare tunnel/DDNS config is in /opt/gateway/.env
 EOF
   scp_cmd /tmp/.env.remote "$REMOTE_HOST:$REMOTE_DIR/.env"

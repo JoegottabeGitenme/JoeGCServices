@@ -147,6 +147,8 @@ services:
       INGESTER_URL: http://ingester:8082/ingest
       STATUS_PORT: 8081
       CONFIG_DIR: /app/config
+      EARTHDATA_USERNAME: ${EARTHDATA_USERNAME:-}
+      EARTHDATA_PASSWORD: ${EARTHDATA_PASSWORD:-}
     deploy:
       resources:
         limits:

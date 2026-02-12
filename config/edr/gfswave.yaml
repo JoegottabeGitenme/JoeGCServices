@@ -1,0 +1,121 @@
+# GFS-Wave EDR Configuration
+# Global Wave Forecast System (WAVEWATCH III) - 0.25° resolution
+#
+# Coverage: Global (-180 to 180 lon, -90 to 90 lat)
+# Resolution: 0.25° (~28km at equator)
+# Update frequency: Every 6 hours (00z, 06z, 12z, 18z)
+#
+# All wave parameters are at the ocean surface (no vertical dimension).
+# valid_range: Used for PNG encoding to ensure consistent rendering.
+
+model: gfswave
+
+collections:
+  # ===========================================================================
+  # Instance-based collections (access all available model runs)
+  # ===========================================================================
+
+  - id: gfswave-surface
+    title: "GFS-Wave - Ocean Surface"
+    description: "Wave forecast parameters at the ocean surface including wave height, period, direction, and surface winds"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      # Combined sea state
+      - name: HTSGW
+        levels: [surface]
+        valid_range: { min: 0, max: 25 }  # meters
+      - name: PERPW
+        levels: [surface]
+        valid_range: { min: 0, max: 30 }  # seconds
+      - name: DIRPW
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }  # degrees
+      # Wind wave component
+      - name: WVHGT
+        levels: [surface]
+        valid_range: { min: 0, max: 20 }  # meters
+      - name: WVPER
+        levels: [surface]
+        valid_range: { min: 0, max: 25 }  # seconds
+      - name: WVDIR
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }  # degrees
+      # Surface wind
+      - name: WIND
+        levels: [surface]
+        valid_range: { min: 0, max: 80 }  # m/s
+      - name: WDIR
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }  # degrees
+      - name: UGRD
+        levels: [surface]
+        valid_range: { min: -100, max: 100 }  # m/s
+      - name: VGRD
+        levels: [surface]
+        valid_range: { min: -100, max: 100 }  # m/s
+    run_mode: instances
+
+  # ===========================================================================
+  # Latest-only collections (quick access to most recent model run)
+  # ===========================================================================
+
+  - id: gfswave-surface-latest
+    title: "GFS-Wave - Ocean Surface (Latest)"
+    description: "Most recent wave forecast at the ocean surface"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: HTSGW
+        levels: [surface]
+        valid_range: { min: 0, max: 25 }
+      - name: PERPW
+        levels: [surface]
+        valid_range: { min: 0, max: 30 }
+      - name: DIRPW
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }
+      - name: WVHGT
+        levels: [surface]
+        valid_range: { min: 0, max: 20 }
+      - name: WVPER
+        levels: [surface]
+        valid_range: { min: 0, max: 25 }
+      - name: WVDIR
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }
+      - name: WIND
+        levels: [surface]
+        valid_range: { min: 0, max: 80 }
+      - name: WDIR
+        levels: [surface]
+        valid_range: { min: 0, max: 360 }
+      - name: UGRD
+        levels: [surface]
+        valid_range: { min: -100, max: 100 }
+      - name: VGRD
+        levels: [surface]
+        valid_range: { min: -100, max: 100 }
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 120
+  max_vertical_levels: 1
+  max_response_size_mb: 100
+  max_area_sq_degrees: 500
+  max_area_sq_degrees_png: 10000
+  max_radius_km: 750

@@ -1,0 +1,48 @@
+# DART EDR Configuration
+# Tsunami buoy water column height data from DART stations
+#
+# This is point observation data (not gridded), sourced from PostgreSQL.
+# Locations are dynamic (queried from the database), not static config.
+#
+# Supported EDR queries:
+# - /collections/dart/locations - List all DART stations with recent observations
+# - /collections/dart/locations/{id} - Get water column height at a specific station
+# - /collections/dart/radius - Get observations within radius of a point
+# - /collections/dart/area - Get observations within a bounding box
+#
+# Data includes water column height measurements from deep-ocean
+# tsunami detection buoys. Standard mode reports every 15 minutes;
+# event mode (during seismic activity) reports every 1 minute or 15 seconds.
+
+model: dart
+data_type: pointobservation
+observation_source: dart
+locations_recency_hours: 12  # DART data from NDBC has ~3-6 hour processing lag
+
+collections:
+  - id: dart
+    title: "DART - Tsunami Buoy Water Column Height"
+    description: "Water column height measurements from DART (Deep-ocean Assessment and Reporting of Tsunamis) buoy stations. Reports water column height in standard (15-min), event (1-min), and triggered (15-sec) modes."
+    parameters:
+      - name: water_column_height
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+    - application/vnd.cov+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 900  # 15 minutes - matches DART standard reporting interval
+
+# Response size limits for observation queries
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 4320       # ~45 days of 15-min observations
+  max_vertical_levels: 1     # Surface only
+  max_response_size_mb: 50   # 45 days of history per station can be large
+  max_radius_km: 5000        # DART stations are spread across entire ocean basins
+  max_area_sq_degrees: 10000 # Global ocean coverage
