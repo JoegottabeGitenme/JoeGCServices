@@ -1,0 +1,120 @@
+# NLDAS-2 Forcing Data Configuration
+# North American Land Data Assimilation System - Forcing 0.125° hourly
+# Source: NASA GES DISC (requires Earthdata Login credentials)
+
+model:
+  id: nldas-forcing
+  name: "NLDAS-2 Forcing"
+  description: "North American Land Data Assimilation System - Forcing 0.125 hourly"
+  enabled: true
+
+dimensions:
+  type: observation
+  time: true
+  elevation: true
+
+source:
+  type: nasa_gesdisc
+  base_url: "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_FORA0125_H.2.0"
+  file_pattern: "NLDAS_FORA0125_H.A{date}.{hour}00.002.grb.SUB.nc4"
+
+grid:
+  projection: geographic
+  resolution: "0.125deg"
+  bbox:
+    min_lon: -124.9375
+    min_lat: 25.0625
+    max_lon: -67.0625
+    max_lat: 52.9375
+
+schedule:
+  type: observation
+  poll_interval_secs: 3600
+  delay_hours: 96
+  max_concurrent: 3
+
+retention:
+  hours: 720
+
+parameters:
+  - name: APCP
+    cf_name: "Rainf_f_tavg"
+    description: "Precipitation hourly total"
+    units: "kg/m^2/s"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 0.1]
+
+  - name: TMP2M
+    cf_name: "Tair_f_inst"
+    description: "2-m air temperature"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    valid_range: [180, 350]
+
+  - name: SPFH2M
+    cf_name: "Qair_f_inst"
+    description: "2-m specific humidity"
+    units: "kg/kg"
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    valid_range: [0, 0.1]
+
+  - name: PRES
+    cf_name: "Psurf_f_inst"
+    description: "Surface pressure"
+    units: "Pa"
+    display_units: "hPa"
+    conversion: Pa_to_hPa
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [50000, 110000]
+
+  - name: WIND
+    cf_name: "Wind_f_inst"
+    description: "10-m wind speed"
+    units: "m/s"
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+    valid_range: [0, 100]
+
+  - name: DSWRF
+    cf_name: "SWdown_f_tavg"
+    description: "Downward shortwave radiation flux"
+    units: "W/m^2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1500]
+
+  - name: DLWRF
+    cf_name: "LWdown_f_tavg"
+    description: "Downward longwave radiation flux"
+    units: "W/m^2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 700]
+
+  - name: CAPE
+    cf_name: "CAPE"
+    description: "Convective Available Potential Energy"
+    units: "J/kg"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 10000]
