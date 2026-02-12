@@ -2,7 +2,7 @@
 //!
 //! Fetches water column height data from DART tsunami buoy stations.
 //! Station discovery uses NDBC activestations.xml (filter type="dart" dart="y").
-//! Per-station data files are at https://www.ndbc.noaa.gov/data/realtime2/{ID}.dart
+//! Per-station data files are at `https://www.ndbc.noaa.gov/data/realtime2/{ID}.dart`
 //!
 //! Data format: 8-column space-delimited, 2-line `#` header:
 //!   #YY  MM DD hh mm ss T   HEIGHT

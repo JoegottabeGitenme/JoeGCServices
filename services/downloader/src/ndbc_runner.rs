@@ -5,7 +5,7 @@
 //! the most recent observation (less than 2 hours old).
 //!
 //! Reference: docs/ocean_data.md
-//! Data source: https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt
+//! Data source: <https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt>
 
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
