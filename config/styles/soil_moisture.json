@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Soil Moisture Styles",
+    "description": "Styles for soil moisture, snow water equivalent, and water storage parameters (kg/m2)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Soil Moisture",
+      "description": "Soil moisture from dry (brown/tan) to saturated (blue)",
+      "type": "gradient",
+      "units": "kg/m2",
+      "range": {
+        "min": 0,
+        "max": 500
+      },
+      "stops": [
+        { "value": 0, "color": "#8B4513", "label": "0" },
+        { "value": 10, "color": "#A0522D", "label": "10" },
+        { "value": 25, "color": "#CD853F", "label": "25" },
+        { "value": 50, "color": "#DEB887", "label": "50" },
+        { "value": 75, "color": "#F5DEB3", "label": "75" },
+        { "value": 100, "color": "#FFFACD", "label": "100" },
+        { "value": 150, "color": "#E0FFFF", "label": "150" },
+        { "value": 200, "color": "#B0E0E6", "label": "200" },
+        { "value": 300, "color": "#6495ED", "label": "300" },
+        { "value": 400, "color": "#4169E1", "label": "400" },
+        { "value": 500, "color": "#00008B", "label": "500" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Soil Moisture (kg/m\u00b2)",
+        "labels": ["0", "50", "100", "200", "300", "500"]
+      }
+    }
+  }
+}

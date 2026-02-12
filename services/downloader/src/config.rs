@@ -500,9 +500,20 @@ impl DevLimits {
             }
         }
 
-        // Cap retention hours
+        // Cap retention hours.
+        // Skip for high-latency sources (nasa_gesdisc) where retention must exceed
+        // the data delay (e.g., NLDAS has 96h delay + 720h retention). Capping
+        // retention below delay_hours makes the discovery window empty.
         if let Some(max_hours) = self.max_retention_hours {
-            if config.retention.hours > max_hours {
+            let skip_retention_cap = config.source.source_type == "nasa_gesdisc";
+            if skip_retention_cap {
+                debug!(
+                    model = %config.model.id,
+                    retention = config.retention.hours,
+                    delay_hours = config.schedule.delay_hours,
+                    "Skipping DEV_MAX_RETENTION_HOURS for high-latency source (nasa_gesdisc)"
+                );
+            } else if config.retention.hours > max_hours {
                 debug!(
                     model = %config.model.id,
                     original = config.retention.hours,
@@ -753,5 +764,99 @@ retention:
         assert!(config.is_observation());
         // When retention.hours is 0, should fallback to schedule.lookback_minutes
         assert_eq!(config.lookback_minutes(), 45);
+    }
+
+    #[test]
+    fn test_dev_limits_skip_retention_for_nasa_gesdisc() {
+        let yaml = r#"
+model:
+  id: nldas-noah
+  name: "NLDAS-2 Noah"
+  enabled: true
+
+source:
+  type: nasa_gesdisc
+  base_url: "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_NOAH0125_H.2.0"
+
+grid:
+  projection: geographic
+  resolution: "0.125deg"
+  bbox:
+    min_lon: -125.0
+    min_lat: 25.0
+    max_lon: -67.0
+    max_lat: 53.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 3600
+  delay_hours: 96
+
+retention:
+  hours: 720
+"#;
+
+        let mut config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.retention.hours, 720);
+
+        // Apply dev limits with a low retention cap
+        let dev_limits = DevLimits {
+            max_forecast_hours: None,
+            max_retention_hours: Some(2),
+            max_cycles: None,
+        };
+        dev_limits.apply(&mut config);
+
+        // nasa_gesdisc sources should NOT have retention capped
+        assert_eq!(
+            config.retention.hours, 720,
+            "nasa_gesdisc models should skip DEV_MAX_RETENTION_HOURS"
+        );
+    }
+
+    #[test]
+    fn test_dev_limits_still_cap_regular_models() {
+        let yaml = r#"
+model:
+  id: mrms
+  name: "MRMS"
+  enabled: true
+
+source:
+  type: aws_s3
+  bucket: noaa-mrms-pds
+
+grid:
+  projection: latlon
+  resolution: "0.01deg"
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 120
+
+retention:
+  hours: 48
+"#;
+
+        let mut config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.retention.hours, 48);
+
+        let dev_limits = DevLimits {
+            max_forecast_hours: None,
+            max_retention_hours: Some(2),
+            max_cycles: None,
+        };
+        dev_limits.apply(&mut config);
+
+        // Regular models should still get capped
+        assert_eq!(
+            config.retention.hours, 2,
+            "Regular models should be capped by DEV_MAX_RETENTION_HOURS"
+        );
     }
 }

@@ -68,8 +68,12 @@ pub async fn query_point_value(
     }
 
     let model = parts[0];
-    // Uppercase parameter to match database storage
-    let parameter = parts[1..].join("_").to_uppercase();
+    // Uppercase parameter for case-insensitive layer config lookup, then resolve
+    // canonical name from config to match database storage (CF NetCDF uses mixed-case)
+    let mut parameter = parts[1..].join("_").to_uppercase();
+    if let Some(lc) = layer_configs.get_layer_by_param(model, &parameter) {
+        parameter = lc.parameter.clone();
+    }
 
     // Convert pixel coordinates to geographic coordinates
     // Note: bbox is already in [min_lon, min_lat, max_lon, max_lat] format

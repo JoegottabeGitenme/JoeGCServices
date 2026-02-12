@@ -240,16 +240,19 @@ async fn warm_single_tile(
     }
 
     let model = parts[0];
-    // Uppercase parameter to match database storage
-    let parameter = parts[1..].join("_").to_uppercase();
+    // Uppercase parameter for case-insensitive layer config lookup, then resolve
+    // canonical name from config to match database storage (CF NetCDF uses mixed-case)
+    let mut parameter = parts[1..].join("_").to_uppercase();
 
     // Get default level from layer config for consistent data selection
     let default_level: Option<String> = {
         let configs = state.layer_configs.read().await;
-        configs
-            .get_layer_by_param(model, &parameter)
-            .and_then(|l| l.default_level())
-            .map(|s| s.to_string())
+        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
+            parameter = lc.parameter.clone();
+            lc.default_level().map(|s| s.to_string())
+        } else {
+            None
+        }
     };
 
     // Render the tile based on layer type

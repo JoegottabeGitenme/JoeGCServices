@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Vegetation Styles",
+    "description": "Styles for vegetation indices (Leaf Area Index, green vegetation fraction)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Vegetation Index",
+      "description": "Vegetation density from bare (brown) to dense (green)",
+      "type": "gradient",
+      "units": "index",
+      "range": {
+        "min": 0,
+        "max": 8
+      },
+      "stops": [
+        { "value": 0, "color": "#A0522D", "label": "0" },
+        { "value": 0.5, "color": "#CD853F", "label": "0.5" },
+        { "value": 1, "color": "#DEB887", "label": "1" },
+        { "value": 1.5, "color": "#F5DEB3", "label": "1.5" },
+        { "value": 2, "color": "#C8E6A0", "label": "2" },
+        { "value": 3, "color": "#90D050", "label": "3" },
+        { "value": 4, "color": "#50B020", "label": "4" },
+        { "value": 5, "color": "#228B22", "label": "5" },
+        { "value": 6, "color": "#006400", "label": "6" },
+        { "value": 8, "color": "#003200", "label": "8" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Vegetation Index",
+        "labels": ["0", "1", "2", "4", "6", "8"]
+      }
+    }
+  }
+}

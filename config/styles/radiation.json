@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Radiation and Heat Flux Styles",
+    "description": "Styles for radiation fluxes, heat fluxes, and evapotranspiration components (W/m2)"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Radiation / Heat Flux",
+      "description": "Energy flux from low (cool colors) to high (warm colors)",
+      "type": "gradient",
+      "units": "W/m2",
+      "range": {
+        "min": -200,
+        "max": 1000
+      },
+      "stops": [
+        { "value": -200, "color": "#1E0082", "label": "-200" },
+        { "value": -100, "color": "#0032C8", "label": "-100" },
+        { "value": -50, "color": "#0096FF", "label": "-50" },
+        { "value": 0, "color": "#E0E0E0", "label": "0" },
+        { "value": 50, "color": "#FFFFAA", "label": "50" },
+        { "value": 100, "color": "#FFFF00", "label": "100" },
+        { "value": 200, "color": "#FFC800", "label": "200" },
+        { "value": 300, "color": "#FF9600", "label": "300" },
+        { "value": 500, "color": "#FF3200", "label": "500" },
+        { "value": 750, "color": "#C80000", "label": "750" },
+        { "value": 1000, "color": "#800080", "label": "1000" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Energy Flux (W/m\u00b2)",
+        "labels": ["-200", "0", "100", "300", "500", "1000"]
+      }
+    }
+  }
+}

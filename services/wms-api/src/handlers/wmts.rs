@@ -750,13 +750,26 @@ async fn wmts_get_tile(
     state.metrics.record_wmts_request();
     let timer = Timer::start();
 
-    // Parse layer
+    // Parse layer name into model + parameter.
+    // The initial parameter is uppercased for backward compatibility with GRIB2 models.
+    // It will be resolved to the canonical case from the layer config below.
     let parts: Vec<&str> = layer.split('_').collect();
-    let (model, parameter) = if parts.len() >= 2 {
+    let (model, mut parameter) = if parts.len() >= 2 {
         (parts[0], parts[1..].join("_").to_uppercase())
     } else {
         (layer, "".to_string())
     };
+
+    // Resolve canonical parameter name from layer config.
+    // The layer config lookup is case-insensitive, so "AVGSURFT" matches "AvgSurfT".
+    // Using the config's parameter name ensures catalog queries match what the ingester stored
+    // (important for CF-convention NetCDF data with mixed-case variable names like AvgSurfT).
+    {
+        let configs = state.layer_configs.read().await;
+        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
+            parameter = lc.parameter.clone();
+        }
+    }
 
     // Get effective elevation - preserve original value for data lookup
     // URL encoding uses %20 for space, which becomes a space when parsed
@@ -1261,11 +1274,19 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
     }
 
     let parts: Vec<&str> = layer.split('_').collect();
-    let (model, parameter) = if parts.len() >= 2 {
+    let (model, mut parameter) = if parts.len() >= 2 {
         (parts[0], parts[1..].join("_").to_uppercase())
     } else {
         return;
     };
+
+    // Resolve canonical parameter name from layer config (see wmts_get_tile for details)
+    {
+        let configs = state.layer_configs.read().await;
+        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
+            parameter = lc.parameter.clone();
+        }
+    }
 
     let latlon_bbox = wms_common::tile::tile_to_latlon_bounds(&coord);
     let bbox_array = [
