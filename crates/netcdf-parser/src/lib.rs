@@ -1,30 +1,30 @@
-//! NetCDF parser for satellite data (GOES-R ABI).
+//! NetCDF parser for weather and satellite data.
 //!
-//! This crate provides reading of NetCDF-4 format files, specifically
-//! optimized for GOES-R ABI (Advanced Baseline Imager) data products.
+//! This crate provides reading of NetCDF-4 format files for two categories:
+//!
+//! 1. **GOES-R ABI satellite data** — Geostationary imagery with scan-angle coordinates
+//! 2. **CF-convention gridded data** — Regular lat/lon grids (NLDAS-2, GLDAS, ERA5, etc.)
 //!
 //! # Features
 //!
 //! - **Native parsing**: High-performance reading using the `netcdf` library
-//! - **Geostationary projection**: Convert between scan angles and lat/lon
-//!
-//! # GOES-R ABI Data Structure
-//!
-//! GOES-R ABI files use the geostationary projection with coordinates in radians.
-//! The main data variable is `CMI` (Cloud and Moisture Imagery) which contains
-//! either reflectance factors (bands 1-6) or brightness temperatures (bands 7-16).
+//! - **Geostationary projection**: Convert between scan angles and lat/lon (GOES)
+//! - **CF-convention reader**: Multi-variable extraction from regular grids
 //!
 //! # Module Structure
 //!
 //! - [`error`] - Error types and result alias
-//! - [`projection`] - Geostationary coordinate transformations
-//! - [`native`] - High-performance netcdf library parsing
+//! - [`projection`] - Geostationary coordinate transformations (GOES)
+//! - [`native`] - GOES-R ABI NetCDF parsing
+//! - [`cf_reader`] - Generic CF-convention NetCDF reader for regular lat/lon grids
 
+pub mod cf_reader;
 pub mod error;
 pub mod native;
 pub mod projection;
 
 // Re-export commonly used items at crate root
+pub use cf_reader::{load_cf_netcdf, CfDataset, CfGridMetadata, CfVariable};
 pub use error::{NetCdfError, NetCdfResult};
 pub use native::{load_goes_netcdf_from_bytes, silence_hdf5_errors};
 pub use projection::GoesProjection;
