@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Wave Height Styles",
+    "description": "Styles for significant wave height visualization"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Wave Height",
+      "description": "Significant wave height from calm seas to extreme conditions",
+      "type": "gradient",
+      "units": "m",
+      "range": {
+        "min": 0,
+        "max": 15
+      },
+      "stops": [
+        { "value": 0, "color": "#FFFFFF00", "label": "Calm" },
+        { "value": 0.25, "color": "#E0F0FF", "label": "0.25 m" },
+        { "value": 0.5, "color": "#B0D8FF", "label": "0.5 m" },
+        { "value": 1.0, "color": "#60B0FF", "label": "1 m" },
+        { "value": 1.5, "color": "#2090FF", "label": "1.5 m" },
+        { "value": 2.0, "color": "#0070E0", "label": "2 m" },
+        { "value": 3.0, "color": "#00A060", "label": "3 m" },
+        { "value": 4.0, "color": "#40C040", "label": "4 m" },
+        { "value": 5.0, "color": "#C0D800", "label": "5 m" },
+        { "value": 6.0, "color": "#FFD000", "label": "6 m" },
+        { "value": 8.0, "color": "#FF8000", "label": "8 m" },
+        { "value": 10.0, "color": "#FF3000", "label": "10 m" },
+        { "value": 12.0, "color": "#D00000", "label": "12 m" },
+        { "value": 15.0, "color": "#800040", "label": "15+ m" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "extend",
+      "legend": {
+        "title": "Wave Height (m)",
+        "labels": ["0.5", "1", "2", "3", "5", "8", "10", "15"],
+        "description": "Calm (<0.5m), Slight (0.5-1.25m), Moderate (1.25-2.5m), Rough (2.5-4m), Very Rough (4-6m), High (6-9m), Very High (9-14m), Phenomenal (>14m)"
+      }
+    },
+    "isolines": {
+      "name": "Wave Height Contours",
+      "description": "Wave height contour lines at 1m intervals",
+      "type": "contour",
+      "contour": {
+        "interval": 1.0,
+        "min_value": 0,
+        "max_value": 20,
+        "line_width": 1.5,
+        "line_color": "#333333",
+        "labels": true,
+        "label_font_size": 9.0,
+        "label_spacing": 200.0,
+        "smoothing_passes": 2,
+        "special_levels": [
+          {
+            "value": 4,
+            "line_color": "#FF8000",
+            "line_width": 2.0,
+            "label": "4m (Rough)"
+          },
+          {
+            "value": 9,
+            "line_color": "#FF0000",
+            "line_width": 2.5,
+            "label": "9m (Very High)"
+          }
+        ]
+      },
+      "legend": {
+        "title": "Wave Height (m)"
+      }
+    }
+  }
+}

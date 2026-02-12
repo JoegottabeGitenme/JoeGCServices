@@ -6,6 +6,7 @@
 // - Otherwise (K8s ingress) -> use relative URLs (same origin)
 const API_BASE_URL = window.location.port === '8000' ? 'http://localhost:8080' : '';
 const REFRESH_INTERVAL = 10000; // 10 seconds
+const FETCH_TIMEOUT = 5000; // 5 second timeout for all API calls
 
 let refreshIntervalId = null;
 let selectedModel = null;
@@ -53,9 +54,17 @@ function startAutoRefresh() {
     }, REFRESH_INTERVAL);
 }
 
+// Fetch with timeout to prevent hanging when backend is down
+function fetchWithTimeout(url, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timeoutId));
+}
+
 // Load all dashboard data
 async function loadAllData() {
-    await Promise.all([
+    await Promise.allSettled([
         loadSystemStatus(),
         loadCatalogSummary(),
         loadModelConfigs(),
@@ -68,7 +77,7 @@ async function loadAllData() {
 // Load system status
 async function loadSystemStatus() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/ingestion/status`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/ingestion/status`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -100,7 +109,7 @@ async function loadSystemStatus() {
 // Load catalog summary
 async function loadCatalogSummary() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/ingestion/status`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/ingestion/status`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -146,7 +155,7 @@ async function loadIngestionLog() {
     const container = document.getElementById('log-container');
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/ingestion/log?limit=50`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/ingestion/log?limit=50`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -200,7 +209,7 @@ async function loadCleanupStatus() {
     const container = document.getElementById('cleanup-status-container');
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/cleanup/status`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/cleanup/status`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -310,7 +319,7 @@ async function loadParsingMetrics() {
     const container = document.getElementById('parsing-metrics-container');
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/metrics`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/metrics`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -441,7 +450,7 @@ async function runManualCleanup() {
     }
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/cleanup/run`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/cleanup/run`, {
             method: 'POST'
         });
         
@@ -465,7 +474,7 @@ async function runManualCleanup() {
 // Load model configurations
 async function loadModelConfigs() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/config/models`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/config/models`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -557,7 +566,7 @@ async function selectModel(modelId) {
 // Load model YAML
 async function loadModelYaml(modelId) {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/config/models/${modelId}`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/config/models/${modelId}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -589,7 +598,7 @@ async function loadShredPreview(modelId) {
     container.innerHTML = '<div class="loading">Loading preview...</div>';
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/preview-shred?model=${modelId}`);
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/preview-shred?model=${modelId}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -674,7 +683,7 @@ async function validateConfig() {
     // Basic YAML syntax check (client-side)
     try {
         // We'll send to server for validation
-        const response = await fetch(`${API_BASE_URL}/api/admin/config/models/${selectedModel}`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/config/models/${selectedModel}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ yaml, validate_only: true })
@@ -724,7 +733,7 @@ async function saveConfig() {
     const feedback = document.getElementById('validation-feedback');
     
     try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/config/models/${selectedModel}`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/admin/config/models/${selectedModel}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ yaml })

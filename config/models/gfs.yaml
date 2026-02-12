@@ -424,6 +424,74 @@ parameters:
     valid_range: [0, 100] # Percentage 0-100%
 
   # ==========================================================================
+  # Ocean/Ice Parameters (available in GFS atmospheric files over ocean)
+  # ==========================================================================
+
+  # Sea Surface Temperature (skin temperature - equals SST over ocean grid points)
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [220, 330]
+
+  # Sea Ice Concentration
+  - name: ICEC
+    description: "Ice Concentration"
+    grib2:
+      discipline: 10
+      category: 2
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: fraction
+    valid_range: [0, 1]
+
+  # Sea Ice Thickness
+  - name: ICETK
+    description: "Ice Thickness"
+    grib2:
+      discipline: 10
+      category: 2
+      number: 1
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    valid_range: [0, 10]
+
+  # Sea Ice Temperature
+  - name: ICETMP
+    description: "Ice Temperature"
+    grib2:
+      discipline: 10
+      category: 2
+      number: 8
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [200, 280]
+
+  # ==========================================================================
   # Visibility
   # ==========================================================================
 

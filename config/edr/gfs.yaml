@@ -66,6 +66,16 @@ collections:
       - name: VIS
         levels: [surface]
         valid_range: { min: 0, max: 100000 }  # meters
+      # Ocean / Ice parameters (from GFS atmospheric files)
+      - name: ICEC
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # fraction (0-1)
+      - name: ICETK
+        levels: [surface]
+        valid_range: { min: 0, max: 10 }  # meters
+      - name: ICETMP
+        levels: [surface]
+        valid_range: { min: 200, max: 280 }  # Kelvin
     run_mode: instances
 
   # Parameters at specific heights above ground level
@@ -190,6 +200,15 @@ collections:
       - name: VIS
         levels: [surface]
         valid_range: { min: 0, max: 100000 }
+      - name: ICEC
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }
+      - name: ICETK
+        levels: [surface]
+        valid_range: { min: 0, max: 10 }
+      - name: ICETMP
+        levels: [surface]
+        valid_range: { min: 200, max: 280 }
     run_mode: latest
 
   - id: gfs-height-agl-latest

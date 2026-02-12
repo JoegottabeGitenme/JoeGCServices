@@ -15,8 +15,10 @@ use tracing::{error, info, warn};
 
 use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
+use crate::dart_runner::{self, DartConfig, DartRunner};
 use crate::download::DownloadManager;
 use crate::model_runner::ModelRunner;
+use crate::ndbc_runner::{self, NdbcConfig, NdbcRunner};
 use crate::observation_runner::{self, ObservationConfig, ObservationRunner, TafRunner};
 use crate::state::DownloadState;
 
@@ -86,6 +88,10 @@ pub struct Scheduler {
     observation_configs: Vec<ObservationConfig>,
     /// TAF forecast configs
     taf_configs: Vec<ObservationConfig>,
+    /// NDBC buoy observation configs
+    ndbc_configs: Vec<NdbcConfig>,
+    /// DART tsunami buoy configs
+    dart_configs: Vec<DartConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
 }
@@ -125,6 +131,12 @@ impl Scheduler {
         // Load TAF forecast configs
         let taf_configs = Self::load_taf_configs(&config_dir, &ingester_url);
 
+        // Load NDBC buoy observation configs
+        let ndbc_configs = Self::load_ndbc_configs(&config_dir, &ingester_url);
+
+        // Load DART tsunami buoy configs
+        let dart_configs = Self::load_dart_configs(&config_dir, &ingester_url);
+
         // Initialize AWS SDK for S3 listing
         // For NOAA public buckets, we need to explicitly allow anonymous access
         // by providing credentials (they won't be used but SDK requires them)
@@ -162,6 +174,22 @@ impl Scheduler {
             );
         }
 
+        if !ndbc_configs.is_empty() {
+            info!(
+                count = ndbc_configs.len(),
+                sources = ?ndbc_configs.iter().map(|c| &c.id).collect::<Vec<_>>(),
+                "Loaded NDBC buoy observation configurations"
+            );
+        }
+
+        if !dart_configs.is_empty() {
+            info!(
+                count = dart_configs.len(),
+                sources = ?dart_configs.iter().map(|c| &c.id).collect::<Vec<_>>(),
+                "Loaded DART tsunami buoy configurations"
+            );
+        }
+
         Self {
             download_manager,
             state,
@@ -173,6 +201,8 @@ impl Scheduler {
             model_configs,
             observation_configs,
             taf_configs,
+            ndbc_configs,
+            dart_configs,
             s3_client,
         }
     }
@@ -253,6 +283,92 @@ impl Scheduler {
                                 path = %path.display(),
                                 error = %e,
                                 "Failed to load TAF config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Load NDBC buoy observation configurations from model config files.
+    fn load_ndbc_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<NdbcConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match ndbc_runner::load_ndbc_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(
+                                source = %config.id,
+                                "Loaded NDBC buoy observation config"
+                            );
+                            configs.push(config);
+                        }
+                        Ok(None) => {
+                            // Not an NDBC source, skip
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load NDBC config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Load DART tsunami buoy configurations from model config files.
+    fn load_dart_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<DartConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match dart_runner::load_dart_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(
+                                source = %config.id,
+                                "Loaded DART tsunami buoy config"
+                            );
+                            configs.push(config);
+                        }
+                        Ok(None) => {
+                            // Not a DART source, skip
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load DART config"
                             );
                         }
                     }
@@ -441,6 +557,54 @@ impl Scheduler {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = runner.run_forever(shutdown_rx).await {
                     error!(source = %source_id, error = %e, "Observation runner failed");
+                }
+            }));
+        }
+
+        // Spawn NDBC buoy runners
+        for ndbc_config in &self.ndbc_configs {
+            let runner = match NdbcRunner::new(ndbc_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %ndbc_config.id,
+                        error = %e,
+                        "Failed to create NDBC runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = ndbc_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "NDBC runner failed");
+                }
+            }));
+        }
+
+        // Spawn DART tsunami buoy runners
+        for dart_config in &self.dart_configs {
+            let runner = match DartRunner::new(dart_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %dart_config.id,
+                        error = %e,
+                        "Failed to create DART runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = dart_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "DART runner failed");
                 }
             }));
         }

@@ -643,6 +643,7 @@
             </a>
             <nav class="nav-links">
                 <a href="#services" class="nav-link">Services</a>
+                <a href="#ocean" class="nav-link">Ocean</a>
                 <a href="#examples" class="nav-link">Examples</a>
                 <a href="#edr-png-examples" class="nav-link">EDR PNG</a>
                 <a href="#api" class="nav-link">API</a>
@@ -715,6 +716,96 @@
                     </p>
                     <a href="/edr" class="card-link" target="_blank">
                         Explore API <span>&#8594;</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ocean Data Section -->
+        <section class="section" id="ocean">
+            <h2 class="section-title">
+                <span class="icon">&#127754;</span>
+                Ocean Data Services
+            </h2>
+            <div class="examples-section">
+                <p class="card-description">
+                    Real-time ocean observations and wave forecasts via OGC EDR API. 
+                    Buoy data is ingested continuously; wave model data updates every 6 hours.
+                </p>
+                <div class="edr-examples-grid">
+                    <!-- GFS-Wave Forecast -->
+                    <a href="/edr/collections/gfswave-surface-latest/position?coords=POINT(-122.4 37.8)&parameter-name=HTSGW,PERPW,DIRPW" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#127754;</span>
+                            <span class="location-name">GFS-Wave Forecast</span>
+                            <span class="location-id">WAVEWATCH III</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"description"</span>: <span class="string">"Global wave forecasts, 0.25&deg;"</span>,
+<span class="key">"parameters"</span>: [
+  <span class="string">"HTSGW"</span>  - Significant wave height (m)
+  <span class="string">"PERPW"</span>  - Primary wave period (s)
+  <span class="string">"DIRPW"</span>  - Primary wave direction (deg)
+  <span class="string">"WVHGT"</span>  - Wind wave height (m)
+  <span class="string">"WIND"</span>   - Surface wind speed (m/s)
+]
+<span class="key">"update"</span>: <span class="string">"Every 6h (00z/06z/12z/18z)"</span></pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Wave Forecasts - Global Coverage</div>
+                            <div class="edr-example-desc">Point, area, and radius queries for wave conditions worldwide</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/gfswave-surface-latest/position?coords=POINT(lon lat)</div>
+                        </div>
+                    </a>
+
+                    <!-- NDBC Buoys -->
+                    <a href="/edr/collections/ndbc/locations" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#9875;</span>
+                            <span class="location-name">NDBC Buoy Stations</span>
+                            <span class="location-id">~749 stations</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"parameters"</span>: [
+  <span class="string">"wave_height_m"</span>        - Sig wave height
+  <span class="string">"dominant_wave_period_s"</span> - Peak period
+  <span class="string">"mean_wave_direction_deg"</span>- Mean direction
+  <span class="string">"water_temp_k"</span>         - Sea surface temp
+  <span class="string">"wind_speed_ms"</span>        - Wind speed
+  <span class="string">"sea_level_pressure_pa"</span> - Barometric pressure
+  <span class="string">"tide_m"</span>               - Tide level
+]</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Marine Surface Observations</div>
+                            <div class="edr-example-desc">Real-time buoy, C-MAN, and coastal station data from NDBC</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/ndbc/locations/{station_id}</div>
+                        </div>
+                    </a>
+
+                    <!-- DART Tsunami Buoys -->
+                    <a href="/edr/collections/dart/locations" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#127759;</span>
+                            <span class="location-name">DART Tsunami Buoys</span>
+                            <span class="location-id">~54 stations</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"parameters"</span>: [
+  <span class="string">"water_column_height_m"</span> - Absolute depth
+]
+<span class="key">"measurement_modes"</span>: {
+  <span class="string">"T=1"</span>: <span class="string">"Standard (15-min interval)"</span>,
+  <span class="string">"T=2"</span>: <span class="string">"Event mode (1-min interval)"</span>,
+  <span class="string">"T=3"</span>: <span class="string">"Triggered (15-sec interval)"</span>
+}
+<span class="key">"depth_range"</span>: <span class="string">"1000m - 6000m"</span></pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Deep-Ocean Tsunami Detection</div>
+                            <div class="edr-example-desc">Water column height from DART buoys across Pacific, Atlantic, and Indian Oceans</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/dart/locations/{station_id}?datetime=2026-02-06T00:00:00Z/..</div>
+                        </div>
                     </a>
                 </div>
             </div>
@@ -1128,6 +1219,83 @@
                             <div class="edr-example-endpoint">/edr/collections/hrrr-surface/locations/KLAX</div>
                         </div>
                     </a>
+
+                    <!-- NDBC Buoy -->
+                    <a href="/edr/collections/ndbc/locations/46042" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#9875;</span>
+                            <span class="location-name">Monterey Bay Buoy</span>
+                            <span class="location-id">46042</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-4"><span class="key">"properties"</span>: {
+  <span class="key">"location_id"</span>: <span class="string">"46042"</span>,
+  <span class="key">"obs_time"</span>: <span class="string">"2026-02-11T04:50:00Z"</span>,
+  <span class="key">"wave_height_m"</span>: <span class="number">2.4</span>,
+  <span class="key">"dominant_wave_period_s"</span>: <span class="number">12.5</span>,
+  <span class="key">"water_temp_k"</span>: <span class="number">285.9</span>,
+  <span class="key">"wind_speed_ms"</span>: <span class="number">6.2</span>,
+  <span class="key">"sea_level_pressure_pa"</span>: <span class="number">101780</span>
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">NDBC Buoy Observations</div>
+                            <div class="edr-example-desc">Waves, wind, and SST at Monterey Bay</div>
+                            <div class="edr-example-endpoint">/edr/collections/ndbc/locations/46042</div>
+                        </div>
+                    </a>
+
+                    <!-- DART Tsunami Buoy -->
+                    <a href="/edr/collections/dart/locations/21413?limit=5" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#127759;</span>
+                            <span class="location-name">SE Tokyo DART</span>
+                            <span class="location-id">21413</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-5"><span class="key">"properties"</span>: {
+  <span class="key">"location_id"</span>: <span class="string">"21413"</span>,
+  <span class="key">"name"</span>: <span class="string">"700NM ESE of Tokyo"</span>,
+  <span class="key">"obs_time"</span>: <span class="string">"2026-02-11T00:00:00Z"</span>,
+  <span class="key">"water_column_height_m"</span>: <span class="number">5780.169</span>,
+  <span class="key">"raw_text"</span>: <span class="string">"T=1 HEIGHT=5780.169"</span>
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">DART Tsunami Buoy</div>
+                            <div class="edr-example-desc">Deep-ocean water column height near Japan</div>
+                            <div class="edr-example-endpoint">/edr/collections/dart/locations/21413</div>
+                        </div>
+                    </a>
+
+                    <!-- GFS-Wave -->
+                    <a href="/edr/collections/gfswave-surface-latest/position?coords=POINT(-122.4 37.8)&parameter-name=HTSGW,PERPW,DIRPW" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#127754;</span>
+                            <span class="location-name">San Francisco Coast</span>
+                            <span class="location-id">GFS-Wave</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response" id="edr-response-6"><span class="key">"parameters"</span>: {
+  <span class="key">"HTSGW"</span>: {
+    <span class="key">"description"</span>: <span class="string">"Sig Wave Height"</span>,
+    <span class="key">"unit"</span>: <span class="string">"m"</span>
+  },
+  <span class="key">"PERPW"</span>: {
+    <span class="key">"description"</span>: <span class="string">"Primary Wave Period"</span>,
+    <span class="key">"unit"</span>: <span class="string">"s"</span>
+  }
+},
+<span class="key">"ranges"</span>: {
+  <span class="key">"HTSGW"</span>: { <span class="key">"values"</span>: [<span class="number">2.8</span>] }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">GFS-Wave Forecast</div>
+                            <div class="edr-example-desc">Wave height, period, and direction off SF coast</div>
+                            <div class="edr-example-endpoint">/edr/collections/gfswave-surface-latest/position</div>
+                        </div>
+                    </a>
                 </div>
             </div>
         </section>
@@ -1230,6 +1398,33 @@
                     </div>
                     <p class="card-description">
                         National Blend of Models with 2.5km resolution. Statistically post-processed blend of multiple models for optimal forecast accuracy. CONUS, Alaska, Hawaii, Puerto Rico, and Guam.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127754;</span>
+                        <span class="card-title">GFS-Wave (WAVEWATCH III)</span>
+                    </div>
+                    <p class="card-description">
+                        Global wave forecasts at 0.25&deg; resolution. Significant wave height, period, direction, wind waves, and surface wind. Updated every 6 hours with forecasts to 120 hours.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#9875;</span>
+                        <span class="card-title">NDBC Buoys</span>
+                    </div>
+                    <p class="card-description">
+                        Real-time surface observations from ~749 NDBC buoys and coastal stations. Wind, pressure, air/water temperature, wave height, wave period, and tide levels.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127759;</span>
+                        <span class="card-title">DART Tsunami Buoys</span>
+                    </div>
+                    <p class="card-description">
+                        Deep-ocean water column height from ~54 DART tsunami detection buoys. Standard 15-minute reporting with 1-minute and 15-second event modes during seismic activity.
                     </p>
                 </div>
             </div>

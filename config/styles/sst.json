@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Sea Surface Temperature Styles",
+    "description": "Styles for sea surface temperature visualization"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Sea Surface Temperature",
+      "description": "SST color scale from polar waters to tropical",
+      "type": "gradient",
+      "units": "K",
+      "range": {
+        "min": 271.15,
+        "max": 305.15
+      },
+      "stops": [
+        { "value": 271.15, "color": "#E0E0FF", "label": "-2\u00b0C" },
+        { "value": 273.15, "color": "#B0B0FF", "label": "0\u00b0C" },
+        { "value": 275.15, "color": "#6060FF", "label": "2\u00b0C" },
+        { "value": 278.15, "color": "#0060FF", "label": "5\u00b0C" },
+        { "value": 281.15, "color": "#0090E0", "label": "8\u00b0C" },
+        { "value": 283.15, "color": "#00B0C0", "label": "10\u00b0C" },
+        { "value": 286.15, "color": "#00C890", "label": "13\u00b0C" },
+        { "value": 288.15, "color": "#00D860", "label": "15\u00b0C" },
+        { "value": 291.15, "color": "#60E030", "label": "18\u00b0C" },
+        { "value": 293.15, "color": "#B0E800", "label": "20\u00b0C" },
+        { "value": 295.15, "color": "#E0D000", "label": "22\u00b0C" },
+        { "value": 297.15, "color": "#F0A000", "label": "24\u00b0C" },
+        { "value": 299.15, "color": "#F07000", "label": "26\u00b0C" },
+        { "value": 301.15, "color": "#E04000", "label": "28\u00b0C" },
+        { "value": 303.15, "color": "#C01000", "label": "30\u00b0C" },
+        { "value": 305.15, "color": "#900000", "label": "32\u00b0C" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Sea Surface Temperature (\u00b0C)",
+        "labels": ["-2", "0", "5", "10", "15", "20", "25", "30"]
+      }
+    },
+    "isolines": {
+      "name": "SST Contours",
+      "description": "Sea surface temperature contour lines at 2\u00b0C intervals",
+      "type": "contour",
+      "transform": {
+        "type": "k_to_c"
+      },
+      "contour": {
+        "interval": 2.0,
+        "min_value": -2,
+        "max_value": 35,
+        "line_width": 1.5,
+        "line_color": "#333333",
+        "labels": true,
+        "label_font_size": 9.0,
+        "label_spacing": 200.0,
+        "smoothing_passes": 2,
+        "special_levels": [
+          {
+            "value": 0,
+            "line_color": "#0066FF",
+            "line_width": 2.5,
+            "label": "0\u00b0C (Freezing)"
+          },
+          {
+            "value": 26,
+            "line_color": "#FF4400",
+            "line_width": 2.0,
+            "label": "26\u00b0C (Tropical cyclone threshold)"
+          }
+        ]
+      },
+      "legend": {
+        "title": "SST (\u00b0C)"
+      }
+    }
+  }
+}
