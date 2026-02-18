@@ -1,0 +1,147 @@
+# NLDAS-2 Forcing Data Layer Configuration
+# Defines WMS/WMTS layers exposed for NLDAS-2 Forcing inputs
+# CONUS coverage at 0.125° resolution, hourly observation data
+# 8 parameters: precipitation, temperature, humidity, pressure, wind, radiation, CAPE
+#
+# NOTE: Parameter names use CF variable names from the NetCDF files
+# (e.g., Tair_f_inst not TMP2M) because the ingester stores CF names directly.
+
+model: nldas-forcing
+display_name: "NLDAS-2 Forcing"
+
+# NLDAS-2 CONUS domain
+default_bbox:
+  west: -124.9375
+  south: 25.0625
+  east: -67.0625
+  north: 52.9375
+
+# NLDAS is observation data (hourly), not forecast
+dimension_type: observation
+
+layers:
+  # ==========================================================================
+  # Temperature
+  # ==========================================================================
+
+  - id: nldas-forcing_Tair_f_inst
+    parameter: Tair_f_inst
+    title: "2-m Air Temperature"
+    abstract: "Instantaneous 2-meter air temperature from NLDAS-2 forcing"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Precipitation
+  # ==========================================================================
+
+  - id: nldas-forcing_Rainf_f_tavg
+    parameter: Rainf_f_tavg
+    title: "Precipitation Rate"
+    abstract: "Time-averaged precipitation rate from NLDAS-2 forcing"
+    style_file: precipitation.json
+    units:
+      native: "kg/m^2/s"
+      display: "kg/m²/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Humidity
+  # ==========================================================================
+
+  - id: nldas-forcing_Qair_f_inst
+    parameter: Qair_f_inst
+    title: "2-m Specific Humidity"
+    abstract: "Instantaneous 2-meter specific humidity from NLDAS-2 forcing"
+    style_file: humidity.json
+    units:
+      native: "kg/kg"
+      display: "kg/kg"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Pressure
+  # ==========================================================================
+
+  - id: nldas-forcing_Psurf_f_inst
+    parameter: Psurf_f_inst
+    title: "Surface Pressure"
+    abstract: "Instantaneous surface pressure from NLDAS-2 forcing"
+    style_file: atmospheric.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Wind
+  # ==========================================================================
+
+  - id: nldas-forcing_Wind_f_inst
+    parameter: Wind_f_inst
+    title: "10-m Wind Speed"
+    abstract: "Instantaneous 10-meter wind speed from NLDAS-2 forcing"
+    style_file: wind.json
+    units:
+      native: "m/s"
+      display: "m/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Radiation
+  # ==========================================================================
+
+  - id: nldas-forcing_SWdown_f_tavg
+    parameter: SWdown_f_tavg
+    title: "Downward Shortwave Radiation"
+    abstract: "Time-averaged downward shortwave radiation flux from NLDAS-2 forcing"
+    style_file: radiation.json
+    units:
+      native: "W/m^2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nldas-forcing_LWdown_f_tavg
+    parameter: LWdown_f_tavg
+    title: "Downward Longwave Radiation"
+    abstract: "Time-averaged downward longwave radiation flux from NLDAS-2 forcing"
+    style_file: radiation.json
+    units:
+      native: "W/m^2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Convection
+  # ==========================================================================
+
+  - id: nldas-forcing_CAPE
+    parameter: CAPE
+    title: "CAPE"
+    abstract: "Convective Available Potential Energy from NLDAS-2 forcing"
+    style_file: cape.json
+    units:
+      native: "J/kg"
+      display: "J/kg"
+    levels:
+      - value: "surface"
+        default: true

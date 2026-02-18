@@ -1,0 +1,446 @@
+# NLDAS-2 Noah Land Surface Model Configuration
+# North American Land Data Assimilation System - Noah 0.125° hourly
+# Source: NASA GES DISC (requires Earthdata Login credentials)
+
+model:
+  id: nldas-noah
+  name: "NLDAS-2 Noah Land Surface Model"
+  description: "North American Land Data Assimilation System - Noah 0.125 hourly"
+  enabled: true
+
+dimensions:
+  type: observation
+  time: true
+  elevation: true
+
+source:
+  type: nasa_gesdisc
+  base_url: "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_NOAH0125_H.2.0"
+  file_pattern: "NLDAS_NOAH0125_H.A{date}.{hour}00.020.nc"
+
+grid:
+  projection: geographic
+  resolution: "0.125deg"
+  bbox:
+    min_lon: -124.9375
+    min_lat: 25.0625
+    max_lon: -67.0625
+    max_lat: 52.9375
+
+schedule:
+  type: observation
+  poll_interval_secs: 3600
+  delay_hours: 96
+  max_concurrent: 3
+
+retention:
+  hours: 720
+
+parameters:
+  # ===========================================================================
+  # Soil Moisture (4 layers + aggregates)
+  # ===========================================================================
+
+  - name: SoilM_0_10cm
+    cf_name: "SoilM_0_10cm"
+    description: "Soil moisture content (0-10cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 10
+        display: "0-10 cm depth"
+    valid_range: [0, 50]
+
+  - name: SoilM_10_40cm
+    cf_name: "SoilM_10_40cm"
+    description: "Soil moisture content (10-40cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 40
+        display: "10-40 cm depth"
+    valid_range: [0, 150]
+
+  - name: SoilM_40_100cm
+    cf_name: "SoilM_40_100cm"
+    description: "Soil moisture content (40-100cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "40-100 cm depth"
+    valid_range: [0, 250]
+
+  - name: SoilM_100_200cm
+    cf_name: "SoilM_100_200cm"
+    description: "Soil moisture content (100-200cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 200
+        display: "100-200 cm depth"
+    valid_range: [0, 500]
+
+  - name: SoilM_0_100cm
+    cf_name: "SoilM_0_100cm"
+    description: "Soil moisture content (0-100cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "0-100 cm total"
+    valid_range: [0, 500]
+
+  - name: SoilM_0_200cm
+    cf_name: "SoilM_0_200cm"
+    description: "Soil moisture content (0-200cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 200
+        display: "0-200 cm total"
+    valid_range: [0, 900]
+
+  - name: RootMoist
+    cf_name: "RootMoist"
+    description: "Root zone soil moisture"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "root zone"
+    valid_range: [0, 900]
+
+  # ===========================================================================
+  # Soil Temperature (4 layers)
+  # ===========================================================================
+
+  - name: SoilT_0_10cm
+    cf_name: "SoilT_0_10cm"
+    description: "Soil temperature (0-10cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 10
+        display: "0-10 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilT_10_40cm
+    cf_name: "SoilT_10_40cm"
+    description: "Soil temperature (10-40cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 40
+        display: "10-40 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilT_40_100cm
+    cf_name: "SoilT_40_100cm"
+    description: "Soil temperature (40-100cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "40-100 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilT_100_200cm
+    cf_name: "SoilT_100_200cm"
+    description: "Soil temperature (100-200cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 200
+        display: "100-200 cm depth"
+    valid_range: [200, 350]
+
+  # ===========================================================================
+  # Snow
+  # ===========================================================================
+
+  - name: SWE
+    cf_name: "SWE"
+    description: "Snow Water Equivalent"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 2000]
+
+  - name: SnowDepth
+    cf_name: "SnowDepth"
+    description: "Snow depth"
+    units: "m"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 10]
+
+  - name: SnowFrac
+    cf_name: "SnowFrac"
+    description: "Snow cover fraction"
+    units: "fraction"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1]
+
+  # ===========================================================================
+  # Surface
+  # ===========================================================================
+
+  - name: AvgSurfT
+    cf_name: "AvgSurfT"
+    description: "Average surface skin temperature"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [200, 350]
+
+  - name: Albedo
+    cf_name: "Albedo"
+    description: "Surface albedo"
+    units: "%"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: CanopInt
+    cf_name: "CanopInt"
+    description: "Plant canopy surface water"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 5]
+
+  # ===========================================================================
+  # Radiation Fluxes
+  # ===========================================================================
+
+  - name: SWdown
+    cf_name: "SWdown"
+    description: "Shortwave radiation flux downwards (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1500]
+
+  - name: LWdown
+    cf_name: "LWdown"
+    description: "Longwave radiation flux downwards (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 700]
+
+  - name: SWnet
+    cf_name: "SWnet"
+    description: "Net shortwave radiation flux (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1500]
+
+  - name: LWnet
+    cf_name: "LWnet"
+    description: "Net longwave radiation flux (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 50]
+
+  # ===========================================================================
+  # Heat Fluxes
+  # ===========================================================================
+
+  - name: Qle
+    cf_name: "Qle"
+    description: "Latent heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-100, 500]
+
+  - name: Qh
+    cf_name: "Qh"
+    description: "Sensible heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 500]
+
+  - name: Qg
+    cf_name: "Qg"
+    description: "Ground heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 200]
+
+  - name: Qf
+    cf_name: "Qf"
+    description: "Snow phase-change heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-100, 100]
+
+  # ===========================================================================
+  # Water Fluxes
+  # ===========================================================================
+
+  - name: Evap
+    cf_name: "Evap"
+    description: "Total evapotranspiration"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-1, 5]
+
+  - name: Qs
+    cf_name: "Qs"
+    description: "Surface runoff (non-infiltrating)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: Qsb
+    cf_name: "Qsb"
+    description: "Subsurface runoff (baseflow)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: Qsm
+    cf_name: "Qsm"
+    description: "Snowmelt"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 50]
+
+  - name: Snowf
+    cf_name: "Snowf"
+    description: "Frozen precipitation (snowfall)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 50]
+
+  - name: Rainf
+    cf_name: "Rainf"
+    description: "Liquid precipitation (rainfall)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  # ===========================================================================
+  # ET Components
+  # ===========================================================================
+
+  - name: PotEvap
+    cf_name: "PotEvap"
+    description: "Potential evapotranspiration"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-100, 1000]
+
+  - name: ECanop
+    cf_name: "ECanop"
+    description: "Canopy water evaporation"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  - name: TVeg
+    cf_name: "TVeg"
+    description: "Transpiration"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  - name: ESoil
+    cf_name: "ESoil"
+    description: "Direct evaporation from bare soil"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  - name: SubSnow
+    cf_name: "SubSnow"
+    description: "Sublimation (evaporation from snow)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  # ===========================================================================
+  # Vegetation / Land Surface
+  # ===========================================================================
+
+  - name: LAI
+    cf_name: "LAI"
+    description: "Leaf Area Index"
+    units: "unitless"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 10]
+
+  - name: GVEG
+    cf_name: "GVEG"
+    description: "Green vegetation fraction"
+    units: "fraction"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1]
+
+  - name: Streamflow
+    cf_name: "Streamflow"
+    description: "Streamflow"
+    units: "m^3 sec-1"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 50000]

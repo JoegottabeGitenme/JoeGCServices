@@ -660,7 +660,7 @@
             <h1>Weather for <span>Everyone</span></h1>
             <p class="hero-tagline">
                 Free, open weather data services powered by OGC standards. 
-                Access NOAA weather data through WMS, WMTS, and EDR APIs.
+                Access NOAA and NASA weather data through WMS, WMTS, and EDR APIs.
             </p>
             <div class="status-live">
                 <span class="status-dot"></span>
@@ -971,6 +971,120 @@
                         <div class="example-info">
                             <div class="example-title">NBM Temperature</div>
                             <div class="example-desc">National Blend of Models - 2.5km blended forecasts for CONUS</div>
+                        </div>
+                    </a>
+
+                    <!-- GFS-Wave Significant Wave Height -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfswave_HTSGW&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-6">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfswave_HTSGW&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="GFS-Wave Significant Wave Height"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-6').style.display='none';"
+                                 onerror="document.getElementById('placeholder-6').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">GFS-Wave Height</div>
+                            <div class="example-desc">WAVEWATCH III - Global significant wave height forecast</div>
+                        </div>
+                    </a>
+
+                    <!-- Sea Surface Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_SST&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-7">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_SST&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="Sea Surface Temperature"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-7').style.display='none';"
+                                 onerror="document.getElementById('placeholder-7').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">Sea Surface Temperature</div>
+                            <div class="example-desc">GFS - Global ocean surface temperature</div>
+                        </div>
+                    </a>
+
+                    <!-- Arctic Sea Ice Concentration -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_ICEC&STYLES=concentration&CRS=EPSG:4326&BBOX=50,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-8">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_ICEC&STYLES=concentration&CRS=EPSG:4326&BBOX=50,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
+                                 alt="Arctic Sea Ice"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-8').style.display='none';"
+                                 onerror="document.getElementById('placeholder-8').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">Arctic Sea Ice</div>
+                            <div class="example-desc">GFS - Sea ice concentration in the Arctic</div>
+                        </div>
+                    </a>
+
+                    <!-- NLDAS Soil Moisture -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_SoilM_0_10cm&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-9">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_SoilM_0_10cm&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
+                                 alt="NLDAS Soil Moisture"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-9').style.display='none';"
+                                 onerror="document.getElementById('placeholder-9').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NLDAS Soil Moisture</div>
+                            <div class="example-desc">NASA NLDAS-2 Noah - Top 10cm soil moisture over CONUS</div>
+                        </div>
+                    </a>
+
+                    <!-- NLDAS Skin Temperature -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_AvgSurfT&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-10">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_AvgSurfT&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
+                                 alt="NLDAS Skin Temperature"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-10').style.display='none';"
+                                 onerror="document.getElementById('placeholder-10').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NLDAS Skin Temperature</div>
+                            <div class="example-desc">NASA NLDAS-2 Noah - Earth skin temperature over CONUS</div>
+                        </div>
+                    </a>
+
+                    <!-- NLDAS Vegetation (LAI) -->
+                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_LAI&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
+                        <div class="example-img-container">
+                            <div class="example-placeholder" id="placeholder-11">
+                                <div class="spinner"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <img class="example-img" 
+                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_LAI&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
+                                 alt="NLDAS Leaf Area Index"
+                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-11').style.display='none';"
+                                 onerror="document.getElementById('placeholder-11').innerHTML='<span>Data unavailable</span>';">
+                        </div>
+                        <div class="example-info">
+                            <div class="example-title">NLDAS Vegetation</div>
+                            <div class="example-desc">NASA NLDAS-2 Noah - Leaf Area Index over CONUS</div>
                         </div>
                     </a>
                 </div>
@@ -1411,6 +1525,33 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
+                        <span class="card-icon">&#127757;</span>
+                        <span class="card-title">SST &amp; Sea Ice</span>
+                    </div>
+                    <p class="card-description">
+                        GFS sea surface temperature, sea ice concentration, thickness, and temperature. Global coverage at 0.25&deg; resolution with 6-hourly updates.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#127793;</span>
+                        <span class="card-title">NLDAS-2 Noah Land Surface</span>
+                    </div>
+                    <p class="card-description">
+                        NASA NLDAS-2 Noah land surface model at 0.125&deg; hourly resolution. 37 variables including soil moisture, soil temperature, snow, radiation, and evapotranspiration over CONUS.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#9729;</span>
+                        <span class="card-title">NLDAS-2 Forcing</span>
+                    </div>
+                    <p class="card-description">
+                        NASA NLDAS-2 atmospheric forcing data at 0.125&deg; hourly resolution. Air temperature, precipitation, humidity, pressure, wind, and radiation over CONUS.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
                         <span class="card-icon">&#9875;</span>
                         <span class="card-title">NDBC Buoys</span>
                     </div>
@@ -1462,8 +1603,8 @@
     <footer class="footer">
         <div class="footer-content">
             <p class="footer-text">
-                FolkWeather provides free access to NOAA weather data through standard OGC APIs.<br>
-                Built with Rust. Data from NOAA/NWS.
+                FolkWeather provides free access to NOAA and NASA weather data through standard OGC APIs.<br>
+                Built with Rust. Data from NOAA/NWS and NASA GES DISC.
             </p>
             <div class="footer-links">
                 <a href="https://github.com" class="footer-link">GitHub</a>

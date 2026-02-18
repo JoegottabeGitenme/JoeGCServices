@@ -26,6 +26,15 @@ pub enum FileType {
     Unknown,
 }
 
+/// Information extracted from an NLDAS-2 filename.
+#[derive(Debug, Clone)]
+pub struct NldasFileInfo {
+    /// Model identifier (nldas-noah, nldas-forcing)
+    pub model: String,
+    /// Observation time
+    pub observation_time: DateTime<Utc>,
+}
+
 /// Information extracted from a GOES filename.
 #[derive(Debug, Clone)]
 pub struct GoesFileInfo {
@@ -85,6 +94,10 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         } else {
             Some("goes18".to_string())
         }
+    } else if lower.starts_with("nldas_noah") {
+        Some("nldas-noah".to_string())
+    } else if lower.starts_with("nldas_fora") || lower.starts_with("nldas_for") {
+        Some("nldas-forcing".to_string())
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
     } else if lower.starts_with("aigefs") || lower.contains("aigefs") {
@@ -301,6 +314,8 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "nbm-puertorico" => BoundingBox::new(-69.0, 16.0, -63.0, 20.0),
         // Guam/Marianas: Mercator 2.5km (193x193)
         "nbm-guam" => BoundingBox::new(141.0, 11.0, 148.0, 18.0),
+        // NLDAS-2 covers North America at 0.125° resolution
+        "nldas-noah" | "nldas-forcing" => BoundingBox::new(-124.9375, 25.0625, -67.0625, 52.9375),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
@@ -329,6 +344,53 @@ pub fn get_bbox_from_grid(grid: &grib2_parser::sections::GridDefinition) -> Boun
     BoundingBox::new(min_lon, min_lat, max_lon, max_lat)
 }
 
+/// Parse NLDAS-2 filename to extract metadata.
+///
+/// Supports:
+/// - Noah: `NLDAS_NOAH0125_H.A20260205.0000.020.nc`
+/// - Forcing: `NLDAS_FORA0125_H.A20260205.0000.020.nc` (or `.nc4`)
+pub fn parse_nldas_filename(filename: &str) -> Option<NldasFileInfo> {
+    let upper = filename.to_uppercase();
+
+    // Determine model
+    let model = if upper.starts_with("NLDAS_NOAH") {
+        "nldas-noah".to_string()
+    } else if upper.starts_with("NLDAS_FORA") || upper.starts_with("NLDAS_FOR") {
+        "nldas-forcing".to_string()
+    } else {
+        return None;
+    };
+
+    // Extract date from .A{YYYYMMDD}.{HHMM} pattern
+    let dot_a_pos = filename.find(".A").or_else(|| filename.find(".a"))?;
+    let date_str = filename.get(dot_a_pos + 2..dot_a_pos + 10)?;
+
+    // Find the hour part after the next dot
+    let rest = filename.get(dot_a_pos + 10..)?;
+    let hour_str = if rest.starts_with('.') {
+        rest.get(1..5)? // ".HHMM"
+    } else {
+        return None;
+    };
+
+    // Parse date components
+    let year: i32 = date_str[0..4].parse().ok()?;
+    let month: u32 = date_str[4..6].parse().ok()?;
+    let day: u32 = date_str[6..8].parse().ok()?;
+    let hour: u32 = hour_str[0..2].parse().ok()?;
+    let minute: u32 = hour_str[2..4].parse().ok()?;
+
+    let naive_date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    let naive_time = chrono::NaiveTime::from_hms_opt(hour, minute, 0)?;
+    let naive_dt = chrono::NaiveDateTime::new(naive_date, naive_time);
+    let observation_time = TimeZone::from_utc_datetime(&Utc, &naive_dt);
+
+    Some(NldasFileInfo {
+        model,
+        observation_time,
+    })
+}
+
 /// Map GOES band number to parameter name.
 pub fn goes_band_to_parameter(band: u8) -> String {
     format!("CMI_C{:02}", band)
@@ -337,7 +399,7 @@ pub fn goes_band_to_parameter(band: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Datelike;
+    use chrono::{Datelike, Timelike};
 
     // ==================== File Type Detection ====================
 
@@ -1060,6 +1122,80 @@ mod tests {
         // Files without MRMS pattern
         assert_eq!(extract_mrms_param("gfs_temperature.grib2"), None);
         assert_eq!(extract_mrms_param("random_file.nc"), None);
+    }
+
+    // ==================== NLDAS Model Extraction ====================
+
+    #[test]
+    fn test_extract_model_nldas_noah() {
+        assert_eq!(
+            extract_model_from_filename("NLDAS_NOAH0125_H.A20260205.0000.020.nc"),
+            Some("nldas-noah".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("nldas_noah0125_h.a20260205.0000.020.nc"),
+            Some("nldas-noah".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_nldas_forcing() {
+        assert_eq!(
+            extract_model_from_filename("NLDAS_FORA0125_H.002.grb.SUB.nc4"),
+            Some("nldas-forcing".to_string())
+        );
+    }
+
+    // ==================== NLDAS Filename Parsing ====================
+
+    #[test]
+    fn test_parse_nldas_noah_filename() {
+        let info = parse_nldas_filename("NLDAS_NOAH0125_H.A20260205.0000.020.nc")
+            .expect("Should parse NLDAS Noah filename");
+        assert_eq!(info.model, "nldas-noah");
+        assert_eq!(info.observation_time.year(), 2026);
+        assert_eq!(info.observation_time.month(), 2);
+        assert_eq!(info.observation_time.day(), 5);
+        assert_eq!(info.observation_time.hour(), 0);
+        assert_eq!(info.observation_time.minute(), 0);
+    }
+
+    #[test]
+    fn test_parse_nldas_noah_filename_nonzero_hour() {
+        let info =
+            parse_nldas_filename("NLDAS_NOAH0125_H.A20260210.1300.020.nc").expect("Should parse");
+        assert_eq!(info.observation_time.hour(), 13);
+        assert_eq!(info.observation_time.minute(), 0);
+    }
+
+    #[test]
+    fn test_parse_nldas_forcing_filename() {
+        let info = parse_nldas_filename("NLDAS_FORA0125_H.A20260205.0000.020.nc")
+            .expect("Should parse NLDAS Forcing filename");
+        assert_eq!(info.model, "nldas-forcing");
+        assert_eq!(info.observation_time.year(), 2026);
+    }
+
+    #[test]
+    fn test_parse_nldas_filename_invalid() {
+        assert!(parse_nldas_filename("random_file.nc").is_none());
+        assert!(parse_nldas_filename("GOES_ABI_data.nc").is_none());
+        assert!(parse_nldas_filename("").is_none());
+    }
+
+    // ==================== NLDAS Bounding Box ====================
+
+    #[test]
+    fn test_get_model_bbox_nldas() {
+        let bbox_noah = get_model_bbox("nldas-noah");
+        assert!((bbox_noah.min_x - (-124.9375)).abs() < 0.01);
+        assert!((bbox_noah.min_y - 25.0625).abs() < 0.01);
+        assert!((bbox_noah.max_x - (-67.0625)).abs() < 0.01);
+        assert!((bbox_noah.max_y - 52.9375).abs() < 0.01);
+
+        let bbox_forcing = get_model_bbox("nldas-forcing");
+        assert_eq!(bbox_noah.min_x, bbox_forcing.min_x);
+        assert_eq!(bbox_noah.max_y, bbox_forcing.max_y);
     }
 
     #[test]

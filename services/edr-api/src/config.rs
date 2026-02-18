@@ -371,6 +371,16 @@ pub fn build_level_string(
             // Height above ground stored as "X m above ground"
             level_value.map(|v| format!("{} m above ground", v as i32))
         }
+        "depth_below_surface" => {
+            // Depth layers stored with named level strings from config
+            // (e.g., "0-10 cm depth", "root zone", "0-100 cm total")
+            param_def
+                .and_then(|p| p.levels.first())
+                .and_then(|l| match l {
+                    LevelValue::Named(name) => Some(name.clone()),
+                    LevelValue::Numeric(v) => Some(format!("{} cm depth", *v as i32)),
+                })
+        }
         "cloud_layer" => {
             // Map cloud layer codes to names
             // GRIB2 Table 4.5: 212-214=low, 222-224=middle, 232-234=high
@@ -742,6 +752,51 @@ mod tests {
         };
         let result = build_level_string(&filter, Some(&param), None);
         assert_eq!(result, Some("cloud base".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_depth_below_surface_named() {
+        let filter = LevelFilter {
+            level_type: "depth_below_surface".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "SoilM_0_10cm".to_string(),
+            levels: vec![LevelValue::Named("0-10 cm depth".to_string())],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), None);
+        assert_eq!(result, Some("0-10 cm depth".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_depth_below_surface_numeric() {
+        let filter = LevelFilter {
+            level_type: "depth_below_surface".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "SoilT_0_10cm".to_string(),
+            levels: vec![LevelValue::Numeric(10.0)],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), None);
+        assert_eq!(result, Some("10 cm depth".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_depth_below_surface_root_zone() {
+        let filter = LevelFilter {
+            level_type: "depth_below_surface".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "RootMoist".to_string(),
+            levels: vec![LevelValue::Named("root zone".to_string())],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), None);
+        assert_eq!(result, Some("root zone".to_string()));
     }
 
     // =========================================================================

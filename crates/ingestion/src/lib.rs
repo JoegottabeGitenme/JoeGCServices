@@ -20,6 +20,7 @@
 //! Which parameters are ingested is controlled by each model's YAML config file
 //! in `config/models/`. See [`tables::IngestionFilter`] for details.
 
+mod cf_netcdf;
 pub mod error;
 mod geotiff;
 mod grib2;
@@ -34,8 +35,8 @@ pub use error::{IngestionError, Result};
 pub use ingester::{IngestOptions, Ingester, IngestionResult};
 pub use metadata::{
     detect_file_type, extract_forecast_hour, extract_model_from_filename, extract_mrms_param,
-    get_bbox_from_grid, get_model_bbox, goes_band_to_parameter, parse_goes_filename, FileType,
-    GoesFileInfo,
+    get_bbox_from_grid, get_model_bbox, goes_band_to_parameter, parse_goes_filename,
+    parse_nldas_filename, FileType, GoesFileInfo, NldasFileInfo,
 };
 pub use tables::{
     build_filter_for_model, build_tables_for_model, build_tables_from_configs, IngestionFilter,

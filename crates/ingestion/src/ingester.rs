@@ -7,10 +7,11 @@ use tracing::warn;
 
 use storage::{Catalog, ObjectStorage};
 
+use crate::cf_netcdf;
 use crate::error::Result;
 use crate::geotiff;
 use crate::grib2;
-use crate::metadata::{detect_file_type, FileType};
+use crate::metadata::{detect_file_type, extract_model_from_filename, FileType};
 use crate::netcdf;
 use grib2_parser::strip_wmo_headers;
 
@@ -110,6 +111,26 @@ impl Ingester {
                 .await
             }
             FileType::NetCdf => {
+                // Route CF-convention NetCDF (NLDAS, etc.) vs GOES-specific NetCDF
+                let detected_model = options
+                    .model
+                    .clone()
+                    .or_else(|| extract_model_from_filename(file_path));
+
+                if let Some(ref m) = detected_model {
+                    if m.starts_with("nldas") {
+                        return cf_netcdf::ingest_cf_netcdf(
+                            &self.storage,
+                            &self.catalog,
+                            data,
+                            file_path,
+                            &options,
+                        )
+                        .await;
+                    }
+                }
+
+                // Default: GOES-specific NetCDF handler
                 netcdf::ingest_netcdf(&self.storage, &self.catalog, data, file_path, &options).await
             }
             FileType::GeoTiff | FileType::GeoTiffGz => {
@@ -120,6 +141,16 @@ impl Ingester {
             FileType::Unknown => {
                 // Try to guess based on content or model
                 if let Some(ref model) = options.model {
+                    if model.starts_with("nldas") {
+                        return cf_netcdf::ingest_cf_netcdf(
+                            &self.storage,
+                            &self.catalog,
+                            data,
+                            file_path,
+                            &options,
+                        )
+                        .await;
+                    }
                     if model.starts_with("goes") {
                         return netcdf::ingest_netcdf(
                             &self.storage,

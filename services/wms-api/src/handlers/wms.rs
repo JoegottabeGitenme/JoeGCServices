@@ -1195,7 +1195,18 @@ async fn render_weather_data(
     }
 
     let model = parts[0];
-    let parameter = parts[1..].join("_").to_uppercase();
+    let mut parameter = parts[1..].join("_").to_uppercase();
+
+    // Resolve canonical parameter name from layer config.
+    // The layer config lookup is case-insensitive, so "AVGSURFT" matches "AvgSurfT".
+    // Using the config's parameter name ensures catalog queries match what the ingester stored
+    // (important for CF-convention NetCDF data with mixed-case variable names).
+    {
+        let configs = state.layer_configs.read().await;
+        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
+            parameter = lc.parameter.clone();
+        }
+    }
 
     // Parse dimensions based on layer type
     let (forecast_hour, observation_time, _reference_time) =

@@ -45,6 +45,7 @@ VALID_SOURCE_TYPES = {
     "http",
     "aviation_weather_api",
     "aviation_weather_api_taf",
+    "nasa_gesdisc",
     "ndbc_latest_obs",
     "dart_realtime",
 }

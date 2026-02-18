@@ -14,6 +14,7 @@ mod config;
 mod dart_runner;
 mod download;
 mod grib_index;
+mod lis_runner;
 mod model_runner;
 mod ndbc_runner;
 mod observation_runner;

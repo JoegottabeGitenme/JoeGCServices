@@ -17,7 +17,8 @@ use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
 use crate::dart_runner::{self, DartConfig, DartRunner};
 use crate::download::DownloadManager;
-use crate::model_runner::ModelRunner;
+use crate::lis_runner;
+use crate::model_runner::{EarthdataAuth, ModelRunner};
 use crate::ndbc_runner::{self, NdbcConfig, NdbcRunner};
 use crate::observation_runner::{self, ObservationConfig, ObservationRunner, TafRunner};
 use crate::state::DownloadState;
@@ -94,6 +95,8 @@ pub struct Scheduler {
     dart_configs: Vec<DartConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
+    /// Optional Earthdata auth for NASA GES DISC sources (NLDAS)
+    earthdata_auth: Option<EarthdataAuth>,
 }
 
 impl Scheduler {
@@ -146,6 +149,40 @@ impl Scheduler {
             .load()
             .await;
         let s3_client = Some(aws_sdk_s3::Client::new(&aws_config));
+
+        // Initialize Earthdata auth if any NLDAS models are configured
+        let has_nldas = model_configs
+            .iter()
+            .any(|m| m.model.enabled && m.model.id.starts_with("nldas"));
+
+        let earthdata_auth = if has_nldas {
+            match lis_runner::build_earthdata_client() {
+                Ok(Some((ed_client, username, password))) => {
+                    info!("Earthdata authentication configured for NLDAS downloads");
+                    Some(EarthdataAuth {
+                        client: ed_client,
+                        username,
+                        password,
+                    })
+                }
+                Ok(None) => {
+                    warn!(
+                        "NLDAS models configured but Earthdata credentials not set. \
+                         Set EARTHDATA_USERNAME and EARTHDATA_PASSWORD environment variables."
+                    );
+                    None
+                }
+                Err(e) => {
+                    error!(
+                        error = %e,
+                        "Failed to build Earthdata client, NLDAS downloads will be skipped"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Log concurrency configuration
         let enabled_models = model_configs.iter().filter(|m| m.model.enabled).count();
@@ -204,6 +241,7 @@ impl Scheduler {
             ndbc_configs,
             dart_configs,
             s3_client,
+            earthdata_auth,
         }
     }
 
@@ -291,6 +329,29 @@ impl Scheduler {
         }
 
         configs
+    }
+
+    /// Create a ModelRunner for the given model config, attaching Earthdata auth if needed.
+    fn create_runner(&self, model: &ModelConfig, permit: ModelDownloadPermit) -> ModelRunner {
+        let mut runner = ModelRunner::new(
+            model.clone(),
+            self.download_manager.clone(),
+            self.state.clone(),
+            permit,
+            self.ingester_url.clone(),
+            self.client.clone(),
+            self.s3_client.clone(),
+            self.output_dir.clone(),
+        );
+
+        // Attach Earthdata auth for NLDAS models
+        if model.model.id.starts_with("nldas") {
+            if let Some(ref auth) = self.earthdata_auth {
+                runner = runner.with_earthdata_auth(auth.clone());
+            }
+        }
+
+        runner
     }
 
     /// Load NDBC buoy observation configurations from model config files.
@@ -418,16 +479,7 @@ impl Scheduler {
                 concurrency_manager.active_downloads_counter(),
             );
 
-            let runner = ModelRunner::new(
-                model.clone(),
-                self.download_manager.clone(),
-                self.state.clone(),
-                permit,
-                self.ingester_url.clone(),
-                self.client.clone(),
-                self.s3_client.clone(),
-                self.output_dir.clone(),
-            );
+            let runner = self.create_runner(model, permit);
 
             if let Err(e) = runner.run_cycle().await {
                 error!(model = %model.model.id, error = %e, "Model download failed");
@@ -460,16 +512,7 @@ impl Scheduler {
             concurrency_manager.active_downloads_counter(),
         );
 
-        let runner = ModelRunner::new(
-            model.clone(),
-            self.download_manager.clone(),
-            self.state.clone(),
-            permit,
-            self.ingester_url.clone(),
-            self.client.clone(),
-            self.s3_client.clone(),
-            self.output_dir.clone(),
-        );
+        let runner = self.create_runner(model, permit);
 
         runner.run_cycle().await
     }
@@ -516,16 +559,7 @@ impl Scheduler {
                 concurrency_manager.active_downloads_counter(),
             );
 
-            let runner = ModelRunner::new(
-                model.clone(),
-                self.download_manager.clone(),
-                self.state.clone(),
-                permit,
-                self.ingester_url.clone(),
-                self.client.clone(),
-                self.s3_client.clone(),
-                self.output_dir.clone(),
-            );
+            let runner = self.create_runner(&model, permit);
 
             let shutdown_rx = shutdown.resubscribe();
             let model_id = model.model.id.clone();
