@@ -57,6 +57,9 @@
   - [HRRR (High-Resolution Rapid Refresh)](./data-sources/hrrr.md)
   - [MRMS (Radar)](./data-sources/mrms.md)
   - [GOES (Satellite)](./data-sources/goes.md)
+  - [NLDAS-2 (Land Surface - CONUS)](./data-sources/nldas.md)
+  - [GLDAS-2.1 (Land Surface - Global)](./data-sources/gldas.md)
+  - [Ocean Data (GFS-Wave, NDBC, DART, SST, Sea Ice)](./data-sources/ocean.md)
   - [VIIRS (Light Pollution)](./data-sources/viirs.md)
 
 # Configuration

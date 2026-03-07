@@ -204,17 +204,17 @@ impl ModelRunner {
         );
 
         // 4. Download with permit-based concurrency
-        // Route NLDAS models through Earthdata download path
-        if self.is_nldas() {
+        // Route LIS models (NLDAS, GLDAS) through Earthdata download path
+        if self.is_lis() {
             self.download_nldas_files(pending).await
         } else {
             self.download_files(pending).await
         }
     }
 
-    /// Check if this model uses NASA GES DISC (NLDAS) sources.
-    fn is_nldas(&self) -> bool {
-        self.model.model.id.starts_with("nldas")
+    /// Check if this model uses NASA GES DISC (LIS) sources (NLDAS, GLDAS, etc.).
+    fn is_lis(&self) -> bool {
+        self.model.model.id.starts_with("nldas") || self.model.model.id.starts_with("gldas")
     }
 
     /// Sort files by priority (newest first).
@@ -549,7 +549,7 @@ impl ModelRunner {
         );
 
         // Route to appropriate discovery method
-        if model.model.id.starts_with("nldas") {
+        if model.model.id.starts_with("nldas") || model.model.id.starts_with("gldas") {
             self.discover_nldas_files().await
         } else if model.source.source_type == "http" || model.model.id == "ndfd" {
             self.discover_ndfd_files().await
@@ -562,33 +562,46 @@ impl ModelRunner {
         }
     }
 
-    /// Discover NLDAS-2 files available for download from NASA GES DISC.
+    /// Discover LIS files (NLDAS/GLDAS) available for download from NASA GES DISC.
     ///
-    /// Uses `lis_runner::build_nldas_file_list()` to construct hourly file URLs
+    /// Uses `lis_runner::build_lis_file_list()` to construct file URLs
     /// based on the configured delay and retention window.
+    ///
+    /// The data window is `[now - delay - retention, now - delay]`, so we pass
+    /// `delay_hours + retention_hours` as the total lookback from now.
     async fn discover_nldas_files(&self) -> Result<Vec<DownloadFile>> {
         let model = &self.model;
         let now = Utc::now();
 
-        // NLDAS data latency is ~4 days (96 hours) but configurable via delay_hours
+        // Data latency: configurable via delay_hours (96h for NLDAS, 792h for GLDAS EP)
         let delay_hours = model.schedule.delay_hours;
         let retention_hours = model.retention.hours;
+        // The data window is [now - delay - retention, now - delay].
+        // build_lis_file_list takes (delay, total_lookback_from_now), so:
+        //   total_lookback = delay + retention
+        //   earliest = now - total_lookback = now - delay - retention
+        //   latest   = now - delay
+        //
+        // NLDAS:  delay=96h,  retention=720h → window = [now-816h, now-96h]  (720h of data)
+        // GLDAS:  delay=792h, retention=720h → window = [now-1512h, now-792h] (720h of data)
+        let total_lookback = delay_hours + retention_hours;
 
         info!(
             model = %model.model.id,
             delay_hours = delay_hours,
             retention_hours = retention_hours,
-            "Discovering NLDAS files"
+            total_lookback = total_lookback,
+            "Discovering LIS files"
         );
 
         let files =
-            lis_runner::build_nldas_file_list(&model.model.id, now, delay_hours, retention_hours);
+            lis_runner::build_lis_file_list(&model.model.id, now, delay_hours, total_lookback);
 
         if !files.is_empty() {
             info!(
                 model = %model.model.id,
                 count = files.len(),
-                "Found NLDAS files to check"
+                "Found LIS files to check"
             );
         }
 

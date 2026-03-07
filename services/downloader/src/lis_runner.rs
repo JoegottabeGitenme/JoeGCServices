@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone, Timelike, Utc};
 use reqwest::{Client, StatusCode};
 use tracing::{debug, info, warn};
 
@@ -191,16 +191,34 @@ pub async fn download_earthdata_file(
     }
 }
 
-/// Construct NLDAS-2 download URLs for a given time range.
+/// LIS product configuration for URL construction.
+struct LisProduct {
+    /// Top-level dataset directory (e.g., "NLDAS", "GLDAS")
+    dataset: &'static str,
+    /// Product version directory (e.g., "NLDAS_NOAH0125_H.2.0")
+    product_dir: &'static str,
+    /// File prefix before `.A{date}` (e.g., "NLDAS_NOAH0125_H")
+    file_prefix: &'static str,
+    /// Version suffix in filename (e.g., "020" for NLDAS, "021" for GLDAS)
+    version_suffix: &'static str,
+    /// File extension (e.g., "nc" or "nc4")
+    extension: &'static str,
+    /// Time step in hours (1 for NLDAS hourly, 3 for GLDAS 3-hourly)
+    step_hours: i64,
+}
+
+/// Construct NASA LIS download URLs for a given time range.
+///
+/// Supports NLDAS-2 (hourly) and GLDAS-2.1 EP (3-hourly) products.
 ///
 /// # Arguments
-/// * `model_id` - "nldas-noah" or "nldas-forcing"
+/// * `model_id` - Model identifier (e.g., "nldas-noah", "gldas-noah")
 /// * `now` - Current time
-/// * `delay_hours` - Data latency (typically 96 hours / 4 days for NLDAS)
-/// * `retention_hours` - How far back to look (typically 720 hours / 30 days)
+/// * `delay_hours` - Data latency
+/// * `retention_hours` - How far back to look
 ///
-/// Returns a list of `DownloadFile` entries for missing hourly files.
-pub fn build_nldas_file_list(
+/// Returns a list of `DownloadFile` entries for missing files.
+pub fn build_lis_file_list(
     model_id: &str,
     now: DateTime<Utc>,
     delay_hours: u32,
@@ -208,12 +226,33 @@ pub fn build_nldas_file_list(
 ) -> Vec<DownloadFile> {
     let mut files = Vec::new();
 
-    // Determine product type from model ID
-    let (product_prefix, file_prefix) = match model_id {
-        "nldas-noah" => ("NLDAS_NOAH0125_H.2.0", "NLDAS_NOAH0125_H"),
-        "nldas-forcing" => ("NLDAS_FORA0125_H.2.0", "NLDAS_FORA0125_H"),
+    let product = match model_id {
+        "nldas-noah" => LisProduct {
+            dataset: "NLDAS",
+            product_dir: "NLDAS_NOAH0125_H.2.0",
+            file_prefix: "NLDAS_NOAH0125_H",
+            version_suffix: "020",
+            extension: "nc",
+            step_hours: 1,
+        },
+        "nldas-forcing" => LisProduct {
+            dataset: "NLDAS",
+            product_dir: "NLDAS_FORA0125_H.2.0",
+            file_prefix: "NLDAS_FORA0125_H",
+            version_suffix: "020",
+            extension: "nc",
+            step_hours: 1,
+        },
+        "gldas-noah" => LisProduct {
+            dataset: "GLDAS",
+            product_dir: "GLDAS_NOAH025_3H_EP.2.1",
+            file_prefix: "GLDAS_NOAH025_3H_EP",
+            version_suffix: "021",
+            extension: "nc4",
+            step_hours: 3,
+        },
         _ => {
-            warn!(model = %model_id, "Unknown NLDAS model ID");
+            warn!(model = %model_id, "Unknown LIS model ID");
             return files;
         }
     };
@@ -222,28 +261,36 @@ pub fn build_nldas_file_list(
     let latest = now - ChronoDuration::hours(delay_hours as i64);
     let earliest = now - ChronoDuration::hours(lookback_hours as i64);
 
-    // Iterate over each hour in the window
+    // Snap earliest to the product's time step boundary
+    let earliest = snap_to_step(earliest, product.step_hours);
+
+    // Iterate over each time step in the window
     let mut current = earliest;
     while current <= latest {
         let year = current.year();
         let doy = current.ordinal(); // Day of year (1-366)
         let date_str = current.format("%Y%m%d").to_string();
         let hour = current.hour();
+        let minute = current.minute();
 
-        // URL: https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/{product}/{YYYY}/{DDD}/{file}.nc
-        let filename = format!("{}.A{}.{:02}00.020.nc", file_prefix, date_str, hour);
+        let filename = format!(
+            "{}.A{}.{:02}{:02}.{}.{}",
+            product.file_prefix, date_str, hour, minute, product.version_suffix, product.extension
+        );
         let url = format!(
-            "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/{}/{}/{:03}/{}",
-            product_prefix, year, doy, filename
+            "https://hydro1.gesdisc.eosdis.nasa.gov/data/{}/{}/{}/{:03}/{}",
+            product.dataset, product.product_dir, year, doy, filename
         );
 
         // Output filename for local storage
         let output_filename = format!(
-            "{}_{}_{}_{:02}00.nc",
+            "{}_{}_{}_{:02}{:02}.{}",
             model_id.replace('-', "_"),
             date_str,
             format!("{:03}", doy),
-            hour
+            hour,
+            minute,
+            product.extension
         );
 
         files.push(DownloadFile {
@@ -252,10 +299,33 @@ pub fn build_nldas_file_list(
             timestamp: Some(current),
         });
 
-        current = current + ChronoDuration::hours(1);
+        current = current + ChronoDuration::hours(product.step_hours);
     }
 
     files
+}
+
+/// Snap a timestamp down to the nearest time step boundary.
+fn snap_to_step(dt: DateTime<Utc>, step_hours: i64) -> DateTime<Utc> {
+    if step_hours <= 1 {
+        return dt;
+    }
+    let hour = dt.hour() as i64;
+    let snapped_hour = (hour / step_hours) * step_hours;
+    dt.date_naive()
+        .and_hms_opt(snapped_hour as u32, 0, 0)
+        .map(|naive| TimeZone::from_utc_datetime(&Utc, &naive))
+        .unwrap_or(dt)
+}
+
+/// Backward-compatible alias for `build_lis_file_list`.
+pub fn build_nldas_file_list(
+    model_id: &str,
+    now: DateTime<Utc>,
+    delay_hours: u32,
+    lookback_hours: u32,
+) -> Vec<DownloadFile> {
+    build_lis_file_list(model_id, now, delay_hours, lookback_hours)
 }
 
 #[cfg(test)]
@@ -346,6 +416,105 @@ mod tests {
         let has_2026 = files.iter().any(|f| f.url.contains("/2026/"));
         assert!(has_2025, "Should have files from 2025");
         assert!(has_2026, "Should have files from 2026");
+    }
+
+    // ==================== GLDAS File List ====================
+
+    #[test]
+    fn test_build_lis_file_list_gldas_noah() {
+        let now = Utc.with_ymd_and_hms(2026, 2, 15, 12, 0, 0).unwrap();
+        // GLDAS EP: delay ~792h (~33 days), lookback 800h
+        // Latest = now - 792h, Earliest = now - 800h (8-hour window = ~2-3 files at 3h step)
+        let files = build_lis_file_list("gldas-noah", now, 792, 800);
+
+        assert!(!files.is_empty());
+
+        // Check file URL format
+        let first = &files[0];
+        assert!(
+            first.url.contains("GLDAS_NOAH025_3H_EP.2.1"),
+            "URL should contain GLDAS product dir: {}",
+            first.url
+        );
+        assert!(
+            first.url.contains("/data/GLDAS/"),
+            "URL should use GLDAS dataset: {}",
+            first.url
+        );
+        assert!(
+            first.url.contains(".021.nc4"),
+            "URL should have .021.nc4 extension: {}",
+            first.url
+        );
+
+        // Check output filename format
+        assert!(
+            first.filename.starts_with("gldas_noah_"),
+            "Output filename should start with gldas_noah_: {}",
+            first.filename
+        );
+        assert!(
+            first.filename.ends_with(".nc4"),
+            "Output filename should end with .nc4: {}",
+            first.filename
+        );
+    }
+
+    #[test]
+    fn test_build_lis_file_list_gldas_3hourly_step() {
+        let now = Utc.with_ymd_and_hms(2026, 2, 15, 12, 0, 0).unwrap();
+        // 24-hour window: should produce exactly 9 files (0,3,6,9,12,15,18,21,0 = 9 steps)
+        let files = build_lis_file_list("gldas-noah", now, 0, 24);
+
+        // 24 hours / 3-hour step = 8 intervals + 1 = 9 timestamps
+        assert_eq!(files.len(), 9, "24h window at 3h step should have 9 files");
+
+        // Verify 3-hourly spacing: hours should be 12,15,18,21,0,3,6,9,12
+        // (going back 24h from hour 12)
+        for file in &files {
+            let ts = file.timestamp.unwrap();
+            assert_eq!(
+                ts.hour() % 3,
+                0,
+                "GLDAS files should be on 3-hour boundaries, got hour {}",
+                ts.hour()
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_lis_file_list_gldas_url_format() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        let files = build_lis_file_list("gldas-noah", now, 0, 3);
+
+        let last = files.last().unwrap();
+        // Jan 15 = day 15
+        assert!(
+            last.url.contains("/015/"),
+            "URL should contain day-of-year: {}",
+            last.url
+        );
+        assert!(last
+            .url
+            .starts_with("https://hydro1.gesdisc.eosdis.nasa.gov"));
+        assert!(last.url.contains("GLDAS_NOAH025_3H_EP.A2026011"));
+    }
+
+    #[test]
+    fn test_snap_to_step() {
+        let dt = Utc.with_ymd_and_hms(2026, 1, 10, 5, 30, 0).unwrap();
+        let snapped = snap_to_step(dt, 3);
+        assert_eq!(snapped.hour(), 3);
+        assert_eq!(snapped.minute(), 0);
+
+        // Already on boundary
+        let dt2 = Utc.with_ymd_and_hms(2026, 1, 10, 6, 0, 0).unwrap();
+        let snapped2 = snap_to_step(dt2, 3);
+        assert_eq!(snapped2.hour(), 6);
+
+        // step_hours=1 should not change anything
+        let snapped3 = snap_to_step(dt, 1);
+        assert_eq!(snapped3, dt);
     }
 
     #[test]

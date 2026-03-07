@@ -118,7 +118,7 @@ impl Ingester {
                     .or_else(|| extract_model_from_filename(file_path));
 
                 if let Some(ref m) = detected_model {
-                    if m.starts_with("nldas") {
+                    if m.starts_with("nldas") || m.starts_with("gldas") {
                         return cf_netcdf::ingest_cf_netcdf(
                             &self.storage,
                             &self.catalog,
@@ -141,7 +141,7 @@ impl Ingester {
             FileType::Unknown => {
                 // Try to guess based on content or model
                 if let Some(ref model) = options.model {
-                    if model.starts_with("nldas") {
+                    if model.starts_with("nldas") || model.starts_with("gldas") {
                         return cf_netcdf::ingest_cf_netcdf(
                             &self.storage,
                             &self.catalog,

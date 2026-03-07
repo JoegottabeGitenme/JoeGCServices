@@ -161,7 +161,7 @@ GET http://ingester:8082/metrics
 
 ### GRIB2 (GRIB Edition 2)
 
-**Used by**: GFS, HRRR, MRMS
+**Used by**: GFS, HRRR, MRMS, GFS-Wave
 
 **Features**:
 - Binary grid format
@@ -184,6 +184,30 @@ GET http://ingester:8082/metrics
 - CF-compliant metadata
 
 **Parser**: Custom Rust implementation (`netcdf-parser` crate)
+
+---
+
+### CF-Convention NetCDF (Land Surface Models)
+
+**Used by**: NLDAS-2, GLDAS-2.1
+
+**Features**:
+- CF (Climate and Forecast) convention compliant
+- Geographic (lat/lon) projection
+- Multiple variables per file (37 for NLDAS, 36 for GLDAS)
+- Variable filtering via `cf_name` in model config
+- Fill value handling (-9999.0 converted to NaN)
+- Ascending latitude support (RowOrigin::South)
+
+**Parser**: CF NetCDF reader (`netcdf-parser` crate, `cf_reader` module)
+
+The CF NetCDF ingestion path (`cf_netcdf::ingest_cf_netcdf`) differs from the GOES NetCDF path in several ways:
+- Reads **all configured variables** from a single file (vs. one variable per GOES file)
+- Uses the **CF variable name** directly as the parameter name in the catalog
+- Handles **depth levels** (soil layers at 10, 40, 100, 200 cm)
+- Extracts time from CF-convention time variables (various epoch references)
+
+Models are routed to this path when their ID starts with `nldas` or `gldas`.
 
 ## Ingestion Flow
 
@@ -627,9 +651,10 @@ services/ingester/src/
 
 crates/ingestion/src/
 ├── lib.rs               # Public API exports
-├── ingester.rs          # Core Ingester struct
+├── ingester.rs          # Core Ingester struct, format routing
 ├── grib2.rs             # GRIB2 file ingestion
-├── netcdf.rs            # NetCDF file ingestion  
+├── netcdf.rs            # GOES NetCDF file ingestion  
+├── cf_netcdf.rs         # CF-convention NetCDF ingestion (NLDAS, GLDAS)
 ├── metadata.rs          # File type detection, model/param extraction
 ├── config.rs            # Parameter filtering rules
 ├── upload.rs            # Upload Zarr to MinIO

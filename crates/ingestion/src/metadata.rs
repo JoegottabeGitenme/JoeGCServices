@@ -26,14 +26,22 @@ pub enum FileType {
     Unknown,
 }
 
-/// Information extracted from an NLDAS-2 filename.
+/// Information extracted from a NASA LIS (Land Information System) filename.
+///
+/// Covers NLDAS-2, GLDAS-2.1, and other LIS products served from GES DISC.
 #[derive(Debug, Clone)]
-pub struct NldasFileInfo {
-    /// Model identifier (nldas-noah, nldas-forcing)
+pub struct LisFileInfo {
+    /// Model identifier (e.g., nldas-noah, nldas-forcing, gldas-noah)
     pub model: String,
     /// Observation time
     pub observation_time: DateTime<Utc>,
 }
+
+/// Backward-compatible type alias for `LisFileInfo`.
+///
+/// Renamed from `NldasFileInfo` to `LisFileInfo` when GLDAS support was added,
+/// since the struct now covers all LIS products, not just NLDAS.
+pub type NldasFileInfo = LisFileInfo;
 
 /// Information extracted from a GOES filename.
 #[derive(Debug, Clone)]
@@ -98,6 +106,8 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         Some("nldas-noah".to_string())
     } else if lower.starts_with("nldas_fora") || lower.starts_with("nldas_for") {
         Some("nldas-forcing".to_string())
+    } else if lower.starts_with("gldas_noah") {
+        Some("gldas-noah".to_string())
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
     } else if lower.starts_with("aigefs") || lower.contains("aigefs") {
@@ -316,6 +326,8 @@ pub fn get_model_bbox(model: &str) -> BoundingBox {
         "nbm-guam" => BoundingBox::new(141.0, 11.0, 148.0, 18.0),
         // NLDAS-2 covers North America at 0.125° resolution
         "nldas-noah" | "nldas-forcing" => BoundingBox::new(-124.9375, 25.0625, -67.0625, 52.9375),
+        // GLDAS-2.1 covers global land at 0.25° resolution
+        "gldas-noah" => BoundingBox::new(-179.875, -59.875, 179.875, 89.875),
         _ => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
     }
 }
@@ -344,12 +356,16 @@ pub fn get_bbox_from_grid(grid: &grib2_parser::sections::GridDefinition) -> Boun
     BoundingBox::new(min_lon, min_lat, max_lon, max_lat)
 }
 
-/// Parse NLDAS-2 filename to extract metadata.
+/// Parse a NASA LIS filename to extract metadata.
 ///
-/// Supports:
-/// - Noah: `NLDAS_NOAH0125_H.A20260205.0000.020.nc`
-/// - Forcing: `NLDAS_FORA0125_H.A20260205.0000.020.nc` (or `.nc4`)
-pub fn parse_nldas_filename(filename: &str) -> Option<NldasFileInfo> {
+/// Supports NLDAS-2, GLDAS-2.1 EP, and other LIS products that use the
+/// `.A{YYYYMMDD}.{HHMM}` date convention in their filenames.
+///
+/// Examples:
+/// - NLDAS Noah: `NLDAS_NOAH0125_H.A20260205.0000.020.nc`
+/// - NLDAS Forcing: `NLDAS_FORA0125_H.A20260205.0000.020.nc` (or `.nc4`)
+/// - GLDAS Noah EP: `GLDAS_NOAH025_3H_EP.A20260110.0000.021.nc4`
+pub fn parse_lis_filename(filename: &str) -> Option<LisFileInfo> {
     let upper = filename.to_uppercase();
 
     // Determine model
@@ -357,6 +373,8 @@ pub fn parse_nldas_filename(filename: &str) -> Option<NldasFileInfo> {
         "nldas-noah".to_string()
     } else if upper.starts_with("NLDAS_FORA") || upper.starts_with("NLDAS_FOR") {
         "nldas-forcing".to_string()
+    } else if upper.starts_with("GLDAS_NOAH") {
+        "gldas-noah".to_string()
     } else {
         return None;
     };
@@ -385,10 +403,15 @@ pub fn parse_nldas_filename(filename: &str) -> Option<NldasFileInfo> {
     let naive_dt = chrono::NaiveDateTime::new(naive_date, naive_time);
     let observation_time = TimeZone::from_utc_datetime(&Utc, &naive_dt);
 
-    Some(NldasFileInfo {
+    Some(LisFileInfo {
         model,
         observation_time,
     })
+}
+
+/// Backward-compatible alias for `parse_lis_filename`.
+pub fn parse_nldas_filename(filename: &str) -> Option<LisFileInfo> {
+    parse_lis_filename(filename)
 }
 
 /// Map GOES band number to parameter name.
@@ -1183,7 +1206,44 @@ mod tests {
         assert!(parse_nldas_filename("").is_none());
     }
 
-    // ==================== NLDAS Bounding Box ====================
+    // ==================== GLDAS Model Extraction ====================
+
+    #[test]
+    fn test_extract_model_gldas_noah() {
+        assert_eq!(
+            extract_model_from_filename("GLDAS_NOAH025_3H_EP.A20260110.0000.021.nc4"),
+            Some("gldas-noah".to_string())
+        );
+        assert_eq!(
+            extract_model_from_filename("gldas_noah025_3h_ep.a20260110.0000.021.nc4"),
+            Some("gldas-noah".to_string())
+        );
+    }
+
+    // ==================== GLDAS Filename Parsing ====================
+
+    #[test]
+    fn test_parse_gldas_noah_filename() {
+        let info = parse_lis_filename("GLDAS_NOAH025_3H_EP.A20260110.0000.021.nc4")
+            .expect("Should parse GLDAS Noah EP filename");
+        assert_eq!(info.model, "gldas-noah");
+        assert_eq!(info.observation_time.year(), 2026);
+        assert_eq!(info.observation_time.month(), 1);
+        assert_eq!(info.observation_time.day(), 10);
+        assert_eq!(info.observation_time.hour(), 0);
+        assert_eq!(info.observation_time.minute(), 0);
+    }
+
+    #[test]
+    fn test_parse_gldas_noah_filename_nonzero_hour() {
+        let info =
+            parse_lis_filename("GLDAS_NOAH025_3H_EP.A20260110.1500.021.nc4").expect("Should parse");
+        assert_eq!(info.model, "gldas-noah");
+        assert_eq!(info.observation_time.hour(), 15);
+        assert_eq!(info.observation_time.minute(), 0);
+    }
+
+    // ==================== NLDAS/GLDAS Bounding Box ====================
 
     #[test]
     fn test_get_model_bbox_nldas() {
@@ -1196,6 +1256,15 @@ mod tests {
         let bbox_forcing = get_model_bbox("nldas-forcing");
         assert_eq!(bbox_noah.min_x, bbox_forcing.min_x);
         assert_eq!(bbox_noah.max_y, bbox_forcing.max_y);
+    }
+
+    #[test]
+    fn test_get_model_bbox_gldas() {
+        let bbox = get_model_bbox("gldas-noah");
+        assert!((bbox.min_x - (-179.875)).abs() < 0.01);
+        assert!((bbox.min_y - (-59.875)).abs() < 0.01);
+        assert!((bbox.max_x - 179.875).abs() < 0.01);
+        assert!((bbox.max_y - 89.875).abs() < 0.01);
     }
 
     #[test]

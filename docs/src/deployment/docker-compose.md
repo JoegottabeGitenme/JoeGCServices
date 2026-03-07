@@ -41,6 +41,9 @@ services:
   downloader:      # Data download service (port 8081)
   web-dashboard:   # Web dashboard (port 8000)
   
+  # Reliability
+  autoheal:        # Restarts unhealthy containers automatically
+  
   # Monitoring
   prometheus:      # Metrics collection (port 9090)
   grafana:         # Dashboards (port 3000)
@@ -175,6 +178,31 @@ The production override (`deploy/production/docker-compose.prod.yml`) adds:
 - **Resource limits** on all containers
 - **Removed development tools** (pgAdmin)
 - **Internal-only networking** for backend services
+
+## Autoheal (Automatic Recovery)
+
+Docker's `restart: unless-stopped` policy only restarts containers that crash (exit). It does **not** restart containers that are running but failing their healthchecks (e.g., WMS API stuck with exhausted connections after weeks of uptime).
+
+The `autoheal` container solves this by monitoring all container healthchecks and restarting any that are unhealthy:
+
+```yaml
+autoheal:
+  image: willfarrell/autoheal
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+  environment:
+    AUTOHEAL_CONTAINER_LABEL: all        # Monitor all containers
+    AUTOHEAL_INTERVAL: 30                # Check every 30 seconds
+    AUTOHEAL_START_PERIOD: 120           # Grace period on startup (seconds)
+  restart: unless-stopped
+```
+
+Key settings:
+- **`AUTOHEAL_CONTAINER_LABEL: all`** -- Monitors every container with a healthcheck, no per-container opt-in needed
+- **`AUTOHEAL_INTERVAL: 30`** -- Polls Docker every 30 seconds for unhealthy containers
+- **`AUTOHEAL_START_PERIOD: 120`** -- Ignores unhealthy status for the first 2 minutes after container start, allowing time for initialization
+
+This is especially important for long-running services like `wms-api` that may get into unrecoverable states after extended uptime.
 
 See [Production Deployment](./production.md) for the complete production setup guide, which includes TLS configuration, authentication, and the automated deployment script.
 

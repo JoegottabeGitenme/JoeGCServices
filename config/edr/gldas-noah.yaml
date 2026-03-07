@@ -1,0 +1,258 @@
+# GLDAS-2.1 Noah Early Products - EDR Configuration
+# Observation data from NASA GES DISC
+#
+# Key differences from NLDAS:
+# - Global land coverage (-180 to 180 lon, -60 to 90 lat)
+# - 0.25° resolution, 3-hourly
+# - ~33 day latency (Early Products)
+# - Variable names have temporal suffixes (_tavg, _inst, _acc)
+# - No aggregated soil moisture (0-100, 0-200), no SnowFrac, LAI, GVEG, Streamflow
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
+
+model: gldas-noah
+data_type: observation
+
+collections:
+  # ===========================================================================
+  # Soil Moisture (depth layers)
+  # ===========================================================================
+
+  - id: gldas-soil-moisture
+    title: "GLDAS-2.1 Noah EP - Soil Moisture"
+    description: "Soil moisture at 4 depth layers plus root zone (0.25° 3-hourly)"
+    level_filter:
+      level_type: depth_below_surface
+    parameters:
+      - name: SoilMoi0_10cm_inst
+        levels: ["0-10 cm depth"]
+        valid_range: { min: 0, max: 50 }
+      - name: SoilMoi10_40cm_inst
+        levels: ["10-40 cm depth"]
+        valid_range: { min: 0, max: 150 }
+      - name: SoilMoi40_100cm_inst
+        levels: ["40-100 cm depth"]
+        valid_range: { min: 0, max: 250 }
+      - name: SoilMoi100_200cm_inst
+        levels: ["100-200 cm depth"]
+        valid_range: { min: 0, max: 500 }
+      - name: RootMoist_inst
+        levels: ["root zone"]
+        valid_range: { min: 0, max: 900 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Soil Temperature (depth layers)
+  # ===========================================================================
+
+  - id: gldas-soil-temperature
+    title: "GLDAS-2.1 Noah EP - Soil Temperature"
+    description: "Soil temperature at 4 depth layers (0.25° 3-hourly)"
+    level_filter:
+      level_type: depth_below_surface
+    parameters:
+      - name: SoilTMP0_10cm_inst
+        levels: ["0-10 cm depth"]
+        valid_range: { min: 200, max: 350 }
+      - name: SoilTMP10_40cm_inst
+        levels: ["10-40 cm depth"]
+        valid_range: { min: 200, max: 350 }
+      - name: SoilTMP40_100cm_inst
+        levels: ["40-100 cm depth"]
+        valid_range: { min: 200, max: 350 }
+      - name: SoilTMP100_200cm_inst
+        levels: ["100-200 cm depth"]
+        valid_range: { min: 200, max: 350 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Snow
+  # ===========================================================================
+
+  - id: gldas-snow
+    title: "GLDAS-2.1 Noah EP - Snow"
+    description: "Snow water equivalent and depth (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: SWE_inst
+        levels: [surface]
+        valid_range: { min: 0, max: 2000 }
+      - name: SnowDepth_inst
+        levels: [surface]
+        valid_range: { min: 0, max: 10 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Surface Variables
+  # ===========================================================================
+
+  - id: gldas-surface
+    title: "GLDAS-2.1 Noah EP - Surface Variables"
+    description: "Surface temperature, albedo, canopy water (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: AvgSurfT_inst
+        levels: [surface]
+        valid_range: { min: 200, max: 350 }
+      - name: Albedo_inst
+        levels: [surface]
+        valid_range: { min: 0, max: 100 }
+      - name: CanopInt_inst
+        levels: [surface]
+        valid_range: { min: 0, max: 5 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Energy Fluxes
+  # ===========================================================================
+
+  - id: gldas-energy-fluxes
+    title: "GLDAS-2.1 Noah EP - Energy Fluxes"
+    description: "Radiation and heat fluxes (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: SWdown_f_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 1500 }
+      - name: LWdown_f_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 700 }
+      - name: Swnet_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 1500 }
+      - name: Lwnet_tavg
+        levels: [surface]
+        valid_range: { min: -200, max: 50 }
+      - name: Qle_tavg
+        levels: [surface]
+        valid_range: { min: -100, max: 500 }
+      - name: Qh_tavg
+        levels: [surface]
+        valid_range: { min: -200, max: 500 }
+      - name: Qg_tavg
+        levels: [surface]
+        valid_range: { min: -200, max: 200 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Water Fluxes
+  # ===========================================================================
+
+  - id: gldas-water-fluxes
+    title: "GLDAS-2.1 Noah EP - Water Fluxes"
+    description: "Evapotranspiration, runoff, precipitation, snowmelt (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: Evap_tavg
+        levels: [surface]
+        valid_range: { min: -0.001, max: 0.001 }
+      - name: Qs_acc
+        levels: [surface]
+        valid_range: { min: 0, max: 100 }
+      - name: Qsb_acc
+        levels: [surface]
+        valid_range: { min: 0, max: 100 }
+      - name: Qsm_acc
+        levels: [surface]
+        valid_range: { min: 0, max: 50 }
+      - name: Snowf_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 0.01 }
+      - name: Rainf_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 0.01 }
+      - name: Rainf_f_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 0.01 }
+      - name: PotEvap_tavg
+        levels: [surface]
+        valid_range: { min: -100, max: 1000 }
+    run_mode: latest
+
+  # ===========================================================================
+  # ET Components
+  # ===========================================================================
+
+  - id: gldas-et-components
+    title: "GLDAS-2.1 Noah EP - Evapotranspiration Components"
+    description: "Canopy evaporation, transpiration, bare soil evaporation (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: ECanop_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 200 }
+      - name: Tveg_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 200 }
+      - name: ESoil_tavg
+        levels: [surface]
+        valid_range: { min: 0, max: 200 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Forcing Variables (near-surface meteorology)
+  # ===========================================================================
+
+  - id: gldas-forcing
+    title: "GLDAS-2.1 Noah EP - Forcing Variables"
+    description: "Near-surface wind, temperature, humidity (0.25° 3-hourly)"
+    level_filter:
+      level_type: height_above_ground
+    parameters:
+      - name: Wind_f_inst
+        levels: ["10 m"]
+        valid_range: { min: 0, max: 50 }
+      - name: Tair_f_inst
+        levels: ["2 m"]
+        valid_range: { min: 200, max: 350 }
+      - name: Qair_f_inst
+        levels: ["2 m"]
+        valid_range: { min: 0, max: 0.05 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Surface Pressure (separate collection — surface level, not height_above_ground)
+  # ===========================================================================
+
+  - id: gldas-surface-pressure
+    title: "GLDAS-2.1 Noah EP - Surface Pressure"
+    description: "Atmospheric surface pressure (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: Psurf_f_inst
+        levels: [surface]
+        valid_range: { min: 50000, max: 110000 }
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 240
+  max_vertical_levels: 5
+  max_response_size_mb: 100
+  max_area_sq_degrees: 2000
+  max_area_sq_degrees_png: 50000
+  max_radius_km: 2000

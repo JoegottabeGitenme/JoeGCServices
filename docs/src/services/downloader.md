@@ -60,7 +60,7 @@ graph TB
 
 ## Data Sources
 
-The downloader supports multiple NOAA data sources:
+The downloader supports multiple NOAA and NASA data sources:
 
 ### GFS (Global Forecast System)
 
@@ -162,6 +162,54 @@ s3_client.list_objects_v2()
 ```
 
 This optimization reduces S3 API calls and ensures all timesteps (~12 per hour at 5-minute intervals) are discovered for each configured band.
+
+---
+
+### NASA LIS (NLDAS-2, GLDAS-2.1)
+
+**Source**: NASA GES DISC (requires Earthdata Login)
+
+The LIS (Land Information System) runner handles downloads from NASA's GES DISC, which requires OAuth2 redirect-based authentication. This is implemented in `services/downloader/src/lis_runner.rs`.
+
+**NLDAS-2 URL Pattern**:
+```
+https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_NOAH0125_H.2.0/{YYYY}/{DDD}/NLDAS_NOAH0125_H.A{YYYYMMDD}.{HH}00.020.nc
+```
+
+**GLDAS-2.1 EP URL Pattern**:
+```
+https://hydro1.gesdisc.eosdis.nasa.gov/data/GLDAS/GLDAS_NOAH025_3H_EP.2.1/{YYYY}/{DDD}/GLDAS_NOAH025_3H_EP.A{YYYYMMDD}.{HHMM}.021.nc4
+```
+
+**Schedule**: NLDAS hourly (96h latency), GLDAS 3-hourly (792h latency)
+**File Size**: NLDAS ~6.5 MB, GLDAS ~22 MB
+
+#### Earthdata Authentication Flow
+
+Unlike other sources that use direct HTTP downloads or AWS S3, NASA GES DISC requires a multi-step OAuth2 flow:
+
+1. Request file from `hydro1.gesdisc.eosdis.nasa.gov`
+2. Server redirects to `urs.earthdata.nasa.gov` for authentication
+3. HTTP Basic auth with Earthdata username/password
+4. Redirect back to GES DISC with session cookie
+5. File download proceeds
+
+The downloader handles this automatically using a cookie jar and redirect following. Configure credentials via environment variables:
+
+```bash
+EARTHDATA_USERNAME=your_username
+EARTHDATA_PASSWORD=your_password
+```
+
+Register at [https://urs.earthdata.nasa.gov](https://urs.earthdata.nasa.gov) and authorize the "NASA GESDISC DATA ARCHIVE" application.
+
+---
+
+### Ocean Data (NDBC, DART, GFS-Wave, SST, Sea Ice)
+
+**NDBC** and **DART** buoy observations are fetched as text data and sent directly to the ingester as point observations (no file download). **GFS-Wave** uses selective GRIB2 download via index files, same as GFS. **SST** and **Sea Ice** are NetCDF files from NOAA sources.
+
+See [Ocean Data Sources](../data-sources/ocean.md) for details.
 
 ## Download Flow
 

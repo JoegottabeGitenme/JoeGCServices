@@ -1,0 +1,494 @@
+# GLDAS-2.1 Noah Early Products Layer Configuration
+# Defines WMS/WMTS layers exposed for GLDAS-2.1 Noah EP outputs
+# Global land coverage at 0.25° resolution, 3-hourly observation data
+# 36 parameters across soil moisture, soil temperature, snow, surface,
+# radiation, heat fluxes, water fluxes, ET components, and forcing variables
+
+model: gldas-noah
+display_name: "GLDAS-2.1 Noah Land Surface Model (EP)"
+
+# GLDAS global land domain
+default_bbox:
+  west: -179.875
+  south: -59.875
+  east: 179.875
+  north: 89.875
+
+# GLDAS is observation data (3-hourly), not forecast
+dimension_type: observation
+
+layers:
+  # ==========================================================================
+  # Soil Moisture (5 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_SoilMoi0_10cm_inst
+    parameter: SoilMoi0_10cm_inst
+    title: "Soil Moisture (0-10 cm)"
+    abstract: "Soil moisture content in the 0-10 cm layer"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "0-10 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilMoi10_40cm_inst
+    parameter: SoilMoi10_40cm_inst
+    title: "Soil Moisture (10-40 cm)"
+    abstract: "Soil moisture content in the 10-40 cm layer"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "10-40 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilMoi40_100cm_inst
+    parameter: SoilMoi40_100cm_inst
+    title: "Soil Moisture (40-100 cm)"
+    abstract: "Soil moisture content in the 40-100 cm layer"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "40-100 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilMoi100_200cm_inst
+    parameter: SoilMoi100_200cm_inst
+    title: "Soil Moisture (100-200 cm)"
+    abstract: "Soil moisture content in the 100-200 cm layer"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "100-200 cm depth"
+        default: true
+
+  - id: gldas-noah_RootMoist_inst
+    parameter: RootMoist_inst
+    title: "Root Zone Soil Moisture"
+    abstract: "Soil moisture in the root zone"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "root zone"
+        default: true
+
+  # ==========================================================================
+  # Soil Temperature (4 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_SoilTMP0_10cm_inst
+    parameter: SoilTMP0_10cm_inst
+    title: "Soil Temperature (0-10 cm)"
+    abstract: "Soil temperature in the 0-10 cm layer"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "0-10 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilTMP10_40cm_inst
+    parameter: SoilTMP10_40cm_inst
+    title: "Soil Temperature (10-40 cm)"
+    abstract: "Soil temperature in the 10-40 cm layer"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "10-40 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilTMP40_100cm_inst
+    parameter: SoilTMP40_100cm_inst
+    title: "Soil Temperature (40-100 cm)"
+    abstract: "Soil temperature in the 40-100 cm layer"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "40-100 cm depth"
+        default: true
+
+  - id: gldas-noah_SoilTMP100_200cm_inst
+    parameter: SoilTMP100_200cm_inst
+    title: "Soil Temperature (100-200 cm)"
+    abstract: "Soil temperature in the 100-200 cm layer"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "100-200 cm depth"
+        default: true
+
+  # ==========================================================================
+  # Snow (2 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_SWE_inst
+    parameter: SWE_inst
+    title: "Snow Water Equivalent"
+    abstract: "Snow water equivalent - total water content of snowpack"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_SnowDepth_inst
+    parameter: SnowDepth_inst
+    title: "Snow Depth"
+    abstract: "Physical depth of snow on the ground"
+    style_file: snow.json
+    units:
+      native: m
+      display: m
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Surface (3 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_AvgSurfT_inst
+    parameter: AvgSurfT_inst
+    title: "Earth Skin Temperature"
+    abstract: "Average surface skin temperature from GLDAS-2.1 Noah EP"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Albedo_inst
+    parameter: Albedo_inst
+    title: "Surface Albedo"
+    abstract: "Surface albedo (reflectivity)"
+    style_file: humidity.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_CanopInt_inst
+    parameter: CanopInt_inst
+    title: "Canopy Water"
+    abstract: "Plant canopy surface water interception"
+    style_file: soil_moisture.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Radiation Fluxes (4 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_SWdown_f_tavg
+    parameter: SWdown_f_tavg
+    title: "Downward Shortwave Radiation"
+    abstract: "Shortwave (solar) radiation flux reaching the surface"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_LWdown_f_tavg
+    parameter: LWdown_f_tavg
+    title: "Downward Longwave Radiation"
+    abstract: "Longwave (thermal infrared) radiation flux reaching the surface"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Swnet_tavg
+    parameter: Swnet_tavg
+    title: "Net Shortwave Radiation"
+    abstract: "Net shortwave radiation absorbed by the surface"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Lwnet_tavg
+    parameter: Lwnet_tavg
+    title: "Net Longwave Radiation"
+    abstract: "Net longwave radiation at the surface"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Heat Fluxes (3 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_Qle_tavg
+    parameter: Qle_tavg
+    title: "Latent Heat Flux"
+    abstract: "Surface latent heat flux (energy used for evapotranspiration)"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Qh_tavg
+    parameter: Qh_tavg
+    title: "Sensible Heat Flux"
+    abstract: "Surface sensible heat flux (direct heating of the atmosphere)"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Qg_tavg
+    parameter: Qg_tavg
+    title: "Ground Heat Flux"
+    abstract: "Heat flux into the ground"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Water Fluxes (7 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_Evap_tavg
+    parameter: Evap_tavg
+    title: "Total Evapotranspiration"
+    abstract: "Total evapotranspiration (water mass flux rate)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2 s-1"
+      display: "kg/m²/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Qs_acc
+    parameter: Qs_acc
+    title: "Surface Runoff"
+    abstract: "Surface runoff (non-infiltrating water, accumulated)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Qsb_acc
+    parameter: Qsb_acc
+    title: "Subsurface Runoff"
+    abstract: "Subsurface runoff (baseflow / groundwater drainage, accumulated)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Qsm_acc
+    parameter: Qsm_acc
+    title: "Snowmelt"
+    abstract: "Water from snowmelt (accumulated)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2"
+      display: "kg/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Snowf_tavg
+    parameter: Snowf_tavg
+    title: "Snowfall Rate"
+    abstract: "Frozen precipitation (snowfall rate)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2 s-1"
+      display: "kg/m²/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Rainf_tavg
+    parameter: Rainf_tavg
+    title: "Rainfall Rate"
+    abstract: "Liquid precipitation (rainfall rate)"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2 s-1"
+      display: "kg/m²/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Rainf_f_tavg
+    parameter: Rainf_f_tavg
+    title: "Rainfall Rate (Forcing)"
+    abstract: "Forcing rainfall rate from meteorological inputs"
+    style_file: precipitation.json
+    units:
+      native: "kg m-2 s-1"
+      display: "kg/m²/s"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_PotEvap_tavg
+    parameter: PotEvap_tavg
+    title: "Potential Evapotranspiration"
+    abstract: "Potential evapotranspiration (max possible ET given available energy)"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # ET Components (3 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_ECanop_tavg
+    parameter: ECanop_tavg
+    title: "Canopy Water Evaporation"
+    abstract: "Evaporation of water intercepted by plant canopy"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_Tveg_tavg
+    parameter: Tveg_tavg
+    title: "Transpiration"
+    abstract: "Plant transpiration (water drawn up through roots and released by leaves)"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: gldas-noah_ESoil_tavg
+    parameter: ESoil_tavg
+    title: "Bare Soil Evaporation"
+    abstract: "Direct evaporation from bare soil surfaces"
+    style_file: radiation.json
+    units:
+      native: "W m-2"
+      display: "W/m²"
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Forcing Variables (4 parameters)
+  # ==========================================================================
+
+  - id: gldas-noah_Wind_f_inst
+    parameter: Wind_f_inst
+    title: "Near-Surface Wind Speed"
+    abstract: "Wind speed at 10m above ground"
+    style_file: wind.json
+    units:
+      native: "m s-1"
+      display: "m/s"
+    levels:
+      - value: "10 m"
+        default: true
+
+  - id: gldas-noah_Tair_f_inst
+    parameter: Tair_f_inst
+    title: "Near-Surface Air Temperature"
+    abstract: "Air temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "°C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m"
+        default: true
+
+  - id: gldas-noah_Qair_f_inst
+    parameter: Qair_f_inst
+    title: "Near-Surface Specific Humidity"
+    abstract: "Specific humidity at 2m above ground"
+    style_file: humidity.json
+    units:
+      native: "kg kg-1"
+      display: "kg/kg"
+    levels:
+      - value: "2 m"
+        default: true
+
+  - id: gldas-noah_Psurf_f_inst
+    parameter: Psurf_f_inst
+    title: "Surface Pressure"
+    abstract: "Atmospheric pressure at the surface"
+    style_file: atmospheric.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "surface"
+        default: true
