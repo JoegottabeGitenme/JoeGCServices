@@ -576,7 +576,14 @@ impl ModelRunner {
         // Data latency: configurable via delay_hours (96h for NLDAS, 792h for GLDAS EP)
         let delay_hours = model.schedule.delay_hours;
         let retention_hours = model.retention.hours;
-        // Total lookback from now = delay + retention to cover the full data window
+        // The data window is [now - delay - retention, now - delay].
+        // build_lis_file_list takes (delay, total_lookback_from_now), so:
+        //   total_lookback = delay + retention
+        //   earliest = now - total_lookback = now - delay - retention
+        //   latest   = now - delay
+        //
+        // NLDAS:  delay=96h,  retention=720h → window = [now-816h, now-96h]  (720h of data)
+        // GLDAS:  delay=792h, retention=720h → window = [now-1512h, now-792h] (720h of data)
         let total_lookback = delay_hours + retention_hours;
 
         info!(

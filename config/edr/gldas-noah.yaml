@@ -206,7 +206,7 @@ collections:
 
   - id: gldas-forcing
     title: "GLDAS-2.1 Noah EP - Forcing Variables"
-    description: "Near-surface wind, temperature, humidity, pressure (0.25° 3-hourly)"
+    description: "Near-surface wind, temperature, humidity (0.25° 3-hourly)"
     level_filter:
       level_type: height_above_ground
     parameters:
@@ -219,8 +219,21 @@ collections:
       - name: Qair_f_inst
         levels: ["2 m"]
         valid_range: { min: 0, max: 0.05 }
+    run_mode: latest
+
+  # ===========================================================================
+  # Surface Pressure (separate collection — surface level, not height_above_ground)
+  # ===========================================================================
+
+  - id: gldas-surface-pressure
+    title: "GLDAS-2.1 Noah EP - Surface Pressure"
+    description: "Atmospheric surface pressure (0.25° 3-hourly)"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
       - name: Psurf_f_inst
-        levels: ["surface"]
+        levels: [surface]
         valid_range: { min: 50000, max: 110000 }
     run_mode: latest
 

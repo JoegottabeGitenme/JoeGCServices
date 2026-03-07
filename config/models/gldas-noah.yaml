@@ -417,6 +417,8 @@ parameters:
     cf_name: "Psurf_f_inst"
     description: "Surface pressure"
     units: "Pa"
+    display_units: "hPa"
+    conversion: Pa_to_hPa
     levels:
       - type: surface
         display: "surface"

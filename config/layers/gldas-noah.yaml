@@ -387,10 +387,6 @@ layers:
       - value: "surface"
         default: true
 
-  # ==========================================================================
-  # ET Components (4 parameters)
-  # ==========================================================================
-
   - id: gldas-noah_PotEvap_tavg
     parameter: PotEvap_tavg
     title: "Potential Evapotranspiration"
@@ -402,6 +398,10 @@ layers:
     levels:
       - value: "surface"
         default: true
+
+  # ==========================================================================
+  # ET Components (3 parameters)
+  # ==========================================================================
 
   - id: gldas-noah_ECanop_tavg
     parameter: ECanop_tavg
@@ -484,10 +484,11 @@ layers:
     parameter: Psurf_f_inst
     title: "Surface Pressure"
     abstract: "Atmospheric pressure at the surface"
-    style_file: radiation.json
+    style_file: atmospheric.json
     units:
       native: Pa
       display: hPa
+      conversion: Pa_to_hPa
     levels:
       - value: "surface"
         default: true

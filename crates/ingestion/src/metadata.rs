@@ -37,6 +37,12 @@ pub struct LisFileInfo {
     pub observation_time: DateTime<Utc>,
 }
 
+/// Backward-compatible type alias for `LisFileInfo`.
+///
+/// Renamed from `NldasFileInfo` to `LisFileInfo` when GLDAS support was added,
+/// since the struct now covers all LIS products, not just NLDAS.
+pub type NldasFileInfo = LisFileInfo;
+
 /// Information extracted from a GOES filename.
 #[derive(Debug, Clone)]
 pub struct GoesFileInfo {
