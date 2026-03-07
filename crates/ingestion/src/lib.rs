@@ -36,7 +36,7 @@ pub use ingester::{IngestOptions, Ingester, IngestionResult};
 pub use metadata::{
     detect_file_type, extract_forecast_hour, extract_model_from_filename, extract_mrms_param,
     get_bbox_from_grid, get_model_bbox, goes_band_to_parameter, parse_goes_filename,
-    parse_nldas_filename, FileType, GoesFileInfo, NldasFileInfo,
+    parse_lis_filename, parse_nldas_filename, FileType, GoesFileInfo, LisFileInfo,
 };
 pub use tables::{
     build_filter_for_model, build_tables_for_model, build_tables_from_configs, IngestionFilter,

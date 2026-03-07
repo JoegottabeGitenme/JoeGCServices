@@ -1,0 +1,423 @@
+# GLDAS-2.1 Noah Early Products (EP) Land Surface Model Configuration
+# Global Land Data Assimilation System - Noah 0.25° 3-hourly
+# Source: NASA GES DISC (requires Earthdata Login credentials)
+# Latency: ~33 days (Early Products)
+
+model:
+  id: gldas-noah
+  name: "GLDAS-2.1 Noah Land Surface Model (EP)"
+  description: "Global Land Data Assimilation System - Noah 0.25 3-hourly Early Products"
+  enabled: true
+
+dimensions:
+  type: observation
+  time: true
+  elevation: true
+
+source:
+  type: nasa_gesdisc
+  base_url: "https://hydro1.gesdisc.eosdis.nasa.gov/data/GLDAS/GLDAS_NOAH025_3H_EP.2.1"
+  file_pattern: "GLDAS_NOAH025_3H_EP.A{date}.{hour}00.021.nc4"
+
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox:
+    min_lon: -179.875
+    min_lat: -59.875
+    max_lon: 179.875
+    max_lat: 89.875
+
+schedule:
+  type: observation
+  poll_interval_secs: 10800
+  delay_hours: 792
+  max_concurrent: 3
+
+retention:
+  hours: 720
+
+parameters:
+  # ===========================================================================
+  # Soil Moisture (4 layers + root zone)
+  # ===========================================================================
+
+  - name: SoilMoi0_10cm_inst
+    cf_name: "SoilMoi0_10cm_inst"
+    description: "Soil moisture content (0-10cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 10
+        display: "0-10 cm depth"
+    valid_range: [0, 50]
+
+  - name: SoilMoi10_40cm_inst
+    cf_name: "SoilMoi10_40cm_inst"
+    description: "Soil moisture content (10-40cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 40
+        display: "10-40 cm depth"
+    valid_range: [0, 150]
+
+  - name: SoilMoi40_100cm_inst
+    cf_name: "SoilMoi40_100cm_inst"
+    description: "Soil moisture content (40-100cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "40-100 cm depth"
+    valid_range: [0, 250]
+
+  - name: SoilMoi100_200cm_inst
+    cf_name: "SoilMoi100_200cm_inst"
+    description: "Soil moisture content (100-200cm)"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 200
+        display: "100-200 cm depth"
+    valid_range: [0, 500]
+
+  - name: RootMoist_inst
+    cf_name: "RootMoist_inst"
+    description: "Root zone soil moisture"
+    units: "kg m-2"
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "root zone"
+    valid_range: [0, 900]
+
+  # ===========================================================================
+  # Soil Temperature (4 layers)
+  # ===========================================================================
+
+  - name: SoilTMP0_10cm_inst
+    cf_name: "SoilTMP0_10cm_inst"
+    description: "Soil temperature (0-10cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 10
+        display: "0-10 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilTMP10_40cm_inst
+    cf_name: "SoilTMP10_40cm_inst"
+    description: "Soil temperature (10-40cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 40
+        display: "10-40 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilTMP40_100cm_inst
+    cf_name: "SoilTMP40_100cm_inst"
+    description: "Soil temperature (40-100cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 100
+        display: "40-100 cm depth"
+    valid_range: [200, 350]
+
+  - name: SoilTMP100_200cm_inst
+    cf_name: "SoilTMP100_200cm_inst"
+    description: "Soil temperature (100-200cm)"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: depth_below_surface
+        value: 200
+        display: "100-200 cm depth"
+    valid_range: [200, 350]
+
+  # ===========================================================================
+  # Snow
+  # ===========================================================================
+
+  - name: SWE_inst
+    cf_name: "SWE_inst"
+    description: "Snow Water Equivalent"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 2000]
+
+  - name: SnowDepth_inst
+    cf_name: "SnowDepth_inst"
+    description: "Snow depth"
+    units: "m"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 10]
+
+  # ===========================================================================
+  # Surface
+  # ===========================================================================
+
+  - name: AvgSurfT_inst
+    cf_name: "AvgSurfT_inst"
+    description: "Average surface skin temperature"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [200, 350]
+
+  - name: Albedo_inst
+    cf_name: "Albedo_inst"
+    description: "Surface albedo"
+    units: "%"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: CanopInt_inst
+    cf_name: "CanopInt_inst"
+    description: "Plant canopy surface water"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 5]
+
+  # ===========================================================================
+  # Radiation Fluxes
+  # ===========================================================================
+
+  - name: SWdown_f_tavg
+    cf_name: "SWdown_f_tavg"
+    description: "Shortwave radiation flux downwards (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1500]
+
+  - name: LWdown_f_tavg
+    cf_name: "LWdown_f_tavg"
+    description: "Longwave radiation flux downwards (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 700]
+
+  - name: Swnet_tavg
+    cf_name: "Swnet_tavg"
+    description: "Net shortwave radiation flux (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 1500]
+
+  - name: Lwnet_tavg
+    cf_name: "Lwnet_tavg"
+    description: "Net longwave radiation flux (surface)"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 50]
+
+  # ===========================================================================
+  # Heat Fluxes
+  # ===========================================================================
+
+  - name: Qle_tavg
+    cf_name: "Qle_tavg"
+    description: "Latent heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-100, 500]
+
+  - name: Qh_tavg
+    cf_name: "Qh_tavg"
+    description: "Sensible heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 500]
+
+  - name: Qg_tavg
+    cf_name: "Qg_tavg"
+    description: "Ground heat flux"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-200, 200]
+
+  # ===========================================================================
+  # Water Fluxes
+  # ===========================================================================
+
+  - name: Evap_tavg
+    cf_name: "Evap_tavg"
+    description: "Total evapotranspiration"
+    units: "kg m-2 s-1"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-0.001, 0.001]
+
+  - name: Qs_acc
+    cf_name: "Qs_acc"
+    description: "Surface runoff (non-infiltrating)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: Qsb_acc
+    cf_name: "Qsb_acc"
+    description: "Subsurface runoff (baseflow)"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 100]
+
+  - name: Qsm_acc
+    cf_name: "Qsm_acc"
+    description: "Snowmelt"
+    units: "kg m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 50]
+
+  - name: Snowf_tavg
+    cf_name: "Snowf_tavg"
+    description: "Frozen precipitation (snowfall rate)"
+    units: "kg m-2 s-1"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 0.01]
+
+  - name: Rainf_tavg
+    cf_name: "Rainf_tavg"
+    description: "Liquid precipitation (rainfall rate)"
+    units: "kg m-2 s-1"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 0.01]
+
+  - name: Rainf_f_tavg
+    cf_name: "Rainf_f_tavg"
+    description: "Rainfall rate (forcing)"
+    units: "kg m-2 s-1"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 0.01]
+
+  # ===========================================================================
+  # ET Components
+  # ===========================================================================
+
+  - name: PotEvap_tavg
+    cf_name: "PotEvap_tavg"
+    description: "Potential evapotranspiration"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [-100, 1000]
+
+  - name: ECanop_tavg
+    cf_name: "ECanop_tavg"
+    description: "Canopy water evaporation"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  - name: Tveg_tavg
+    cf_name: "Tveg_tavg"
+    description: "Transpiration"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  - name: ESoil_tavg
+    cf_name: "ESoil_tavg"
+    description: "Direct evaporation from bare soil"
+    units: "W m-2"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [0, 200]
+
+  # ===========================================================================
+  # Forcing Variables
+  # ===========================================================================
+
+  - name: Wind_f_inst
+    cf_name: "Wind_f_inst"
+    description: "Near surface wind speed"
+    units: "m s-1"
+    levels:
+      - type: height_above_ground
+        value: 10
+        display: "10 m"
+    valid_range: [0, 50]
+
+  - name: Tair_f_inst
+    cf_name: "Tair_f_inst"
+    description: "Near surface air temperature"
+    units: "K"
+    display_units: "C"
+    conversion: K_to_C
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m"
+    valid_range: [200, 350]
+
+  - name: Qair_f_inst
+    cf_name: "Qair_f_inst"
+    description: "Near surface specific humidity"
+    units: "kg kg-1"
+    levels:
+      - type: height_above_ground
+        value: 2
+        display: "2 m"
+    valid_range: [0, 0.05]
+
+  - name: Psurf_f_inst
+    cf_name: "Psurf_f_inst"
+    description: "Surface pressure"
+    units: "Pa"
+    levels:
+      - type: surface
+        display: "surface"
+    valid_range: [50000, 110000]

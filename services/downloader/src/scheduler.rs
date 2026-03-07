@@ -150,15 +150,15 @@ impl Scheduler {
             .await;
         let s3_client = Some(aws_sdk_s3::Client::new(&aws_config));
 
-        // Initialize Earthdata auth if any NLDAS models are configured
-        let has_nldas = model_configs
-            .iter()
-            .any(|m| m.model.enabled && m.model.id.starts_with("nldas"));
+        // Initialize Earthdata auth if any LIS models (NLDAS, GLDAS) are configured
+        let has_lis = model_configs.iter().any(|m| {
+            m.model.enabled && (m.model.id.starts_with("nldas") || m.model.id.starts_with("gldas"))
+        });
 
-        let earthdata_auth = if has_nldas {
+        let earthdata_auth = if has_lis {
             match lis_runner::build_earthdata_client() {
                 Ok(Some((ed_client, username, password))) => {
-                    info!("Earthdata authentication configured for NLDAS downloads");
+                    info!("Earthdata authentication configured for LIS downloads (NLDAS/GLDAS)");
                     Some(EarthdataAuth {
                         client: ed_client,
                         username,
@@ -344,8 +344,8 @@ impl Scheduler {
             self.output_dir.clone(),
         );
 
-        // Attach Earthdata auth for NLDAS models
-        if model.model.id.starts_with("nldas") {
+        // Attach Earthdata auth for LIS models (NLDAS, GLDAS)
+        if model.model.id.starts_with("nldas") || model.model.id.starts_with("gldas") {
             if let Some(ref auth) = self.earthdata_auth {
                 runner = runner.with_earthdata_auth(auth.clone());
             }
