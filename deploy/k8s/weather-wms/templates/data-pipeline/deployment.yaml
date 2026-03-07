@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-data-pipeline
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-pipeline
+spec:
+  replicas: {{ .Values.dataPipeline.replicaCount }}
+  strategy:
+    type: Recreate    # SQLite state cannot be shared — no rolling updates
+  selector:
+    matchLabels:
+      {{- include "weather-wms.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: data-pipeline
+  template:
+    metadata:
+      labels:
+        {{- include "weather-wms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: data-pipeline
+    spec:
+      containers:
+        # -----------------------------------------------------------
+        # Downloader: fetches weather data from external sources
+        # -----------------------------------------------------------
+        - name: downloader
+          image: {{ include "weather-wms.image" (dict "registry" .Values.global.image.registry "repository" .Values.dataPipeline.image.downloader.repository "tag" .Values.dataPipeline.image.downloader.tag) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          args:
+            - "--total-max-concurrent"
+            - {{ .Values.dataPipeline.downloader.totalMaxConcurrent | quote }}
+            - "--config-dir"
+            - "/app/config"
+          ports:
+            - containerPort: 8081
+              name: http-dl
+          env:
+            # Ingester is in the same pod — use localhost
+            - name: INGESTER_URL
+              value: "http://localhost:8082/ingest"
+            - name: CONFIG_DIR
+              value: "/app/config"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: DATABASE_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+            - name: S3_REGION
+              value: "us-east-1"
+            - name: S3_ALLOW_HTTP
+              value: "true"
+            {{- if .Values.secrets.earthdata.username }}
+            - name: EARTHDATA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: EARTHDATA_USERNAME
+            {{- end }}
+            {{- if .Values.secrets.earthdata.password }}
+            - name: EARTHDATA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: EARTHDATA_PASSWORD
+            {{- end }}
+            {{- range $key, $value := .Values.dataPipeline.downloader.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: downloads
+              mountPath: /data/downloads
+            - name: state
+              mountPath: /data/downloader
+            - name: config-models
+              mountPath: /app/config/models
+              readOnly: true
+          resources:
+            {{- toYaml .Values.dataPipeline.downloader.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-dl
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-dl
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+        # -----------------------------------------------------------
+        # Ingester: processes downloaded files into Zarr/PostgreSQL
+        # -----------------------------------------------------------
+        - name: ingester
+          image: {{ include "weather-wms.image" (dict "registry" .Values.global.image.registry "repository" .Values.dataPipeline.image.ingester.repository "tag" .Values.dataPipeline.image.ingester.tag) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - containerPort: 8082
+              name: http-ing
+          env:
+            - name: CONFIG_DIR
+              value: "/app/config"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: DATABASE_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+            - name: S3_REGION
+              value: "us-east-1"
+            - name: S3_ALLOW_HTTP
+              value: "true"
+            {{- range $key, $value := .Values.dataPipeline.ingester.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: downloads
+              mountPath: /data/downloads
+              readOnly: true
+            - name: config-models
+              mountPath: /app/config/models
+              readOnly: true
+          resources:
+            {{- toYaml .Values.dataPipeline.ingester.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-ing
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-ing
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+      volumes:
+        # Shared ephemeral volume for downloaded files (survives container
+        # restarts within the pod, but NOT pod restarts — this is intentional,
+        # since files are ingested then deleted)
+        - name: downloads
+          emptyDir:
+            sizeLimit: {{ .Values.dataPipeline.downloadVolume.sizeLimit }}
+        # Persistent volume for downloader SQLite state DB
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ include "weather-wms.fullname" . }}-downloader-state
+        # Config files
+        - name: config-models
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-models

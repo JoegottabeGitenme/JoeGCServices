@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-downloader-state
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-pipeline
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.dataPipeline.stateVolume.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.dataPipeline.stateVolume.size }}

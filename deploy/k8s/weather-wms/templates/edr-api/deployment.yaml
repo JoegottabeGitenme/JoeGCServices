@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-edr-api
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edr-api
+spec:
+  replicas: {{ .Values.edrApi.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "weather-wms.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: edr-api
+  template:
+    metadata:
+      labels:
+        {{- include "weather-wms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: edr-api
+    spec:
+      containers:
+        - name: edr-api
+          image: {{ include "weather-wms.image" (dict "registry" .Values.global.image.registry "repository" .Values.edrApi.image.repository "tag" .Values.edrApi.image.tag) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - containerPort: 8083
+              name: http
+          env:
+            - name: CONFIG_DIR
+              value: "/app/config"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: DATABASE_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+            - name: EDR_BASE_URL
+              value: {{ include "weather-wms.edrBaseUrl" . | quote }}
+            {{- range $key, $value := .Values.edrApi.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: config-edr
+              mountPath: /app/config/edr
+              readOnly: true
+            - name: config-models
+              mountPath: /app/config/models
+              readOnly: true
+          resources:
+            {{- toYaml .Values.edrApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: config-edr
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-edr
+        - name: config-models
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-models

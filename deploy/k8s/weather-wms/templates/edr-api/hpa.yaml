@@ -1,0 +1,23 @@
+{{- if .Values.edrApi.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-edr-api
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edr-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "weather-wms.fullname" . }}-edr-api
+  minReplicas: {{ .Values.edrApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.edrApi.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.edrApi.autoscaling.targetCPUUtilization }}
+{{- end }}

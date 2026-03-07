@@ -1,0 +1,118 @@
+{{/*
+Dedicated cleanup pod for WMS API.
+Only created when wmsApi.cleanup.separate is true (typically when
+scaling wms-api to multiple replicas). Runs cleanup and sync tasks
+while the main replicas handle requests only.
+*/}}
+{{- if .Values.wmsApi.cleanup.separate }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-wms-cleanup
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: wms-cleanup
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "weather-wms.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: wms-cleanup
+  template:
+    metadata:
+      labels:
+        {{- include "weather-wms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: wms-cleanup
+    spec:
+      containers:
+        - name: wms-cleanup
+          image: {{ include "weather-wms.image" (dict "registry" .Values.global.image.registry "repository" .Values.wmsApi.image.repository "tag" .Values.wmsApi.image.tag) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: CONFIG_DIR
+              value: "/app/config"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: REDIS_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weather-wms.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+            - name: S3_REGION
+              value: "us-east-1"
+            - name: S3_ALLOW_HTTP
+              value: "true"
+            - name: INGESTER_URL
+              value: "http://{{ include "weather-wms.fullname" . }}-data-pipeline-ingester:8082"
+            # This pod IS the cleanup leader
+            - name: ENABLE_CLEANUP
+              value: "true"
+            - name: ENABLE_SYNC
+              value: "true"
+            # Disable cache warming on cleanup pod (waste of resources)
+            - name: ENABLE_CACHE_WARMING
+              value: "false"
+            - name: ENABLE_L1_CACHE
+              value: "false"
+            - name: ENABLE_PREFETCH
+              value: "false"
+            - name: RUST_LOG
+              value: {{ .Values.wmsApi.env.RUST_LOG | default "info" | quote }}
+            - name: RUST_BACKTRACE
+              value: {{ .Values.wmsApi.env.RUST_BACKTRACE | default "1" | quote }}
+          volumeMounts:
+            - name: config-models
+              mountPath: /app/config/models
+              readOnly: true
+            - name: config-layers
+              mountPath: /app/config/layers
+              readOnly: true
+            - name: config-styles
+              mountPath: /app/config/styles
+              readOnly: true
+          resources:
+            {{- toYaml .Values.wmsApi.cleanup.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /wms?SERVICE=WMS&REQUEST=GetCapabilities
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: config-models
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-models
+        - name: config-layers
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-layers
+        - name: config-styles
+          configMap:
+            name: {{ include "weather-wms.fullname" . }}-styles
+{{- end }}

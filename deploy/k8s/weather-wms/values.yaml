@@ -1,0 +1,252 @@
+# =============================================================================
+# Weather WMS - Helm Chart Values
+# =============================================================================
+# Default values suitable for local development on k3s.
+# Override with values-production.yaml for production deployments.
+# =============================================================================
+
+global:
+  namespace: weather-wms
+  image:
+    registry: gitea.local:3000
+    pullPolicy: IfNotPresent
+  domain: localhost
+
+# =============================================================================
+# Secrets
+# =============================================================================
+# Override in production via --set or values-production.yaml (gitignored).
+secrets:
+  postgres:
+    user: weatherwms
+    password: weatherwms
+    database: weatherwms
+  redis:
+    password: ""             # Empty = no auth (dev only)
+  s3:
+    accessKey: minioadmin
+    secretKey: minioadmin
+  earthdata:
+    username: ""
+    password: ""
+    token: ""
+
+# =============================================================================
+# Data Pipeline (downloader + ingester in one pod)
+# =============================================================================
+# These two containers share downloaded files via emptyDir and communicate
+# over localhost. The downloader POSTs to http://localhost:8082/ingest.
+# This pod MUST remain a singleton (replicaCount: 1).
+dataPipeline:
+  image:
+    downloader:
+      repository: weather-wms/downloader
+      tag: latest
+    ingester:
+      repository: weather-wms/ingester
+      tag: latest
+  replicaCount: 1
+  downloader:
+    totalMaxConcurrent: 5
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+    env:
+      RUST_LOG: info
+      RUST_BACKTRACE: "1"
+      STATUS_PORT: "8081"
+      PENDING_INGESTION_MAX_AGE_SECS: "7200"
+      # Set to empty string for no dev limits (production behavior)
+      DEV_MAX_FORECAST_HOURS: ""
+      DEV_MAX_RETENTION_HOURS: ""
+      DEV_MAX_CYCLES: ""
+  ingester:
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+    env:
+      RUST_LOG: info
+      RUST_BACKTRACE: "1"
+  stateVolume:
+    size: 1Gi
+    storageClassName: local-path
+  downloadVolume:
+    sizeLimit: 50Gi
+
+# =============================================================================
+# WMS API
+# =============================================================================
+wmsApi:
+  image:
+    repository: weather-wms/wms-api
+    tag: latest
+  replicaCount: 1
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: "1"
+    limits:
+      memory: 16Gi
+  env:
+    RUST_LOG: info
+    RUST_BACKTRACE: "1"
+    TOKIO_WORKER_THREADS: "8"
+    # L1 tile memory cache
+    ENABLE_L1_CACHE: "true"
+    TILE_CACHE_SIZE_MB: "1024"
+    TILE_CACHE_TTL_SECS: "300"
+    # Prefetch
+    ENABLE_PREFETCH: "true"
+    PREFETCH_RINGS: "2"
+    PREFETCH_MIN_ZOOM: "3"
+    PREFETCH_MAX_ZOOM: "12"
+    # Cache warming
+    ENABLE_CACHE_WARMING: "true"
+    CACHE_WARMING_MAX_ZOOM: "4"
+    CACHE_WARMING_HOURS: "0"
+    CACHE_WARMING_LAYERS: "gfs_TMP:temperature"
+    CACHE_WARMING_CONCURRENCY: "10"
+    # Memory pressure
+    ENABLE_MEMORY_PRESSURE: "true"
+    MEMORY_LIMIT_MB: "4000"
+    MEMORY_PRESSURE_THRESHOLD: "0.80"
+    MEMORY_PRESSURE_TARGET: "0.60"
+    # Cleanup/sync (disable on non-leader replicas when scaling)
+    ENABLE_CLEANUP: "true"
+    ENABLE_SYNC: "true"
+    # CITE compliance testing data (disable in production)
+    ENABLE_CITE_DATA: "false"
+  # When cleanup.separate is true and replicaCount > 1, a dedicated cleanup
+  # pod is created with ENABLE_CLEANUP=true and the main deployment gets
+  # ENABLE_CLEANUP=false. When false (default), the main deployment handles
+  # cleanup itself (fine for single replica).
+  cleanup:
+    separate: false
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 250m
+      limits:
+        memory: 4Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilization: 70
+
+# =============================================================================
+# EDR API
+# =============================================================================
+edrApi:
+  image:
+    repository: weather-wms/edr-api
+    tag: latest
+  replicaCount: 1
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 8Gi
+  env:
+    RUST_LOG: info
+    RUST_BACKTRACE: "1"
+    EDR_CHUNK_CACHE_MB: "256"
+    EDR_LISTEN_ADDR: "0.0.0.0:8083"
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilization: 70
+
+# =============================================================================
+# Web Dashboard
+# =============================================================================
+webDashboard:
+  enabled: true
+  image:
+    repository: weather-wms/web-dashboard
+    tag: latest
+  replicaCount: 1
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+
+# =============================================================================
+# PostgreSQL (PostGIS)
+# =============================================================================
+postgres:
+  image: postgis/postgis:16-3.4
+  storage:
+    size: 10Gi
+    storageClassName: local-path
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+
+# =============================================================================
+# Redis
+# =============================================================================
+redis:
+  image: redis:7-bookworm
+  storage:
+    size: 2Gi
+    storageClassName: local-path
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+
+# =============================================================================
+# MinIO (S3-compatible object storage)
+# =============================================================================
+minio:
+  image: minio/minio:latest
+  mcImage: minio/mc:latest
+  storage:
+    size: 100Gi
+    storageClassName: local-path
+  bucket: weather-data
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: weather-wms-tls
+
+# =============================================================================
+# Monitoring
+# =============================================================================
+# ServiceMonitor resources for prometheus-operator (kube-prometheus-stack).
+# Only created if the CRD exists in the cluster.
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    labels:
+      release: monitoring

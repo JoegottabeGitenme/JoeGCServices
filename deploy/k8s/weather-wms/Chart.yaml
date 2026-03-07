@@ -1,0 +1,8 @@
+apiVersion: v2
+name: weather-wms
+description: OGC-standard weather data services (WMS, WMTS, EDR) for weather-wms
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Joe

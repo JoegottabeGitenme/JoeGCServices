@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weather-wms.fullname" . }}-edr-api
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edr-api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8083
+      targetPort: http
+      name: http
+  selector:
+    {{- include "weather-wms.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: edr-api

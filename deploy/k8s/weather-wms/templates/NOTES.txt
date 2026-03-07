@@ -1,0 +1,47 @@
+Weather WMS has been deployed!
+
+Services:
+  - WMS API:        {{ include "weather-wms.fullname" . }}-wms-api
+  - EDR API:        {{ include "weather-wms.fullname" . }}-edr-api
+  - Data Pipeline:  {{ include "weather-wms.fullname" . }}-data-pipeline
+  - Web Dashboard:  {{ include "weather-wms.fullname" . }}-web-dashboard
+
+Infrastructure:
+  - PostgreSQL:     {{ include "weather-wms.fullname" . }}-postgres
+  - Redis:          {{ include "weather-wms.fullname" . }}-redis
+  - MinIO:          {{ include "weather-wms.fullname" . }}-minio
+
+{{- if .Values.ingress.enabled }}
+
+Ingress is enabled. Access the services at:
+{{- if .Values.ingress.tls.enabled }}
+  - WMS:        https://{{ .Values.global.domain }}/wms
+  - WMTS:       https://{{ .Values.global.domain }}/wmts
+  - EDR:        https://{{ .Values.global.domain }}/edr
+  - Dashboard:  https://{{ .Values.global.domain }}/
+{{- else }}
+  - WMS:        http://{{ .Values.global.domain }}/wms
+  - WMTS:       http://{{ .Values.global.domain }}/wmts
+  - EDR:        http://{{ .Values.global.domain }}/edr
+  - Dashboard:  http://{{ .Values.global.domain }}/
+{{- end }}
+{{- else }}
+
+Ingress is disabled. Use port-forward to access services:
+  kubectl port-forward svc/{{ include "weather-wms.fullname" . }}-wms-api 8080:8080
+  kubectl port-forward svc/{{ include "weather-wms.fullname" . }}-edr-api 8083:8083
+{{- end }}
+
+Useful commands:
+  # Check pod status
+  kubectl get pods -n {{ .Release.Namespace }}
+
+  # View WMS API logs
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=wms-api -f
+
+  # View data pipeline logs
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=data-pipeline -c downloader -f
+
+  # Check downloader status
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "weather-wms.fullname" . }}-data-pipeline-downloader 8081:8081
+  curl http://localhost:8081/status

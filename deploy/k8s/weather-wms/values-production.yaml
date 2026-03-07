@@ -1,0 +1,63 @@
+# =============================================================================
+# Weather WMS - Production Values Overlay
+# =============================================================================
+# Usage:
+#   helm upgrade --install weather-wms deploy/k8s/weather-wms \
+#     -f deploy/k8s/weather-wms/values-production.yaml \
+#     --set secrets.postgres.password=XXX \
+#     --set secrets.redis.password=XXX \
+#     --set secrets.s3.accessKey=XXX \
+#     --set secrets.s3.secretKey=XXX
+# =============================================================================
+
+global:
+  domain: folkweather.com
+  image:
+    registry: gitea.folkweather.com
+
+dataPipeline:
+  downloader:
+    totalMaxConcurrent: 10
+    resources:
+      limits:
+        memory: 2Gi
+    env:
+      RUST_BACKTRACE: "0"
+  ingester:
+    resources:
+      limits:
+        memory: 4Gi
+    env:
+      RUST_BACKTRACE: "0"
+
+wmsApi:
+  replicaCount: 2
+  cleanup:
+    separate: true
+  resources:
+    limits:
+      memory: 16Gi
+  env:
+    RUST_BACKTRACE: "0"
+    TOKIO_WORKER_THREADS: "16"
+    TILE_CACHE_SIZE_MB: "8192"
+    TILE_CACHE_TTL_SECS: "600"
+    CACHE_WARMING_CONCURRENCY: "8"
+    MEMORY_LIMIT_MB: "28000"
+    MEMORY_PRESSURE_THRESHOLD: "0.80"
+    MEMORY_PRESSURE_TARGET: "0.70"
+    ENABLE_CITE_DATA: "false"
+
+edrApi:
+  replicaCount: 2
+  resources:
+    limits:
+      memory: 8Gi
+  env:
+    RUST_BACKTRACE: "0"
+    EDR_CHUNK_CACHE_MB: "8192"
+
+ingress:
+  tls:
+    enabled: true
+    secretName: weather-wms-tls

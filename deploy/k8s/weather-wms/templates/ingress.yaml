@@ -1,0 +1,70 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "weather-wms.fullname" . }}
+  labels:
+    {{- include "weather-wms.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.global.domain }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.global.domain }}
+      http:
+        paths:
+          - path: /wms
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-wms-api
+                port:
+                  number: 8080
+          - path: /wmts
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-wms-api
+                port:
+                  number: 8080
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-wms-api
+                port:
+                  number: 8080
+          - path: /edr
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-edr-api
+                port:
+                  number: 8083
+          - path: /downloader
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-data-pipeline-downloader
+                port:
+                  number: 8081
+          {{- if .Values.webDashboard.enabled }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "weather-wms.fullname" . }}-web-dashboard
+                port:
+                  number: 8000
+          {{- end }}
+{{- end }}
