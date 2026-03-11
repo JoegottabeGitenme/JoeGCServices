@@ -320,7 +320,7 @@ pub async fn wmts_kvp_handler(
                 );
             }
 
-            let dimensions = DimensionParams {
+            let mut dimensions = DimensionParams {
                 time: params.time.clone(),
                 run: params.run.clone(),
                 forecast: params.forecast.clone(),
@@ -410,12 +410,28 @@ pub async fn wmts_kvp_handler(
                     {
                         let is_valid = availability.times.iter().any(|t| t == time);
                         if !is_valid {
-                            return wmts_exception_with_locator(
-                                "InvalidParameterValue",
-                                &format!("TIME '{}' is not valid for layer '{}'", time, layer),
-                                Some("time"),
-                                StatusCode::BAD_REQUEST,
-                            );
+                            // Snap to nearest available time within 2 minutes
+                            // (observation data like MRMS rotates every 2 min)
+                            if let Some(nearest) = find_nearest_time(
+                                time,
+                                &availability.times,
+                                chrono::Duration::minutes(2),
+                            ) {
+                                debug!(
+                                    requested = %time,
+                                    snapped = %nearest,
+                                    layer = %layer,
+                                    "TIME snapped to nearest available value"
+                                );
+                                dimensions.time = Some(nearest);
+                            } else {
+                                return wmts_exception_with_locator(
+                                    "InvalidParameterValue",
+                                    &format!("TIME '{}' is not valid for layer '{}' and no nearby time found within 2 minutes", time, layer),
+                                    Some("time"),
+                                    StatusCode::BAD_REQUEST,
+                                );
+                            }
                         }
                     }
                 }
@@ -489,7 +505,7 @@ pub async fn wmts_rest_handler(
         );
     }
 
-    let dimensions = DimensionParams {
+    let mut dimensions = DimensionParams {
         time: params.time.clone(),
         run: params.run.clone(),
         forecast: params.forecast.clone(),
@@ -577,12 +593,27 @@ pub async fn wmts_rest_handler(
             {
                 let is_valid = availability.times.iter().any(|t| t == time);
                 if !is_valid {
-                    return wmts_exception_with_locator(
-                        "InvalidParameterValue",
-                        &format!("TIME '{}' is not valid for layer '{}'", time, layer),
-                        Some("time"),
-                        StatusCode::BAD_REQUEST,
-                    );
+                    // Snap to nearest available time within 2 minutes
+                    if let Some(nearest) = find_nearest_time(
+                        time,
+                        &availability.times,
+                        chrono::Duration::minutes(2),
+                    ) {
+                        debug!(
+                            requested = %time,
+                            snapped = %nearest,
+                            layer = %layer,
+                            "TIME snapped to nearest available value (REST)"
+                        );
+                        dimensions.time = Some(nearest);
+                    } else {
+                        return wmts_exception_with_locator(
+                            "InvalidParameterValue",
+                            &format!("TIME '{}' is not valid for layer '{}' and no nearby time found within 2 minutes", time, layer),
+                            Some("time"),
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
                 }
             }
         }
@@ -1685,6 +1716,49 @@ fn build_wmts_capabilities_xml_v2(
     )
 }
 
+/// Find the nearest available time within a tolerance window.
+///
+/// Observation data (MRMS, GOES) rotates continuously, so a client's cached
+/// time list can go stale between capabilities refreshes. Instead of rejecting
+/// with an error, snap to the nearest available time if it falls within
+/// `max_delta` of the requested value. Returns `None` if no time is within range.
+fn find_nearest_time(
+    requested: &str,
+    available_times: &[String],
+    max_delta: chrono::Duration,
+) -> Option<String> {
+    let requested_dt = chrono::DateTime::parse_from_rfc3339(requested)
+        .or_else(|_| {
+            // Also try the common "%Y-%m-%dT%H:%M:%SZ" format (no timezone offset)
+            chrono::NaiveDateTime::parse_from_str(requested, "%Y-%m-%dT%H:%M:%SZ")
+                .map(|ndt| ndt.and_utc().fixed_offset())
+        })
+        .ok()?;
+
+    let mut best: Option<(String, i64)> = None;
+
+    for t in available_times {
+        let dt = chrono::DateTime::parse_from_rfc3339(t)
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%SZ")
+                    .map(|ndt| ndt.and_utc().fixed_offset())
+            })
+            .ok();
+        if let Some(dt) = dt {
+            let diff = requested_dt.signed_duration_since(dt);
+            let delta_secs = diff.num_seconds().unsigned_abs() as i64;
+            let max_secs = max_delta.num_seconds().unsigned_abs() as i64;
+            if delta_secs <= max_secs {
+                if best.as_ref().map_or(true, |(_, bd)| delta_secs < *bd) {
+                    best = Some((t.clone(), delta_secs));
+                }
+            }
+        }
+    }
+
+    best.map(|(t, _)| t)
+}
+
 /// Build time dimension XML for a WMTS layer based on actual data availability.
 fn build_layer_time_dimensions_wmts(
     availability: &ParameterAvailability,
@@ -1897,5 +1971,134 @@ mod tests {
         );
         // All tasks completed
         assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    // =========================================================================
+    // find_nearest_time tests
+    // =========================================================================
+
+    fn mrms_times() -> Vec<String> {
+        vec![
+            "2026-03-11T16:34:00Z".to_string(),
+            "2026-03-11T16:32:00Z".to_string(),
+            "2026-03-11T16:30:00Z".to_string(),
+            "2026-03-11T16:28:00Z".to_string(),
+            "2026-03-11T16:26:00Z".to_string(),
+            "2026-03-11T15:50:00Z".to_string(),
+            "2026-03-11T15:52:00Z".to_string(),
+        ]
+    }
+
+    #[test]
+    fn test_nearest_time_exact_match_returns_none() {
+        // Exact match should be handled by the caller before calling find_nearest_time,
+        // but if it does get called, it should still return the exact match.
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T16:34:00Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_nearest_time_snaps_to_closest_within_tolerance() {
+        // 15:51 is 1 minute from both 15:50 and 15:52 — should pick one (first encountered)
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T15:51:00Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert!(result.is_some(), "Should snap to a nearby time");
+        let snapped = result.unwrap();
+        assert!(
+            snapped == "2026-03-11T15:50:00Z" || snapped == "2026-03-11T15:52:00Z",
+            "Should snap to 15:50 or 15:52, got {}",
+            snapped
+        );
+    }
+
+    #[test]
+    fn test_nearest_time_prefers_closer() {
+        // 16:33 is 1 min from 16:34 and 1 min from 16:32 — equidistant, picks first scanned.
+        // 16:33:30 is 30s from 16:34 and 90s from 16:32 — should prefer 16:34.
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T16:33:30Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_nearest_time_outside_tolerance_returns_none() {
+        // 15:00 is far from any available time (closest is 15:50, 50 min away)
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T15:00:00Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert!(result.is_none(), "Should return None for times far from any available");
+    }
+
+    #[test]
+    fn test_nearest_time_exactly_at_tolerance_boundary() {
+        // 16:36 is exactly 2 minutes from 16:34 — should be within tolerance
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T16:36:00Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_nearest_time_just_beyond_tolerance() {
+        // 16:36:01 is 2 min 1 sec from 16:34 — just beyond 2-minute tolerance
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "2026-03-11T16:36:01Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert!(result.is_none(), "Should return None when just beyond tolerance");
+    }
+
+    #[test]
+    fn test_nearest_time_empty_available() {
+        let result = find_nearest_time(
+            "2026-03-11T16:34:00Z",
+            &[],
+            chrono::Duration::minutes(2),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_nearest_time_invalid_requested_format() {
+        let times = mrms_times();
+        let result = find_nearest_time(
+            "not-a-timestamp",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert!(result.is_none(), "Should return None for unparseable requested time");
+    }
+
+    #[test]
+    fn test_nearest_time_single_available() {
+        let times = vec!["2026-03-11T16:00:00Z".to_string()];
+        // 15:59 is 1 min away — within tolerance
+        let result = find_nearest_time(
+            "2026-03-11T15:59:00Z",
+            &times,
+            chrono::Duration::minutes(2),
+        );
+        assert_eq!(result, Some("2026-03-11T16:00:00Z".to_string()));
     }
 }

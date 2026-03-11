@@ -58,6 +58,7 @@ let wmsLayerCountsInterval = null;
 let serviceStatusInterval = null;
 let clockInterval = null;
 let heatmapPollingInterval = null;
+let observationTimeRefreshInterval = null; // Periodic refresh for observation layer times (MRMS, GOES)
 
 // ============================================================================
 // MEMORY MANAGEMENT - Visibility-based polling to prevent memory leaks
@@ -170,6 +171,7 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         console.log('Tab hidden - pausing all polling intervals to save memory');
         pauseAllIntervals();
+        stopObservationTimeRefresh();
         // Also stop any playback
         if (isPlaying) {
             stopPlayback();
@@ -177,6 +179,7 @@ document.addEventListener('visibilitychange', () => {
     } else {
         console.log('Tab visible - resuming polling intervals');
         startAllIntervals();
+        startObservationTimeRefresh(); // Resume if on an observation layer
     }
 });
 
@@ -1607,8 +1610,9 @@ function formatLayerName(layerName) {
 
 // Load a specific layer on the map
 function loadLayerOnMap(layerName) {
-    // Stop any active playback
+    // Stop any active playback and observation time refresh from previous layer
     stopPlayback();
+    stopObservationTimeRefresh();
     
     // Remove existing layer and cleanup event listeners
     if (wmsLayer) {
@@ -3173,6 +3177,10 @@ async function fetchAvailableTimes() {
         // Now create the layer with the correct time parameters
         createWeatherLayer();
         
+        // Start periodic time refresh for observation layers (MRMS, GOES)
+        // whose data rotates continuously and can go stale
+        startObservationTimeRefresh();
+        
     } catch (error) {
         console.error('Failed to fetch available times:', error);
         hideTimeSlider();
@@ -3184,10 +3192,102 @@ async function fetchAvailableTimes() {
         console.log('Using default forecast mode with hour 0 due to error');
         // Still try to create layer even if time fetch fails
         createWeatherLayer();
+        stopObservationTimeRefresh();
     }
 }
 
+// Silently refresh observation times for the active layer without disrupting the UI.
+// Called periodically (~60s) for observation layers (MRMS, GOES) whose data rotates.
+async function refreshObservationTimes() {
+    if (!selectedLayer || layerTimeMode !== 'observation') return;
 
+    try {
+        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`, { cache: 'no-cache' });
+        const xml = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xml, 'text/xml');
+
+        const layers = doc.getElementsByTagName('Layer');
+        for (let layer of layers) {
+            const nameEl = layer.getElementsByTagName('Name')[0];
+            if (nameEl && nameEl.textContent === selectedLayer) {
+                const dimensions = layer.getElementsByTagName('Dimension');
+                for (let dim of dimensions) {
+                    if (dim.getAttribute('name') === 'TIME') {
+                        const timeText = dim.textContent.trim();
+                        const newTimes = timeText.split(',').filter(t => t && t !== 'latest');
+                        newTimes.sort((a, b) => new Date(b) - new Date(a));
+
+                        if (newTimes.length === 0) return;
+
+                        // Detect if the set of times actually changed
+                        const oldSet = new Set(availableObservationTimes);
+                        const newSet = new Set(newTimes);
+                        const changed = newTimes.length !== availableObservationTimes.length ||
+                            newTimes.some(t => !oldSet.has(t));
+
+                        if (!changed) return; // No change, nothing to do
+
+                        console.log(`Observation times refreshed for ${selectedLayer}: ${availableObservationTimes.length} -> ${newTimes.length} times`);
+
+                        // Remember current selection so we can preserve the user's slider position
+                        const previousTime = currentObservationTime;
+                        availableObservationTimes = newTimes;
+
+                        // Try to keep the user on the same (or nearest) time
+                        if (previousTime && newSet.has(previousTime)) {
+                            currentObservationTime = previousTime;
+                        } else if (previousTime) {
+                            // Find nearest available time to what the user had selected
+                            const prevMs = new Date(previousTime).getTime();
+                            let bestTime = newTimes[0];
+                            let bestDelta = Math.abs(new Date(bestTime).getTime() - prevMs);
+                            for (const t of newTimes) {
+                                const delta = Math.abs(new Date(t).getTime() - prevMs);
+                                if (delta < bestDelta) {
+                                    bestDelta = delta;
+                                    bestTime = t;
+                                }
+                            }
+                            currentObservationTime = bestTime;
+                            console.log(`Snapped observation time from ${previousTime} to nearest ${bestTime} (delta ${Math.round(bestDelta/1000)}s)`);
+                        } else {
+                            currentObservationTime = newTimes[0]; // Latest
+                        }
+
+                        // Re-populate the slider with updated times and refresh the tile layer
+                        populateTimeSlider();
+                        if (!isPlaying) {
+                            updateLayerTime();
+                        }
+                        return;
+                    }
+                }
+                break;
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to refresh observation times:', error);
+    }
+}
+
+// Start periodic observation time refresh (called when an observation layer is selected)
+function startObservationTimeRefresh() {
+    stopObservationTimeRefresh();
+    if (layerTimeMode === 'observation') {
+        // Refresh every 60 seconds — fast enough for MRMS (2-min updates) without being noisy
+        observationTimeRefreshInterval = setInterval(refreshObservationTimes, 60000);
+        console.log('Started observation time refresh interval (60s)');
+    }
+}
+
+// Stop periodic observation time refresh
+function stopObservationTimeRefresh() {
+    if (observationTimeRefreshInterval) {
+        clearInterval(observationTimeRefreshInterval);
+        observationTimeRefreshInterval = null;
+    }
+}
 
 // Note: stopPlayback() is defined earlier in this file (around line 289)
 // with full implementation including button state updates
