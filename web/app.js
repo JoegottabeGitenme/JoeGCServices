@@ -446,7 +446,19 @@ function togglePlayback() {
     }
 }
 
-// Preload all time step layers for smooth animation
+// Determine whether to use preload-all (forecast with few steps) or
+// on-demand frame switching (observation with many steps like MRMS/GOES).
+const PRELOAD_ALL_THRESHOLD = 15; // Max steps to preload all at once
+
+function shouldPreloadAll() {
+    const timeSteps = layerTimeMode === 'observation' 
+        ? availableObservationTimes 
+        : availableForecastHours;
+    return timeSteps.length <= PRELOAD_ALL_THRESHOLD;
+}
+
+// Preload all time step layers for smooth animation.
+// Only used for forecast layers with few steps (<=PRELOAD_ALL_THRESHOLD).
 function preloadAllLayers() {
     if (selectedProtocol !== 'wmts' || !selectedLayer) return;
     
@@ -540,19 +552,26 @@ function startPlayback() {
         playBtn.querySelector('.play-icon').textContent = '❚❚';
     }
     
-    // Preload all layers for smooth animation
     if (selectedProtocol === 'wmts') {
-        preloadAllLayers();
-        
-        // Hide the main layer during animation
-        if (wmsLayer) {
-            wmsLayer.setOpacity(0);
-        }
-        
-        // Show the current frame
-        const currentIndex = parseInt(slider.value);
-        if (preloadedLayers[currentIndex]) {
-            preloadedLayers[currentIndex].setOpacity(0.7);
+        if (shouldPreloadAll()) {
+            // Forecast layers with few steps: preload all frames for instant switching
+            preloadAllLayers();
+            
+            // Hide the main layer during animation
+            if (wmsLayer) {
+                wmsLayer.setOpacity(0);
+            }
+            
+            // Show the current frame
+            const currentIndex = parseInt(slider.value);
+            if (preloadedLayers[currentIndex]) {
+                preloadedLayers[currentIndex].setOpacity(0.7);
+            }
+        } else {
+            // Observation layers with many steps (MRMS 65+, GOES 36+):
+            // Use on-demand frame switching instead of preloading all at once.
+            // Each frame swaps the tile layer URL — server-side cache handles performance.
+            console.log(`On-demand playback for ${availableObservationTimes.length} observation timestamps`);
         }
     }
     
@@ -565,12 +584,14 @@ function startPlaybackInterval() {
     const slider = document.getElementById('map-time-slider');
     if (!slider) return;
     
+    const usePreloaded = selectedProtocol === 'wmts' && shouldPreloadAll();
+    
     playbackInterval = setInterval(() => {
         let currentIndex = parseInt(slider.value);
         const maxIndex = parseInt(slider.max);
         
-        // Hide current frame
-        if (selectedProtocol === 'wmts' && preloadedLayers[currentIndex]) {
+        // Hide current frame (only for preloaded mode)
+        if (usePreloaded && preloadedLayers[currentIndex]) {
             preloadedLayers[currentIndex].setOpacity(0);
         }
         
@@ -580,13 +601,24 @@ function startPlaybackInterval() {
             currentIndex = 0;
         }
         
-        // Show next frame
-        if (selectedProtocol === 'wmts' && preloadedLayers[currentIndex]) {
-            preloadedLayers[currentIndex].setOpacity(0.7);
+        // Update slider position
+        slider.value = currentIndex;
+        
+        if (usePreloaded) {
+            // Preloaded mode: toggle layer opacity (fast, no network)
+            if (preloadedLayers[currentIndex]) {
+                preloadedLayers[currentIndex].setOpacity(0.7);
+            }
+            onTimeSliderChange(currentIndex);
+        } else {
+            // On-demand mode: swap the tile layer URL directly.
+            // onTimeSliderChange sets currentObservationTime/currentForecastHour
+            // and updates the time label, but skips updateLayerTime() when isPlaying.
+            // We call updateLayerTime() ourselves to swap the actual tile layer.
+            onTimeSliderChange(currentIndex);
+            updateLayerTime();
         }
         
-        slider.value = currentIndex;
-        onTimeSliderChange(currentIndex);
         updateSliderProgress();
     }, getPlaybackInterval());
 }
@@ -823,7 +855,8 @@ function onTimeSliderChange(index) {
         if (reversedIndex >= 0 && reversedIndex < availableObservationTimes.length) {
             currentObservationTime = availableObservationTimes[reversedIndex];
             updateTimeSliderDisplay();
-            // Only update layer if not playing (during playback we use preloaded layers)
+            // During playback, the playback interval handles layer updates
+            // (either via preloaded layer opacity or on-demand updateLayerTime)
             if (!isPlaying) {
                 updateLayerTime();
             }
@@ -833,7 +866,7 @@ function onTimeSliderChange(index) {
         if (index >= 0 && index < availableForecastHours.length) {
             currentForecastHour = availableForecastHours[index];
             updateTimeSliderDisplay();
-            // Only update layer if not playing (during playback we use preloaded layers)
+            // During playback, the playback interval handles layer updates
             if (!isPlaying) {
                 updateLayerTime();
             }
@@ -939,7 +972,14 @@ function populateTimeSlider() {
         
         slider.min = 0;
         slider.max = timesReversed.length - 1;
-        slider.value = timesReversed.length - 1; // Start at latest (last in reversed array)
+        
+        // Preserve slider position if we have a current observation time, otherwise default to latest
+        if (currentObservationTime) {
+            const posIndex = timesReversed.indexOf(currentObservationTime);
+            slider.value = posIndex >= 0 ? posIndex : timesReversed.length - 1;
+        } else {
+            slider.value = timesReversed.length - 1; // Start at latest
+        }
         
         // Create labels (show ~5 evenly spaced)
         const numLabels = Math.min(5, timesReversed.length);
@@ -3060,7 +3100,7 @@ function updateLayerTime() {
 // Fetch available runs, forecast hours, and elevations from capabilities
 async function fetchAvailableTimes() {
     try {
-        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`);
+        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`, { cache: 'no-cache' });
         const xml = await response.text();
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'text/xml');
