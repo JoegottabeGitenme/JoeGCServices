@@ -114,8 +114,8 @@ pub fn create_minio_storage(config: &MinioConfig) -> Result<Arc<MinioStorage>> {
         .with_access_key_id(&config.access_key_id)
         .with_secret_access_key(&config.secret_access_key)
         .with_region(&config.region)
-        .with_allow_http(config.allow_http)
         .with_client_options(client_options)
+        .with_allow_http(config.allow_http)
         .build()
         .map_err(|e| {
             GridProcessorError::open_failed(format!("Failed to create S3 client: {}", e))
