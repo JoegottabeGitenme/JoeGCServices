@@ -41,7 +41,8 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
     };
 
     // Create grid data service
-    let grid_data_service = GridDataService::new(Arc::clone(&catalog), minio_config, 64);
+    let grid_data_service = GridDataService::new(Arc::clone(&catalog), minio_config, 64)
+        .expect("Failed to create GridDataService");
 
     // Create observation catalog
     let observation_catalog = Arc::new(ObservationCatalog::new(catalog.pool_clone()));

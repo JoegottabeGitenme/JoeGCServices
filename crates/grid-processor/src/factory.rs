@@ -20,10 +20,12 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 
 use crate::cache::ChunkCache;
 use crate::config::GridProcessorConfig;
-use crate::minio_storage::MinioConfig;
+use crate::error::Result;
+use crate::minio_storage::{create_minio_storage, MinioConfig, MinioStorage};
 use crate::types::{CacheStats, GridMetadata};
 use crate::writer::ZarrMetadata;
 
@@ -48,32 +50,49 @@ pub struct GridProcessorFactory {
     config: GridProcessorConfig,
     /// Shared chunk cache for decompressed Zarr chunks
     chunk_cache: Arc<RwLock<ChunkCache>>,
-    /// MinIO configuration for creating storage
+    /// MinIO configuration (kept for diagnostics/logging)
     minio_config: MinioConfig,
+    /// Shared MinIO storage — single S3 client reused across all tile renders
+    shared_storage: Arc<MinioStorage>,
 }
 
 impl GridProcessorFactory {
     /// Create a new factory with MinIO/S3 storage configuration.
     ///
+    /// Creates a single shared S3 client that is reused across all tile renders,
+    /// preventing connection pool exhaustion under concurrent load.
+    ///
     /// # Arguments
     /// * `minio_config` - MinIO/S3 connection configuration
     /// * `chunk_cache_size_mb` - Memory budget for the chunk cache in MB
-    pub fn new(minio_config: MinioConfig, chunk_cache_size_mb: usize) -> Self {
+    pub fn new(minio_config: MinioConfig, chunk_cache_size_mb: usize) -> Result<Self> {
         let chunk_cache = Arc::new(RwLock::new(ChunkCache::new(
             chunk_cache_size_mb * 1024 * 1024,
         )));
 
         let config = GridProcessorConfig::from_env();
 
-        Self {
+        // Create a single shared S3 client with connection pooling.
+        // This client is reused across all concurrent tile renders instead of
+        // creating a new client (and connection pool) per request.
+        let shared_storage = create_minio_storage(&minio_config)?;
+
+        info!(
+            endpoint = %minio_config.endpoint,
+            bucket = %minio_config.bucket,
+            "Created shared MinIO storage client for GridProcessorFactory"
+        );
+
+        Ok(Self {
             config,
             chunk_cache,
             minio_config,
-        }
+            shared_storage,
+        })
     }
 
     /// Create a new factory with default MinIO configuration from environment.
-    pub fn from_env(chunk_cache_size_mb: usize) -> Self {
+    pub fn from_env(chunk_cache_size_mb: usize) -> Result<Self> {
         Self::new(MinioConfig::from_env(), chunk_cache_size_mb)
     }
 
@@ -97,6 +116,15 @@ impl GridProcessorFactory {
     /// Get the MinIO configuration.
     pub fn minio_config(&self) -> &MinioConfig {
         &self.minio_config
+    }
+
+    /// Get the shared MinIO storage client.
+    ///
+    /// Returns a reference-counted handle to the single shared S3 client.
+    /// All tile renders should use this instead of creating new clients,
+    /// as it shares the underlying HTTP connection pool.
+    pub fn storage(&self) -> Arc<MinioStorage> {
+        self.shared_storage.clone()
     }
 
     /// Clear the chunk cache (for hot reload / cache invalidation).
@@ -179,5 +207,94 @@ mod tests {
         assert_eq!(grid.shape, zarr.shape);
         assert_eq!(grid.chunk_shape, zarr.chunk_shape);
         assert_eq!(grid.projection, zarr.projection);
+    }
+
+    #[test]
+    fn test_factory_new_returns_result() {
+        // Factory::new now returns Result since it creates the shared S3 client
+        let config = MinioConfig::default();
+        let result = GridProcessorFactory::new(config, 1024);
+        assert!(
+            result.is_ok(),
+            "Factory::new should succeed with default MinIO config"
+        );
+    }
+
+    #[test]
+    fn test_factory_from_env_returns_result() {
+        let result = GridProcessorFactory::from_env(512);
+        assert!(result.is_ok(), "Factory::from_env should succeed");
+    }
+
+    #[test]
+    fn test_factory_shared_storage_returns_arc() {
+        let config = MinioConfig::default();
+        let factory = GridProcessorFactory::new(config, 256).unwrap();
+
+        // storage() should return cloned Arcs pointing to the same underlying client
+        let store1 = factory.storage();
+        let store2 = factory.storage();
+
+        // The factory holds one reference, plus our two clones = 3
+        assert_eq!(Arc::strong_count(&store1), 3);
+        drop(store2);
+        assert_eq!(Arc::strong_count(&store1), 2);
+    }
+
+    #[test]
+    fn test_factory_storage_identity() {
+        // Multiple calls to storage() should return handles to the SAME client,
+        // not create new ones. This is the key property that fixes connection exhaustion.
+        let config = MinioConfig::default();
+        let factory = GridProcessorFactory::new(config, 256).unwrap();
+
+        let store1 = factory.storage();
+        let store2 = factory.storage();
+
+        // Both Arcs point to the same allocation
+        assert!(Arc::ptr_eq(&store1, &store2));
+    }
+
+    #[tokio::test]
+    async fn test_factory_chunk_cache_shared() {
+        let config = MinioConfig::default();
+        let factory = GridProcessorFactory::new(config, 128).unwrap();
+
+        // chunk_cache() should return clones of the same Arc
+        let cache1 = factory.chunk_cache();
+        let cache2 = factory.chunk_cache();
+        assert!(Arc::ptr_eq(&cache1, &cache2));
+    }
+
+    #[tokio::test]
+    async fn test_factory_clear_chunk_cache() {
+        let config = MinioConfig::default();
+        let factory = GridProcessorFactory::new(config, 128).unwrap();
+
+        let (entries, bytes) = factory.clear_chunk_cache().await;
+        // Fresh cache should have nothing to clear
+        assert_eq!(entries, 0);
+        assert_eq!(bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_factory_cache_stats_initial() {
+        let config = MinioConfig::default();
+        let factory = GridProcessorFactory::new(config, 256).unwrap();
+
+        let stats = factory.cache_stats().await;
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.memory_bytes, 0);
+        assert_eq!(stats.evictions, 0);
+    }
+
+    #[test]
+    fn test_factory_zero_cache_size() {
+        // 0 MB cache should still work (minimal/disabled cache mode)
+        let config = MinioConfig::default();
+        let result = GridProcessorFactory::new(config, 0);
+        assert!(result.is_ok(), "Factory with 0 MB cache should succeed");
     }
 }

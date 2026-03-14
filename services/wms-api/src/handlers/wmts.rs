@@ -1247,8 +1247,16 @@ fn spawn_tile_prefetch(
         let state = state.clone();
         let layer = layer.clone();
         let style = style.clone();
+        let semaphore = state.prefetch_semaphore.clone();
 
         tokio::spawn(async move {
+            // Acquire a permit to bound concurrent prefetch renders.
+            // This prevents MinIO connection exhaustion when many tiles
+            // miss cache simultaneously (e.g., during time slider loops).
+            let _permit = match semaphore.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => return, // semaphore closed, shutting down
+            };
             prefetch_single_tile(state, &layer, &style, neighbor).await;
         });
     }
@@ -1844,5 +1852,50 @@ mod tests {
         assert!(matrices.contains("<ows:Identifier>0</ows:Identifier>"));
         assert!(matrices.contains("<ows:Identifier>18</ows:Identifier>"));
         assert!(matrices.contains("<TileWidth>256</TileWidth>"));
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_semaphore_bounds_concurrency() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::sync::Semaphore;
+        use tokio::time::{sleep, Duration};
+
+        let max_concurrent = 4;
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        // Spawn 20 tasks (simulating prefetch tiles) that all contend for permits
+        let mut handles = vec![];
+        for _ in 0..20 {
+            let sem = semaphore.clone();
+            let active = active.clone();
+            let peak = peak.clone();
+
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                // Update peak concurrency
+                peak.fetch_max(current, Ordering::SeqCst);
+                // Simulate work
+                sleep(Duration::from_millis(10)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // Peak concurrency should never exceed the semaphore limit
+        let peak_val = peak.load(Ordering::SeqCst);
+        assert!(
+            peak_val <= max_concurrent,
+            "Peak concurrency {} exceeded semaphore limit {}",
+            peak_val,
+            max_concurrent
+        );
+        // All tasks completed
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 }

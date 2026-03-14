@@ -29,7 +29,7 @@ use storage::Catalog;
 
 use crate::error::{GridProcessorError, Result};
 use crate::factory::GridProcessorFactory;
-use crate::minio_storage::{create_minio_storage, MinioConfig};
+use crate::minio_storage::MinioConfig;
 use crate::processor::{
     parse_multiscale_metadata, GridProcessor, MultiscaleGridProcessorFactory, ZarrGridProcessor,
 };
@@ -76,9 +76,9 @@ impl GridDataService {
         catalog: Arc<Catalog>,
         minio_config: MinioConfig,
         chunk_cache_size_mb: usize,
-    ) -> Self {
-        let factory = GridProcessorFactory::new(minio_config, chunk_cache_size_mb);
-        Self { catalog, factory }
+    ) -> Result<Self> {
+        let factory = GridProcessorFactory::new(minio_config, chunk_cache_size_mb)?;
+        Ok(Self { catalog, factory })
     }
 
     /// Create a new GridDataService with a pre-configured factory.
@@ -135,9 +135,8 @@ impl GridDataService {
         // Build storage path
         let zarr_path = normalize_path(&entry.storage_path);
 
-        // Create storage
-        let store = create_minio_storage(self.factory.minio_config())
-            .map_err(|e| GridProcessorError::Storage(e.to_string()))?;
+        // Use the shared MinIO storage client (avoids creating a new S3 client per request)
+        let store = self.factory.storage();
 
         // Check for multiscale support
         let multiscale_meta = parse_multiscale_metadata(zarr_json);
@@ -204,9 +203,8 @@ impl GridDataService {
         let zarr_path = normalize_path(&entry.storage_path);
         let level_path = append_level_path(&zarr_path, 0);
 
-        // Create storage
-        let store = create_minio_storage(self.factory.minio_config())
-            .map_err(|e| GridProcessorError::Storage(e.to_string()))?;
+        // Use the shared MinIO storage client
+        let store = self.factory.storage();
 
         let grid_metadata = GridMetadata::from(&zarr_meta);
         let processor = ZarrGridProcessor::with_metadata(

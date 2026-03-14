@@ -133,6 +133,7 @@ pub struct AppState {
     pub grid_processor_factory: GridProcessorFactory, // Factory for Zarr-based grid processors
     pub metrics: Arc<MetricsCollector>,
     pub prefetch_rings: u32, // Number of rings to prefetch (1=8 tiles, 2=24 tiles)
+    pub prefetch_semaphore: Arc<tokio::sync::Semaphore>, // Bounds concurrent prefetch renders
     pub optimization_config: OptimizationConfig, // Feature flags for optimizations
     pub chunk_warmer:
         tokio::sync::RwLock<Option<std::sync::Arc<crate::chunk_warming::ChunkWarmer>>>, // Chunk cache warmer
@@ -193,21 +194,33 @@ impl AppState {
         );
 
         // Create GridProcessorFactory for Zarr-based data access
-        // Now using the factory from grid-processor crate which manages MinIO config internally
+        // The factory creates a single shared S3 client with connection pooling,
+        // preventing connection exhaustion under concurrent tile load.
         let grid_processor_factory = if optimization_config.chunk_cache_enabled {
             let minio_config = MinioConfig::from_env();
             let factory =
-                GridProcessorFactory::new(minio_config, optimization_config.chunk_cache_size_mb);
+                GridProcessorFactory::new(minio_config, optimization_config.chunk_cache_size_mb)?;
             info!(
                 chunk_cache_size_mb = optimization_config.chunk_cache_size_mb,
-                "GridProcessorFactory initialized with chunk cache"
+                "GridProcessorFactory initialized with shared storage and chunk cache"
             );
             factory
         } else {
             info!("Chunk cache disabled (set ENABLE_CHUNK_CACHE=true to enable)");
             let minio_config = MinioConfig::from_env();
-            GridProcessorFactory::new(minio_config, 0) // 0 MB = minimal cache
+            GridProcessorFactory::new(minio_config, 0)? // 0 MB = minimal cache
         };
+
+        // Semaphore to bound concurrent prefetch renders and prevent MinIO connection exhaustion
+        let prefetch_concurrency = env::var("PREFETCH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(16);
+        let prefetch_semaphore = Arc::new(tokio::sync::Semaphore::new(prefetch_concurrency));
+        info!(
+            prefetch_concurrency = prefetch_concurrency,
+            "Prefetch concurrency limiter initialized"
+        );
 
         // Load model dimension configurations from YAML files
         let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
@@ -244,6 +257,7 @@ impl AppState {
             grid_processor_factory,
             metrics,
             prefetch_rings,
+            prefetch_semaphore,
             optimization_config,
             chunk_warmer: tokio::sync::RwLock::new(None),
             model_dimensions,

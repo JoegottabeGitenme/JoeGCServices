@@ -4,9 +4,11 @@
 //! storage backends that work with the zarrs crate.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 // Use the direct object_store crate (version must match what zarrs_object_store uses)
 use object_store::aws::AmazonS3Builder;
+use object_store::ClientOptions;
 use zarrs_object_store::AsyncObjectStore;
 use zarrs_storage::storage_adapter::async_to_sync::{
     AsyncToSyncBlockOn, AsyncToSyncStorageAdapter,
@@ -98,6 +100,14 @@ pub type MinioStorage = AsyncToSyncStorageAdapter<AsyncMinioStorage, TokioBlockO
 /// # Returns
 /// An Arc-wrapped storage adapter that implements ReadableStorageTraits
 pub fn create_minio_storage(config: &MinioConfig) -> Result<Arc<MinioStorage>> {
+    // Configure connection pool and timeouts to prevent connection exhaustion
+    // when many concurrent tile renders share this client.
+    let client_options = ClientOptions::new()
+        .with_pool_max_idle_per_host(32)
+        .with_connect_timeout(Duration::from_secs(5))
+        .with_timeout(Duration::from_secs(30))
+        .with_pool_idle_timeout(Duration::from_secs(60));
+
     let s3 = AmazonS3Builder::new()
         .with_endpoint(&config.endpoint)
         .with_bucket_name(&config.bucket)
@@ -105,6 +115,7 @@ pub fn create_minio_storage(config: &MinioConfig) -> Result<Arc<MinioStorage>> {
         .with_secret_access_key(&config.secret_access_key)
         .with_region(&config.region)
         .with_allow_http(config.allow_http)
+        .with_client_options(client_options)
         .build()
         .map_err(|e| {
             GridProcessorError::open_failed(format!("Failed to create S3 client: {}", e))
@@ -132,5 +143,44 @@ mod tests {
         assert_eq!(config.endpoint, "http://minio:9000");
         assert_eq!(config.bucket, "weather-data");
         assert!(config.allow_http);
+    }
+
+    #[test]
+    fn test_create_minio_storage_succeeds_with_defaults() {
+        // Verifies that create_minio_storage builds a valid S3 client
+        // with ClientOptions (pool size, timeouts) without panicking.
+        let config = MinioConfig::default();
+        let result = create_minio_storage(&config);
+        assert!(
+            result.is_ok(),
+            "create_minio_storage should succeed with default config"
+        );
+    }
+
+    #[test]
+    fn test_create_minio_storage_returns_arc() {
+        // Verify the returned storage is Arc-wrapped and can be cloned cheaply
+        let config = MinioConfig::default();
+        let store = create_minio_storage(&config).unwrap();
+        let store_clone = store.clone();
+        // Both point to the same underlying storage (Arc strong count = 2)
+        assert_eq!(Arc::strong_count(&store), 2);
+        drop(store_clone);
+        assert_eq!(Arc::strong_count(&store), 1);
+    }
+
+    #[test]
+    fn test_create_minio_storage_custom_endpoint() {
+        // Ensure custom endpoints (e.g., k8s service names) work
+        let config = MinioConfig {
+            endpoint: "http://joegcservices-minio:9000".to_string(),
+            bucket: "weather-data".to_string(),
+            access_key_id: "testkey".to_string(),
+            secret_access_key: "testsecret".to_string(),
+            region: "us-east-2".to_string(),
+            allow_http: true,
+        };
+        let result = create_minio_storage(&config);
+        assert!(result.is_ok(), "Should handle custom endpoint");
     }
 }

@@ -693,8 +693,7 @@ pub(crate) async fn load_wind_components_from_zarr(
     bbox: Option<[f32; 4]>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     use grid_processor::{
-        create_minio_storage, BoundingBox as GpBoundingBox, GridProcessor, MinioConfig,
-        ZarrGridProcessor, ZarrMetadata,
+        BoundingBox as GpBoundingBox, GridProcessor, ZarrGridProcessor, ZarrMetadata,
     };
 
     // Parse zarr_metadata for U component
@@ -730,10 +729,8 @@ pub(crate) async fn load_wind_components_from_zarr(
         "Loading wind components from Zarr"
     );
 
-    // Create MinIO storage
-    let minio_config = MinioConfig::from_env();
-    let store = create_minio_storage(&minio_config)
-        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+    // Use the shared MinIO storage client from the factory (single connection pool)
+    let store = factory.storage();
 
     // Build storage paths
     let u_zarr_path = if u_entry.storage_path.starts_with('/') {
@@ -1167,8 +1164,7 @@ async fn load_wind_speed_direction_from_zarr(
     bbox: Option<[f32; 4]>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize, [f32; 4], bool), String> {
     use grid_processor::{
-        create_minio_storage, BoundingBox as GpBoundingBox, GridProcessor, MinioConfig,
-        ZarrGridProcessor, ZarrMetadata,
+        BoundingBox as GpBoundingBox, GridProcessor, ZarrGridProcessor, ZarrMetadata,
     };
 
     // Parse zarr_metadata for speed
@@ -1204,10 +1200,8 @@ async fn load_wind_speed_direction_from_zarr(
         "Loading wind speed/direction from Zarr"
     );
 
-    // Create MinIO storage
-    let minio_config = MinioConfig::from_env();
-    let store = create_minio_storage(&minio_config)
-        .map_err(|e| format!("Failed to create MinIO storage: {}", e))?;
+    // Use the shared MinIO storage client from the factory (single connection pool)
+    let store = factory.storage();
 
     // Build storage paths
     let speed_zarr_path = if speed_entry.storage_path.starts_with('/') {

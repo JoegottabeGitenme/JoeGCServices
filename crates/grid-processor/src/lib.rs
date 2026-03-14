@@ -25,7 +25,7 @@
 //! use grid_processor::{GridDataService, DatasetQuery, BoundingBox};
 //!
 //! // Create service (typically at application startup)
-//! let service = GridDataService::new(catalog, storage_config, 1024).await?;
+//! let service = GridDataService::new(catalog, storage_config, 1024)?;
 //!
 //! // Query for a forecast dataset
 //! let query = DatasetQuery::forecast("gfs", "TMP")
@@ -144,7 +144,7 @@ pub use config::{GridProcessorConfig, PyramidConfig, ZarrCompression};
 pub use downsample::{generate_pyramid, DownsampleMethod, PyramidLevelData};
 pub use error::{GridProcessorError, Result};
 pub use factory::GridProcessorFactory;
-pub use minio_storage::{create_minio_storage, MinioConfig};
+pub use minio_storage::{create_minio_storage, MinioConfig, MinioStorage};
 pub use processor::{
     parse_multiscale_metadata, GridProcessor, MultiscaleGridProcessorFactory, ZarrGridProcessor,
 };

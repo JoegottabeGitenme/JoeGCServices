@@ -44,6 +44,9 @@ pub struct AppState {
 impl AppState {
     /// Create a new AppState from environment configuration.
     pub async fn new() -> Result<Self> {
+        // Get config directory
+        let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+
         // Get database URL
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
             "postgresql://weatherwms:weatherwms@localhost:5432/weatherwms".to_string()
@@ -83,13 +86,14 @@ impl AppState {
 
         // Create high-level grid data service
         let grid_data_service =
-            GridDataService::new(Arc::clone(&catalog), minio_config, chunk_cache_size_mb);
+            GridDataService::new(Arc::clone(&catalog), minio_config, chunk_cache_size_mb)?;
 
         // Create observation catalog for point data (METAR, TAF, etc.)
         let observation_catalog = Arc::new(ObservationCatalog::new(catalog.pool_clone()));
 
         // Load EDR config
-        let edr_config = EdrConfig::load_from_dir("config/edr")?;
+        let edr_dir = format!("{}/edr", config_dir);
+        let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
 
         // Create location cache
         // TODO: Make these configurable via environment variables
@@ -131,7 +135,9 @@ impl AppState {
     /// Reload EDR configuration from disk.
     /// Also invalidates the availability cache since config may reference different parameters/levels.
     pub async fn reload_config(&self) -> Result<()> {
-        let new_config = EdrConfig::load_from_dir("config/edr")?;
+        let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+        let edr_dir = format!("{}/edr", config_dir);
+        let new_config = EdrConfig::load_from_dir(&edr_dir)?;
         let mut config = self.edr_config.write().await;
         *config = new_config;
 

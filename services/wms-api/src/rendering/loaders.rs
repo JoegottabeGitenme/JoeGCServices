@@ -81,8 +81,8 @@ pub async fn load_grid_data_from_zarr(
     requires_full_grid: bool,
 ) -> Result<GridData, String> {
     use grid_processor::{
-        create_minio_storage, parse_multiscale_metadata, BoundingBox as GpBoundingBox,
-        MultiscaleGridProcessorFactory, ZarrMetadata,
+        parse_multiscale_metadata, BoundingBox as GpBoundingBox, MultiscaleGridProcessorFactory,
+        ZarrMetadata,
     };
 
     // Parse zarr_metadata from catalog entry
@@ -114,17 +114,8 @@ pub async fn load_grid_data_from_zarr(
         format!("/{}", entry.storage_path)
     };
 
-    // Create MinIO storage using factory's config (avoids re-parsing env vars)
-    let minio_config = factory.minio_config();
-    let store = create_minio_storage(minio_config).map_err(|e| {
-        error!(
-            error = %e,
-            endpoint = %minio_config.endpoint,
-            bucket = %minio_config.bucket,
-            "Failed to create MinIO storage"
-        );
-        format!("Failed to create MinIO storage: {}", e)
-    })?;
+    // Use the shared MinIO storage client from the factory (single connection pool)
+    let store = factory.storage();
 
     // Determine bbox to read
     // For non-geographic projections (Lambert Conformal, etc.), we must read the
@@ -370,7 +361,7 @@ pub async fn query_point_from_zarr(
     lon: f64,
     lat: f64,
 ) -> Result<Option<f32>, String> {
-    use grid_processor::{create_minio_storage, GridProcessor, ZarrGridProcessor, ZarrMetadata};
+    use grid_processor::{GridProcessor, ZarrGridProcessor, ZarrMetadata};
 
     // Parse zarr_metadata from catalog entry
     let zarr_json = entry.zarr_metadata.as_ref()
@@ -413,12 +404,8 @@ pub async fn query_point_from_zarr(
         format!("/{}", entry.storage_path)
     };
 
-    // Create MinIO storage using factory's config
-    let minio_config = factory.minio_config();
-    let store = create_minio_storage(minio_config).map_err(|e| {
-        error!(error = %e, "Failed to create MinIO storage");
-        format!("Failed to create MinIO storage: {}", e)
-    })?;
+    // Use the shared MinIO storage client from the factory (single connection pool)
+    let store = factory.storage();
 
     // Convert zarr_meta to GridMetadata for the processor
     let grid_metadata = grid_processor::GridMetadata {
