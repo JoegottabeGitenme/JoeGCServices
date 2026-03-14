@@ -96,6 +96,9 @@ RUN apt-get update && apt-get install -y \
 # Copy binary from builder
 COPY --from=builder /app/ingester-binary /usr/local/bin/ingester
 
+# Bake config files into the image (config changes require rebuild)
+COPY config /app/config
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser
 USER appuser

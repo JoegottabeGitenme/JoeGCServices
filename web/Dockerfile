@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy web files
-COPY index.html app.js style.css server.py ./
+# Copy all web files (HTML pages, JS, CSS, assets)
+COPY . ./
 
 EXPOSE 8000
 
