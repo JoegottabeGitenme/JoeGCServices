@@ -594,11 +594,9 @@ pub async fn wmts_rest_handler(
                 let is_valid = availability.times.iter().any(|t| t == time);
                 if !is_valid {
                     // Snap to nearest available time within 2 minutes
-                    if let Some(nearest) = find_nearest_time(
-                        time,
-                        &availability.times,
-                        chrono::Duration::minutes(2),
-                    ) {
+                    if let Some(nearest) =
+                        find_nearest_time(time, &availability.times, chrono::Duration::minutes(2))
+                    {
                         debug!(
                             requested = %time,
                             snapped = %nearest,
@@ -1994,11 +1992,8 @@ mod tests {
         // Exact match should be handled by the caller before calling find_nearest_time,
         // but if it does get called, it should still return the exact match.
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T16:34:00Z",
-            &times,
-            chrono::Duration::minutes(2),
-        );
+        let result =
+            find_nearest_time("2026-03-11T16:34:00Z", &times, chrono::Duration::minutes(2));
         assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
     }
 
@@ -2006,11 +2001,8 @@ mod tests {
     fn test_nearest_time_snaps_to_closest_within_tolerance() {
         // 15:51 is 1 minute from both 15:50 and 15:52 — should pick one (first encountered)
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T15:51:00Z",
-            &times,
-            chrono::Duration::minutes(2),
-        );
+        let result =
+            find_nearest_time("2026-03-11T15:51:00Z", &times, chrono::Duration::minutes(2));
         assert!(result.is_some(), "Should snap to a nearby time");
         let snapped = result.unwrap();
         assert!(
@@ -2025,11 +2017,8 @@ mod tests {
         // 16:33 is 1 min from 16:34 and 1 min from 16:32 — equidistant, picks first scanned.
         // 16:33:30 is 30s from 16:34 and 90s from 16:32 — should prefer 16:34.
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T16:33:30Z",
-            &times,
-            chrono::Duration::minutes(2),
-        );
+        let result =
+            find_nearest_time("2026-03-11T16:33:30Z", &times, chrono::Duration::minutes(2));
         assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
     }
 
@@ -2037,23 +2026,20 @@ mod tests {
     fn test_nearest_time_outside_tolerance_returns_none() {
         // 15:00 is far from any available time (closest is 15:50, 50 min away)
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T15:00:00Z",
-            &times,
-            chrono::Duration::minutes(2),
+        let result =
+            find_nearest_time("2026-03-11T15:00:00Z", &times, chrono::Duration::minutes(2));
+        assert!(
+            result.is_none(),
+            "Should return None for times far from any available"
         );
-        assert!(result.is_none(), "Should return None for times far from any available");
     }
 
     #[test]
     fn test_nearest_time_exactly_at_tolerance_boundary() {
         // 16:36 is exactly 2 minutes from 16:34 — should be within tolerance
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T16:36:00Z",
-            &times,
-            chrono::Duration::minutes(2),
-        );
+        let result =
+            find_nearest_time("2026-03-11T16:36:00Z", &times, chrono::Duration::minutes(2));
         assert_eq!(result, Some("2026-03-11T16:34:00Z".to_string()));
     }
 
@@ -2061,44 +2047,36 @@ mod tests {
     fn test_nearest_time_just_beyond_tolerance() {
         // 16:36:01 is 2 min 1 sec from 16:34 — just beyond 2-minute tolerance
         let times = mrms_times();
-        let result = find_nearest_time(
-            "2026-03-11T16:36:01Z",
-            &times,
-            chrono::Duration::minutes(2),
+        let result =
+            find_nearest_time("2026-03-11T16:36:01Z", &times, chrono::Duration::minutes(2));
+        assert!(
+            result.is_none(),
+            "Should return None when just beyond tolerance"
         );
-        assert!(result.is_none(), "Should return None when just beyond tolerance");
     }
 
     #[test]
     fn test_nearest_time_empty_available() {
-        let result = find_nearest_time(
-            "2026-03-11T16:34:00Z",
-            &[],
-            chrono::Duration::minutes(2),
-        );
+        let result = find_nearest_time("2026-03-11T16:34:00Z", &[], chrono::Duration::minutes(2));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_nearest_time_invalid_requested_format() {
         let times = mrms_times();
-        let result = find_nearest_time(
-            "not-a-timestamp",
-            &times,
-            chrono::Duration::minutes(2),
+        let result = find_nearest_time("not-a-timestamp", &times, chrono::Duration::minutes(2));
+        assert!(
+            result.is_none(),
+            "Should return None for unparseable requested time"
         );
-        assert!(result.is_none(), "Should return None for unparseable requested time");
     }
 
     #[test]
     fn test_nearest_time_single_available() {
         let times = vec!["2026-03-11T16:00:00Z".to_string()];
         // 15:59 is 1 min away — within tolerance
-        let result = find_nearest_time(
-            "2026-03-11T15:59:00Z",
-            &times,
-            chrono::Duration::minutes(2),
-        );
+        let result =
+            find_nearest_time("2026-03-11T15:59:00Z", &times, chrono::Duration::minutes(2));
         assert_eq!(result, Some("2026-03-11T16:00:00Z".to_string()));
     }
 }
