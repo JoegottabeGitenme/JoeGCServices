@@ -21,6 +21,9 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
+          args:
+            - "-c"
+            - "max_connections={{ .Values.postgres.maxConnections | default 200 }}"
           ports:
             - containerPort: 5432
               name: postgres

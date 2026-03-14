@@ -81,6 +81,8 @@ spec:
               value: "false"
             - name: ENABLE_PREFETCH
               value: "false"
+            - name: DATABASE_POOL_SIZE
+              value: {{ .Values.wmsApi.env.DATABASE_POOL_SIZE | default "20" | quote }}
             - name: RUST_LOG
               value: {{ .Values.wmsApi.env.RUST_LOG | default "info" | quote }}
             - name: RUST_BACKTRACE
@@ -99,7 +101,7 @@ spec:
             {{- toYaml .Values.wmsApi.cleanup.resources | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /wms?SERVICE=WMS&REQUEST=GetCapabilities
+              path: /health
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30

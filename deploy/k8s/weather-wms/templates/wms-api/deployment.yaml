@@ -99,7 +99,7 @@ spec:
             {{- toYaml .Values.wmsApi.resources | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /wms?SERVICE=WMS&REQUEST=GetCapabilities
+              path: /health
               port: http
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -107,7 +107,7 @@ spec:
             failureThreshold: 5
           readinessProbe:
             httpGet:
-              path: /wms?SERVICE=WMS&REQUEST=GetCapabilities
+              path: /health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
