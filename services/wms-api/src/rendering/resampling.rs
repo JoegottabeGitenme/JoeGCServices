@@ -437,8 +437,8 @@ pub fn resample_grid_for_bbox_with_proj(
     goes_projection: Option<&GoesProjectionParams>,
     grid_uses_360: bool,
 ) -> Vec<f32> {
-    // Use Lambert Conformal resampling for HRRR and NDFD (native projection)
-    if model == "hrrr" || model == "ndfd" {
+    // Use Lambert Conformal resampling for HRRR, NAM and NDFD (native projection)
+    if model == "hrrr" || model == "nam" || model == "ndfd" {
         debug!(
             model = model,
             use_mercator = use_mercator,
@@ -453,6 +453,7 @@ pub fn resample_grid_for_bbox_with_proj(
         let proj = if model == "ndfd" {
             LambertConformal::ndfd()
         } else {
+            // HRRR and NAM CONUS nest share the same grid
             LambertConformal::hrrr()
         };
 
@@ -761,7 +762,7 @@ pub fn resample_for_model_geographic(
     model: &str,
     grid_uses_360: bool,
 ) -> Vec<f32> {
-    if model == "hrrr" {
+    if model == "hrrr" || model == "nam" {
         resample_lambert_to_geographic(
             data,
             data_width,

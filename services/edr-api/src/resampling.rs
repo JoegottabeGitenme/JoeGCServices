@@ -109,7 +109,8 @@ fn resample_lambert_to_geographic(
     let proj = match model {
         "ndfd" => LambertConformal::ndfd(),
         "nbm-conus" => LambertConformal::nbm_conus(),
-        _ => LambertConformal::hrrr(), // Default to HRRR
+        // HRRR and NAM CONUS nest share the same grid
+        _ => LambertConformal::hrrr(),
     };
 
     // Calculate scale factors if data dimensions differ from native projection dimensions.

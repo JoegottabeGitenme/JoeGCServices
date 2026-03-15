@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Lightning Styles",
+    "description": "Styles for lightning flash rate density data"
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Lightning Flash Rate",
+      "description": "Lightning flash rate density (0-1 scale)",
+      "type": "gradient",
+      "units": "non-dim",
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "stops": [
+        { "value": 0.0, "color": "#00000000", "label": "None" },
+        { "value": 0.05, "color": "#4B0082", "label": "Trace" },
+        { "value": 0.1, "color": "#0000CD", "label": "Low" },
+        { "value": 0.2, "color": "#00BFFF", "label": "0.2" },
+        { "value": 0.4, "color": "#FFFF00", "label": "Moderate" },
+        { "value": 0.6, "color": "#FFA500", "label": "0.6" },
+        { "value": 0.8, "color": "#FF4500", "label": "High" },
+        { "value": 1.0, "color": "#FF0000", "label": "Extreme" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Lightning Flash Rate",
+        "labels": ["None", "Trace", "Low", "Moderate", "High", "Extreme"]
+      }
+    }
+  }
+}

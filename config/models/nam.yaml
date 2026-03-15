@@ -1,0 +1,662 @@
+# NAM - North American Mesoscale Configuration
+# NCEP NAM CONUS Nest, 3km resolution, CONUS coverage
+# Uses the same Lambert Conformal grid as HRRR (1799x1059, 3km spacing)
+
+model:
+  id: nam
+  name: "NAM - North American Mesoscale (CONUS Nest)"
+  description: "NCEP NAM CONUS Nest, 3km resolution, 60-hour forecasts, 4 cycles/day"
+  enabled: true
+
+# WMS/WMTS dimension configuration
+dimensions:
+  type: forecast # "forecast" = RUN+FORECAST dimensions, "observation" = TIME dimension
+  run: true # RUN dimension - model initialization time (ISO8601)
+  forecast: true # FORECAST dimension - hours ahead from run time
+  elevation: true # ELEVATION dimension - vertical levels (from parameter definitions)
+
+source:
+  type: aws_s3
+  bucket: noaa-nam-pds
+  prefix_template: "nam.{date}"
+  # CONUS nest high-resolution file (~900MB full, but .idx selective download
+  # reduces to only configured parameters, typically ~50-100MB)
+  file_pattern: "nam.t{cycle:02}z.conusnest.hiresf{forecast:02}.tm00.grib2"
+  region: us-east-1
+  # Enable selective download via .idx files to reduce bandwidth
+  # Critical for NAM CONUS nest where full files are ~900MB each
+  use_index_file: true
+
+grid:
+  projection: lambert_conformal
+  resolution: "3km"
+  # NAM CONUS nest uses identical grid to HRRR
+  bbox:
+    min_lon: -122.719528
+    min_lat: 21.138123
+    max_lon: -60.917193
+    max_lat: 47.842195
+  projection_params:
+    lat1: 21.138123
+    lon1: -122.719528
+    lov: -97.5 # Central meridian
+    latin1: 38.5 # Standard parallel
+    latin2: 38.5 # Standard parallel (tangent cone)
+    dx: 3000.0 # meters
+    dy: 3000.0 # meters
+    nx: 1799
+    ny: 1059
+
+schedule:
+  cycles: [0, 6, 12, 18] # 4 cycles per day
+  forecast_hours:
+    start: 0
+    end: 60 # 60-hour forecast for CONUS nest
+    step: 1 # Every hour
+  poll_interval_secs: 300 # Check every 5 minutes
+  delay_hours: 3 # NAM data typically available 3-4 hours after cycle
+  max_concurrent: 3 # Allow up to 3 concurrent downloads
+
+retention:
+  hours: 72 # Keep 72 hours of data
+  keep_latest_runs: 3 # Always keep 3 most recent runs
+
+# Precaching configuration
+precaching:
+  enabled: false
+  keep_recent: 6
+  warm_on_ingest: false
+  poll_interval_secs: 300
+  parameters: ["TMP"]
+
+# GRIB2 level type codes reference (Table 4.5):
+#   1 = surface
+#   100 = isobaric (pressure level in Pa, displayed as mb)
+#   101 = mean sea level
+#   103 = height above ground (in m)
+#   106 = depth below land surface (in m)
+#   200 = entire atmosphere
+#   214 = low cloud layer
+#   224 = middle cloud layer
+#   234 = high cloud layer
+
+parameters:
+  # ==========================================================================
+  # Pressure
+  # ==========================================================================
+
+  # Mean Sea Level Pressure
+  - name: PRMSL
+    description: "Mean Sea Level Pressure"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 1
+    downsample: mean
+    levels:
+      - type: mean_sea_level
+        level_code: 101
+        display: "mean sea level"
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+    valid_range: [85000, 110000] # 850-1100 hPa
+
+  # ==========================================================================
+  # Surface & Near-Surface Parameters
+  # ==========================================================================
+
+  # Temperature (2m and isobaric)
+  - name: TMP
+    description: "Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 0
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+      - type: isobaric
+        level_code: 100
+        value: 85000
+      - type: isobaric
+        level_code: 100
+        value: 70000
+      - type: isobaric
+        level_code: 100
+        value: 50000
+      - type: isobaric
+        level_code: 100
+        value: 30000
+      - type: isobaric
+        level_code: 100
+        value: 25000
+    units: K
+    display_units: "\u00B0C"
+    conversion: K_to_C
+    valid_range: [180, 340]
+
+  # Dew Point Temperature (2m)
+  - name: DPT
+    description: "Dew Point Temperature"
+    grib2:
+      discipline: 0
+      category: 0
+      number: 6
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+    units: K
+    display_units: "\u00B0C"
+    conversion: K_to_C
+    valid_range: [180, 320]
+
+  # U-component wind (10m and isobaric)
+  - name: UGRD
+    description: "U-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 2
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
+    units: m/s
+    valid_range: [-150, 150]
+
+  # V-component wind (10m and isobaric)
+  - name: VGRD
+    description: "V-Component of Wind"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 3
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 10
+        display: "10 m above ground"
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
+    units: m/s
+    valid_range: [-150, 150]
+
+  # Relative Humidity (2m and isobaric)
+  - name: RH
+    description: "Relative Humidity"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 1
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 2
+        display: "2 m above ground"
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Surface wind gust
+  - name: GUST
+    description: "Wind Speed (Gust)"
+    grib2:
+      discipline: 0
+      category: 2
+      number: 22
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m/s
+    valid_range: [0, 100]
+
+  # Surface Pressure
+  - name: PRES
+    description: "Surface Pressure"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: Pa
+    display_units: hPa
+    conversion: Pa_to_hPa
+    valid_range: [50000, 110000]
+
+  # ==========================================================================
+  # Convective Parameters
+  # ==========================================================================
+
+  # Convective Available Potential Energy
+  - name: CAPE
+    description: "Convective Available Potential Energy"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 6
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: J/kg
+    valid_range: [0, 10000]
+
+  # Convective Inhibition
+  - name: CIN
+    description: "Convective Inhibition"
+    grib2:
+      discipline: 0
+      category: 7
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: J/kg
+    valid_range: [-2000, 0]
+
+  # Composite Reflectivity
+  - name: REFC
+    description: "Composite Reflectivity"
+    grib2:
+      discipline: 0
+      category: 16
+      number: 196
+    downsample: max
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    units: dBZ
+    valid_range: [-10, 80]
+
+  # ==========================================================================
+  # Geopotential Height (isobaric only)
+  # ==========================================================================
+
+  - name: HGT
+    description: "Geopotential Height"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 5
+    downsample: mean
+    levels:
+      - type: isobaric
+        level_code: 100
+        value: 100000
+        display: "1000 mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500
+        display: "925 mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000
+        display: "850 mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000
+        display: "700 mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000
+        display: "500 mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000
+        display: "300 mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000
+        display: "250 mb"
+    units: gpm
+    valid_range: [0, 20000]
+
+  # ==========================================================================
+  # Precipitation Parameters
+  # ==========================================================================
+
+  # Total Precipitation
+  - name: APCP
+    description: "Total Precipitation"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 8
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2
+    display_units: mm
+    accumulation: true
+    valid_range: [0, 500]
+
+  # Precipitation Rate (NAM extra)
+  - name: PRATE
+    description: "Precipitation Rate"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2/s
+    display_units: mm/hr
+    conversion: kgm2s_to_mmhr
+    valid_range: [0, 0.1] # 0-360 mm/hr in native units
+
+  # ==========================================================================
+  # Visibility
+  # ==========================================================================
+
+  - name: VIS
+    description: "Visibility"
+    grib2:
+      discipline: 0
+      category: 19
+      number: 0
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: km
+    conversion: m_to_km
+    valid_range: [0, 50000]
+
+  # ==========================================================================
+  # Cloud Cover
+  # ==========================================================================
+
+  - name: TCDC
+    description: "Total Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 1
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    units: "%"
+    valid_range: [0, 100]
+
+  - name: LCDC
+    description: "Low Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 3
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 214
+        display: "low cloud layer"
+    units: "%"
+    valid_range: [0, 100]
+
+  - name: MCDC
+    description: "Medium Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 4
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 224
+        display: "middle cloud layer"
+    units: "%"
+    valid_range: [0, 100]
+
+  - name: HCDC
+    description: "High Cloud Cover"
+    grib2:
+      discipline: 0
+      category: 6
+      number: 5
+    downsample: mean
+    levels:
+      - type: cloud_layer
+        level_code: 234
+        display: "high cloud layer"
+    units: "%"
+    valid_range: [0, 100]
+
+  # Precipitable Water
+  - name: PWAT
+    description: "Precipitable Water"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 3
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+    units: kg/m^2
+    display_units: mm
+    valid_range: [0, 100]
+
+  # ==========================================================================
+  # NAM-Specific Extra Parameters
+  # ==========================================================================
+
+  # Snow Depth
+  - name: SNOD
+    description: "Snow Depth"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 11
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: cm
+    conversion: m_to_cm
+    valid_range: [0, 10] # 0-10 m (0-1000 cm)
+
+  # Snow Water Equivalent
+  - name: WEASD
+    description: "Water Equivalent of Accumulated Snow Depth"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 13
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2
+    display_units: mm
+    valid_range: [0, 1000]
+
+  # Planetary Boundary Layer Height
+  - name: HPBL
+    description: "Planetary Boundary Layer Height"
+    grib2:
+      discipline: 0
+      category: 3
+      number: 18
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    valid_range: [0, 6000] # 0-6000 m
+
+  # Lightning
+  - name: LTNG
+    description: "Lightning"
+    grib2:
+      discipline: 0
+      category: 17
+      number: 192
+    downsample: max
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "non-dim"
+    valid_range: [0, 1] # Flash rate density (0-1 scale)
+
+  # Downward Short-wave Radiation Flux
+  - name: DSWRF
+    description: "Downward Short-wave Radiation Flux"
+    grib2:
+      discipline: 0
+      category: 4
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: W/m^2
+    valid_range: [0, 1400] # 0-1400 W/m^2 (solar constant max)
+
+  # Soil Temperature (top layer only for simplicity)
+  - name: TSOIL
+    description: "Soil Temperature"
+    grib2:
+      discipline: 2 # Land Surface Products
+      category: 0
+      number: 2
+    downsample: mean
+    levels:
+      - type: depth_below_surface
+        level_code: 106
+        value: 0.1 # 0-0.1m layer
+        display: "0-0.1 m below ground"
+    units: K
+    display_units: "\u00B0C"
+    conversion: K_to_C
+    valid_range: [200, 340]
+
+# Composite layers
+composites:
+  - name: WIND_BARBS
+    description: "Wind barbs visualization"
+    requires: [UGRD, VGRD]
+    renderer: wind_barbs

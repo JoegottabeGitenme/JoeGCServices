@@ -416,8 +416,8 @@ pub fn sample_grid_value(
     lat: f64,
     model: &str,
 ) -> Result<f32, String> {
-    // Handle Lambert Conformal projections (HRRR, NDFD)
-    if model == "hrrr" || model == "ndfd" {
+    // Handle Lambert Conformal projections (HRRR, NAM, NDFD)
+    if model == "hrrr" || model == "nam" || model == "ndfd" {
         return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
@@ -537,8 +537,8 @@ pub fn sample_grid_value_with_projection(
     goes_projection: Option<&GoesProjectionParams>,
     grid_bbox: Option<[f32; 4]>,
 ) -> Result<f32, String> {
-    // Handle Lambert Conformal projections (HRRR, NDFD, NBM-CONUS)
-    if model == "hrrr" || model == "ndfd" {
+    // Handle Lambert Conformal projections (HRRR, NAM, NDFD, NBM-CONUS)
+    if model == "hrrr" || model == "nam" || model == "ndfd" {
         return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 

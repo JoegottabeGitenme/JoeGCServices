@@ -1,0 +1,232 @@
+# NAM Layer Configuration
+# Defines WMS/WMTS layers exposed for the NAM CONUS Nest model
+# CONUS coverage only (same grid as HRRR)
+
+model: nam
+display_name: "NAM - North American Mesoscale (CONUS Nest)"
+
+# NAM CONUS Nest covers the same area as HRRR
+default_bbox:
+  west: -134.72
+  south: 21.14
+  east: -60.92
+  north: 53.84
+
+layers:
+  # ==========================================================================
+  # Temperature Layers
+  # ==========================================================================
+
+  - id: nam_TMP
+    parameter: TMP
+    title: "Temperature"
+    abstract: "Air temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "\u00B0C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  - id: nam_DPT
+    parameter: DPT
+    title: "Dew Point Temperature"
+    abstract: "Dew point temperature at 2m above ground"
+    style_file: temperature.json
+    units:
+      native: K
+      display: "\u00B0C"
+      conversion: K_to_C
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Wind Layers
+  # ==========================================================================
+
+  - id: nam_UGRD
+    parameter: UGRD
+    title: "U-Component of Wind"
+    abstract: "Eastward wind component at 10m above ground"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: nam_VGRD
+    parameter: VGRD
+    title: "V-Component of Wind"
+    abstract: "Northward wind component at 10m above ground"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  - id: nam_GUST
+    parameter: GUST
+    title: "Wind Gust"
+    abstract: "Surface wind gust speed"
+    style_file: wind.json
+    units:
+      native: m/s
+      display: m/s
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nam_WIND_BARBS
+    parameter: WIND_BARBS
+    title: "Wind Barbs"
+    abstract: "Wind direction and speed barbs (composite of UGRD/VGRD)"
+    style_file: wind_barbs.json
+    composite: true
+    requires: [UGRD, VGRD]
+    levels:
+      - value: "10 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Pressure Layers
+  # ==========================================================================
+
+  - id: nam_PRMSL
+    parameter: PRMSL
+    title: "Mean Sea Level Pressure"
+    abstract: "Atmospheric pressure reduced to mean sea level"
+    style_file: mslp.json
+    units:
+      native: Pa
+      display: hPa
+      conversion: Pa_to_hPa
+    levels:
+      - value: "mean sea level"
+        default: true
+
+  # ==========================================================================
+  # Moisture Layers
+  # ==========================================================================
+
+  - id: nam_RH
+    parameter: RH
+    title: "Relative Humidity"
+    abstract: "Relative humidity percentage at 2m"
+    style_file: humidity.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "2 m above ground"
+        default: true
+
+  # ==========================================================================
+  # Precipitation Layers
+  # ==========================================================================
+
+  - id: nam_APCP
+    parameter: APCP
+    title: "Total Precipitation"
+    abstract: "Accumulated precipitation"
+    style_file: precipitation.json
+    units:
+      native: "kg/m^2"
+      display: mm
+    accumulation: true
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nam_PRATE
+    parameter: PRATE
+    title: "Precipitation Rate"
+    abstract: "Instantaneous precipitation rate"
+    style_file: precip_rate.json
+    units:
+      native: "kg/m^2/s"
+      display: mm/hr
+      conversion: kgm2s_to_mmhr
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Visibility
+  # ==========================================================================
+
+  - id: nam_VIS
+    parameter: VIS
+    title: "Visibility"
+    abstract: "Surface visibility"
+    style_file: visibility.json
+    units:
+      native: m
+      display: km
+      conversion: m_to_km
+    levels:
+      - value: "surface"
+        default: true
+
+  # ==========================================================================
+  # Cloud Layers
+  # ==========================================================================
+
+  - id: nam_TCDC
+    parameter: TCDC
+    title: "Total Cloud Cover"
+    abstract: "Total cloud cover percentage for entire atmospheric column"
+    style_file: cloud.json
+    units:
+      native: "%"
+      display: "%"
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  # ==========================================================================
+  # NAM-Specific Extra Layers
+  # ==========================================================================
+
+  - id: nam_SNOD
+    parameter: SNOD
+    title: "Snow Depth"
+    abstract: "Depth of snow on the ground"
+    style_file: snow.json
+    units:
+      native: m
+      display: cm
+      conversion: m_to_cm
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nam_DSWRF
+    parameter: DSWRF
+    title: "Downward Solar Radiation"
+    abstract: "Downward short-wave radiation flux at the surface"
+    style_file: radiation.json
+    units:
+      native: "W/m^2"
+      display: "W/m^2"
+    levels:
+      - value: "surface"
+        default: true
+
+  - id: nam_LTNG
+    parameter: LTNG
+    title: "Lightning"
+    abstract: "Lightning flash rate density"
+    style_file: lightning.json
+    units:
+      native: "non-dim"
+      display: "flash rate"
+    levels:
+      - value: "surface"
+        default: true

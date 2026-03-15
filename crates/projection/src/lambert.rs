@@ -143,6 +143,18 @@ impl LambertConformal {
         )
     }
 
+    /// Create NAM CONUS Nest projection with standard parameters.
+    ///
+    /// NAM CONUS Nest uses the same Lambert Conformal grid as HRRR:
+    /// - First point: 21.138123°N, 237.280472°E (= -122.719528°W)
+    /// - LoV: 262.5°E (= -97.5°W)
+    /// - Standard parallels: 38.5°N (both)
+    /// - Grid: 1799 x 1059, 3km spacing
+    pub fn nam() -> Self {
+        // NAM CONUS nest uses identical projection parameters to HRRR
+        Self::hrrr()
+    }
+
     /// Create projection parameters for NDFD CONUS 2.5km grid.
     ///
     /// NDFD uses Lambert Conformal with:

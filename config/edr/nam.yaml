@@ -1,0 +1,168 @@
+# NAM EDR Configuration
+# Defines collections grouped by level type for the OGC EDR API
+#
+# NAM CONUS Nest - 3km resolution, same grid as HRRR
+# Includes standard NWP parameters plus NAM-specific extras
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
+
+model: nam
+
+collections:
+  # Full isobaric data
+  - id: nam-isobaric
+    title: "NAM - Isobaric Levels"
+    description: "Upper-air parameters on pressure levels (1000, 925, 850, 700, 500, 300, 250 hPa)"
+    level_filter:
+      level_type: isobaric
+      level_code: 100
+    parameters:
+      - name: TMP
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 180, max: 340 }
+      - name: HGT
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 0, max: 20000 }
+      - name: UGRD
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: -150, max: 150 }
+      - name: VGRD
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: -150, max: 150 }
+      - name: RH
+        levels: [1000, 925, 850, 700, 500, 300, 250]
+        valid_range: { min: 0, max: 100 }
+    run_mode: instances
+
+  - id: nam-surface
+    title: "NAM - Surface"
+    description: "Surface-level parameters including NAM-specific extras"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: PRES
+        levels: [surface]
+        valid_range: { min: 50000, max: 110000 }
+      - name: CAPE
+        levels: [surface]
+        valid_range: { min: 0, max: 10000 }
+      - name: CIN
+        levels: [surface]
+        valid_range: { min: -2000, max: 0 }
+      - name: APCP
+        levels: [surface]
+        valid_range: { min: 0, max: 500 }
+      - name: PRATE
+        levels: [surface]
+        valid_range: { min: 0, max: 0.1 }
+      - name: VIS
+        levels: [surface]
+        valid_range: { min: 0, max: 50000 }
+      - name: GUST
+        levels: [surface]
+        valid_range: { min: 0, max: 100 }
+      - name: SNOD
+        levels: [surface]
+        valid_range: { min: 0, max: 10 }
+      - name: WEASD
+        levels: [surface]
+        valid_range: { min: 0, max: 1000 }
+      - name: HPBL
+        levels: [surface]
+        valid_range: { min: 0, max: 6000 }
+      - name: LTNG
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }
+      - name: DSWRF
+        levels: [surface]
+        valid_range: { min: 0, max: 1400 }
+    run_mode: instances
+
+  - id: nam-height-agl
+    title: "NAM - Heights Above Ground"
+    description: "Parameters at specific heights above ground level (2m temp/dew point/humidity, 10m wind)"
+    level_filter:
+      level_type: height_above_ground
+      level_code: 103
+    parameters:
+      - name: TMP
+        levels: [2]
+        valid_range: { min: 180, max: 340 }
+      - name: DPT
+        levels: [2]
+        valid_range: { min: 180, max: 320 }
+      - name: RH
+        levels: [2]
+        valid_range: { min: 0, max: 100 }
+      - name: UGRD
+        levels: [10]
+        valid_range: { min: -150, max: 150 }
+      - name: VGRD
+        levels: [10]
+        valid_range: { min: -150, max: 150 }
+    run_mode: instances
+
+  - id: nam-atmosphere
+    title: "NAM - Entire Atmosphere"
+    description: "Column-integrated atmospheric parameters"
+    level_filter:
+      level_type: entire_atmosphere
+      level_code: 200
+    parameters:
+      - name: PWAT
+        levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }
+    run_mode: instances
+
+  - id: nam-cloud-layers
+    title: "NAM - Cloud Layers"
+    description: "Cloud cover by layer (low, middle, high)"
+    level_filter:
+      level_type: cloud_layer
+      level_codes: [214, 224, 234]
+    parameters:
+      - name: LCDC
+        levels: [low_cloud_layer]
+        valid_range: { min: 0, max: 100 }
+      - name: MCDC
+        levels: [middle_cloud_layer]
+        valid_range: { min: 0, max: 100 }
+      - name: HCDC
+        levels: [high_cloud_layer]
+        valid_range: { min: 0, max: 100 }
+    run_mode: instances
+
+  - id: nam-soil
+    title: "NAM - Soil"
+    description: "Soil parameters from the NAM land surface model"
+    level_filter:
+      level_type: depth_below_surface
+      level_code: 106
+    parameters:
+      - name: TSOIL
+        levels: [0.1]
+        valid_range: { min: 200, max: 340 }
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+  cache_policy:
+    png_max_age: 10800  # 3 hours - NAM updates every 6 hours
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 350
+  max_vertical_levels: 20
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100
+  max_area_sq_degrees_png: 2500
