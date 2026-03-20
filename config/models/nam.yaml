@@ -636,7 +636,13 @@ parameters:
     units: W/m^2
     valid_range: [0, 1400] # 0-1400 W/m^2 (solar constant max)
 
-  # Soil Temperature (top layer only for simplicity)
+  # Soil Temperature (top layer)
+  # Note: TSOIL uses GRIB2 level type 106 (depth below land surface) with a
+  # fractional depth value (0.1m). The downloader's LevelConfig.value is u32,
+  # so we use level_code 1 (surface) here. The .idx filter will match
+  # "TSOIL:surface" which won't find the actual "0-0.1 m below ground" entry,
+  # so this parameter will fall back to full GRIB message scanning during
+  # ingestion. A future enhancement could add depth_below_surface support.
   - name: TSOIL
     description: "Soil Temperature"
     grib2:
@@ -645,9 +651,8 @@ parameters:
       number: 2
     downsample: mean
     levels:
-      - type: depth_below_surface
-        level_code: 106
-        value: 0.1 # 0-0.1m layer
+      - type: surface
+        level_code: 1
         display: "0-0.1 m below ground"
     units: K
     display_units: "\u00B0C"
