@@ -53,14 +53,11 @@ http {
     resolver_timeout 5s;
 
     # === UPSTREAMS ===
-    # Note: Using variables in proxy_pass forces re-resolution per request
-    # But we keep upstreams for connection pooling - nginx restart handles DNS refresh
-    upstream wms_api { server wms-api:8080; }
-    upstream edr_api { server edr-api:8083; }
-    upstream dashboard { server web-dashboard:8000; }
-    upstream grafana { server grafana:3000; }
-    upstream minio_console { server minio:9001; }
-    upstream downloader { server downloader:8081; }
+    # Using variables in proxy_pass forces per-request DNS re-resolution via
+    # Docker's internal resolver (127.0.0.11). This allows nginx to start even
+    # when upstream containers aren't running yet, and handles container restarts
+    # gracefully without needing to reload nginx.
+    # Variable-based upstreams are set in each location block via: set $upstream_xxx
 
     # === MAIN SERVER (HTTP - used by Cloudflare Tunnel) ===
     # Cloudflare handles SSL termination, so tunnel traffic arrives on port 80
@@ -134,7 +131,8 @@ http {
         # Public splash page at root
         location = / {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://dashboard/splash.html;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard/splash.html;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -144,7 +142,8 @@ http {
         # WMS API
         location /wms {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -156,7 +155,8 @@ http {
         # WMTS API
         location /wmts {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -168,7 +168,8 @@ http {
         # EDR API
         location /edr {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://edr_api;
+            set $upstream_edr http://edr-api:8083;
+            proxy_pass $upstream_edr;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -182,7 +183,8 @@ http {
         location /api/ {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -194,7 +196,8 @@ http {
         location /loadtest {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -205,7 +208,8 @@ http {
         location /admin {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard/index.html;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard/index.html;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -216,7 +220,8 @@ http {
         location ~ ^/(style\.css|app\.js|admin\.|downloads\.|benchmarks\.|.*compliance.*|.*coverage.*) {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -227,7 +232,8 @@ http {
         location / {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -240,7 +246,8 @@ http {
             auth_basic_user_file /etc/nginx/.htpasswd;
             
             # Don't strip /grafana/ - Grafana handles it with SERVE_FROM_SUB_PATH
-            proxy_pass http://grafana;
+            set $upstream_grafana http://grafana:3000;
+            proxy_pass $upstream_grafana;
             
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
@@ -268,7 +275,8 @@ http {
             
             # Rewrite to strip /minio prefix before sending to MinIO
             rewrite ^/minio/(.*) /$1 break;
-            proxy_pass http://minio_console;
+            set $upstream_minio http://minio:9001;
+            proxy_pass $upstream_minio;
             
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
@@ -298,7 +306,8 @@ http {
         location /downloader/ {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://downloader/;
+            set $upstream_downloader http://downloader:8081;
+            proxy_pass $upstream_downloader/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -387,7 +396,8 @@ http {
         # Public splash page at root
         location = / {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://dashboard/splash.html;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard/splash.html;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -396,7 +406,8 @@ http {
 
         location /wms {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -407,7 +418,8 @@ http {
 
         location /wmts {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -418,7 +430,8 @@ http {
 
         location /edr {
             limit_req zone=api burst=__RATE_LIMIT_BURST__ nodelay;
-            proxy_pass http://edr_api;
+            set $upstream_edr http://edr-api:8083;
+            proxy_pass $upstream_edr;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -432,7 +445,8 @@ http {
         location /api/ {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -444,7 +458,8 @@ http {
         location /loadtest {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://wms_api;
+            set $upstream_wms http://wms-api:8080;
+            proxy_pass $upstream_wms;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -455,7 +470,8 @@ http {
         location /admin {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard/index.html;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard/index.html;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -466,7 +482,8 @@ http {
         location ~ ^/(style\.css|app\.js|admin\.|downloads\.|benchmarks\.|.*compliance.*|.*coverage.*) {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -477,7 +494,8 @@ http {
         location / {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://dashboard;
+            set $upstream_dashboard http://web-dashboard:8000;
+            proxy_pass $upstream_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -490,7 +508,8 @@ http {
             auth_basic_user_file /etc/nginx/.htpasswd;
             
             # Don't strip /grafana/ - Grafana handles it with SERVE_FROM_SUB_PATH
-            proxy_pass http://grafana;
+            set $upstream_grafana http://grafana:3000;
+            proxy_pass $upstream_grafana;
             
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
@@ -517,7 +536,8 @@ http {
             
             # Rewrite to strip /minio prefix before sending to MinIO
             rewrite ^/minio/(.*) /$1 break;
-            proxy_pass http://minio_console;
+            set $upstream_minio http://minio:9001;
+            proxy_pass $upstream_minio;
             
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
@@ -546,7 +566,8 @@ http {
         location /downloader/ {
             auth_basic "Weather WMS Admin";
             auth_basic_user_file /etc/nginx/.htpasswd;
-            proxy_pass http://downloader/;
+            set $upstream_downloader http://downloader:8081;
+            proxy_pass $upstream_downloader/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $real_client_ip;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
