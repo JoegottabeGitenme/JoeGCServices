@@ -2025,7 +2025,7 @@ ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS injuries_direct INT;
 ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS deaths_direct INT;
 ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS begin_location TEXT;
 ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS tor_length_mi DOUBLE PRECISION;
-ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS tor_width_yd DOUBLE PRECISION
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS tor_width_yd DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_storm_events_geom_point ON storm_events USING GIST(geom_point);
 CREATE INDEX IF NOT EXISTS idx_storm_events_geom_track ON storm_events USING GIST(geom_track);
