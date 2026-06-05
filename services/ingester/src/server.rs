@@ -847,6 +847,26 @@ pub struct StormEventData {
     #[serde(default)]
     pub cz_type: Option<String>,
     #[serde(default)]
+    pub event_narrative: Option<String>,
+    #[serde(default)]
+    pub episode_narrative: Option<String>,
+    #[serde(default)]
+    pub report_source: Option<String>,
+    #[serde(default)]
+    pub damage_property: Option<String>,
+    #[serde(default)]
+    pub damage_crops: Option<String>,
+    #[serde(default)]
+    pub injuries_direct: Option<i32>,
+    #[serde(default)]
+    pub deaths_direct: Option<i32>,
+    #[serde(default)]
+    pub begin_location: Option<String>,
+    #[serde(default)]
+    pub tor_length_mi: Option<f64>,
+    #[serde(default)]
+    pub tor_width_yd: Option<f64>,
+    #[serde(default)]
     pub raw: serde_json::Value,
 }
 
@@ -914,6 +934,16 @@ async fn ingest_storm_events_handler(
             cz_name: ev.cz_name.clone(),
             cz_fips: ev.cz_fips.clone(),
             cz_type: ev.cz_type.clone(),
+            event_narrative: ev.event_narrative.clone(),
+            episode_narrative: ev.episode_narrative.clone(),
+            report_source: ev.report_source.clone(),
+            damage_property: ev.damage_property.clone(),
+            damage_crops: ev.damage_crops.clone(),
+            injuries_direct: ev.injuries_direct,
+            deaths_direct: ev.deaths_direct,
+            begin_location: ev.begin_location.clone(),
+            tor_length_mi: ev.tor_length_mi,
+            tor_width_yd: ev.tor_width_yd,
             raw: ev.raw.clone(),
         });
     }

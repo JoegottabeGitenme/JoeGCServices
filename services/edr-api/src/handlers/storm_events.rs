@@ -420,6 +420,17 @@ fn feature_to_geojson(f: StormEventFeature) -> Value {
             "state": f.state,
             "county_name": f.cz_name,
             "county_fips": f.county_fips,
+            // Report / narrative fields (null when not yet ingested)
+            "event_narrative": f.event_narrative,
+            "episode_narrative": f.episode_narrative,
+            "report_source": f.report_source,
+            "damage_property": f.damage_property,
+            "damage_crops": f.damage_crops,
+            "injuries_direct": f.injuries_direct,
+            "deaths_direct": f.deaths_direct,
+            "begin_location": f.begin_location,
+            "tor_length_mi": f.tor_length_mi,
+            "tor_width_yd": f.tor_width_yd,
         },
     })
 }

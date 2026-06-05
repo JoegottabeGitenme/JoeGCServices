@@ -57,6 +57,26 @@ pub struct StormEvent {
     pub cz_fips: Option<String>,
     /// `CZ_TYPE`: `'C'` (county) or `'Z'` (zone).
     pub cz_type: Option<String>,
+    /// Per-event narrative comment from the CSV (`EVENT_NARRATIVE`).
+    pub event_narrative: Option<String>,
+    /// Storm-system-level narrative comment (`EPISODE_NARRATIVE`).
+    pub episode_narrative: Option<String>,
+    /// Who reported the event (`SOURCE`, e.g. "Trained Spotter", "ASOS").
+    pub report_source: Option<String>,
+    /// Raw property damage string (`DAMAGE_PROPERTY`, e.g. "120.00K").
+    pub damage_property: Option<String>,
+    /// Raw crop damage string (`DAMAGE_CROPS`, e.g. "0.00K").
+    pub damage_crops: Option<String>,
+    /// Direct injuries (`INJURIES_DIRECT`).
+    pub injuries_direct: Option<i32>,
+    /// Direct deaths (`DEATHS_DIRECT`).
+    pub deaths_direct: Option<i32>,
+    /// Human-readable begin location, composed from RANGE + AZIMUTH + LOCATION.
+    pub begin_location: Option<String>,
+    /// Tornado path length in miles (`TOR_LENGTH`).
+    pub tor_length_mi: Option<f64>,
+    /// Tornado path width in yards (`TOR_WIDTH`).
+    pub tor_width_yd: Option<f64>,
     /// Additional CSV fields preserved as JSON.
     #[serde(default)]
     pub raw: serde_json::Value,
@@ -89,6 +109,27 @@ pub struct StormEventFeature {
     /// Geometry as a raw GeoJSON object string (Point for hail/wind,
     /// LineString for tornadoes with a track).
     pub geometry_geojson: String,
+    // -- Report / narrative fields --
+    /// Per-event narrative comment (mirrors the text shown on the NOAA/SPC site).
+    pub event_narrative: Option<String>,
+    /// Storm-system-level narrative.
+    pub episode_narrative: Option<String>,
+    /// Who reported the event (e.g. "Trained Spotter", "ASOS", "Law Enforcement").
+    pub report_source: Option<String>,
+    /// Raw property damage string (e.g. "120.00K", "2.50M").
+    pub damage_property: Option<String>,
+    /// Raw crop damage string.
+    pub damage_crops: Option<String>,
+    /// Direct injuries.
+    pub injuries_direct: Option<i32>,
+    /// Direct deaths.
+    pub deaths_direct: Option<i32>,
+    /// Human-readable begin location (e.g. "3.94 ESE BELKNAP").
+    pub begin_location: Option<String>,
+    /// Tornado path length in miles.
+    pub tor_length_mi: Option<f64>,
+    /// Tornado path width in yards.
+    pub tor_width_yd: Option<f64>,
 }
 
 /// The result of a per-county events query — individual event features plus
@@ -182,7 +223,12 @@ impl StormEventCatalog {
                 begin_lat, begin_lon, end_lat, end_lon,
                 magnitude, magnitude_unit, tor_f_scale,
                 state, cz_name, cz_fips, cz_type,
-                county_fips, source, raw, ingested_at
+                county_fips, source, raw,
+                event_narrative, episode_narrative, report_source,
+                damage_property, damage_crops,
+                injuries_direct, deaths_direct,
+                begin_location, tor_length_mi, tor_width_yd,
+                ingested_at
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 CASE WHEN $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
@@ -197,7 +243,12 @@ impl StormEventCatalog {
                    WHERE $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
                      AND ST_Contains(geom, ST_SetSRID(ST_MakePoint($7, $6), 4326))
                    LIMIT 1),
-                'storm_events', $17, NOW()
+                'storm_events', $17,
+                $19, $20, $21,
+                $22, $23,
+                $24, $25,
+                $26, $27, $28,
+                NOW()
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 episode_id = EXCLUDED.episode_id,
@@ -219,27 +270,47 @@ impl StormEventCatalog {
                 cz_type = EXCLUDED.cz_type,
                 county_fips = EXCLUDED.county_fips,
                 raw = EXCLUDED.raw,
+                event_narrative = EXCLUDED.event_narrative,
+                episode_narrative = EXCLUDED.episode_narrative,
+                report_source = EXCLUDED.report_source,
+                damage_property = EXCLUDED.damage_property,
+                damage_crops = EXCLUDED.damage_crops,
+                injuries_direct = EXCLUDED.injuries_direct,
+                deaths_direct = EXCLUDED.deaths_direct,
+                begin_location = EXCLUDED.begin_location,
+                tor_length_mi = EXCLUDED.tor_length_mi,
+                tor_width_yd = EXCLUDED.tor_width_yd,
                 ingested_at = NOW()
             "#,
         )
-        .bind(event.event_id)
-        .bind(event.episode_id)
-        .bind(&event.event_type)
-        .bind(event.begin_time)
-        .bind(event.end_time)
-        .bind(event.begin_lat)
-        .bind(event.begin_lon)
-        .bind(event.end_lat)
-        .bind(event.end_lon)
-        .bind(event.magnitude)
-        .bind(&event.magnitude_unit)
-        .bind(event.tor_f_scale)
-        .bind(&event.state)
-        .bind(&event.cz_name)
-        .bind(&event.cz_fips)
-        .bind(&event.cz_type)
-        .bind(&event.raw)
-        .bind(has_track) // $18: whether to build a tornado track LineString
+        .bind(event.event_id) // $1
+        .bind(event.episode_id) // $2
+        .bind(&event.event_type) // $3
+        .bind(event.begin_time) // $4
+        .bind(event.end_time) // $5
+        .bind(event.begin_lat) // $6
+        .bind(event.begin_lon) // $7
+        .bind(event.end_lat) // $8
+        .bind(event.end_lon) // $9
+        .bind(event.magnitude) // $10
+        .bind(&event.magnitude_unit) // $11
+        .bind(event.tor_f_scale) // $12
+        .bind(&event.state) // $13
+        .bind(&event.cz_name) // $14
+        .bind(&event.cz_fips) // $15
+        .bind(&event.cz_type) // $16
+        .bind(&event.raw) // $17
+        .bind(has_track) // $18
+        .bind(&event.event_narrative) // $19
+        .bind(&event.episode_narrative) // $20
+        .bind(&event.report_source) // $21
+        .bind(&event.damage_property) // $22
+        .bind(&event.damage_crops) // $23
+        .bind(event.injuries_direct) // $24
+        .bind(event.deaths_direct) // $25
+        .bind(&event.begin_location) // $26
+        .bind(event.tor_length_mi) // $27
+        .bind(event.tor_width_yd) // $28
         .execute(&self.pool)
         .await
         .map_err(|e| WmsError::DatabaseError(format!("Upsert storm event failed: {}", e)))?;
@@ -272,7 +343,11 @@ impl StormEventCatalog {
             r#"
             SELECT event_id, event_type, begin_time, end_time,
                    magnitude, magnitude_unit, tor_f_scale, state, cz_name, county_fips,
-                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson
+                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson,
+                   event_narrative, episode_narrative, report_source,
+                   damage_property, damage_crops,
+                   injuries_direct, deaths_direct,
+                   begin_location, tor_length_mi, tor_width_yd
             FROM storm_events
             WHERE event_type = $1
               AND geom_point IS NOT NULL
@@ -318,7 +393,11 @@ impl StormEventCatalog {
             r#"
             SELECT event_id, event_type, begin_time, end_time,
                    magnitude, magnitude_unit, tor_f_scale, state, cz_name, county_fips,
-                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson
+                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson,
+                   event_narrative, episode_narrative, report_source,
+                   damage_property, damage_crops,
+                   injuries_direct, deaths_direct,
+                   begin_location, tor_length_mi, tor_width_yd
             FROM storm_events
             WHERE event_type = $1
               AND COALESCE(geom_track, geom_point) IS NOT NULL
@@ -352,7 +431,11 @@ impl StormEventCatalog {
             r#"
             SELECT event_id, event_type, begin_time, end_time,
                    magnitude, magnitude_unit, tor_f_scale, state, cz_name, county_fips,
-                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson
+                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson,
+                   event_narrative, episode_narrative, report_source,
+                   damage_property, damage_crops,
+                   injuries_direct, deaths_direct,
+                   begin_location, tor_length_mi, tor_width_yd
             FROM storm_events
             WHERE event_id = $1
             "#,
@@ -438,6 +521,16 @@ impl StormEventCatalog {
             county_fips: Option<String>,
             geometry_geojson: Option<String>,
             max_ingested_at: Option<DateTime<Utc>>,
+            event_narrative: Option<String>,
+            episode_narrative: Option<String>,
+            report_source: Option<String>,
+            damage_property: Option<String>,
+            damage_crops: Option<String>,
+            injuries_direct: Option<i32>,
+            deaths_direct: Option<i32>,
+            begin_location: Option<String>,
+            tor_length_mi: Option<f64>,
+            tor_width_yd: Option<f64>,
         }
 
         let rows = sqlx::query_as::<_, EventWithMeta>(
@@ -445,7 +538,11 @@ impl StormEventCatalog {
             SELECT event_id, event_type, begin_time, end_time,
                    magnitude, magnitude_unit, tor_f_scale, state, cz_name, county_fips,
                    ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson,
-                   MAX(ingested_at) OVER () AS max_ingested_at
+                   MAX(ingested_at) OVER () AS max_ingested_at,
+                   event_narrative, episode_narrative, report_source,
+                   damage_property, damage_crops,
+                   injuries_direct, deaths_direct,
+                   begin_location, tor_length_mi, tor_width_yd
             FROM storm_events
             WHERE event_type = $1
               AND county_fips  = $2
@@ -477,6 +574,16 @@ impl StormEventCatalog {
                 cz_name: r.cz_name,
                 county_fips: r.county_fips,
                 geometry_geojson: r.geometry_geojson.unwrap_or_else(|| "null".to_string()),
+                event_narrative: r.event_narrative,
+                episode_narrative: r.episode_narrative,
+                report_source: r.report_source,
+                damage_property: r.damage_property,
+                damage_crops: r.damage_crops,
+                injuries_direct: r.injuries_direct,
+                deaths_direct: r.deaths_direct,
+                begin_location: r.begin_location,
+                tor_length_mi: r.tor_length_mi,
+                tor_width_yd: r.tor_width_yd,
             })
             .collect();
 
@@ -623,6 +730,16 @@ struct StormEventRow {
     cz_name: Option<String>,
     county_fips: Option<String>,
     geometry_geojson: Option<String>,
+    event_narrative: Option<String>,
+    episode_narrative: Option<String>,
+    report_source: Option<String>,
+    damage_property: Option<String>,
+    damage_crops: Option<String>,
+    injuries_direct: Option<i32>,
+    deaths_direct: Option<i32>,
+    begin_location: Option<String>,
+    tor_length_mi: Option<f64>,
+    tor_width_yd: Option<f64>,
 }
 
 impl From<StormEventRow> for StormEventFeature {
@@ -639,6 +756,16 @@ impl From<StormEventRow> for StormEventFeature {
             cz_name: r.cz_name,
             county_fips: r.county_fips,
             geometry_geojson: r.geometry_geojson.unwrap_or_else(|| "null".to_string()),
+            event_narrative: r.event_narrative,
+            episode_narrative: r.episode_narrative,
+            report_source: r.report_source,
+            damage_property: r.damage_property,
+            damage_crops: r.damage_crops,
+            injuries_direct: r.injuries_direct,
+            deaths_direct: r.deaths_direct,
+            begin_location: r.begin_location,
+            tor_length_mi: r.tor_length_mi,
+            tor_width_yd: r.tor_width_yd,
         }
     }
 }

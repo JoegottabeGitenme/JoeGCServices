@@ -340,6 +340,19 @@ fn parse_storm_events_csv(csv_text: &str) -> Result<Vec<IngestStormEvent>> {
     let i_mag = col("MAGNITUDE");
     let i_mag_type = col("MAGNITUDE_TYPE");
     let i_tor_scale = col("TOR_F_SCALE");
+    // Report / narrative fields
+    let i_event_narrative = col("EVENT_NARRATIVE");
+    let i_episode_narrative = col("EPISODE_NARRATIVE");
+    let i_source = col("SOURCE");
+    let i_damage_property = col("DAMAGE_PROPERTY");
+    let i_damage_crops = col("DAMAGE_CROPS");
+    let i_injuries_direct = col("INJURIES_DIRECT");
+    let i_deaths_direct = col("DEATHS_DIRECT");
+    let i_begin_range = col("BEGIN_RANGE");
+    let i_begin_azimuth = col("BEGIN_AZIMUTH");
+    let i_begin_location = col("BEGIN_LOCATION");
+    let i_tor_length = col("TOR_LENGTH");
+    let i_tor_width = col("TOR_WIDTH");
 
     let get = |rec: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
         idx.and_then(|i| rec.get(i))
@@ -394,6 +407,18 @@ fn parse_storm_events_csv(csv_text: &str) -> Result<Vec<IngestStormEvent>> {
             _ => (raw_mag, mag_type),
         };
 
+        // Compose human-readable begin location: "3.94 ESE BELKNAP"
+        let begin_location = {
+            let range = get(&rec, i_begin_range);
+            let azimuth = get(&rec, i_begin_azimuth);
+            let location = get(&rec, i_begin_location);
+            match (range, azimuth, location) {
+                (Some(r), Some(a), Some(l)) => Some(format!("{} {} {}", r, a, l)),
+                (None, None, Some(l)) => Some(l),
+                _ => None,
+            }
+        };
+
         out.push(IngestStormEvent {
             event_id,
             episode_id: get(&rec, i_episode_id).and_then(|s| s.parse::<i64>().ok()),
@@ -411,6 +436,16 @@ fn parse_storm_events_csv(csv_text: &str) -> Result<Vec<IngestStormEvent>> {
             cz_name: get(&rec, i_cz_name),
             cz_fips: get(&rec, i_cz_fips),
             cz_type: get(&rec, i_cz_type),
+            event_narrative: get(&rec, i_event_narrative),
+            episode_narrative: get(&rec, i_episode_narrative),
+            report_source: get(&rec, i_source),
+            damage_property: get(&rec, i_damage_property),
+            damage_crops: get(&rec, i_damage_crops),
+            injuries_direct: get(&rec, i_injuries_direct).and_then(|s| s.parse::<i32>().ok()),
+            deaths_direct: get(&rec, i_deaths_direct).and_then(|s| s.parse::<i32>().ok()),
+            begin_location,
+            tor_length_mi: get(&rec, i_tor_length).and_then(|s| s.parse::<f64>().ok()),
+            tor_width_yd: get(&rec, i_tor_width).and_then(|s| s.parse::<f64>().ok()),
             raw: serde_json::Value::Null,
         });
     }
@@ -479,6 +514,16 @@ pub struct IngestStormEvent {
     pub cz_name: Option<String>,
     pub cz_fips: Option<String>,
     pub cz_type: Option<String>,
+    pub event_narrative: Option<String>,
+    pub episode_narrative: Option<String>,
+    pub report_source: Option<String>,
+    pub damage_property: Option<String>,
+    pub damage_crops: Option<String>,
+    pub injuries_direct: Option<i32>,
+    pub deaths_direct: Option<i32>,
+    pub begin_location: Option<String>,
+    pub tor_length_mi: Option<f64>,
+    pub tor_width_yd: Option<f64>,
     pub raw: serde_json::Value,
 }
 

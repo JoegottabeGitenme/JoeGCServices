@@ -1997,10 +1997,35 @@ CREATE TABLE IF NOT EXISTS storm_events (
     -- County stamped via spatial join to tiger_counties (source of truth)
     county_fips CHAR(5),
 
+    -- Narrative / report fields from the NOAA Storm Events CSV
+    event_narrative TEXT,             -- EVENT_NARRATIVE: per-event comment text (shown on NOAA/SPC site)
+    episode_narrative TEXT,           -- EPISODE_NARRATIVE: storm-system-level narrative
+    report_source TEXT,               -- SOURCE: who reported the event (e.g. "Trained Spotter", "ASOS")
+    damage_property TEXT,             -- DAMAGE_PROPERTY: raw string e.g. "120.00K"
+    damage_crops TEXT,                -- DAMAGE_CROPS: raw string e.g. "0.00K"
+    injuries_direct INT,              -- INJURIES_DIRECT
+    deaths_direct INT,                -- DEATHS_DIRECT
+    begin_location TEXT,              -- human-readable: composed from BEGIN_RANGE + BEGIN_AZIMUTH + BEGIN_LOCATION
+    tor_length_mi DOUBLE PRECISION,   -- TOR_LENGTH: tornado path length in miles
+    tor_width_yd DOUBLE PRECISION,    -- TOR_WIDTH: tornado path width in yards
+
     source VARCHAR(30) NOT NULL DEFAULT 'storm_events',
     raw JSONB DEFAULT '{}',
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Additive migration: add narrative/report columns to existing tables.
+-- These are safe no-ops on a fresh install and idempotent on upgrade.
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS event_narrative TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS episode_narrative TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS report_source TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS damage_property TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS damage_crops TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS injuries_direct INT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS deaths_direct INT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS begin_location TEXT;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS tor_length_mi DOUBLE PRECISION;
+ALTER TABLE storm_events ADD COLUMN IF NOT EXISTS tor_width_yd DOUBLE PRECISION
 
 CREATE INDEX IF NOT EXISTS idx_storm_events_geom_point ON storm_events USING GIST(geom_point);
 CREATE INDEX IF NOT EXISTS idx_storm_events_geom_track ON storm_events USING GIST(geom_track);
