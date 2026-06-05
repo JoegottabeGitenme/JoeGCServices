@@ -1,0 +1,57 @@
+# NOAA Storm Events Database - severe convective reports
+#
+# Bulk historical Hail / Thunderstorm Wind / Tornado reports from NCEI.
+# One gzip-compressed CSV per year; the downloader resolves the exact filename
+# from the directory listing (the trailing creation stamp changes on revision).
+#
+# Download cadence: daily (re-pulls current + previous year for revisions).
+# Exposure cadence: county aggregate (materialized view) refreshes monthly.
+#
+# Data source: https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/
+# Exposed via EDR as the hail / wind / tornado feature collections.
+
+model:
+  id: storm-events
+  name: "NOAA Storm Events (Hail/Wind/Tornado)"
+  description: "Historical severe convective reports from the NOAA Storm Events Database"
+  enabled: true
+
+dimensions:
+  type: observation
+  run: false
+  forecast: false
+  time: true
+  elevation: false
+
+source:
+  type: storm_events_csv
+  base_url: "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/"
+  backfill_start_year: 1995
+  format: csv_gz
+
+grid:
+  projection: geographic
+  resolution: "point"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 86400  # daily
+  lookback_minutes: 0
+
+retention:
+  hours: 0  # historical archive; never expire
+
+parameters:
+  - name: magnitude
+    description: "Hail size (in) / wind speed (kt)"
+    units: "mixed"
+    display_units: "mixed"
+  - name: tor_f_scale
+    description: "Tornado EF/F scale (0-5)"
+    units: "scale"
+    display_units: "EF"

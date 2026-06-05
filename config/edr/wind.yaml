@@ -1,0 +1,43 @@
+# Thunderstorm Wind Storm Events EDR Configuration
+#
+# Severe thunderstorm wind reports from the NOAA Storm Events Database
+# (1995-present), stored in PostGIS and served as a GeoJSON feature collection.
+#
+# This is feature-collection data (point geometry, begin location), not gridded.
+#
+# Supported EDR queries:
+# - /collections/wind/radius    - Wind reports within radius of a point
+# - /collections/wind/area      - Wind reports within a bounding box
+# - /collections/wind/items     - GeoJSON items (bbox + datetime + paging)
+# - /collections/wind/locations - List of reports as locations
+# - /collections/wind/counties  - County-aggregate counts + boundaries (monthly)
+
+model: wind
+data_type: featurecollection
+observation_source: storm_events
+
+collections:
+  - id: wind
+    title: "Thunderstorm Wind Reports (NOAA Storm Events)"
+    description: "Historical severe thunderstorm wind reports from the NOAA Storm Events Database. Each feature is a point at the report's begin location with wind speed in knots."
+    parameters:
+      - name: magnitude       # wind speed, knots
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 86400
+
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 1
+  max_vertical_levels: 1
+  max_response_size_mb: 50
+  max_radius_km: 200
+  max_area_sq_degrees: 100

@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod object_store;
 pub mod observations;
 pub mod stations_bootstrap;
+pub mod storm_events;
 pub mod tile_memory_cache;
 
 pub use self::object_store::{
@@ -25,4 +26,5 @@ pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,
 };
 pub use stations_bootstrap::bootstrap_locations;
+pub use storm_events::{CountyAggregate, StormEvent, StormEventCatalog, StormEventFeature};
 pub use tile_memory_cache::{TileMemoryCache, TileMemoryCacheStats};

@@ -68,6 +68,27 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for storm events (requires PostGIS).
+    ///
+    /// Creates the `tiger_counties` and `storm_events` tables plus the
+    /// `mv_county_event_counts` materialized view. Call this after
+    /// `migrate_observations()` (which enables PostGIS).
+    pub async fn migrate_storm_events(&self) -> WmsResult<()> {
+        for statement in STORM_EVENTS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Storm events migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -1917,6 +1938,90 @@ CREATE TABLE IF NOT EXISTS taf_periods (
 
 CREATE INDEX IF NOT EXISTS idx_taf_periods_taf ON taf_periods(taf_id);
 CREATE INDEX IF NOT EXISTS idx_taf_periods_time ON taf_periods(period_from, period_to)
+"#;
+
+/// Schema for SPC / NOAA Storm Events severe-convective reports and the
+/// TIGER county polygons used to stamp `county_fips` onto each event.
+///
+/// Requires the PostGIS extension (enabled by `OBSERVATIONS_SCHEMA_SQL`).
+/// Geometry is stored in two typed columns: `geom_point` (begin location, all
+/// event types) and `geom_track` (LineString, tornadoes only).
+pub const STORM_EVENTS_SCHEMA_SQL: &str = r#"
+-- PostGIS is enabled by the observations schema migration.
+-- Enabling it here too so this script works standalone.
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- TIGER/Line county polygons (Census). Loaded once via scripts/load_tiger_counties.sh.
+-- Source of truth for stamping county_fips and for serving county boundary geometry.
+CREATE TABLE IF NOT EXISTS tiger_counties (
+    geoid CHAR(5) PRIMARY KEY,          -- 5-digit county FIPS (state + county)
+    name VARCHAR(100) NOT NULL,
+    state_fips CHAR(2),
+    state_abbr CHAR(2),
+    geom GEOMETRY(MultiPolygon, 4326) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tiger_counties_geom ON tiger_counties USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_tiger_counties_state ON tiger_counties(state_abbr);
+
+-- Storm Events (Hail / Thunderstorm Wind / Tornado).
+-- One row per EVENT_ID. Geometry split into point (begin) and track (tornado line).
+CREATE TABLE IF NOT EXISTS storm_events (
+    event_id BIGINT PRIMARY KEY,        -- NOAA Storm Events EVENT_ID (dedup key)
+    episode_id BIGINT,
+    event_type VARCHAR(20) NOT NULL,    -- 'hail' | 'wind' | 'tornado'
+    begin_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ,
+
+    -- Geometry (separate typed columns)
+    geom_point GEOMETRY(Point, 4326),       -- begin location (all types)
+    geom_track GEOMETRY(LineString, 4326),  -- tornado track (nullable)
+
+    -- Raw coordinates (for reference / re-derivation)
+    begin_lat DOUBLE PRECISION,
+    begin_lon DOUBLE PRECISION,
+    end_lat DOUBLE PRECISION,
+    end_lon DOUBLE PRECISION,
+
+    -- Magnitude (canonical units): hail inches, wind knots, tornado EF in tor_f_scale
+    magnitude DOUBLE PRECISION,
+    magnitude_unit VARCHAR(20),
+    tor_f_scale SMALLINT,               -- 0..5, tornadoes only
+
+    -- Administrative / reference fields from the CSV
+    state VARCHAR(50),
+    cz_name VARCHAR(100),
+    cz_fips VARCHAR(10),
+    cz_type CHAR(1),                    -- C=county, Z=zone (raw, not authoritative)
+
+    -- County stamped via spatial join to tiger_counties (source of truth)
+    county_fips CHAR(5),
+
+    source VARCHAR(30) NOT NULL DEFAULT 'storm_events',
+    raw JSONB DEFAULT '{}',
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_storm_events_geom_point ON storm_events USING GIST(geom_point);
+CREATE INDEX IF NOT EXISTS idx_storm_events_geom_track ON storm_events USING GIST(geom_track);
+CREATE INDEX IF NOT EXISTS idx_storm_events_type_time ON storm_events(event_type, begin_time);
+CREATE INDEX IF NOT EXISTS idx_storm_events_county ON storm_events(county_fips);
+
+-- Monthly-refreshed county aggregate: counts by (county, type, year).
+-- Refreshed via REFRESH MATERIALIZED VIEW CONCURRENTLY (needs a unique index).
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_county_event_counts AS
+SELECT
+    county_fips,
+    state,
+    event_type,
+    EXTRACT(YEAR FROM begin_time)::INT AS year,
+    COUNT(*)::BIGINT AS count
+FROM storm_events
+WHERE county_fips IS NOT NULL
+GROUP BY county_fips, state, event_type, EXTRACT(YEAR FROM begin_time);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_county_event_counts_key
+    ON mv_county_event_counts(county_fips, event_type, year)
 "#;
 
 #[cfg(test)]

@@ -19,6 +19,11 @@ pub enum DataType {
     PointObservation,
     /// Point forecast data (e.g., TAF) - station-based forecasts from PostgreSQL.
     PointForecast,
+    /// Feature collection (e.g., storm events) - mixed point/linestring geometry
+    /// from PostGIS, served as GeoJSON. Supports radius/area/locations/items
+    /// plus a custom county-aggregate endpoint.
+    #[serde(rename = "featurecollection")]
+    FeatureCollection,
 }
 
 impl DataType {
@@ -40,6 +45,11 @@ impl DataType {
     /// Check if this is any kind of point data (observation or forecast).
     pub fn is_point_data(&self) -> bool {
         matches!(self, DataType::PointObservation | DataType::PointForecast)
+    }
+
+    /// Check if this is a feature collection (storm events, etc.).
+    pub fn is_feature_data(&self) -> bool {
+        matches!(self, DataType::FeatureCollection)
     }
 }
 
@@ -967,6 +977,38 @@ limits:
         assert_eq!(config.limits.max_time_steps, 36);
         assert_eq!(config.limits.max_vertical_levels, 1);
         assert_eq!(config.limits.max_area_sq_degrees, Some(50.0));
+    }
+
+    #[test]
+    fn test_feature_collection_config_parsing() {
+        // Storm-events feature collection config (hail/wind/tornado).
+        let yaml = r#"
+model: hail
+data_type: featurecollection
+observation_source: storm_events
+collections:
+  - id: hail
+    title: "Hail Reports"
+    description: "Historical severe hail reports"
+    parameters:
+      - name: magnitude
+        levels: [surface]
+    run_mode: latest
+settings:
+  output_formats:
+    - application/geo+json
+limits:
+  max_radius_km: 200
+"#;
+
+        let config: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model, "hail");
+        assert_eq!(config.data_type, DataType::FeatureCollection);
+        assert!(config.data_type.is_feature_data());
+        assert!(!config.data_type.is_point_data());
+        assert_eq!(config.observation_source.as_deref(), Some("storm_events"));
+        assert_eq!(config.collections.len(), 1);
+        assert_eq!(config.collections[0].id, "hail");
     }
 
     #[test]

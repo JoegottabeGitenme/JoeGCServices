@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use grid_processor::{GridDataService, MinioConfig};
 use storage::observations::ObservationCatalog;
+use storage::storm_events::StormEventCatalog;
 use storage::Catalog;
 
 use crate::availability::AvailabilityCache;
@@ -23,6 +24,10 @@ pub struct AppState {
 
     /// Observation catalog for point observation data (METAR, etc.).
     pub observation_catalog: Arc<ObservationCatalog>,
+
+    /// Storm event catalog for severe-convective feature collections
+    /// (hail/wind/tornado).
+    pub storm_event_catalog: Arc<StormEventCatalog>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -91,6 +96,9 @@ impl AppState {
         // Create observation catalog for point data (METAR, TAF, etc.)
         let observation_catalog = Arc::new(ObservationCatalog::new(catalog.pool_clone()));
 
+        // Create storm event catalog for feature collections (hail/wind/tornado)
+        let storm_event_catalog = Arc::new(StormEventCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -124,6 +132,7 @@ impl AppState {
             catalog,
             grid_data_service,
             observation_catalog,
+            storm_event_catalog,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,

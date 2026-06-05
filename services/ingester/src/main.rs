@@ -26,6 +26,7 @@ use tracing_subscriber::FmtSubscriber;
 use ingestion::{IngestOptions, Ingester};
 use std::env;
 use storage::observations::ObservationCatalog;
+use storage::storm_events::StormEventCatalog;
 use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
 
 use server::{start_server, IngestionTracker, ServerState};
@@ -102,8 +103,15 @@ async fn main() -> Result<()> {
     catalog.migrate_observations().await?;
     info!("Observation schema migrated");
 
+    // Migrate storm events schema (tiger_counties, storm_events, aggregate view)
+    catalog.migrate_storm_events().await?;
+    info!("Storm events schema migrated");
+
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
+
+    // Create storm event catalog sharing the same connection pool
+    let storm_event_catalog = StormEventCatalog::new(catalog.pool_clone());
 
     // Bootstrap locations if needed (loads initial airport data)
     // Threshold of 100 means: if we have fewer than 100 locations, populate from embedded data
@@ -130,6 +138,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(ServerState {
         ingester,
         observation_catalog: Some(observation_catalog),
+        storm_event_catalog: Some(storm_event_catalog),
         tracker: IngestionTracker::new(),
     });
 

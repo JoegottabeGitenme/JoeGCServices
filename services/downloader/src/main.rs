@@ -21,6 +21,7 @@ mod observation_runner;
 mod scheduler;
 mod server;
 mod state;
+mod storm_events_runner;
 
 use std::path::PathBuf;
 use std::sync::Arc;

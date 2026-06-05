@@ -22,6 +22,7 @@ use crate::model_runner::{EarthdataAuth, ModelRunner};
 use crate::ndbc_runner::{self, NdbcConfig, NdbcRunner};
 use crate::observation_runner::{self, ObservationConfig, ObservationRunner, TafRunner};
 use crate::state::DownloadState;
+use crate::storm_events_runner::{self, StormEventsConfig, StormEventsRunner};
 
 /// Model schedule info for API display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +94,8 @@ pub struct Scheduler {
     ndbc_configs: Vec<NdbcConfig>,
     /// DART tsunami buoy configs
     dart_configs: Vec<DartConfig>,
+    /// Storm Events (hail/wind/tornado) configs
+    storm_events_configs: Vec<StormEventsConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
     /// Optional Earthdata auth for NASA GES DISC sources (NLDAS)
@@ -139,6 +142,9 @@ impl Scheduler {
 
         // Load DART tsunami buoy configs
         let dart_configs = Self::load_dart_configs(&config_dir, &ingester_url);
+
+        // Load Storm Events (hail/wind/tornado) configs
+        let storm_events_configs = Self::load_storm_events_configs(&config_dir, &ingester_url);
 
         // Initialize AWS SDK for S3 listing
         // For NOAA public buckets, we need to explicitly allow anonymous access
@@ -227,6 +233,14 @@ impl Scheduler {
             );
         }
 
+        if !storm_events_configs.is_empty() {
+            info!(
+                count = storm_events_configs.len(),
+                sources = ?storm_events_configs.iter().map(|c| &c.id).collect::<Vec<_>>(),
+                "Loaded Storm Events configurations"
+            );
+        }
+
         Self {
             download_manager,
             state,
@@ -240,6 +254,7 @@ impl Scheduler {
             taf_configs,
             ndbc_configs,
             dart_configs,
+            storm_events_configs,
             s3_client,
             earthdata_auth,
         }
@@ -430,6 +445,46 @@ impl Scheduler {
                                 path = %path.display(),
                                 error = %e,
                                 "Failed to load DART config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Load Storm Events (hail/wind/tornado) configurations from model config files.
+    fn load_storm_events_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<StormEventsConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match storm_events_runner::load_storm_events_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(source = %config.id, "Loaded Storm Events config");
+                            configs.push(config);
+                        }
+                        Ok(None) => {
+                            // Not a storm events source, skip
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load Storm Events config"
                             );
                         }
                     }
@@ -663,6 +718,30 @@ impl Scheduler {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = runner.run_forever(shutdown_rx).await {
                     error!(source = %source_id, error = %e, "TAF runner failed");
+                }
+            }));
+        }
+
+        // Spawn Storm Events runners (hail/wind/tornado)
+        for storm_config in &self.storm_events_configs {
+            let runner = match StormEventsRunner::new(storm_config.clone(), self.state.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %storm_config.id,
+                        error = %e,
+                        "Failed to create Storm Events runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = storm_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "Storm Events runner failed");
                 }
             }));
         }

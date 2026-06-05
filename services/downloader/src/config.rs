@@ -104,6 +104,9 @@ pub struct SourceConfig {
     /// Individual station files are at `{data_base_url}/{STATION_ID}.dart`
     #[serde(default)]
     pub data_base_url: Option<String>,
+    /// First year to backfill (for storm_events_csv sources).
+    #[serde(default)]
+    pub backfill_start_year: Option<i32>,
 }
 
 fn default_index_suffix() -> String {

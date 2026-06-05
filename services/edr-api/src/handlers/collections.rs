@@ -333,6 +333,64 @@ async fn build_point_forecast_collection(
     collection
 }
 
+/// Build a Collection for storm-event feature data (hail/wind/tornado).
+async fn build_storm_event_collection(
+    state: &AppState,
+    _model_config: &ModelEdrConfig,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+    event_count: i64,
+) -> Collection {
+    let description = format!(
+        "{} ({} events available)",
+        collection_def.description, event_count
+    );
+
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&description);
+
+    collection.build_links(&state.base_url);
+
+    // Feature collections support radius, area, and locations queries.
+    // (items + counties are served via dedicated routes; not standard EDR
+    // dataQueries so they are documented in the collection description.)
+    let queries = DataQueries::default()
+        .with_locations(&state.base_url, &collection_def.id)
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+
+    collection = collection.with_data_queries(queries);
+
+    // Temporal extent from the events themselves.
+    let temporal_extent = state
+        .storm_event_catalog
+        .get_event_time_range(&collection_def.id)
+        .await
+        .ok()
+        .flatten();
+
+    // CONUS bounding box.
+    let spatial_bbox = [-170.0, 15.0, -60.0, 72.0];
+    let mut extent = Extent::with_spatial(spatial_bbox, None);
+
+    if let Some((start, end)) = temporal_extent {
+        let temporal = TemporalExtent::new(Some(start.to_rfc3339()), Some(end.to_rfc3339()));
+        extent = extent.with_temporal(temporal);
+    }
+
+    collection = collection.with_extent(extent);
+
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        let param = Parameter::new(param_name, param_name);
+        params.insert(param_name.clone(), param);
+    }
+    collection = collection.with_parameters(params);
+
+    collection
+}
+
 /// GET /edr/collections - List all collections
 ///
 /// Only returns collections that have data available in the catalog.
@@ -355,6 +413,39 @@ pub async fn list_collections_handler(
         let Some((model_config, coll_def)) = config.find_collection(&collection_def.id) else {
             continue;
         };
+
+        // Feature collections (storm events: hail/wind/tornado)
+        if model_config.data_type.is_feature_data() {
+            let event_type = &collection_def.id;
+            let count = state
+                .storm_event_catalog
+                .count_events(event_type)
+                .await
+                .unwrap_or(0);
+
+            if count == 0 {
+                tracing::debug!(
+                    "Skipping feature collection {} - no events in database",
+                    collection_def.id
+                );
+                continue;
+            }
+
+            let available_params: Vec<String> =
+                coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            let collection = build_storm_event_collection(
+                &state,
+                model_config,
+                coll_def,
+                &available_params,
+                count,
+            )
+            .await;
+
+            collections.push(collection);
+            continue;
+        }
 
         // Point observation collections have different availability checks
         if model_config.data_type.is_point_observation() {
@@ -583,6 +674,49 @@ pub async fn get_collection_handler(
             .body(json.into())
             .unwrap();
     };
+
+    // Handle feature collections (storm events) differently
+    if model_config.data_type.is_feature_data() {
+        let count = state
+            .storm_event_catalog
+            .count_events(&collection_id)
+            .await
+            .unwrap_or(0);
+
+        if count == 0 {
+            let exc =
+                ExceptionResponse::not_found(format!("Collection {} has no events", collection_id));
+            let json = serde_json::to_string(&exc).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap();
+        }
+
+        let available_params: Vec<String> = collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        let collection = build_storm_event_collection(
+            &state,
+            model_config,
+            collection_def,
+            &available_params,
+            count,
+        )
+        .await;
+
+        let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(json.into())
+            .unwrap();
+    }
 
     // Handle point observation collections differently
     if model_config.data_type.is_point_observation() {

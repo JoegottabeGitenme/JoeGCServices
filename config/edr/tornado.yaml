@@ -1,0 +1,47 @@
+# Tornado Storm Events EDR Configuration
+#
+# Tornado reports from the NOAA Storm Events Database (1995-present), stored in
+# PostGIS and served as a GeoJSON feature collection.
+#
+# This is feature-collection data with LINESTRING geometry: each tornado track
+# is derived from its begin/end coordinates (ST_MakeLine). Tornadoes without
+# valid end coordinates fall back to a Point at the begin location.
+#
+# Supported EDR queries:
+# - /collections/tornado/radius    - Tornado tracks near a point
+# - /collections/tornado/area      - Tornado tracks intersecting a bounding box
+# - /collections/tornado/items     - GeoJSON items (LineStrings; bbox + datetime + paging)
+# - /collections/tornado/locations - List of tornado reports
+# - /collections/tornado/counties  - County-aggregate counts + boundaries (monthly)
+
+model: tornado
+data_type: featurecollection
+observation_source: storm_events
+
+collections:
+  - id: tornado
+    title: "Tornado Tracks (NOAA Storm Events)"
+    description: "Historical tornado reports from the NOAA Storm Events Database. Each feature is a LineString track (begin to end) with EF/F-scale rating; reports without an end point are returned as a Point."
+    parameters:
+      - name: tor_f_scale     # EF/F scale 0-5
+        levels: [surface]
+      - name: magnitude       # alias for f-scale where applicable
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 86400
+
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 1
+  max_vertical_levels: 1
+  max_response_size_mb: 50
+  max_radius_km: 200
+  max_area_sq_degrees: 100

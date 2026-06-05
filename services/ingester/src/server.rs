@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 use ingestion::{IngestOptions, Ingester, IngestionResult};
 use storage::observations::{Location, Observation, ObservationCatalog, TafForecast, TafPeriod};
+use storage::storm_events::{StormEvent, StormEventCatalog};
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -32,6 +33,8 @@ pub struct ServerState {
     pub ingester: Ingester,
     /// Observation catalog for point data (METAR, etc.)
     pub observation_catalog: Option<ObservationCatalog>,
+    /// Storm event catalog for severe-convective reports (hail/wind/tornado)
+    pub storm_event_catalog: Option<StormEventCatalog>,
     /// Tracking for active/completed ingestions
     pub tracker: IngestionTracker,
 }
@@ -792,11 +795,208 @@ async fn metrics_handler() -> impl IntoResponse {
 }
 
 /// Build the HTTP router.
+// =============================================================================
+// Storm events ingest (SPC / NOAA Storm Events: hail / wind / tornado)
+// =============================================================================
+
+/// Request body for /ingest/storm-events.
+#[derive(Debug, Deserialize)]
+pub struct StormEventIngestRequest {
+    /// The storm event records to upsert.
+    pub events: Vec<StormEventData>,
+}
+
+/// A single storm event in an ingest request.
+///
+/// Mirrors `storage::storm_events::StormEvent` but with RFC3339 string times,
+/// matching the JSON-over-HTTP convention used by the observation endpoints.
+#[derive(Debug, Deserialize)]
+pub struct StormEventData {
+    /// NOAA `EVENT_ID`.
+    pub event_id: i64,
+    /// `EPISODE_ID`.
+    #[serde(default)]
+    pub episode_id: Option<i64>,
+    /// Normalized type: `"hail"`, `"wind"`, or `"tornado"`.
+    pub event_type: String,
+    /// Begin time (RFC3339).
+    pub begin_time: String,
+    /// End time (RFC3339).
+    #[serde(default)]
+    pub end_time: Option<String>,
+    #[serde(default)]
+    pub begin_lat: Option<f64>,
+    #[serde(default)]
+    pub begin_lon: Option<f64>,
+    #[serde(default)]
+    pub end_lat: Option<f64>,
+    #[serde(default)]
+    pub end_lon: Option<f64>,
+    #[serde(default)]
+    pub magnitude: Option<f64>,
+    #[serde(default)]
+    pub magnitude_unit: Option<String>,
+    #[serde(default)]
+    pub tor_f_scale: Option<i16>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub cz_name: Option<String>,
+    #[serde(default)]
+    pub cz_fips: Option<String>,
+    #[serde(default)]
+    pub cz_type: Option<String>,
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+/// Response for /ingest/storm-events.
+#[derive(Debug, Serialize)]
+pub struct StormEventIngestResponse {
+    pub success: bool,
+    pub message: String,
+    pub events_ingested: usize,
+}
+
+/// POST /ingest/storm-events - Upsert storm event reports.
+async fn ingest_storm_events_handler(
+    Extension(state): Extension<Arc<ServerState>>,
+    Json(request): Json<StormEventIngestRequest>,
+) -> impl IntoResponse {
+    let catalog = match &state.storm_event_catalog {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(StormEventIngestResponse {
+                    success: false,
+                    message: "Storm event catalog not configured".to_string(),
+                    events_ingested: 0,
+                }),
+            );
+        }
+    };
+
+    info!(
+        count = request.events.len(),
+        "Received storm event ingest request"
+    );
+
+    let mut events = Vec::with_capacity(request.events.len());
+    for ev in &request.events {
+        let begin_time = match DateTime::parse_from_rfc3339(&ev.begin_time) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(e) => {
+                warn!(event_id = ev.event_id, error = %e, "Bad begin_time, skipping");
+                continue;
+            }
+        };
+        let end_time = ev.end_time.as_ref().and_then(|t| {
+            DateTime::parse_from_rfc3339(t)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+
+        events.push(StormEvent {
+            event_id: ev.event_id,
+            episode_id: ev.episode_id,
+            event_type: ev.event_type.clone(),
+            begin_time,
+            end_time,
+            begin_lat: ev.begin_lat,
+            begin_lon: ev.begin_lon,
+            end_lat: ev.end_lat,
+            end_lon: ev.end_lon,
+            magnitude: ev.magnitude,
+            magnitude_unit: ev.magnitude_unit.clone(),
+            tor_f_scale: ev.tor_f_scale,
+            state: ev.state.clone(),
+            cz_name: ev.cz_name.clone(),
+            cz_fips: ev.cz_fips.clone(),
+            cz_type: ev.cz_type.clone(),
+            raw: ev.raw.clone(),
+        });
+    }
+
+    match catalog.upsert_events(&events).await {
+        Ok(n) => (
+            StatusCode::OK,
+            Json(StormEventIngestResponse {
+                success: true,
+                message: format!("Ingested {} storm events", n),
+                events_ingested: n,
+            }),
+        ),
+        Err(e) => {
+            error!(error = %e, "Storm event ingest failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StormEventIngestResponse {
+                    success: false,
+                    message: format!("Ingest failed: {}", e),
+                    events_ingested: 0,
+                }),
+            )
+        }
+    }
+}
+
+/// Response for /ingest/storm-events/refresh-counties.
+#[derive(Debug, Serialize)]
+pub struct RefreshCountiesResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /ingest/storm-events/refresh-counties - Refresh the county aggregate
+/// materialized view (monthly exposure cadence; triggered by the downloader).
+async fn refresh_counties_handler(
+    Extension(state): Extension<Arc<ServerState>>,
+) -> impl IntoResponse {
+    let catalog = match &state.storm_event_catalog {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(RefreshCountiesResponse {
+                    success: false,
+                    message: "Storm event catalog not configured".to_string(),
+                }),
+            );
+        }
+    };
+
+    match catalog.refresh_county_counts().await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(RefreshCountiesResponse {
+                success: true,
+                message: "County aggregate refreshed".to_string(),
+            }),
+        ),
+        Err(e) => {
+            error!(error = %e, "County aggregate refresh failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(RefreshCountiesResponse {
+                    success: false,
+                    message: format!("Refresh failed: {}", e),
+                }),
+            )
+        }
+    }
+}
+
 pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/ingest", post(ingest_handler))
         .route("/ingest/observations", post(ingest_observations_handler))
         .route("/ingest/tafs", post(ingest_tafs_handler))
+        .route("/ingest/storm-events", post(ingest_storm_events_handler))
+        .route(
+            "/ingest/storm-events/refresh-counties",
+            post(refresh_counties_handler),
+        )
         .route("/status", get(status_handler))
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))

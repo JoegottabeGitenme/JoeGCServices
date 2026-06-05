@@ -138,6 +138,19 @@ impl DownloadState {
         .execute(&pool)
         .await?;
 
+        // Generic key/value markers (used by runners to track one-off progress,
+        // e.g. storm-events backfill completion and monthly aggregate refreshes).
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS markers (
+                key TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         info!(path = %path.display(), "Opened download state database");
 
         Ok(Self { pool })
@@ -189,7 +202,38 @@ impl DownloadState {
         .execute(&pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE markers (
+                key TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
+    }
+
+    /// Check whether a generic marker key is present.
+    pub async fn has_marker(&self, key: &str) -> Result<bool> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM markers WHERE key = ?")
+            .bind(key)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count.0 > 0)
+    }
+
+    /// Set a generic marker key (idempotent).
+    pub async fn set_marker(&self, key: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("INSERT OR IGNORE INTO markers (key, created_at) VALUES (?, ?)")
+            .bind(key)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// Get or create a download progress record.

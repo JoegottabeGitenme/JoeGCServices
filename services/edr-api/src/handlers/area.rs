@@ -206,9 +206,25 @@ pub async fn area_handler(
     headers: HeaderMap,
 ) -> Response {
     // Check if this is a point data collection (METAR observations or TAF forecasts)
+    // or a feature collection (storm events: hail/wind/tornado).
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_feature_data() {
+                let storm_params = crate::handlers::storm_events::StormAreaParams {
+                    coords: params.coords.clone(),
+                    datetime: params.datetime.clone(),
+                    limit: None,
+                    f: params.f.clone(),
+                };
+                drop(config);
+                return crate::handlers::storm_events::storm_area_handler(
+                    Extension(state.clone()),
+                    Path(collection_id),
+                    Query(storm_params),
+                )
+                .await;
+            }
             if model_config.data_type.is_point_data() {
                 // Convert the coords to format observation handler expects
                 let obs_params = ObsAreaQueryParams {

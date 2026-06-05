@@ -17,4 +17,5 @@ pub mod locations;
 pub mod observations;
 pub mod position;
 pub mod radius;
+pub mod storm_events;
 pub mod trajectory;

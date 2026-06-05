@@ -1,0 +1,44 @@
+# Hail Storm Events EDR Configuration
+#
+# Severe hail reports from the NOAA Storm Events Database (1995-present),
+# stored in PostGIS and served as a GeoJSON feature collection.
+#
+# This is feature-collection data (mixed point/linestring geometry), not
+# gridded. Hail events are Points (begin location).
+#
+# Supported EDR queries:
+# - /collections/hail/radius    - Hail reports within radius of a point ("this house")
+# - /collections/hail/area      - Hail reports within a bounding box
+# - /collections/hail/items     - GeoJSON items (bbox + datetime + paging)
+# - /collections/hail/locations - List of reports as locations
+# - /collections/hail/counties  - County-aggregate counts + boundaries (monthly)
+
+model: hail
+data_type: featurecollection
+observation_source: storm_events
+
+collections:
+  - id: hail
+    title: "Hail Reports (NOAA Storm Events)"
+    description: "Historical severe hail reports from the NOAA Storm Events Database. Each feature is a point at the report's begin location with hail size in inches."
+    parameters:
+      - name: magnitude       # hail size, inches
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 86400  # historical data; cache aggressively
+
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 1
+  max_vertical_levels: 1
+  max_response_size_mb: 50
+  max_radius_km: 200        # "this house" queries
+  max_area_sq_degrees: 100
