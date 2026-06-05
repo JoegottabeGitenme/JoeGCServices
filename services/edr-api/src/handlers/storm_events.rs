@@ -8,13 +8,11 @@
 //!
 //! Endpoints (dispatched from the generic radius/area handlers, plus dedicated
 //! routes for items/counties):
-//! - radius:   reports within a radius of a point ("this house")
-//! - area:     reports within a bounding box
-//! - items:    GeoJSON items (bbox + datetime + paging) for the click-a-point UX
-//! - counties: county-aggregate counts + (simplified) boundary geometry
-//!
-//! The county aggregate is refreshed monthly (materialized view), so its counts
-//! are stable within a calendar month even though point/track queries are live.
+//! - radius:         reports within a radius of a point ("this house")
+//! - area:           reports within a bounding box
+//! - items:          GeoJSON items (bbox + datetime + paging) for the click-a-point UX
+//! - counties:       county-aggregate counts + boundary geometry (monthly MV)
+//! - counties/{fips} per-county individual events (cache-optimised, ETag'd)
 
 use axum::{
     extract::{Extension, Path, Query},
@@ -27,7 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use storage::storm_events::{CountyAggregate, StormEventFeature};
+use storage::storm_events::{CountyAggregate, CountyEventsResult, StormEventFeature};
 
 use crate::state::AppState;
 
@@ -90,6 +88,16 @@ pub struct CountiesParams {
     pub geometry: Option<bool>,
     /// Override simplification tolerance in degrees.
     pub simplify: Option<f64>,
+}
+
+/// Parameters for the per-county events endpoint.
+#[derive(Debug, Deserialize, Default)]
+pub struct CountyEventsParams {
+    /// Single year filter, e.g. `?year=2023`.
+    pub year: Option<i32>,
+    /// Year range, e.g. `?years=2015/2024`.  Either bare years ("2015/2024") or
+    /// RFC3339 dates; the same format accepted by other storm-events endpoints.
+    pub years: Option<String>,
 }
 
 // =============================================================================
@@ -269,6 +277,96 @@ pub async fn storm_counties_handler(
     geojson_response(counties_to_collection(aggregates))
 }
 
+/// Per-county events endpoint — returns individual event features for one county.
+///
+/// `GET /edr/collections/{type}/counties/{fips}`
+/// `GET /edr/collections/{type}/counties/{fips}?year=2023`
+/// `GET /edr/collections/{type}/counties/{fips}?years=2015/2024`
+///
+/// Designed for browser/CDN caching: the URL is stable and the response only
+/// changes after the monthly ingest refresh.  An ETag derived from
+/// `max(ingested_at)` enables efficient 304 revalidation.
+pub async fn storm_county_events_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((collection_id, fips)): Path<(String, String)>,
+    Query(params): Query<CountyEventsParams>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let event_type = match resolve_event_type(&state, &collection_id).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    // FIPS pre-validation (5 digits). The storage layer also validates but we
+    // want a 400 with a clear message rather than a DB error.
+    if fips.len() != 5 || !fips.chars().all(|c| c.is_ascii_digit()) {
+        return bad_request(format!(
+            "Invalid county FIPS '{}': must be exactly 5 digits (e.g. '40109')",
+            fips
+        ));
+    }
+
+    let (start_year, end_year) = parse_county_year_params(&params);
+
+    let result = match state
+        .storm_event_catalog
+        .get_events_by_county(&event_type, &fips, start_year, end_year)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) if e.to_string().contains("Invalid county FIPS") => {
+            return bad_request(e.to_string());
+        }
+        Err(e) => return internal_error(format!("County events query failed: {}", e)),
+    };
+
+    // Build the ETag from max(ingested_at) + year filter.
+    // Stable until new events for this county are ingested.
+    let etag_seed = format!(
+        "{}-{}-{:?}-{:?}",
+        fips,
+        event_type,
+        result.max_ingested_at,
+        (start_year, end_year)
+    );
+    let etag = format!(
+        "W/\"{:016x}\"",
+        etag_seed.bytes().fold(14695981039346656037u64, |acc, b| {
+            acc.wrapping_mul(1099511628211) ^ (b as u64)
+        })
+    );
+
+    // Honour If-None-Match for cheap revalidation.
+    if let Some(inm) = headers.get(header::IF_NONE_MATCH) {
+        if inm.to_str().unwrap_or("") == etag {
+            return Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(header::ETAG, &etag)
+                .body(axum::body::Body::empty())
+                .unwrap();
+        }
+    }
+
+    let collection = county_events_to_collection(&result);
+    let json = match serde_json::to_string(&collection) {
+        Ok(j) => j,
+        Err(e) => return internal_error(format!("Serialization failed: {}", e)),
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        // Public caching: 24 h fresh, serve stale for up to 7 days while revalidating.
+        // Historical storm data rarely changes; the ETag handles the monthly update.
+        .header(
+            header::CACHE_CONTROL,
+            "public, max-age=86400, stale-while-revalidate=604800",
+        )
+        .header(header::ETAG, &etag)
+        .body(json.into())
+        .unwrap()
+}
+
 // =============================================================================
 // Response builders
 // =============================================================================
@@ -278,6 +376,25 @@ fn features_to_collection(features: Vec<StormEventFeature>) -> Value {
     let feats: Vec<Value> = features.into_iter().map(feature_to_geojson).collect();
     json!({
         "type": "FeatureCollection",
+        "features": feats,
+    })
+}
+
+/// Build the per-county response: a FeatureCollection with county metadata
+/// alongside the standard `features` array.
+fn county_events_to_collection(result: &CountyEventsResult) -> Value {
+    let feats: Vec<Value> = result
+        .features
+        .iter()
+        .map(|f| feature_to_geojson(f.clone()))
+        .collect();
+    json!({
+        "type": "FeatureCollection",
+        "county_fips": result.county_fips,
+        "county_name": result.county_name,
+        "state": result.state,
+        "event_type": result.features.first().map(|f| &f.event_type),
+        "numberReturned": feats.len(),
         "features": feats,
     })
 }
@@ -514,6 +631,19 @@ fn parse_dt_bound(s: &str) -> Option<DateTime<Utc>> {
 fn parse_year_range(datetime: &Option<String>) -> (Option<i32>, Option<i32>) {
     let (start, end) = parse_datetime_range(datetime);
     (start.map(|d| d.year()), end.map(|d| d.year()))
+}
+
+/// Parse year filter params for the per-county events endpoint.
+///
+/// Priority: `year` (single year) > `years` (range) > unbounded.
+fn parse_county_year_params(params: &CountyEventsParams) -> (Option<i32>, Option<i32>) {
+    if let Some(y) = params.year {
+        return (Some(y), Some(y));
+    }
+    if let Some(ref range) = params.years {
+        return parse_year_range(&Some(range.clone()));
+    }
+    (None, None)
 }
 
 fn geojson_response(value: Value) -> Response {

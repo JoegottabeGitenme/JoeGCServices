@@ -26,5 +26,7 @@ pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,
 };
 pub use stations_bootstrap::bootstrap_locations;
-pub use storm_events::{CountyAggregate, StormEvent, StormEventCatalog, StormEventFeature};
+pub use storm_events::{
+    CountyAggregate, CountyEventsResult, StormEvent, StormEventCatalog, StormEventFeature,
+};
 pub use tile_memory_cache::{TileMemoryCache, TileMemoryCacheStats};

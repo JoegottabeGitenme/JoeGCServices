@@ -188,6 +188,11 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/counties",
             get(handlers::storm_events::storm_counties_handler),
         )
+        // Per-county individual events (cache-optimised; ETag'd; year filter optional)
+        .route(
+            "/edr/collections/:collection_id/counties/:fips",
+            get(handlers::storm_events::storm_county_events_handler),
+        )
         // Trajectory query
         .route(
             "/edr/collections/:collection_id/trajectory",

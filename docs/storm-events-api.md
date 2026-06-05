@@ -222,7 +222,94 @@ GET /edr/collections/wind/area?coords=-97.5,35.0,-96.5,36.0&datetime=2022-01-01/
 
 ---
 
-### 4. Counties — aggregate counts + boundaries (choropleth)
+### 4. Per-county events — individual events for one county (cache-optimised)
+
+Returns every individual event (points for hail/wind, LineStrings for tornadoes)
+that occurred in a specific county, identified by its **5-digit FIPS code**.
+
+This is the **recommended endpoint for map viewport rendering**. Because the URL
+is stable (FIPS + optional year, nothing else), responses are cached aggressively
+in the browser and at any CDN layer. After the first fetch a county is free.
+
+```
+GET /edr/collections/{type}/counties/{fips}              # full history (best cache)
+GET /edr/collections/{type}/counties/{fips}?year=2023    # single year
+GET /edr/collections/{type}/counties/{fips}?years=2015/2024  # year range
+```
+
+**Example — all hail events in Oklahoma County OK (FIPS 40109):**
+```
+GET /edr/collections/hail/counties/40109
+```
+
+**Example — tornado tracks in Cleveland County OK, 2010-present:**
+```
+GET /edr/collections/tornado/counties/40051?years=2010/2026
+```
+
+**Response:**
+```json
+{
+  "type": "FeatureCollection",
+  "county_fips": "40109",
+  "county_name": "Oklahoma",
+  "state": "OK",
+  "event_type": "hail",
+  "numberReturned": 142,
+  "features": [
+    {
+      "type": "Feature",
+      "id": 887406,
+      "geometry": { "type": "Point", "coordinates": [-97.56, 35.51] },
+      "properties": {
+        "event_id": 887406,
+        "event_type": "hail",
+        "datetime": "2020-04-22T11:04:00+00:00",
+        "begin_time": "2020-04-22T11:04:00+00:00",
+        "end_time": "2020-04-22T11:04:00+00:00",
+        "magnitude": 1.5,
+        "magnitude_unit": "in",
+        "tor_f_scale": null,
+        "state": "OKLAHOMA",
+        "county_name": "OKLAHOMA",
+        "county_fips": "40109"
+      }
+    }
+    ...
+  ]
+}
+```
+
+**Cache behaviour:**
+- `Cache-Control: public, max-age=86400, stale-while-revalidate=604800`
+- `ETag` fingerprint derived from the county's latest ingest timestamp — changes after the monthly data refresh, stable otherwise
+- Supports `If-None-Match` → returns `304 Not Modified` on cache hit (zero payload)
+
+**Caching strategy for the frontend:**
+```javascript
+// On map move: determine visible county FIPS, then fetch each county once.
+// After first load these all come from cache; no re-fetching on pan/zoom.
+const visibleFips = getVisibleCountyFips(mapBounds); // from your tile/FIPS index
+
+const eventsByCounty = await Promise.all(
+  visibleFips.map(fips =>
+    fetch(`/edr/collections/hail/counties/${fips}`)
+      .then(r => r.json())
+  )
+);
+```
+
+**Notes:**
+- `county_fips` is on every event `properties` — the frontend can derive which
+  county each event belongs to without any join
+- Empty counties (no events of that type) return an empty `features: []` — not a 404
+- Per-county volume is small (avg ~100-150 events per type, max ~2,000); no pagination needed
+- The `county_fips` values come from the `/counties` aggregate endpoint, which
+  is the natural "county index" before drilling into individual counties
+
+---
+
+### 5. Counties — aggregate counts + boundaries (choropleth)
 
 Returns per-county event counts joined to county boundary polygons. Use this
 to power choropleth maps showing "which counties get hit the most."
@@ -329,10 +416,37 @@ GET /edr/collections/hail/counties?geometry=false
 GET /edr/collections/hail/counties?bbox=-104,36,-94,37&geometry=true
 ```
 
-### Map viewport rendering (tornado tracks as user pans)
+### Map viewport rendering — per-county (recommended)
+
+Fetch events per visible county instead of per viewport. Each county is fetched
+once and cached; panning across counties is essentially free after the first load.
+
+```javascript
+// 1. Get visible county FIPS from the aggregate index (fetch once, reuse)
+const countyIndex = await fetch('/edr/collections/hail/counties?geometry=false')
+  .then(r => r.json());
+
+// 2. On every map move, fetch each visible county (cache hits after first load)
+function onMapMove(visibleFips) {
+  visibleFips.forEach(fips => {
+    // These are aggressively cached — only the first call hits the server
+    fetch(`/edr/collections/hail/counties/${fips}`)
+      .then(r => r.json())
+      .then(fc => renderCounty(fc));
+    fetch(`/edr/collections/tornado/counties/${fips}`)
+      .then(r => r.json())
+      .then(fc => renderCounty(fc));
+  });
+}
+```
+
+### Map viewport rendering — bbox fallback (simpler, less cache-efficient)
+
+Use `/items` if you don't want to manage per-county FIPS lookups client-side.
+Less cache-friendly but simpler integration:
 
 ```
-# Tornado tracks in current map viewport — use items for pagination control
+# Tornado tracks in current map viewport
 GET /edr/collections/tornado/items?bbox={west},{south},{east},{north}&limit=500
 
 # Page 2

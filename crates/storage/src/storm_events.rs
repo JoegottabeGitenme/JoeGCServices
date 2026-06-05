@@ -91,6 +91,23 @@ pub struct StormEventFeature {
     pub geometry_geojson: String,
 }
 
+/// The result of a per-county events query — individual event features plus
+/// lightweight county metadata and an ETag seed.
+#[derive(Debug)]
+pub struct CountyEventsResult {
+    /// 5-digit county FIPS.
+    pub county_fips: String,
+    /// County name from `tiger_counties` (None if TIGER not loaded).
+    pub county_name: Option<String>,
+    /// State abbreviation from `tiger_counties`.
+    pub state: Option<String>,
+    /// Individual event features for this county.
+    pub features: Vec<StormEventFeature>,
+    /// Latest `ingested_at` across all returned rows — used to generate an ETag.
+    /// Stable until the next ingest cycle touches this county.
+    pub max_ingested_at: Option<DateTime<Utc>>,
+}
+
 /// A county-level aggregate row, optionally carrying boundary geometry.
 #[derive(Debug, Clone, Serialize)]
 pub struct CountyAggregate {
@@ -365,6 +382,110 @@ impl StormEventCatalog {
         Ok(match row {
             Some((Some(min), Some(max))) => Some((min, max)),
             _ => None,
+        })
+    }
+
+    /// Get all events of a type within a specific county (by FIPS), with optional
+    /// year filtering.  Returns the events, the county name/state from
+    /// `tiger_counties`, and the `max(ingested_at)` for ETag generation.
+    ///
+    /// This is the per-county cache-optimised endpoint:
+    /// - Hits the existing `idx_storm_events_county` index directly.
+    /// - Default (no year bounds) returns the full 1995-present history.
+    /// - Year-bounded calls produce a small fixed set of cache keys per county.
+    pub async fn get_events_by_county(
+        &self,
+        event_type: &str,
+        county_fips: &str,
+        start_year: Option<i32>,
+        end_year: Option<i32>,
+    ) -> WmsResult<CountyEventsResult> {
+        // Validate FIPS format early (5 ASCII digits).
+        if county_fips.len() != 5 || !county_fips.chars().all(|c| c.is_ascii_digit()) {
+            return Err(WmsError::DatabaseError(format!(
+                "Invalid county FIPS '{}': must be exactly 5 digits",
+                county_fips
+            )));
+        }
+
+        // Look up county name / state from TIGER (may be absent if TIGER not loaded).
+        #[derive(sqlx::FromRow)]
+        struct CountyMeta {
+            name: Option<String>,
+            state_abbr: Option<String>,
+        }
+        let meta: Option<CountyMeta> =
+            sqlx::query_as("SELECT name, state_abbr FROM tiger_counties WHERE geoid = $1")
+                .bind(county_fips)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| {
+                    WmsError::DatabaseError(format!("County metadata lookup failed: {}", e))
+                })?;
+
+        // Fetch events and max(ingested_at) in one query.
+        #[derive(sqlx::FromRow)]
+        struct EventWithMeta {
+            event_id: i64,
+            event_type: String,
+            begin_time: DateTime<Utc>,
+            end_time: Option<DateTime<Utc>>,
+            magnitude: Option<f64>,
+            magnitude_unit: Option<String>,
+            tor_f_scale: Option<i16>,
+            state: Option<String>,
+            cz_name: Option<String>,
+            county_fips: Option<String>,
+            geometry_geojson: Option<String>,
+            max_ingested_at: Option<DateTime<Utc>>,
+        }
+
+        let rows = sqlx::query_as::<_, EventWithMeta>(
+            r#"
+            SELECT event_id, event_type, begin_time, end_time,
+                   magnitude, magnitude_unit, tor_f_scale, state, cz_name, county_fips,
+                   ST_AsGeoJSON(COALESCE(geom_track, geom_point)) AS geometry_geojson,
+                   MAX(ingested_at) OVER () AS max_ingested_at
+            FROM storm_events
+            WHERE event_type = $1
+              AND county_fips  = $2
+              AND ($3::int IS NULL OR EXTRACT(YEAR FROM begin_time) >= $3)
+              AND ($4::int IS NULL OR EXTRACT(YEAR FROM begin_time) <= $4)
+            ORDER BY begin_time DESC
+            "#,
+        )
+        .bind(event_type)
+        .bind(county_fips)
+        .bind(start_year)
+        .bind(end_year)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("County events query failed: {}", e)))?;
+
+        let max_ingested_at = rows.first().and_then(|r| r.max_ingested_at);
+        let features: Vec<StormEventFeature> = rows
+            .into_iter()
+            .map(|r| StormEventFeature {
+                event_id: r.event_id,
+                event_type: r.event_type,
+                begin_time: r.begin_time,
+                end_time: r.end_time,
+                magnitude: r.magnitude,
+                magnitude_unit: r.magnitude_unit,
+                tor_f_scale: r.tor_f_scale,
+                state: r.state,
+                cz_name: r.cz_name,
+                county_fips: r.county_fips,
+                geometry_geojson: r.geometry_geojson.unwrap_or_else(|| "null".to_string()),
+            })
+            .collect();
+
+        Ok(CountyEventsResult {
+            county_fips: county_fips.to_string(),
+            county_name: meta.as_ref().and_then(|m| m.name.clone()),
+            state: meta.as_ref().and_then(|m| m.state_abbr.clone()),
+            features,
+            max_ingested_at,
         })
     }
 
