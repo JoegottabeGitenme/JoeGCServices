@@ -411,7 +411,7 @@ impl StormEventCatalog {
             SELECT
                 m.county_fips,
                 c.name AS county_name,
-                COALESCE(c.state_abbr, m.state) AS state_abbr,
+                c.state_abbr,
                 m.event_type,
                 m.year,
                 m.count,

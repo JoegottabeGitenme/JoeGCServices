@@ -2009,16 +2009,18 @@ CREATE INDEX IF NOT EXISTS idx_storm_events_county ON storm_events(county_fips);
 
 -- Monthly-refreshed county aggregate: counts by (county, type, year).
 -- Refreshed via REFRESH MATERIALIZED VIEW CONCURRENTLY (needs a unique index).
+-- Note: state is NOT in the GROUP BY because the same county_fips can appear
+-- with different state strings in the raw CSV data (data quality variation).
+-- State is sourced from tiger_counties at query time instead.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_county_event_counts AS
 SELECT
     county_fips,
-    state,
     event_type,
     EXTRACT(YEAR FROM begin_time)::INT AS year,
     COUNT(*)::BIGINT AS count
 FROM storm_events
 WHERE county_fips IS NOT NULL
-GROUP BY county_fips, state, event_type, EXTRACT(YEAR FROM begin_time);
+GROUP BY county_fips, event_type, EXTRACT(YEAR FROM begin_time);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_county_event_counts_key
     ON mv_county_event_counts(county_fips, event_type, year)
