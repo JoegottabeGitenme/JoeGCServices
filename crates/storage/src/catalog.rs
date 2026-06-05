@@ -1985,12 +1985,12 @@ CREATE TABLE IF NOT EXISTS storm_events (
 
     -- Magnitude (canonical units): hail inches, wind knots, tornado EF in tor_f_scale
     magnitude DOUBLE PRECISION,
-    magnitude_unit VARCHAR(20),
+    magnitude_unit TEXT,
     tor_f_scale SMALLINT,               -- 0..5, tornadoes only
 
     -- Administrative / reference fields from the CSV
-    state VARCHAR(50),
-    cz_name VARCHAR(100),
+    state TEXT,
+    cz_name TEXT,
     cz_fips VARCHAR(10),
     cz_type CHAR(1),                    -- C=county, Z=zone (raw, not authoritative)
 
