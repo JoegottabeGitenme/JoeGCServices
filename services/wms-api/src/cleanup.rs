@@ -307,13 +307,19 @@ pub struct SyncConfig {
     pub enabled: bool,
     /// How often to run sync (in seconds)
     pub interval_secs: u64,
+    /// Grace period (in seconds): objects written / rows ingested within this
+    /// window are never treated as orphans. This prevents a race where data
+    /// ingested while a sync cycle is in flight (bucket listings can take
+    /// tens of seconds on large buckets) is wrongly deleted.
+    pub grace_secs: u64,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            interval_secs: 60, // Run every minute
+            interval_secs: 3600, // Reconciliation job - hourly is plenty
+            grace_secs: 900,     // 15 minutes
         }
     }
 }
@@ -329,11 +335,17 @@ impl SyncConfig {
         let interval_secs = std::env::var("SYNC_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(60); // 1 minute default
+            .unwrap_or(3600); // 1 hour default
+
+        let grace_secs = std::env::var("SYNC_GRACE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(900); // 15 minute default
 
         Self {
             enabled,
             interval_secs,
+            grace_secs,
         }
     }
 }
@@ -695,6 +707,20 @@ pub struct SyncPreview {
     pub minio_objects_checked: u64,
 }
 
+/// Result of comparing DB and MinIO state (orphan candidates after
+/// grace-period filtering).
+#[derive(Debug, Default, Clone)]
+struct SyncAnalysis {
+    /// Paths in database but not in MinIO storage
+    orphan_db_paths: Vec<String>,
+    /// Paths in MinIO storage but not in database
+    orphan_minio_paths: Vec<String>,
+    /// Total database records checked
+    db_records_checked: u64,
+    /// Total MinIO objects checked
+    minio_objects_checked: u64,
+}
+
 /// Sync task for reconciling database and MinIO storage.
 pub struct SyncTask {
     state: Arc<AppState>,
@@ -756,51 +782,116 @@ impl SyncTask {
     pub async fn preview(&self) -> Result<SyncPreview> {
         info!("Generating sync preview");
 
-        // Get all storage paths from the database
+        let analysis = self.analyze().await?;
+
+        Ok(SyncPreview {
+            orphan_db_paths: analysis.orphan_db_paths,
+            orphan_minio_paths: analysis.orphan_minio_paths,
+            db_records_checked: analysis.db_records_checked,
+            minio_objects_checked: analysis.minio_objects_checked,
+        })
+    }
+
+    /// Analyze DB and MinIO state and compute orphan candidates.
+    ///
+    /// # Race-safety
+    ///
+    /// The ingester uploads zarr objects to MinIO *before* registering the
+    /// catalog row, and bucket listings on a large bucket can take tens of
+    /// seconds. A naive snapshot comparison therefore deletes freshly
+    /// ingested data (observed in production: MRMS, ingesting every 2 min,
+    /// was wiped continuously once the bucket grew large enough).
+    ///
+    /// Two defenses are applied:
+    /// 1. Ordering: the MinIO listing is taken *first* and the DB snapshot
+    ///    *after* it completes. Objects uploaded during the listing have
+    ///    their catalog rows registered by the time the DB snapshot is
+    ///    taken, so they are not flagged as MinIO orphans.
+    /// 2. Grace period: objects whose last_modified is within
+    ///    `grace_secs`, and DB rows whose ingested_at is within
+    ///    `grace_secs`, are never considered orphans.
+    async fn analyze(&self) -> Result<SyncAnalysis> {
+        let grace = Duration::seconds(self.config.grace_secs as i64);
+        let now = Utc::now();
+
+        // Step 1: Get all objects from MinIO (with last-modified timestamps).
+        // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data),
+        // and grids/ (Zarr data). This listing is taken BEFORE the DB snapshot
+        // (see race-safety notes above).
+        let mut minio_paths = self.state.storage.list_with_modified("shredded/").await?;
+        let raw_paths = self.state.storage.list_with_modified("raw/").await?;
+        minio_paths.extend(raw_paths);
+        let grid_paths = self.state.storage.list_with_modified("grids/").await?;
+        minio_paths.extend(grid_paths);
+
+        // For Zarr directories, we need to extract the parent .zarr path from
+        // individual files, e.g. "grids/mrms/123/foo.zarr/c/0/0" -> "grids/mrms/123/foo.zarr".
+        // Track the NEWEST last_modified per logical path so that a zarr
+        // directory still being uploaded is protected by the grace period.
+        let mut minio_path_ages: HashMap<String, DateTime<Utc>> = HashMap::new();
+        for (path, modified) in &minio_paths {
+            let logical_path = if let Some(zarr_idx) = path.find(".zarr/") {
+                path[..zarr_idx + 5].to_string() // +5 for ".zarr"
+            } else {
+                path.clone()
+            };
+            minio_path_ages
+                .entry(logical_path)
+                .and_modify(|newest| {
+                    if modified > newest {
+                        *newest = *modified;
+                    }
+                })
+                .or_insert(*modified);
+        }
+        let minio_objects_checked = minio_paths.len() as u64;
+
+        info!(
+            count = minio_paths.len(),
+            unique_paths = minio_path_ages.len(),
+            "Retrieved MinIO objects (shredded + raw + grids)"
+        );
+
+        // Step 2: DB snapshots, taken AFTER the MinIO listing completed.
+        //   - full set: used to decide which MinIO objects are orphans
+        //   - aged set (ingested more than grace_secs ago): candidates for
+        //     orphan DB record detection
         let db_paths = self.state.catalog.get_all_storage_paths().await?;
         let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
         let db_records_checked = db_paths.len() as u64;
 
-        // Get all objects from MinIO
-        // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data), and grids/ (Zarr data)
-        let mut minio_paths = self.state.storage.list("shredded/").await?;
-        let raw_paths = self.state.storage.list("raw/").await?;
-        minio_paths.extend(raw_paths);
-        let grid_paths = self.state.storage.list("grids/").await?;
-        minio_paths.extend(grid_paths);
+        let aged_db_paths = self
+            .state
+            .catalog
+            .get_storage_paths_older_than(self.config.grace_secs)
+            .await?;
 
-        // For Zarr directories, extract the parent .zarr path from individual files
-        let mut minio_path_set: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for path in &minio_paths {
-            if let Some(zarr_idx) = path.find(".zarr/") {
-                let zarr_dir = &path[..zarr_idx + 5];
-                minio_path_set.insert(zarr_dir.to_string());
-            } else {
-                minio_path_set.insert(path.clone());
-            }
-        }
-        let minio_objects_checked = minio_paths.len() as u64;
+        info!(count = db_paths.len(), "Retrieved database storage paths");
 
-        // Find orphan DB records (in DB but not in MinIO)
-        let orphan_db_paths: Vec<String> = db_paths
+        // Step 3: Find orphan DB records (in DB but not in MinIO).
+        // Only rows older than the grace period are considered - a row
+        // ingested mid-listing may reference objects the lister passed
+        // before they were uploaded.
+        let orphan_db_paths: Vec<String> = aged_db_paths
             .into_iter()
-            .filter(|path| !minio_path_set.contains(path))
+            .filter(|path| !minio_path_ages.contains_key(path))
             .collect();
 
-        // Find orphan MinIO objects (in MinIO but not in DB)
-        // For Zarr files, check if the extracted zarr directory exists in DB
-        // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
-        let orphan_minio_paths: Vec<String> = minio_path_set
+        // Step 4: Find orphan MinIO objects (in MinIO but not in DB).
+        // Only consider shredded/ and grids/ files as orphans - raw/ files
+        // may be awaiting processing. Objects written within the grace
+        // period are never orphans: their catalog row may not exist yet.
+        let orphan_minio_paths: Vec<String> = minio_path_ages
             .iter()
-            .filter(|path| {
+            .filter(|(path, newest_modified)| {
                 (path.starts_with("shredded/") || path.starts_with("grids/"))
                     && !db_path_set.contains(*path)
+                    && now.signed_duration_since(**newest_modified) > grace
             })
-            .cloned()
+            .map(|(path, _)| path.clone())
             .collect();
 
-        Ok(SyncPreview {
+        Ok(SyncAnalysis {
             orphan_db_paths,
             orphan_minio_paths,
             db_records_checked,
@@ -812,51 +903,17 @@ impl SyncTask {
     async fn run_sync(&self, delete: bool) -> Result<SyncStats> {
         let mut stats = SyncStats::default();
 
-        info!(delete = delete, "Starting database/storage sync");
-
-        // Step 1: Get all storage paths from the database
-        let db_paths = self.state.catalog.get_all_storage_paths().await?;
-        let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
-        stats.db_records_checked = db_paths.len() as u64;
-
-        info!(count = db_paths.len(), "Retrieved database storage paths");
-
-        // Step 2: Get all objects from MinIO
-        // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data), and grids/ (Zarr data)
-        let mut minio_paths = self.state.storage.list("shredded/").await?;
-        let raw_paths = self.state.storage.list("raw/").await?;
-        minio_paths.extend(raw_paths);
-        let grid_paths = self.state.storage.list("grids/").await?;
-        minio_paths.extend(grid_paths);
-
-        // For Zarr directories, we need to extract the parent .zarr path from individual files
-        // e.g., "grids/mrms/123/foo.zarr/c/0/0" -> "grids/mrms/123/foo.zarr"
-        let mut minio_path_set: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for path in &minio_paths {
-            // Check if this is a Zarr file (contains .zarr/ in path)
-            if let Some(zarr_idx) = path.find(".zarr/") {
-                // Extract the zarr directory path (including .zarr)
-                let zarr_dir = &path[..zarr_idx + 5]; // +5 for ".zarr"
-                minio_path_set.insert(zarr_dir.to_string());
-            } else {
-                // Regular file path
-                minio_path_set.insert(path.clone());
-            }
-        }
-        stats.minio_objects_checked = minio_paths.len() as u64;
-
         info!(
-            count = minio_paths.len(),
-            unique_paths = minio_path_set.len(),
-            "Retrieved MinIO objects (shredded + raw + grids)"
+            delete = delete,
+            grace_secs = self.config.grace_secs,
+            "Starting database/storage sync"
         );
 
-        // Step 3: Find orphan DB records (in DB but not in MinIO)
-        let orphan_db_paths: Vec<String> = db_paths
-            .into_iter()
-            .filter(|path| !minio_path_set.contains(path))
-            .collect();
+        let analysis = self.analyze().await?;
+        stats.db_records_checked = analysis.db_records_checked;
+        stats.minio_objects_checked = analysis.minio_objects_checked;
+
+        let orphan_db_paths = analysis.orphan_db_paths;
         stats.orphan_db_records = orphan_db_paths.len() as u64;
 
         if !orphan_db_paths.is_empty() {
@@ -891,17 +948,7 @@ impl SyncTask {
             }
         }
 
-        // Step 4: Find orphan MinIO objects (in MinIO but not in DB)
-        // For Zarr files, check if the extracted zarr directory exists in DB
-        // Only consider shredded/ and grids/ files as orphans - raw/ files may be awaiting processing
-        let orphan_minio_paths: Vec<String> = minio_path_set
-            .iter()
-            .filter(|path| {
-                (path.starts_with("shredded/") || path.starts_with("grids/"))
-                    && !db_path_set.contains(*path)
-            })
-            .cloned()
-            .collect();
+        let orphan_minio_paths = analysis.orphan_minio_paths;
         stats.orphan_minio_objects = orphan_minio_paths.len() as u64;
 
         if !orphan_minio_paths.is_empty() {
@@ -976,7 +1023,8 @@ mod tests {
     fn test_sync_config_default() {
         let config = SyncConfig::default();
         assert!(config.enabled);
-        assert_eq!(config.interval_secs, 60);
+        assert_eq!(config.interval_secs, 3600);
+        assert_eq!(config.grace_secs, 900);
     }
 
     #[test]

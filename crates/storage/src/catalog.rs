@@ -1090,6 +1090,26 @@ impl Catalog {
         Ok(paths)
     }
 
+    /// Get storage paths for datasets ingested more than `grace_secs` ago.
+    ///
+    /// Used by the sync task for orphan-DB-record detection: rows ingested
+    /// within the grace window are excluded because their objects may not
+    /// yet be visible in a MinIO listing that started before the ingest
+    /// completed (listing a large bucket can take tens of seconds).
+    pub async fn get_storage_paths_older_than(&self, grace_secs: u64) -> WmsResult<Vec<String>> {
+        let paths = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT storage_path FROM datasets \
+             WHERE status = 'available' \
+               AND ingested_at < NOW() - ($1 * INTERVAL '1 second')",
+        )
+        .bind(grace_secs as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(paths)
+    }
+
     /// Delete database records for paths that no longer exist in storage.
     /// Returns the number of records deleted.
     pub async fn delete_orphan_records(&self, orphan_paths: &[String]) -> WmsResult<u64> {

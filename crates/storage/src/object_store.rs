@@ -149,6 +149,33 @@ impl ObjectStorage {
         Ok(paths)
     }
 
+    /// List objects with their last-modified timestamps.
+    ///
+    /// Used by the sync/orphan-reconciliation task to apply a grace period:
+    /// objects written recently must not be treated as orphans because the
+    /// corresponding catalog row may not have been registered yet (uploads
+    /// happen before registration).
+    pub async fn list_with_modified(
+        &self,
+        prefix: &str,
+    ) -> WmsResult<Vec<(String, chrono::DateTime<chrono::Utc>)>> {
+        use futures::TryStreamExt;
+
+        let prefix_path = Path::from(prefix);
+        let mut results = Vec::new();
+
+        let mut stream = self.store.list(Some(&prefix_path));
+        while let Some(meta) = stream
+            .try_next()
+            .await
+            .map_err(|e| WmsError::StorageError(format!("List failed: {}", e)))?
+        {
+            results.push((meta.location.to_string(), meta.last_modified));
+        }
+
+        Ok(results)
+    }
+
     /// List objects with metadata (path and size).
     pub async fn list_with_sizes(&self, prefix: &str) -> WmsResult<Vec<(String, u64)>> {
         use futures::TryStreamExt;
