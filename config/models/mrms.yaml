@@ -133,3 +133,23 @@ parameters:
     units: "mm"
     display_units: "mm"
     valid_range: [-10, 500]
+
+  # Quantitative Precipitation Estimate - 72 hour
+  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=43
+  # (updated hourly like the other Pass2 accumulations)
+  - name: QPE_72H
+    description: "72-Hour Precipitation Accumulation"
+    downsample: mean
+    grib2:
+      discipline: 209
+      category: 6
+      number: 43
+    product: "MultiSensor_QPE_72H_Pass2_00.00"
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 0
+        display: "0 m above MSL"
+    units: "mm"
+    display_units: "mm"
+    valid_range: [-10, 1000]

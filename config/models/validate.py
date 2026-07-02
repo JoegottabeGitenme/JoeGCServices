@@ -356,7 +356,34 @@ class ModelValidator:
 
             if "forecast_hours" in schedule:
                 fh = schedule["forecast_hours"]
-                if isinstance(fh, dict):
+                if isinstance(fh, dict) and "ranges" in fh:
+                    # Multi-range form: {ranges: [{start, end, step}, ...]}
+                    ranges = fh["ranges"]
+                    if not isinstance(ranges, list) or not ranges:
+                        self.add_error(
+                            "schedule.forecast_hours.ranges",
+                            "Must be a non-empty list of {start, end, step} mappings",
+                        )
+                    else:
+                        for i, r in enumerate(ranges):
+                            if not isinstance(r, dict):
+                                self.add_error(
+                                    f"schedule.forecast_hours.ranges[{i}]",
+                                    "Must be a mapping with start/end/step",
+                                )
+                                continue
+                            for field in ["start", "end"]:
+                                if field not in r:
+                                    self.add_error(
+                                        f"schedule.forecast_hours.ranges[{i}].{field}",
+                                        f"Missing required field '{field}'",
+                                    )
+                                elif not isinstance(r[field], int):
+                                    self.add_error(
+                                        f"schedule.forecast_hours.ranges[{i}].{field}",
+                                        "Must be an integer",
+                                    )
+                elif isinstance(fh, dict):
                     for field in ["start", "end"]:
                         if field not in fh:
                             self.add_error(

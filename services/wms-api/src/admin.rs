@@ -1852,15 +1852,27 @@ async fn load_model_config_summary(model_id: &str) -> anyhow::Result<Option<Mode
         })
         .to_string();
 
-    // Parse forecast hours if present
+    // Parse forecast hours if present.
+    // For the multi-range form ({ranges: [...]}) the summary shows the
+    // overall span: first range start .. last range end, first range step.
     let forecast_hours = schedule
         .and_then(|s| s.get("forecast_hours"))
         .and_then(|fh| {
-            Some(ForecastHoursInfo {
-                start: fh.get("start")?.as_u64()? as u32,
-                end: fh.get("end")?.as_u64()? as u32,
-                step: fh.get("step")?.as_u64()? as u32,
-            })
+            if let Some(ranges) = fh.get("ranges").and_then(|r| r.as_sequence()) {
+                let first = ranges.first()?;
+                let last = ranges.last()?;
+                Some(ForecastHoursInfo {
+                    start: first.get("start")?.as_u64()? as u32,
+                    end: last.get("end")?.as_u64()? as u32,
+                    step: first.get("step").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+                })
+            } else {
+                Some(ForecastHoursInfo {
+                    start: fh.get("start")?.as_u64()? as u32,
+                    end: fh.get("end")?.as_u64()? as u32,
+                    step: fh.get("step")?.as_u64()? as u32,
+                })
+            }
         });
 
     // Parse parameters

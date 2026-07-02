@@ -382,14 +382,19 @@ pub fn build_level_string(
             level_value.map(|v| format!("{} m above ground", v as i32))
         }
         "depth_below_surface" => {
-            // Depth layers stored with named level strings from config
-            // (e.g., "0-10 cm depth", "root zone", "0-100 cm total")
-            param_def
-                .and_then(|p| p.levels.first())
-                .and_then(|l| match l {
-                    LevelValue::Named(name) => Some(name.clone()),
-                    LevelValue::Numeric(v) => Some(format!("{} cm depth", *v as i32)),
-                })
+            // Two storage conventions exist for depth levels:
+            // - NLDAS/GLDAS (NetCDF): named level strings from config
+            //   (e.g., "0-10 cm depth", "root zone", "0-100 cm total")
+            // - GRIB2 soil params (GFS/HRRR TSOIL, code 106): numeric cm
+            //   values stored as "{cm} cm below ground"
+            match param_def.and_then(|p| p.levels.first()) {
+                Some(LevelValue::Named(name)) => Some(name.clone()),
+                _ => {
+                    // Numeric levels: honor z selection (falls back to the
+                    // first configured level via level_value)
+                    level_value.map(|v| format!("{} cm below ground", v as i32))
+                }
+            }
         }
         "cloud_layer" => {
             // Map cloud layer codes to names
@@ -781,17 +786,40 @@ mod tests {
 
     #[test]
     fn test_build_level_string_depth_below_surface_numeric() {
+        // GRIB2 soil params (TSOIL code 106) store numeric cm levels as
+        // "{cm} cm below ground"
         let filter = LevelFilter {
             level_type: "depth_below_surface".to_string(),
             ..Default::default()
         };
         let param = ParameterDefinition {
-            name: "SoilT_0_10cm".to_string(),
+            name: "TSOIL".to_string(),
             levels: vec![LevelValue::Numeric(10.0)],
             valid_range: None,
         };
         let result = build_level_string(&filter, Some(&param), None);
-        assert_eq!(result, Some("10 cm depth".to_string()));
+        assert_eq!(result, Some("10 cm below ground".to_string()));
+    }
+
+    #[test]
+    fn test_build_level_string_depth_below_surface_z_selection() {
+        // z parameter selects a specific soil layer
+        let filter = LevelFilter {
+            level_type: "depth_below_surface".to_string(),
+            ..Default::default()
+        };
+        let param = ParameterDefinition {
+            name: "TSOIL".to_string(),
+            levels: vec![
+                LevelValue::Numeric(0.0),
+                LevelValue::Numeric(10.0),
+                LevelValue::Numeric(40.0),
+                LevelValue::Numeric(100.0),
+            ],
+            valid_range: None,
+        };
+        let result = build_level_string(&filter, Some(&param), Some(40.0));
+        assert_eq!(result, Some("40 cm below ground".to_string()));
     }
 
     #[test]

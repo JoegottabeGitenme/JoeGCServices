@@ -128,6 +128,21 @@ collections:
         valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
+  # Soil temperature (RUC land model POINT depths; level values = depth in cm)
+  # z parameter selects the depth: z=0, z=4, z=10, z=30, z=100 (cm below
+  # ground). Units: Kelvin. Same query contract as hrrr-surface.
+  - id: hrrr-soil
+    title: "HRRR - Soil"
+    description: "Soil temperature at RUC land-model point depths (0, 4, 10, 30, 100 cm below ground)"
+    level_filter:
+      level_type: depth_below_surface
+      level_code: 106
+    parameters:
+      - name: TSOIL
+        levels: [0, 4, 10, 30, 100]
+        valid_range: { min: 200, max: 350 }  # Kelvin
+    run_mode: instances
+
 settings:
   output_formats:
     - application/vnd.cov+json

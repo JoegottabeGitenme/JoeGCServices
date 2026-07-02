@@ -47,7 +47,7 @@ schedule:
   cycles: [0, 6, 12, 18]
   forecast_hours:
     start: 0
-    end: 120
+    end: 384      # Full 16-day horizon (matches GFS)
     step: 3       # Wave data at 3-hourly intervals is sufficient
   poll_interval_secs: 3600
   delay_hours: 5  # Wave data typically available ~5 hours after cycle

@@ -203,20 +203,93 @@ fn default_poll_interval() -> u64 {
     3600
 }
 
-#[allow(dead_code)]
+/// Forecast hours configuration.
+///
+/// Two YAML forms are supported:
+///
+/// Single range (legacy):
+/// ```yaml
+/// forecast_hours:
+///   start: 0
+///   end: 120
+///   step: 1
+/// ```
+///
+/// Multiple ranges — for models whose native output cadence changes with
+/// lead time (e.g. GFS is hourly to 120h then 3-hourly to 384h; NBM is
+/// hourly to 36h, 3-hourly to 192h, 6-hourly to 264h):
+/// ```yaml
+/// forecast_hours:
+///   ranges:
+///     - { start: 0, end: 120, step: 1 }
+///     - { start: 123, end: 384, step: 3 }
+/// ```
 #[derive(Debug, Clone, Deserialize)]
-pub struct ForecastHoursConfig {
+#[serde(untagged)]
+pub enum ForecastHoursConfig {
+    /// Multiple ranges with independent steps
+    Ranges { ranges: Vec<ForecastRange> },
+    /// Single contiguous range (legacy form)
+    Single(ForecastRange),
+}
+
+/// A single contiguous forecast-hour range.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ForecastRange {
     pub start: u32,
     pub end: u32,
+    #[serde(default = "default_forecast_step")]
     pub step: u32,
 }
 
+fn default_forecast_step() -> u32 {
+    1
+}
+
+impl ForecastRange {
+    fn hours_iter(&self) -> impl Iterator<Item = u32> + '_ {
+        (self.start..=self.end).step_by(self.step.max(1) as usize)
+    }
+}
+
 impl ForecastHoursConfig {
-    /// Generate the list of forecast hours.
+    /// Generate the sorted, deduplicated list of forecast hours.
     pub fn hours(&self) -> Vec<u32> {
-        (self.start..=self.end)
-            .step_by(self.step as usize)
-            .collect()
+        let mut hours: Vec<u32> = match self {
+            Self::Single(range) => range.hours_iter().collect(),
+            Self::Ranges { ranges } => ranges.iter().flat_map(|r| r.hours_iter()).collect(),
+        };
+        hours.sort_unstable();
+        hours.dedup();
+        hours
+    }
+
+    /// Maximum forecast hour across all ranges.
+    pub fn max_hour(&self) -> u32 {
+        match self {
+            Self::Single(range) => range.end,
+            Self::Ranges { ranges } => ranges.iter().map(|r| r.end).max().unwrap_or(0),
+        }
+    }
+
+    /// Cap all ranges at the given maximum hour (dev limits).
+    /// Ranges that start beyond the cap are dropped entirely.
+    pub fn cap(&mut self, max: u32) {
+        match self {
+            Self::Single(range) => {
+                if range.end > max {
+                    range.end = max;
+                }
+            }
+            Self::Ranges { ranges } => {
+                ranges.retain(|r| r.start <= max);
+                for r in ranges.iter_mut() {
+                    if r.end > max {
+                        r.end = max;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -267,6 +340,13 @@ pub struct LevelConfig {
     pub display: Option<String>,
     /// Display template for multiple values (e.g., "{value} mb")
     pub display_template: Option<String>,
+    /// Explicit .idx level string override for selective download matching.
+    ///
+    /// Needed when the idx string cannot be derived from a single numeric
+    /// value — e.g. GRIB2 code 106 depth layers: GFS uses layer strings
+    /// ("0-0.1 m below ground") while HRRR uses point strings
+    /// ("0.04-0.04 m below ground").
+    pub idx_level: Option<String>,
 }
 
 /// Composite layer configuration.
@@ -350,6 +430,14 @@ impl ModelConfig {
             let param_name = &param.name;
 
             for level in &param.levels {
+                // Explicit .idx level string override takes precedence —
+                // used where the idx string can't be derived from the value
+                // (e.g. depth-below-ground layers, code 106)
+                if let Some(ref idx_level) = level.idx_level {
+                    filters.push((param_name.clone(), idx_level.clone()));
+                    continue;
+                }
+
                 // Try to get the level code
                 let (level_code, level_type_unknown) = if let Some(code) = level.level_code {
                     (code, false)
@@ -498,14 +586,14 @@ impl DevLimits {
         // Cap forecast hours
         if let Some(max_hours) = self.max_forecast_hours {
             if let Some(ref mut fh) = config.schedule.forecast_hours {
-                if fh.end > max_hours {
+                if fh.max_hour() > max_hours {
                     debug!(
                         model = %config.model.id,
-                        original = fh.end,
+                        original = fh.max_hour(),
                         capped = max_hours,
-                        "Capping forecast_hours.end due to DEV_MAX_FORECAST_HOURS"
+                        "Capping forecast_hours due to DEV_MAX_FORECAST_HOURS"
                     );
-                    fh.end = max_hours;
+                    fh.cap(max_hours);
                 }
             }
         }
@@ -617,12 +705,81 @@ mod tests {
 
     #[test]
     fn test_forecast_hours() {
-        let fh = ForecastHoursConfig {
+        let fh = ForecastHoursConfig::Single(ForecastRange {
             start: 0,
             end: 12,
             step: 3,
-        };
+        });
         assert_eq!(fh.hours(), vec![0, 3, 6, 9, 12]);
+        assert_eq!(fh.max_hour(), 12);
+    }
+
+    #[test]
+    fn test_forecast_hours_multi_range() {
+        let yaml = r#"
+ranges:
+  - { start: 0, end: 12, step: 1 }
+  - { start: 15, end: 48, step: 3 }
+  - { start: 54, end: 120, step: 6 }
+"#;
+        let fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
+        let hours = fh.hours();
+        // hourly 0-12 (13) + 3-hourly 15-48 (12) + 6-hourly 54-120 (12)
+        assert_eq!(hours.len(), 13 + 12 + 12);
+        assert_eq!(hours[0], 0);
+        assert_eq!(*hours.last().unwrap(), 120);
+        assert!(hours.contains(&11));
+        assert!(hours.contains(&45));
+        assert!(hours.contains(&114));
+        assert!(!hours.contains(&13)); // between ranges
+        assert!(!hours.contains(&50)); // not on 3-hourly grid
+        assert_eq!(fh.max_hour(), 120);
+    }
+
+    #[test]
+    fn test_forecast_hours_single_range_yaml_backward_compat() {
+        let yaml = "{ start: 0, end: 24, step: 6 }";
+        let fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(fh.hours(), vec![0, 6, 12, 18, 24]);
+    }
+
+    #[test]
+    fn test_forecast_hours_overlapping_ranges_dedup() {
+        let yaml = r#"
+ranges:
+  - { start: 0, end: 12, step: 3 }
+  - { start: 12, end: 24, step: 6 }
+"#;
+        let fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(fh.hours(), vec![0, 3, 6, 9, 12, 18, 24]);
+    }
+
+    #[test]
+    fn test_forecast_hours_cap() {
+        let yaml = r#"
+ranges:
+  - { start: 0, end: 120, step: 1 }
+  - { start: 123, end: 384, step: 3 }
+"#;
+        let mut fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
+        fh.cap(24);
+        assert_eq!(fh.max_hour(), 24);
+        assert_eq!(fh.hours().len(), 25); // second range dropped entirely
+
+        let mut single = ForecastHoursConfig::Single(ForecastRange {
+            start: 0,
+            end: 120,
+            step: 1,
+        });
+        single.cap(48);
+        assert_eq!(single.max_hour(), 48);
+    }
+
+    #[test]
+    fn test_forecast_range_default_step() {
+        let yaml = "{ start: 0, end: 3 }";
+        let fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(fh.hours(), vec![0, 1, 2, 3]);
     }
 
     #[test]

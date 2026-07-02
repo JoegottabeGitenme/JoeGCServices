@@ -148,6 +148,21 @@ collections:
         valid_range: { min: 85000, max: 110000 }  # Pa
     run_mode: instances
 
+  # Soil temperature (Noah land model layers; level values = layer top in cm)
+  # z parameter selects the layer: z=0 (0-0.1m), z=10 (0.1-0.4m),
+  # z=40 (0.4-1m), z=100 (1-2m). Units: Kelvin.
+  - id: gfs-soil
+    title: "GFS - Soil"
+    description: "Soil temperature at Noah land-model layers (0-0.1, 0.1-0.4, 0.4-1, 1-2 m below ground)"
+    level_filter:
+      level_type: depth_below_surface
+      level_code: 106
+    parameters:
+      - name: TSOIL
+        levels: [0, 10, 40, 100]
+        valid_range: { min: 200, max: 350 }  # Kelvin
+    run_mode: instances
+
   # ===========================================================================
   # Latest-only collections (quick access to most recent model run)
   # These use the non-instance endpoints for simpler access patterns:
@@ -275,6 +290,18 @@ collections:
       - name: PRMSL
         levels: [mean_sea_level]
         valid_range: { min: 85000, max: 110000 }
+    run_mode: latest
+
+  - id: gfs-soil-latest
+    title: "GFS - Soil (Latest)"
+    description: "Most recent soil temperature at Noah land-model layers"
+    level_filter:
+      level_type: depth_below_surface
+      level_code: 106
+    parameters:
+      - name: TSOIL
+        levels: [0, 10, 40, 100]
+        valid_range: { min: 200, max: 350 }  # Kelvin
     run_mode: latest
 
 settings:

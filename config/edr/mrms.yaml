@@ -72,6 +72,48 @@ collections:
         valid_range: { min: -10, max: 500 }  # mm
     run_mode: latest
 
+  # ===========================================================================
+  # QPE accumulations (rolling multi-sensor Pass 2 estimates, hourly updates)
+  # Dedicated collection for point-query use cases (e.g. subgrade saturation):
+  #   GET /edr/collections/mrms-qpe/position?coords=POINT(-100 40)
+  # ===========================================================================
+
+  - id: mrms-qpe
+    title: "MRMS - Quantitative Precipitation Estimates"
+    description: "Rolling 1/24/72-hour multi-sensor precipitation accumulations (Pass 2), updated hourly"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: QPE_01H
+        levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
+      - name: QPE_24H
+        levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
+      - name: QPE_72H
+        levels: [0]
+        valid_range: { min: -10, max: 1000 }  # mm
+    run_mode: instances
+
+  - id: mrms-qpe-latest
+    title: "MRMS - Quantitative Precipitation Estimates (Latest)"
+    description: "Most recent 1/24/72-hour precipitation accumulations"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: QPE_01H
+        levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
+      - name: QPE_24H
+        levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
+      - name: QPE_72H
+        levels: [0]
+        valid_range: { min: -10, max: 1000 }  # mm
+    run_mode: latest
+
 settings:
   output_formats:
     - application/vnd.cov+json

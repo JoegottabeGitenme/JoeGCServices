@@ -13,7 +13,7 @@ use edr_api::{
     metrics::MetricsCollector, state::AppState,
 };
 use grid_processor::{GridDataService, MinioConfig};
-use storage::{observations::ObservationCatalog, Catalog};
+use storage::{observations::ObservationCatalog, storm_events::StormEventCatalog, Catalog};
 use test_utils::containers::TestInfrastructure;
 
 /// Create test AppState from infrastructure.
@@ -47,6 +47,9 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
     // Create observation catalog
     let observation_catalog = Arc::new(ObservationCatalog::new(catalog.pool_clone()));
 
+    // Create storm event catalog
+    let storm_event_catalog = Arc::new(StormEventCatalog::new(catalog.pool_clone()));
+
     // Create empty EDR config (no YAML files in test)
     let edr_config = EdrConfig::default();
 
@@ -59,6 +62,7 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
         catalog,
         grid_data_service,
         observation_catalog,
+        storm_event_catalog,
         edr_config: Arc::new(RwLock::new(edr_config)),
         base_url: "http://localhost:8083/edr".to_string(),
         location_cache,

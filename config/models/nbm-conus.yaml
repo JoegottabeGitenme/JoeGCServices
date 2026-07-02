@@ -58,10 +58,14 @@ grid:
 schedule:
   cycles:
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] # Hourly
+  # Full 11-day horizon at native cadence (verified against AWS bucket,
+  # all cycles carry the full range): hourly f001-f060, 3-hourly f063-f189,
+  # 6-hourly f192-f264
   forecast_hours:
-    start: 1
-    end: 48 # Short-range focus (NBM goes to 264h but we limit to 48h)
-    step: 1 # Every hour
+    ranges:
+      - { start: 1, end: 60, step: 1 } # hourly (2.5 days)
+      - { start: 63, end: 189, step: 3 } # 3-hourly (days 2.5-8)
+      - { start: 192, end: 264, step: 6 } # 6-hourly (days 8-11)
   poll_interval_secs: 3600 # Check every hour
   delay_hours: 2 # NBM typically available ~2 hours after cycle time
   max_concurrent: 3 # Allow up to 3 concurrent downloads

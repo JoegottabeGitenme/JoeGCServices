@@ -179,6 +179,7 @@ pub mod level_matching {
             "isobaric" | "pressure" => format!("{} mb", int_value),
             "height_above_ground" | "height_agl" => format!("{} m above ground", int_value),
             "height_above_msl" | "height_msl" => format!("{} m above MSL", int_value),
+            "depth_below_surface" => format!("{} cm below ground", int_value),
             "surface" => "surface".to_string(),
             "entire_atmosphere" | "atmosphere" => "entire atmosphere".to_string(),
             "cloud_layer" => {
@@ -245,6 +246,14 @@ pub mod level_matching {
             "isobaric" | "pressure" => level_lower.contains("mb") || level_lower.contains("hpa"),
             "height_above_ground" | "height_agl" => level_lower.contains("above ground"),
             "height_above_msl" | "height_msl" => level_lower.contains("above msl"),
+            // Matches both GRIB2 soil strings ("10 cm below ground") and
+            // NLDAS/GLDAS named strings ("0-10 cm depth", "root zone", "0-100 cm total")
+            "depth_below_surface" => {
+                level_lower.contains("below ground")
+                    || level_lower.contains("depth")
+                    || level_lower.contains("root zone")
+                    || level_lower.contains("cm")
+            }
             "surface" => level_lower == "surface",
             "entire_atmosphere" | "atmosphere" => {
                 level_lower.contains("entire atmosphere") || level_lower.contains("atmosphere")

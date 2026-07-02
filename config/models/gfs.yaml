@@ -43,10 +43,12 @@ grid:
 
 schedule:
   cycles: [0, 6, 12, 18] # All 4 daily cycles
+  # Full 16-day horizon at native cadence (verified against AWS bucket):
+  # hourly through f120, then 3-hourly through f384
   forecast_hours:
-    start: 0
-    end: 120 # 5-day forecast (120 hours)
-    step: 1 # Every 1 hour
+    ranges:
+      - { start: 0, end: 120, step: 1 } # hourly (5 days)
+      - { start: 123, end: 384, step: 3 } # 3-hourly (days 5-16)
   poll_interval_secs: 3600 # Check for new data every hour
   delay_hours: 4 # Data typically available 4 hours after cycle time
   max_concurrent: 3 # Allow up to 3 concurrent downloads
@@ -511,6 +513,48 @@ parameters:
     display_units: km
     conversion: m_to_km
     valid_range: [0, 100000] # 0-100 km visibility
+
+  # ==========================================================================
+  # Soil (Noah land model layers, GRIB2 depth-below-land code 106)
+  # ==========================================================================
+  # Level values are GRIB2 scaled values (scale factor 2) = layer TOP in cm.
+  # Catalog level strings: "0 cm below ground", "10 cm below ground", etc.
+  # idx_level: exact .idx match strings (layer top-bottom in meters) —
+  # verified from live gfs.tXXz.pgrb2.0p25.fYYY.idx files.
+
+  # Soil Temperature
+  - name: TSOIL
+    description: "Soil Temperature"
+    grib2:
+      discipline: 2
+      category: 0
+      number: 2
+    downsample: mean
+    levels:
+      - type: depth_below_surface
+        level_code: 106
+        value: 0
+        idx_level: "0-0.1 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 10
+        idx_level: "0.1-0.4 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 40
+        idx_level: "0.4-1 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 100
+        idx_level: "1-2 m below ground"
+        display_template: "{value} cm below ground"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [200, 350]
 
 # Composite layers (derived from multiple parameters)
 composites:

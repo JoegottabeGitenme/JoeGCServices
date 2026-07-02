@@ -121,11 +121,48 @@ struct ModelConfigSchedule {
 }
 
 /// Structure matching forecast_hours in schedule section.
+/// Supports both the legacy single-range form ({start, end, step}) and the
+/// multi-range form ({ranges: [{start, end, step}, ...]}).
 #[derive(Debug, Deserialize)]
 struct ForecastHoursConfig {
     start: Option<u32>,
     end: Option<u32>,
     step: Option<u32>,
+    ranges: Option<Vec<ForecastRangeConfig>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ForecastRangeConfig {
+    start: Option<u32>,
+    end: Option<u32>,
+    step: Option<u32>,
+}
+
+impl ForecastHoursConfig {
+    /// Total number of expected forecast hours (deduplicated across ranges).
+    fn expected_count(&self) -> Option<u32> {
+        if let Some(ref ranges) = self.ranges {
+            let mut hours: Vec<u32> = Vec::new();
+            for r in ranges {
+                let start = r.start.unwrap_or(0);
+                let end = r.end?;
+                let step = r.step.unwrap_or(1).max(1);
+                hours.extend((start..=end).step_by(step as usize));
+            }
+            hours.sort_unstable();
+            hours.dedup();
+            Some(hours.len() as u32)
+        } else {
+            let start = self.start.unwrap_or(0);
+            let end = self.end?;
+            let step = self.step.unwrap_or(1);
+            if step > 0 {
+                Some((end - start) / step + 1)
+            } else {
+                None
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,20 +250,12 @@ impl CleanupConfig {
                                 };
 
                                 // Calculate expected forecast hours from schedule
+                                // (handles both single-range and multi-range forms)
                                 let expected_forecast_hours = config
                                     .schedule
                                     .as_ref()
                                     .and_then(|s| s.forecast_hours.as_ref())
-                                    .and_then(|fh| {
-                                        let start = fh.start.unwrap_or(0);
-                                        let end = fh.end?;
-                                        let step = fh.step.unwrap_or(1);
-                                        if step > 0 {
-                                            Some((end - start) / step + 1)
-                                        } else {
-                                            None
-                                        }
-                                    });
+                                    .and_then(|fh| fh.expected_count());
 
                                 // Get hours setting (not used for static models but kept for config consistency)
                                 let hours = retention.and_then(|r| r.hours).unwrap_or(24);

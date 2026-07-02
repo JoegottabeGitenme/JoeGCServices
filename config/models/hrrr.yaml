@@ -546,6 +546,54 @@ parameters:
     display_units: mm
     valid_range: [0, 100] # 0-100 mm
 
+  # ==========================================================================
+  # Soil (RUC land model POINT depths, GRIB2 depth-below-land code 106)
+  # ==========================================================================
+  # Unlike GFS's Noah layers, HRRR uses point depths (top == bottom in .idx).
+  # Level values are GRIB2 scaled values (scale factor 2) = depth in cm.
+  # Native depths: 0, 0.01, 0.04, 0.1, 0.3, 0.6, 1, 1.6, 3 m — we ingest a
+  # subset spanning the frost/cure-relevant range.
+  # idx_level strings verified from live hrrr.tXXz.wrfprsfYY.grib2.idx files.
+
+  # Soil Temperature
+  - name: TSOIL
+    description: "Soil Temperature"
+    grib2:
+      discipline: 2
+      category: 0
+      number: 2
+    downsample: mean
+    levels:
+      - type: depth_below_surface
+        level_code: 106
+        value: 0
+        idx_level: "0-0 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 4
+        idx_level: "0.04-0.04 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 10
+        idx_level: "0.1-0.1 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 30
+        idx_level: "0.3-0.3 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 100
+        idx_level: "1-1 m below ground"
+        display_template: "{value} cm below ground"
+    units: K
+    display_units: °C
+    conversion: K_to_C
+    valid_range: [200, 350]
+
 # Composite layers
 composites:
   - name: WIND_BARBS

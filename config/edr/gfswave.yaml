@@ -113,7 +113,7 @@ settings:
 
 limits:
   max_parameters_per_request: 10
-  max_time_steps: 120
+  max_time_steps: 150   # full 16-day run = 129 steps (0-384h, 3-hourly)
   max_vertical_levels: 1
   max_response_size_mb: 100
   max_area_sq_degrees: 500
