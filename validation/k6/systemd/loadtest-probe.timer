@@ -1,0 +1,10 @@
+[Unit]
+Description=Run load test probe every ~3h with jitter (sporadic daytime checks)
+
+[Timer]
+OnCalendar=*-*-* 00/3:30:00
+RandomizedDelaySec=5400
+Persistent=false
+
+[Install]
+WantedBy=timers.target

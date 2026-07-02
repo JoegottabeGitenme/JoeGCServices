@@ -1,0 +1,11 @@
+[Unit]
+Description=weather-wms nightly load test suite (full intensity)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=joe
+ExecStart=/opt/weather-wms/loadtest/scripts/run-nightly.sh
+TimeoutStartSec=10800
+Nice=5
