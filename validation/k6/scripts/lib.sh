@@ -117,6 +117,14 @@ publish_report() {
   else
     warn "No report.html to publish"
   fi
+
+  # Regenerate the cross-run trends page from history (host python3)
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$LT_ROOT/report/generate_trends.py" \
+      --results-dir "$LT_ROOT/results" \
+      --out "$PUBLISH_DIR/trends.html" \
+      && ok "Trends page updated" || warn "Trends generation failed"
+  fi
 }
 
 # Keep only the most recent N result dirs for a given prefix
