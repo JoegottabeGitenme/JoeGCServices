@@ -141,6 +141,20 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Bootstrap US ZIP codes for ZIP lookup in the EDR `populated` collection.
+    // Threshold of 1000: if fewer than 1000 zip rows exist, load the embedded
+    // ~33k-ZIP dataset.
+    match storage::stations_bootstrap::bootstrap_zip_codes(&observation_catalog, 1000).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(count = count, "Bootstrapped US ZIP codes");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to bootstrap ZIP codes (continuing anyway)");
+        }
+    }
+
     // Create ingester
     let ingester = Ingester::new(storage, catalog);
 

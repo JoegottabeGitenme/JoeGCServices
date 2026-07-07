@@ -1854,6 +1854,33 @@ pub async fn populated_locations_list_handler(
     // Search mode when ?q= is present and non-empty; otherwise population browse.
     let search_query = params.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
+    // ZIP lookup: a 5-digit numeric query is an exact ZIP-code lookup (returns
+    // the ZIP point labeled with its nearest city/state).
+    if let Some(raw_q) = search_query {
+        if is_zip_query(raw_q) {
+            let zip = match state.observation_catalog.get_zip_code(raw_q).await {
+                Ok(z) => z,
+                Err(e) => {
+                    tracing::error!("get_zip_code failed: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error("Failed to look up ZIP code"),
+                    );
+                }
+            };
+            let features: Vec<serde_json::Value> = zip
+                .iter()
+                .map(|z| populated_place_feature(z, &state.base_url, &default_collections))
+                .collect();
+            let fc = serde_json::json!({
+                "type": "FeatureCollection",
+                "numberReturned": features.len(),
+                "features": features,
+            });
+            return json_response(fc, "max-age=86400");
+        }
+    }
+
     let (places, min_pop_echo, is_search) = if let Some(raw_q) = search_query {
         // Parse optional "City, ST" / "City ST" -> (name, state). An explicit
         // ?state= overrides any parsed state.
@@ -2175,6 +2202,16 @@ fn parse_bbox(s: &str) -> Result<(f64, f64, f64, f64), String> {
         return Err("bbox must have 4 comma-separated values".to_string());
     }
     Ok((parts[0], parts[1], parts[2], parts[3]))
+}
+
+/// Returns true if the query is an exact 5-digit US ZIP code (optionally with
+/// a "ZIP" prefix or surrounding whitespace). ZIP+4 ("80202-1234") also counts,
+/// using just the 5-digit prefix.
+fn is_zip_query(q: &str) -> bool {
+    let t = q.trim().trim_start_matches("ZIP").trim_start_matches("zip");
+    // Accept "80202" or "80202-1234"
+    let five = t.split('-').next().unwrap_or(t).trim();
+    five.len() == 5 && five.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Parse a search query into (city_name, optional_state).
@@ -2544,6 +2581,20 @@ mod tests {
         );
         assert!(parse_within(&None, None).is_err());
         assert!(parse_within(&Some("5furlongs".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn test_is_zip_query() {
+        use super::is_zip_query;
+        assert!(is_zip_query("80202"));
+        assert!(is_zip_query(" 80202 "));
+        assert!(is_zip_query("ZIP80202"));
+        assert!(is_zip_query("80202-1234")); // ZIP+4
+        assert!(!is_zip_query("8020")); // too short
+        assert!(!is_zip_query("802021")); // too long
+        assert!(!is_zip_query("denver"));
+        assert!(!is_zip_query("denver 80")); // not a bare ZIP
+        assert!(!is_zip_query("abcde"));
     }
 
     #[test]

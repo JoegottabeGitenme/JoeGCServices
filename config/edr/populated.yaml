@@ -25,13 +25,13 @@ collections:
   - id: populated
     title: "US Populated Places"
     description: >-
-      Registry of US cities/towns (population >= 1000) for point-forecast
-      lookup and city-name search. Use /locations to browse (filter with
-      min-population/bbox) or search by name (?q=, e.g. ?q=denver or
-      ?q=denver,co); /locations/{id} to fetch a point forecast at a city
-      (select models with collections=); and /radius to fetch forecasts for
-      all cities near a point (also usable for reverse-geocoding with
-      within=25km&limit=1).
+      Registry of US cities/towns (population >= 1000) plus all US ZIP codes
+      for point-forecast lookup and location search. Use /locations to browse
+      (filter with min-population/bbox), search by name (?q=denver or
+      ?q=denver,co), or look up a ZIP (?q=80202); /locations/{id} to fetch a
+      point forecast at a city (select models with collections=); and /radius
+      to fetch forecasts for all cities near a point (also usable for
+      reverse-geocoding with within=25km&limit=1).
     run_mode: latest
 
 settings:

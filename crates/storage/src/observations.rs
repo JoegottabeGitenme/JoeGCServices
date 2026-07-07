@@ -793,6 +793,80 @@ impl ObservationCatalog {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    // ========== ZIP Code Methods ==========
+
+    /// Look up a ZIP code (exact 5-digit match) and enrich it with the nearest
+    /// populated place (for a "City, ST" display label).
+    ///
+    /// `zip` may be given with or without the "ZIP" prefix ("80202" or
+    /// "ZIP80202"). Returns None if the ZIP is unknown. The returned
+    /// `Location`'s `properties` includes:
+    ///   - `zip`: the 5-digit code
+    ///   - `nearest_place`: nearest city name (if any within ~40 km)
+    ///   - `nearest_state`: that city's state
+    /// `name` is set to the nearest place name when available (else the ZIP),
+    /// and `region` to the nearest place's state, so ZIP features render like
+    /// populated places.
+    pub async fn get_zip_code(&self, zip: &str) -> WmsResult<Option<Location>> {
+        let code = zip.trim().trim_start_matches("ZIP").trim();
+        let id = format!("ZIP{}", code);
+
+        #[derive(sqlx::FromRow)]
+        struct ZipRow {
+            id: String,
+            zip: String,
+            lon: f64,
+            lat: f64,
+            near_name: Option<String>,
+            near_state: Option<String>,
+        }
+
+        // Find the ZIP, then LATERAL-join the single nearest populated place
+        // within 40 km (GiST-indexed) for the city/state label.
+        let row = sqlx::query_as::<_, ZipRow>(
+            r#"
+            SELECT z.id,
+                   z.properties->>'zip' AS zip,
+                   ST_X(z.location::geometry) AS lon,
+                   ST_Y(z.location::geometry) AS lat,
+                   p.name AS near_name,
+                   p.region AS near_state
+            FROM locations z
+            LEFT JOIN LATERAL (
+                SELECT name, region
+                FROM locations pp
+                WHERE pp.location_type = 'populated_place'
+                  AND ST_DWithin(pp.location, z.location, 40000)
+                ORDER BY ST_Distance(pp.location, z.location)
+                LIMIT 1
+            ) p ON true
+            WHERE z.id = $1 AND z.location_type = 'zip'
+            "#,
+        )
+        .bind(&id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get ZIP code failed: {}", e)))?;
+
+        Ok(row.map(|r| {
+            let display_name = r.near_name.clone().unwrap_or_else(|| r.zip.clone());
+            let mut loc = Location::new(r.id, display_name, r.lon, r.lat)
+                .with_type("zip")
+                .with_country("US")
+                .with_property("zip", serde_json::Value::String(r.zip.clone()));
+            if let Some(ref name) = r.near_name {
+                loc = loc.with_property("nearest_place", serde_json::Value::String(name.clone()));
+            }
+            if let Some(ref st) = r.near_state {
+                loc = loc
+                    .with_region(st.clone())
+                    .with_property("nearest_state", serde_json::Value::String(st.clone()))
+                    .with_property("state", serde_json::Value::String(st.clone()));
+            }
+            loc
+        }))
+    }
+
     // ========== Observation Methods ==========
 
     /// Insert a single observation.
