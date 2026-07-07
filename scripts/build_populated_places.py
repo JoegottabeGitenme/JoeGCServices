@@ -168,6 +168,7 @@ def main():
         )
         writer = csv.DictWriter(
             f,
+            lineterminator="\n",  # avoid CRLF (csv default) so git/repo stays LF
             fieldnames=["id", "name", "lon", "lat", "elevation_m", "state", "population"],
         )
         writer.writeheader()
