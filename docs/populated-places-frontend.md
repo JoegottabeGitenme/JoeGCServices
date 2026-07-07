@@ -68,6 +68,71 @@ GET /edr/collections/populated/locations?min-population=500000&limit=5
 
 ---
 
+## 1b. City-name search (typeahead) — `?q=`
+
+Add `q=<text>` to the same `/locations` endpoint to search by name instead of
+browsing by population. Designed to replace an external geocoder for a search
+box. Same GeoJSON response shape.
+
+```
+GET /edr/collections/populated/locations?q=denv&limit=5
+```
+
+```jsonc
+{
+  "type": "FeatureCollection",
+  "numberReturned": 5,
+  "features": [
+    { "type": "Feature", "id": "PP0820000",
+      "geometry": { "type": "Point", "coordinates": [-104.99, 39.74] },
+      "properties": { "name": "Denver", "state": "CO", "population": 716577,
+                      "forecast": ".../collections/populated/locations/PP0820000",
+                      "forecast_links": [ /* ... */ ] } }
+    // Denver City TX, Denver PA, Denver IA, ...
+  ]
+}
+```
+
+Matching & ranking:
+- **Prefix + substring**, **accent-insensitive** (`q=canon` or `q=cañon` →
+  *Cañon City*), **punctuation-insensitive** (`q=st louis` → *St. Louis*).
+- Ranked **exact > prefix > substring**, then **population descending** — the
+  most relevant/populous city comes first.
+- **`limit`** default **10**, max **50**.
+
+Optional refinements:
+- **`"City, ST"`** or **`"City ST"`** — constrain by state, e.g.
+  `q=springfield, il` or `q=portland or`. State may be a 2-letter USPS code or
+  full name (`q=springfield, illinois`). Multi-word cities are preserved
+  (`q=new york` stays "New York").
+- **`state=CO`** — explicit state param (overrides any state parsed from `q`).
+- **`min-population=`** — optional floor (search applies **no floor** by
+  default, so small towns are findable).
+- **`bbox=`** — bias/restrict to a region.
+
+Behavior notes:
+- No matches → **200** with `features: []` (never 404).
+- Typeahead-grade latency (server-side query ~7 ms over ~10k cities).
+- No forecast payload is fetched for search results — they're lightweight; get
+  the forecast separately via the city `id` (§2) once the user picks one.
+
+---
+
+## 1c. Reverse geocoding — name a dropped pin
+
+Use the `/radius` endpoint with a small radius and `limit=1` to get the nearest
+city to a coordinate:
+
+```
+GET /edr/collections/populated/radius?coords=POINT(-104.99 39.74)&within=25km&min-population=0&limit=1
+```
+
+Returns the single closest city (as a forecast FeatureCollection — if you only
+want the name/coords, read `features[0].properties`). `min-population=0`
+ensures even a tiny nearby town resolves; raise it to snap to a larger city.
+
+---
+
 ## 2. Point forecast at a city
 
 ```
