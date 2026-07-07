@@ -82,13 +82,14 @@ collections:
       - name: RH
         levels: [2]
         valid_range: { min: 0, max: 100 }  # percent
-      # TODO: 10m wind not working yet - need to investigate level_value template
-      # Currently only 2m values are being ingested for UGRD/VGRD
+      # 10m wind now labels correctly: code-103 display is a {value} template
+      # (was previously a static "2 m above ground" that mislabeled all
+      # height-AGL params due to first-config-wins in the level table)
       - name: UGRD
-        levels: [2]
+        levels: [10]
         valid_range: { min: -150, max: 150 }  # m/s
       - name: VGRD
-        levels: [2]
+        levels: [10]
         valid_range: { min: -150, max: 150 }  # m/s
       - name: MASSDEN
         levels: [8]

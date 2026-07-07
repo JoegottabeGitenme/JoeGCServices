@@ -117,7 +117,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display_template: "{value} m above ground"
       # Isobaric levels for upper-air analysis
       # Use {value_mb} template to convert Pa to mb (divide by 100)
       - type: isobaric
@@ -159,7 +159,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display_template: "{value} m above ground"
     units: K
     display_units: °C
     conversion: K_to_C
@@ -177,7 +177,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display_template: "{value} m above ground"
       # Isobaric levels
       - type: isobaric
         level_code: 100
@@ -222,7 +222,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 10
-        display: "10 m above ground"
+        display_template: "{value} m above ground"
       # Isobaric levels
       - type: isobaric
         level_code: 100
@@ -267,7 +267,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 2
-        display: "2 m above ground"
+        display_template: "{value} m above ground"
       # Isobaric levels
       - type: isobaric
         level_code: 100
@@ -568,7 +568,7 @@ parameters:
       - type: height_above_ground
         level_code: 103
         value: 8
-        display: "8 m above ground"
+        display_template: "{value} m above ground"
     units: kg/m^3
     display_units: µg/m^3
     valid_range: [0, 0.00001] # 0..1e-5 kg/m^3 = 0..10000 µg/m^3
