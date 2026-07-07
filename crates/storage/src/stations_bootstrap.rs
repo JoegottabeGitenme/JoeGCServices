@@ -226,7 +226,9 @@ fn parse_populated_places_csv(csv_data: &str) -> WmsResult<Vec<Location>> {
             continue;
         }
 
-        let parts: Vec<&str> = line.split(',').collect();
+        // CSV split that respects double-quoted fields (place names can
+        // contain commas, e.g. "Islamorada, Village of Islands").
+        let parts = split_csv_line(line);
         if parts.len() < 7 {
             warn!(
                 line = line_num + 1,
@@ -278,6 +280,27 @@ fn parse_populated_places_csv(csv_data: &str) -> WmsResult<Vec<Location>> {
     }
 
     Ok(places)
+}
+
+/// Split a CSV line into fields, honoring double-quoted fields that may
+/// contain commas. Minimal RFC-4180-style handling (no escaped quotes needed
+/// for this dataset).
+fn split_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for c in line.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                fields.push(std::mem::take(&mut current));
+            }
+            _ => current.push(c),
+        }
+    }
+    fields.push(current);
+    fields
 }
 
 /// Load additional stations from a file path.
@@ -365,6 +388,31 @@ PP0644000,Los Angeles,-118.41083,34.01939,,CA,3820914
         // population + state stored in properties
         assert_eq!(nyc.properties["population"], serde_json::json!(8258035));
         assert_eq!(nyc.properties["state"], serde_json::json!("NY"));
+    }
+
+    #[test]
+    fn test_split_csv_line_quoted() {
+        let parts = split_csv_line(
+            r#"PP1234132,"Islamorada, Village of Islands",-80.54330,24.98435,,FL,6988"#,
+        );
+        assert_eq!(parts.len(), 7);
+        assert_eq!(parts[0], "PP1234132");
+        assert_eq!(parts[1], "Islamorada, Village of Islands");
+        assert_eq!(parts[2], "-80.54330");
+        assert_eq!(parts[5], "FL");
+        assert_eq!(parts[6], "6988");
+    }
+
+    #[test]
+    fn test_parse_populated_places_quoted_names() {
+        let csv = concat!(
+            "id,name,lon,lat,elevation_m,state,population\n",
+            "PP1234132,\"Islamorada, Village of Islands\",-80.54330,24.98435,,FL,6988\n",
+        );
+        let places = parse_populated_places_csv(csv).unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].name, "Islamorada, Village of Islands");
+        assert_eq!(places[0].properties["population"], serde_json::json!(6988));
     }
 
     #[test]
