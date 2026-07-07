@@ -53,17 +53,20 @@ STATE_FIPS = {
 }
 
 
-def fetch(url: str) -> str:
+def fetch(url: str, encoding: str) -> str:
+    # Census sources differ: the Gazetteer place files are UTF-8, the PEP
+    # sub-est CSV is Latin-1. Decoding with the wrong one mangles non-ASCII
+    # names (e.g. "Cañon City" -> "CaÃ±on City").
     print(f"  fetching {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={"User-Agent": "weather-wms-build"})
     with urllib.request.urlopen(req, timeout=120) as r:
-        return r.read().decode("latin-1")
+        return r.read().decode(encoding)
 
 
 def load_population() -> dict:
     """GEOID(7) -> population, from PEP. Keeps incorporated places (162) and
     CDPs (157); drops higher-level summaries."""
-    text = fetch(PEP_URL)
+    text = fetch(PEP_URL, "latin-1")
     pop = {}
     reader = csv.DictReader(io.StringIO(text))
     for row in reader:
@@ -104,7 +107,7 @@ def load_gazetteer() -> dict:
     for fips, usps in STATE_FIPS.items():
         url = f"{GAZ_BASE}/2023_gaz_place_{fips}.txt"
         try:
-            text = fetch(url)
+            text = fetch(url, "utf-8")
         except Exception as e:
             print(f"  WARN: {usps} gazetteer failed: {e}", file=sys.stderr)
             continue
