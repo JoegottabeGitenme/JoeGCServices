@@ -547,6 +547,87 @@ parameters:
     valid_range: [0, 100] # 0-100 mm
 
   # ==========================================================================
+  # Smoke / Aerosols (HRRR-Smoke coupling, GRIB2 discipline 0 category 20)
+  # ==========================================================================
+  # Values stored in native SI units (as decoded via wgrib2 from a live file):
+  #   MASSDEN  kg/m^3   near-surface smoke; ×1e9 for µg/m^3 (obs max ~1.1e-6)
+  #   COLMD    kg/m^2   column-integrated smoke; ×1e6 for mg/m^2 (max ~6.7e-4)
+  #   AOTK     unitless aerosol optical depth (obs 0..~3)
+  # COLMD/AOTK idx level string is the long form; the plain "entire atmosphere"
+  # derived by level_to_idx_string(200) would NOT match, so idx_level overrides.
+
+  # Near-surface smoke (fine particulate mass density at 8 m AGL)
+  - name: MASSDEN
+    description: "Near-Surface Smoke (Mass Density)"
+    grib2:
+      discipline: 0
+      category: 20
+      number: 0
+    downsample: mean
+    levels:
+      - type: height_above_ground
+        level_code: 103
+        value: 8
+        display: "8 m above ground"
+    units: kg/m^3
+    display_units: µg/m^3
+    valid_range: [0, 0.00001] # 0..1e-5 kg/m^3 = 0..10000 µg/m^3
+
+  # Column-integrated smoke (vertically integrated mass density)
+  - name: COLMD
+    description: "Vertically Integrated Smoke"
+    grib2:
+      discipline: 0
+      category: 20
+      number: 1
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+        idx_level: "entire atmosphere (considered as a single layer)"
+    units: kg/m^2
+    display_units: mg/m^2
+    valid_range: [0, 0.01] # 0..1e-2 kg/m^2 (obs max ~6.7e-4)
+
+  # Aerosol Optical Depth (dimensionless)
+  - name: AOTK
+    description: "Aerosol Optical Depth"
+    grib2:
+      discipline: 0
+      category: 20
+      number: 102
+    downsample: mean
+    levels:
+      - type: entire_atmosphere
+        level_code: 200
+        display: "entire atmosphere"
+        idx_level: "entire atmosphere (considered as a single layer)"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 5] # dimensionless; obs 0..~3
+
+  # ==========================================================================
+  # Radiation
+  # ==========================================================================
+
+  # Downward Shortwave Radiation Flux (solar; UV/solar proxy)
+  - name: DSWRF
+    description: "Downward Shortwave Radiation Flux"
+    grib2:
+      discipline: 0
+      category: 4
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: W/m^2
+    display_units: W/m^2
+    valid_range: [0, 1500] # 0..1500 W/m^2 (clear-sky noon ~1000)
+
+  # ==========================================================================
   # Soil (RUC land model POINT depths, GRIB2 depth-below-land code 106)
   # ==========================================================================
   # Unlike GFS's Noah layers, HRRR uses point depths (top == bottom in .idx).

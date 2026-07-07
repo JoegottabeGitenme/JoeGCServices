@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Aerosol Optical Depth Styles",
+    "description": "HRRR aerosol optical depth (AOTK). Dimensionless; no transform. Higher values = more aerosol (smoke/dust/haze) attenuating sunlight."
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Aerosol Optical Depth",
+      "description": "Column aerosol optical thickness (dimensionless)",
+      "type": "gradient",
+      "units": "1",
+      "range": {
+        "min": 0,
+        "max": 3
+      },
+      "stops": [
+        { "value": 0.0, "color": "#00000000", "label": "0" },
+        { "value": 0.1, "color": "#2B83BAC0", "label": "0.1" },
+        { "value": 0.25, "color": "#80BFAB", "label": "0.25" },
+        { "value": 0.5, "color": "#C7E8AD", "label": "0.5" },
+        { "value": 0.75, "color": "#FFFFBF", "label": "0.75" },
+        { "value": 1.0, "color": "#FDC980", "label": "1.0" },
+        { "value": 1.5, "color": "#F17C4A", "label": "1.5" },
+        { "value": 3.0, "color": "#D7191C", "label": "3.0+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Aerosol Optical Depth",
+        "labels": ["0", "0.25", "0.5", "1.0", "1.5", "3.0+"],
+        "description": "AOD <0.1 clear, 0.1-0.5 hazy, 0.5-1 smoky, >1 dense smoke/dust"
+      }
+    }
+  }
+}

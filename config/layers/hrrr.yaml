@@ -176,3 +176,63 @@ layers:
     levels:
       - value: "entire atmosphere"
         default: true
+
+  # ==========================================================================
+  # Smoke / Aerosols (HRRR-Smoke)
+  # ==========================================================================
+  # Native data is SI (kg/m^3, kg/m^2); the display conversion to µg/m^3 and
+  # mg/m^2 is done in the style file's linear transform, NOT via an ingestion
+  # `conversion:` (which only has a fixed enum). WMS renders display units;
+  # EDR returns native SI (see config/edr/hrrr.yaml).
+
+  - id: hrrr_MASSDEN
+    parameter: MASSDEN
+    title: "Near-Surface Smoke"
+    abstract: "Near-surface fine particulate smoke concentration (8 m above ground)"
+    style_file: smoke.json
+    units:
+      native: kg/m^3
+      display: µg/m^3
+    levels:
+      - value: "8 m above ground"
+        default: true
+
+  - id: hrrr_COLMD
+    parameter: COLMD
+    title: "Vertically Integrated Smoke"
+    abstract: "Column-integrated smoke mass density"
+    style_file: smoke_column.json
+    units:
+      native: kg/m^2
+      display: mg/m^2
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  - id: hrrr_AOTK
+    parameter: AOTK
+    title: "Aerosol Optical Depth"
+    abstract: "Column aerosol optical thickness (dimensionless)"
+    style_file: aod.json
+    units:
+      native: "1"
+      display: "1"
+    levels:
+      - value: "entire atmosphere"
+        default: true
+
+  # ==========================================================================
+  # Radiation
+  # ==========================================================================
+
+  - id: hrrr_DSWRF
+    parameter: DSWRF
+    title: "Downward Shortwave Radiation"
+    abstract: "Downward shortwave (solar) radiation flux at the surface"
+    style_file: radiation.json
+    units:
+      native: W/m^2
+      display: W/m^2
+    levels:
+      - value: "surface"
+        default: true

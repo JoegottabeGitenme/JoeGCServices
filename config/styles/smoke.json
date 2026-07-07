@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Near-Surface Smoke Styles",
+    "description": "HRRR-Smoke near-surface fine particulate (MASSDEN). Native data is kg/m^3; a linear transform (scale 1e9) converts to µg/m^3 before color mapping, so all stops/ranges below are in µg/m^3."
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Smoke Concentration",
+      "description": "Near-surface smoke concentration, colored by air-quality severity (µg/m^3)",
+      "type": "gradient",
+      "units": "µg/m^3",
+      "transform": {
+        "type": "linear",
+        "scale": 1000000000.0,
+        "offset": 0.0
+      },
+      "range": {
+        "min": 0,
+        "max": 250
+      },
+      "stops": [
+        { "value": 0, "color": "#00000000", "label": "0" },
+        { "value": 1, "color": "#B3E5A1C0", "label": "1" },
+        { "value": 12, "color": "#00E400", "label": "12 (Good)" },
+        { "value": 35, "color": "#FFFF00", "label": "35 (Moderate)" },
+        { "value": 55, "color": "#FF7E00", "label": "55 (USG)" },
+        { "value": 150, "color": "#FF0000", "label": "150 (Unhealthy)" },
+        { "value": 250, "color": "#8F3F97", "label": "250 (Very Unhealthy)" },
+        { "value": 500, "color": "#7E0023", "label": "500 (Hazardous)" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Near-Surface Smoke (µg/m³)",
+        "labels": ["0", "12", "35", "55", "150", "250+"],
+        "description": "AQI-aligned PM breakpoints: Good <12, Moderate 12-35, USG 35-55, Unhealthy 55-150, Very Unhealthy 150-250, Hazardous >250"
+      }
+    }
+  }
+}

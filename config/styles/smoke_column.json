@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Vertically Integrated Smoke Styles",
+    "description": "HRRR-Smoke column-integrated mass density (COLMD). Native data is kg/m^2; a linear transform (scale 1e6) converts to mg/m^2 before color mapping, so stops/ranges are in mg/m^2."
+  },
+  "styles": {
+    "gradient": {
+      "default": true,
+      "name": "Column Smoke",
+      "description": "Vertically integrated smoke loading (mg/m^2)",
+      "type": "gradient",
+      "units": "mg/m^2",
+      "transform": {
+        "type": "linear",
+        "scale": 1000000.0,
+        "offset": 0.0
+      },
+      "range": {
+        "min": 0,
+        "max": 300
+      },
+      "stops": [
+        { "value": 0, "color": "#00000000", "label": "0" },
+        { "value": 5, "color": "#FFFFB2C0", "label": "5" },
+        { "value": 25, "color": "#FECC5C", "label": "25" },
+        { "value": 75, "color": "#FD8D3C", "label": "75" },
+        { "value": 150, "color": "#F03B20", "label": "150" },
+        { "value": 300, "color": "#BD0026", "label": "300" },
+        { "value": 600, "color": "#7E0023", "label": "600+" }
+      ],
+      "interpolation": "linear",
+      "out_of_range": "clamp",
+      "legend": {
+        "title": "Column Smoke (mg/m²)",
+        "labels": ["0", "25", "75", "150", "300+"],
+        "description": "Vertically integrated smoke; higher values indicate thick smoke plumes aloft"
+      }
+    }
+  }
+}

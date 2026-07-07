@@ -61,6 +61,9 @@ collections:
       - name: GUST
         levels: [surface]
         valid_range: { min: 0, max: 100 }  # m/s
+      - name: DSWRF
+        levels: [surface]
+        valid_range: { min: 0, max: 1500 }  # W/m^2 (downward shortwave / solar)
     run_mode: instances
 
   - id: hrrr-height-agl
@@ -87,6 +90,9 @@ collections:
       - name: VGRD
         levels: [2]
         valid_range: { min: -150, max: 150 }  # m/s
+      - name: MASSDEN
+        levels: [8]
+        valid_range: { min: 0, max: 0.00001 }  # kg/m^3 (near-surface smoke; ×1e9 for µg/m^3)
     run_mode: instances
 
   - id: hrrr-atmosphere
@@ -99,6 +105,12 @@ collections:
       - name: PWAT
         levels: [entire_atmosphere]
         valid_range: { min: 0, max: 100 }  # kg/m^2 (mm)
+      - name: COLMD
+        levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 0.01 }  # kg/m^2 (column smoke; ×1e6 for mg/m^2)
+      - name: AOTK
+        levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 5 }  # dimensionless aerosol optical depth
       # TODO: REFC and TCDC need GRIB2 parameter code mapping fix
       # - name: REFC
       #   levels: [entire_atmosphere]
