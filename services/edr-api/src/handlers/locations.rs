@@ -1804,17 +1804,30 @@ fn populated_place_feature(
         })
         .collect();
 
+    let mut properties = serde_json::json!({
+        "name": loc.name,
+        "state": state,
+        "population": pop,
+        "forecast": format!("{}/collections/populated/locations/{}", base_url, loc.id),
+        "forecast_links": forecast_links,
+    });
+
+    // ZIP results carry extra fields (the 5-digit code and the nearest place
+    // used for the display label). Pass them through when present.
+    if let serde_json::Value::Object(ref mut map) = properties {
+        if let Some(zip) = loc.properties.get("zip") {
+            map.insert("zip".to_string(), zip.clone());
+        }
+        if let Some(near) = loc.properties.get("nearest_place") {
+            map.insert("nearest_place".to_string(), near.clone());
+        }
+    }
+
     serde_json::json!({
         "type": "Feature",
         "id": loc.id,
         "geometry": { "type": "Point", "coordinates": [loc.lon, loc.lat] },
-        "properties": {
-            "name": loc.name,
-            "state": state,
-            "population": pop,
-            "forecast": format!("{}/collections/populated/locations/{}", base_url, loc.id),
-            "forecast_links": forecast_links,
-        },
+        "properties": properties,
     })
 }
 

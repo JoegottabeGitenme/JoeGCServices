@@ -808,7 +808,10 @@ impl ObservationCatalog {
     /// and `region` to the nearest place's state, so ZIP features render like
     /// populated places.
     pub async fn get_zip_code(&self, zip: &str) -> WmsResult<Option<Location>> {
-        let code = zip.trim().trim_start_matches("ZIP").trim();
+        // Accept "80202", "ZIP80202", or ZIP+4 "80202-1234" -> normalize to the
+        // 5-digit code.
+        let stripped = zip.trim().trim_start_matches("ZIP");
+        let code = stripped.split('-').next().unwrap_or(stripped).trim();
         let id = format!("ZIP{}", code);
 
         #[derive(sqlx::FromRow)]
@@ -821,8 +824,12 @@ impl ObservationCatalog {
             near_state: Option<String>,
         }
 
-        // Find the ZIP, then LATERAL-join the single nearest populated place
-        // within 40 km (GiST-indexed) for the city/state label.
+        // Find the ZIP, then LATERAL-join a representative populated place for
+        // the label. We prefer the most recognizable nearby city rather than
+        // the strictly-nearest centroid: any city within 8 km is treated as
+        // "here", and among those (or, failing that, all cities within 40 km)
+        // we pick the most populous, tie-broken by distance. This makes a
+        // Denver ZIP say "Denver" rather than an adjacent enclave.
         let row = sqlx::query_as::<_, ZipRow>(
             r#"
             SELECT z.id,
@@ -837,7 +844,10 @@ impl ObservationCatalog {
                 FROM locations pp
                 WHERE pp.location_type = 'populated_place'
                   AND ST_DWithin(pp.location, z.location, 40000)
-                ORDER BY ST_Distance(pp.location, z.location)
+                ORDER BY
+                    (ST_DWithin(pp.location, z.location, 8000)) DESC,
+                    COALESCE((pp.properties->>'population')::bigint, 0) DESC,
+                    ST_Distance(pp.location, z.location) ASC
                 LIMIT 1
             ) p ON true
             WHERE z.id = $1 AND z.location_type = 'zip'
