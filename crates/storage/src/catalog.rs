@@ -1880,14 +1880,15 @@ CREATE INDEX IF NOT EXISTS idx_locations_type ON locations(location_type);
 CREATE INDEX IF NOT EXISTS idx_locations_country ON locations(country);
 
 -- Text search support for populated-place name search (EDR ?q=)
--- unaccent: accent-insensitive matching; pg_trgm: fast substring/prefix via GIN
+-- unaccent gives accent-insensitive matching, pg_trgm gives fast substring
+-- and prefix matching via a GIN index (no semicolons in comments: the
+-- migration runner splits statements on the semicolon character)
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Trigram index on lower(name) accelerates ILIKE/substring matches as the
--- place set grows. The search query normalizes further (unaccent + strip
--- punctuation), which the planner applies as a post-filter on the trigram
--- candidate set.
+-- Trigram index on lower(name) accelerates substring matches as the place set
+-- grows. The search query normalizes further (unaccent plus punctuation
+-- stripping), applied by the planner as a post-filter on the trigram candidates
 CREATE INDEX IF NOT EXISTS idx_locations_name_trgm ON locations USING GIN (lower(name) gin_trgm_ops);
 
 -- Surface observations (METARs, MADIS surface data, etc.)
