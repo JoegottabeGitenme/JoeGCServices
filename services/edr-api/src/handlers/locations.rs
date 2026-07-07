@@ -62,6 +62,9 @@ pub struct LocationsListParams {
     pub min_population: Option<i64>,
     pub bbox: Option<String>,
     pub limit: Option<i64>,
+    /// Populated-places free-text name search (and optional state constraint).
+    pub q: Option<String>,
+    pub state: Option<String>,
 }
 
 /// Query parameters for location data query endpoint.
@@ -165,6 +168,8 @@ async fn locations_list(
     // Populated-places: list cities from PostGIS (filterable by population)
     if model_config.data_type.is_populated_places() {
         let pop_params = PopulatedListParams {
+            q: params.q.clone(),
+            state: params.state.clone(),
             min_population: params.min_population,
             bbox: params.bbox.clone(),
             limit: params.limit,
@@ -1711,7 +1716,15 @@ async fn fetch_gridded_collection_data(
 /// Query params for the populated-places /locations list.
 #[derive(Debug, Deserialize, Default)]
 pub struct PopulatedListParams {
-    /// Minimum population filter (defaults to the collection's configured floor).
+    /// Free-text city-name search. When present, switches to search mode
+    /// (ranked, accent/punctuation-insensitive) instead of population browse.
+    /// Accepts "City, ST" / "City ST" to constrain by state.
+    pub q: Option<String>,
+    /// Explicit state filter (2-letter USPS or full name); overrides any
+    /// state parsed from `q`.
+    pub state: Option<String>,
+    /// Minimum population filter (defaults to the collection's configured floor
+    /// in browse mode; no floor in search mode unless set).
     #[serde(rename = "min-population")]
     pub min_population: Option<i64>,
     /// Bounding box filter: "min_lon,min_lat,max_lon,max_lat".
@@ -1822,13 +1835,6 @@ pub async fn populated_locations_list_handler(
         );
     };
     let limits = &model_config.limits;
-    let min_pop = params
-        .min_population
-        .unwrap_or(limits.default_min_population);
-    let limit = params
-        .limit
-        .unwrap_or(limits.max_places_per_request)
-        .clamp(1, limits.max_places_per_request);
 
     let bbox = match &params.bbox {
         Some(s) => match parse_bbox(s) {
@@ -1845,19 +1851,65 @@ pub async fn populated_locations_list_handler(
         .clone()
         .unwrap_or_else(|| vec!["gfs-surface".to_string()]);
 
-    let places = match state
-        .observation_catalog
-        .get_populated_places(min_pop, bbox, limit)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("get_populated_places failed: {}", e);
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ExceptionResponse::internal_error("Failed to query populated places"),
-            );
-        }
+    // Search mode when ?q= is present and non-empty; otherwise population browse.
+    let search_query = params.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    let (places, min_pop_echo, is_search) = if let Some(raw_q) = search_query {
+        // Parse optional "City, ST" / "City ST" -> (name, state). An explicit
+        // ?state= overrides any parsed state.
+        let (name_part, parsed_state) = parse_city_state(raw_q);
+        let state_filter = params
+            .state
+            .as_deref()
+            .and_then(normalize_state)
+            .or(parsed_state);
+
+        // Search: no default population floor (find small towns); honor min-population if given.
+        let min_pop = params.min_population.unwrap_or(0);
+        let limit = params
+            .limit
+            .unwrap_or(limits.search_default_limit)
+            .clamp(1, limits.search_max_limit);
+
+        let places = match state
+            .observation_catalog
+            .search_populated_places(&name_part, state_filter.as_deref(), min_pop, bbox, limit)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("search_populated_places failed: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to search populated places"),
+                );
+            }
+        };
+        (places, min_pop, true)
+    } else {
+        let min_pop = params
+            .min_population
+            .unwrap_or(limits.default_min_population);
+        let limit = params
+            .limit
+            .unwrap_or(limits.max_places_per_request)
+            .clamp(1, limits.max_places_per_request);
+
+        let places = match state
+            .observation_catalog
+            .get_populated_places(min_pop, bbox, limit)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("get_populated_places failed: {}", e);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to query populated places"),
+                );
+            }
+        };
+        (places, min_pop, false)
     };
 
     let features: Vec<serde_json::Value> = places
@@ -1868,11 +1920,17 @@ pub async fn populated_locations_list_handler(
     let fc = serde_json::json!({
         "type": "FeatureCollection",
         "numberReturned": features.len(),
-        "min_population": min_pop,
+        "min_population": min_pop_echo,
         "features": features,
     });
 
-    json_response(fc, "max-age=86400")
+    // Search results shouldn't be cached as long as the static browse list.
+    let cache = if is_search {
+        "max-age=300"
+    } else {
+        "max-age=86400"
+    };
+    json_response(fc, cache)
 }
 
 /// GET /edr/collections/populated/locations/{id}
@@ -2118,6 +2176,127 @@ fn parse_bbox(s: &str) -> Result<(f64, f64, f64, f64), String> {
     }
     Ok((parts[0], parts[1], parts[2], parts[3]))
 }
+
+/// Parse a search query into (city_name, optional_state).
+///
+/// Accepts "Denver, CO", "Denver CO", "St. Louis, MO", or plain "Denver".
+/// Only splits off a trailing token that resolves to a known state (2-letter
+/// USPS or full name); otherwise the whole string is the city name (so
+/// multi-word cities like "New York" or "St. Louis Park" stay intact).
+fn parse_city_state(q: &str) -> (String, Option<String>) {
+    let q = q.trim();
+
+    // Comma form: "City, ST" — everything after the last comma is the state
+    // candidate.
+    if let Some(idx) = q.rfind(',') {
+        let (city, st) = q.split_at(idx);
+        let st = st[1..].trim();
+        if let Some(code) = normalize_state(st) {
+            let city = city.trim();
+            if !city.is_empty() {
+                return (city.to_string(), Some(code));
+            }
+        }
+    }
+
+    // Space form: "City ST" — only treat the last token as a state if it's a
+    // 2-letter USPS code (avoid stealing a word from a multi-word city name).
+    if let Some(idx) = q.rfind(char::is_whitespace) {
+        let (city, last) = q.split_at(idx);
+        let last = last.trim();
+        if last.len() == 2 {
+            if let Some(code) = normalize_state(last) {
+                let city = city.trim();
+                if !city.is_empty() {
+                    return (city.to_string(), Some(code));
+                }
+            }
+        }
+    }
+
+    (q.to_string(), None)
+}
+
+/// Normalize a state token to a 2-letter USPS code. Accepts a USPS code
+/// (case-insensitive) or a full state name. Returns None if unrecognized.
+fn normalize_state(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let upper = t.to_uppercase();
+    // 2-letter USPS code
+    if upper.len() == 2 && USPS_CODES.contains(&upper.as_str()) {
+        return Some(upper);
+    }
+    // Full name (case-insensitive)
+    let lower = t.to_lowercase();
+    STATE_NAMES
+        .iter()
+        .find(|(name, _)| *name == lower)
+        .map(|(_, code)| code.to_string())
+}
+
+const USPS_CODES: &[&str] = &[
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
+    "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM",
+    "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
+    "WV", "WI", "WY",
+];
+
+const STATE_NAMES: &[(&str, &str)] = &[
+    ("alabama", "AL"),
+    ("alaska", "AK"),
+    ("arizona", "AZ"),
+    ("arkansas", "AR"),
+    ("california", "CA"),
+    ("colorado", "CO"),
+    ("connecticut", "CT"),
+    ("delaware", "DE"),
+    ("district of columbia", "DC"),
+    ("florida", "FL"),
+    ("georgia", "GA"),
+    ("hawaii", "HI"),
+    ("idaho", "ID"),
+    ("illinois", "IL"),
+    ("indiana", "IN"),
+    ("iowa", "IA"),
+    ("kansas", "KS"),
+    ("kentucky", "KY"),
+    ("louisiana", "LA"),
+    ("maine", "ME"),
+    ("maryland", "MD"),
+    ("massachusetts", "MA"),
+    ("michigan", "MI"),
+    ("minnesota", "MN"),
+    ("mississippi", "MS"),
+    ("missouri", "MO"),
+    ("montana", "MT"),
+    ("nebraska", "NE"),
+    ("nevada", "NV"),
+    ("new hampshire", "NH"),
+    ("new jersey", "NJ"),
+    ("new mexico", "NM"),
+    ("new york", "NY"),
+    ("north carolina", "NC"),
+    ("north dakota", "ND"),
+    ("ohio", "OH"),
+    ("oklahoma", "OK"),
+    ("oregon", "OR"),
+    ("pennsylvania", "PA"),
+    ("rhode island", "RI"),
+    ("south carolina", "SC"),
+    ("south dakota", "SD"),
+    ("tennessee", "TN"),
+    ("texas", "TX"),
+    ("utah", "UT"),
+    ("vermont", "VT"),
+    ("virginia", "VA"),
+    ("washington", "WA"),
+    ("west virginia", "WV"),
+    ("wisconsin", "WI"),
+    ("wyoming", "WY"),
+];
 
 fn parse_optional_datetime(dt: &Option<String>) -> Result<Option<DateTime<Utc>>, String> {
     match dt {
@@ -2365,6 +2544,60 @@ mod tests {
         );
         assert!(parse_within(&None, None).is_err());
         assert!(parse_within(&Some("5furlongs".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn test_normalize_state() {
+        use super::normalize_state;
+        assert_eq!(normalize_state("CO"), Some("CO".to_string()));
+        assert_eq!(normalize_state("co"), Some("CO".to_string()));
+        assert_eq!(normalize_state("Colorado"), Some("CO".to_string()));
+        assert_eq!(normalize_state("new york"), Some("NY".to_string()));
+        assert_eq!(
+            normalize_state("District of Columbia"),
+            Some("DC".to_string())
+        );
+        assert_eq!(normalize_state("XX"), None);
+        assert_eq!(normalize_state("notastate"), None);
+        assert_eq!(normalize_state(""), None);
+    }
+
+    #[test]
+    fn test_parse_city_state() {
+        use super::parse_city_state;
+        // comma form
+        assert_eq!(
+            parse_city_state("Denver, CO"),
+            ("Denver".to_string(), Some("CO".to_string()))
+        );
+        assert_eq!(
+            parse_city_state("Denver, Colorado"),
+            ("Denver".to_string(), Some("CO".to_string()))
+        );
+        // space form with 2-letter code
+        assert_eq!(
+            parse_city_state("Denver CO"),
+            ("Denver".to_string(), Some("CO".to_string()))
+        );
+        // multi-word city with comma+state
+        assert_eq!(
+            parse_city_state("St. Louis, MO"),
+            ("St. Louis".to_string(), Some("MO".to_string()))
+        );
+        // plain city, no state
+        assert_eq!(parse_city_state("Denver"), ("Denver".to_string(), None));
+        // multi-word city, no state (last token is not a state)
+        assert_eq!(parse_city_state("New York"), ("New York".to_string(), None));
+        // multi-word city ending in a word that isn't a 2-letter code stays intact
+        assert_eq!(
+            parse_city_state("St. Louis Park"),
+            ("St. Louis Park".to_string(), None)
+        );
+        // trailing token that looks like a state code but comma form wins
+        assert_eq!(
+            parse_city_state("Kansas City, KS"),
+            ("Kansas City".to_string(), Some("KS".to_string()))
+        );
     }
 
     #[test]

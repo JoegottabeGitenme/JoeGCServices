@@ -719,6 +719,80 @@ impl ObservationCatalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Free-text search over populated place names.
+    ///
+    /// Matching is accent- and punctuation-insensitive: both the query and the
+    /// stored name are normalized via `regexp_replace(unaccent(lower(x)),
+    /// '[^a-z0-9]', '', 'g')` (so "st louis" matches "St. Louis", "cañon"
+    /// matches "Canon"). Results are ranked exact > prefix > substring, then by
+    /// population descending.
+    ///
+    /// - `query`: the city name text (already stripped of any "City, ST" state part).
+    /// - `state`: optional 2-letter USPS code to constrain results (matched against `region`).
+    /// - `min_population`: optional floor (`0` = no floor).
+    /// - `bbox`: optional (min_lon, min_lat, max_lon, max_lat) region bias/filter.
+    /// - `limit`: max rows.
+    pub async fn search_populated_places(
+        &self,
+        query: &str,
+        state: Option<&str>,
+        min_population: i64,
+        bbox: Option<(f64, f64, f64, f64)>,
+        limit: i64,
+    ) -> WmsResult<Vec<Location>> {
+        let (min_lon, min_lat, max_lon, max_lat, has_bbox) = match bbox {
+            Some((a, b, c, d)) => (a, b, c, d, true),
+            None => (0.0, 0.0, 0.0, 0.0, false),
+        };
+
+        // Normalized column expression, reused for match + rank.
+        // NOTE: keep this in sync with the trigram index in OBSERVATIONS_SCHEMA_SQL.
+        let rows = sqlx::query_as::<_, PopulatedPlaceRow>(
+            r#"
+            WITH q AS (
+                SELECT regexp_replace(unaccent(lower($1)), '[^a-z0-9]', '', 'g') AS norm
+            )
+            SELECT l.id, l.name, l.description,
+                   ST_X(l.location::geometry) as lon, ST_Y(l.location::geometry) as lat,
+                   l.elevation_m, l.location_type, l.country, l.region, l.properties,
+                   COALESCE((l.properties->>'population')::bigint, 0) as population
+            FROM locations l, q
+            WHERE l.location_type = 'populated_place'
+              AND q.norm <> ''
+              AND regexp_replace(unaccent(lower(l.name)), '[^a-z0-9]', '', 'g')
+                  LIKE '%' || q.norm || '%'
+              AND COALESCE((l.properties->>'population')::bigint, 0) >= $2
+              AND ($3::text IS NULL OR l.region = $3)
+              AND (NOT $8 OR ST_Within(
+                  l.location::geometry,
+                  ST_MakeEnvelope($4, $5, $6, $7, 4326)
+              ))
+            ORDER BY
+              CASE
+                WHEN regexp_replace(unaccent(lower(l.name)), '[^a-z0-9]', '', 'g') = q.norm THEN 0
+                WHEN regexp_replace(unaccent(lower(l.name)), '[^a-z0-9]', '', 'g') LIKE q.norm || '%' THEN 1
+                ELSE 2
+              END ASC,
+              COALESCE((l.properties->>'population')::bigint, 0) DESC
+            LIMIT $9
+            "#,
+        )
+        .bind(query)
+        .bind(min_population)
+        .bind(state)
+        .bind(min_lon)
+        .bind(min_lat)
+        .bind(max_lon)
+        .bind(max_lat)
+        .bind(has_bbox)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Search populated places failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     // ========== Observation Methods ==========
 
     /// Insert a single observation.

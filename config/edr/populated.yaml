@@ -26,9 +26,12 @@ collections:
     title: "US Populated Places"
     description: >-
       Registry of US cities/towns (population >= 1000) for point-forecast
-      lookup. Use /locations to discover places (filter with min-population),
-      /locations/{id} to fetch a point forecast at a city (select models with
-      collections=), and /radius to fetch forecasts for all cities near a point.
+      lookup and city-name search. Use /locations to browse (filter with
+      min-population/bbox) or search by name (?q=, e.g. ?q=denver or
+      ?q=denver,co); /locations/{id} to fetch a point forecast at a city
+      (select models with collections=); and /radius to fetch forecasts for
+      all cities near a point (also usable for reverse-geocoding with
+      within=25km&limit=1).
     run_mode: latest
 
 settings:
@@ -40,10 +43,14 @@ settings:
     - "EPSG:4326"
 
 limits:
-  # Default population floor for the unfiltered /locations list (override with
+  # Default population floor for the unfiltered /locations browse (override with
   # ?min-population=). Keeps the default response to major cities.
+  # Name search (?q=) applies NO floor unless min-population is set.
   default_min_population: 25000
-  # Max places returned by a single /locations or /radius request.
+  # Max places returned by a single /locations browse or /radius request.
   max_places_per_request: 500
   # Max collections proxied per place in /radius (bounds fan-out).
   max_collections_per_request: 5
+  # Name-search (?q=) result limits.
+  search_default_limit: 10
+  search_max_limit: 50

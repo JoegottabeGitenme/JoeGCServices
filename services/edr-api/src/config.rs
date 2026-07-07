@@ -594,6 +594,14 @@ pub struct LimitsConfig {
     /// Populated-places: max backing collections proxied per place in /radius.
     #[serde(default = "default_max_collections_per_place")]
     pub max_collections_per_request: usize,
+
+    /// Populated-places: default result limit for name search (?q=).
+    #[serde(default = "default_search_limit")]
+    pub search_default_limit: i64,
+
+    /// Populated-places: max result limit for name search (?q=).
+    #[serde(default = "default_search_max_limit")]
+    pub search_max_limit: i64,
 }
 
 impl Default for LimitsConfig {
@@ -611,6 +619,8 @@ impl Default for LimitsConfig {
             default_min_population: default_min_population(),
             max_places_per_request: default_max_places(),
             max_collections_per_request: default_max_collections_per_place(),
+            search_default_limit: default_search_limit(),
+            search_max_limit: default_search_max_limit(),
         }
     }
 }
@@ -623,6 +633,12 @@ fn default_max_places() -> i64 {
 }
 fn default_max_collections_per_place() -> usize {
     5
+}
+fn default_search_limit() -> i64 {
+    10
+}
+fn default_search_max_limit() -> i64 {
+    50
 }
 
 fn default_max_params() -> usize {
