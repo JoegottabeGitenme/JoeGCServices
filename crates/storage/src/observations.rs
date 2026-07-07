@@ -91,6 +91,53 @@ impl Location {
         self.elevation_m = Some(elevation_m);
         self
     }
+
+    /// Merge a key/value into the JSON properties object.
+    pub fn with_property(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        if let serde_json::Value::Object(ref mut map) = self.properties {
+            map.insert(key.into(), value);
+        } else {
+            let mut map = serde_json::Map::new();
+            map.insert(key.into(), value);
+            self.properties = serde_json::Value::Object(map);
+        }
+        self
+    }
+}
+
+/// Row shape for populated-place queries (adds a computed `population` column
+/// used only for ordering/filtering; not stored on `Location`).
+#[derive(sqlx::FromRow)]
+struct PopulatedPlaceRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    lon: f64,
+    lat: f64,
+    elevation_m: Option<f32>,
+    location_type: Option<String>,
+    country: Option<String>,
+    region: Option<String>,
+    properties: serde_json::Value,
+    #[allow(dead_code)]
+    population: i64,
+}
+
+impl From<PopulatedPlaceRow> for Location {
+    fn from(r: PopulatedPlaceRow) -> Self {
+        Location {
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            lon: r.lon,
+            lat: r.lat,
+            elevation_m: r.elevation_m,
+            location_type: r.location_type,
+            country: r.country,
+            region: r.region,
+            properties: r.properties,
+        }
+    }
 }
 
 /// A surface weather observation.
@@ -543,6 +590,133 @@ impl ObservationCatalog {
             .map_err(|e| WmsError::DatabaseError(format!("Count locations failed: {}", e)))?;
 
         Ok(count)
+    }
+
+    /// Count locations of a given type (e.g. "populated_place", "airport").
+    pub async fn count_locations_by_type(&self, location_type: &str) -> WmsResult<i64> {
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM locations WHERE location_type = $1")
+                .bind(location_type)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    WmsError::DatabaseError(format!("Count locations by type failed: {}", e))
+                })?;
+
+        Ok(count)
+    }
+
+    // ========== Populated Places Methods ==========
+    //
+    // Populated places are stored in the shared `locations` table with
+    // location_type = 'populated_place' and population in properties->>'population'.
+    // These power the EDR `populated` collection (a coordinate registry the
+    // frontend uses to fetch point forecasts without external geocoding).
+
+    /// List populated places, optionally filtered by minimum population and bbox.
+    ///
+    /// Ordered by population descending (biggest cities first). `limit` caps
+    /// the result count.
+    pub async fn get_populated_places(
+        &self,
+        min_population: i64,
+        bbox: Option<(f64, f64, f64, f64)>,
+        limit: i64,
+    ) -> WmsResult<Vec<Location>> {
+        // bbox is (min_lon, min_lat, max_lon, max_lat); NULL sentinels when absent
+        let (min_lon, min_lat, max_lon, max_lat, has_bbox) = match bbox {
+            Some((a, b, c, d)) => (a, b, c, d, true),
+            None => (0.0, 0.0, 0.0, 0.0, false),
+        };
+
+        let rows = sqlx::query_as::<_, PopulatedPlaceRow>(
+            r#"
+            SELECT id, name, description,
+                   ST_X(location::geometry) as lon, ST_Y(location::geometry) as lat,
+                   elevation_m, location_type, country, region, properties,
+                   COALESCE((properties->>'population')::bigint, 0) as population
+            FROM locations
+            WHERE location_type = 'populated_place'
+              AND COALESCE((properties->>'population')::bigint, 0) >= $1
+              AND (NOT $6 OR ST_Within(
+                  location::geometry,
+                  ST_MakeEnvelope($2, $3, $4, $5, 4326)
+              ))
+            ORDER BY population DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(min_population)
+        .bind(min_lon)
+        .bind(min_lat)
+        .bind(max_lon)
+        .bind(max_lat)
+        .bind(has_bbox)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get populated places failed: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get populated places within a radius of a point, filtered by population.
+    ///
+    /// Uses the GiST-indexed `ST_DWithin`; ordered by distance ascending.
+    pub async fn get_populated_places_in_radius(
+        &self,
+        lon: f64,
+        lat: f64,
+        radius_m: f64,
+        min_population: i64,
+        limit: i64,
+    ) -> WmsResult<Vec<Location>> {
+        let rows = sqlx::query_as::<_, PopulatedPlaceRow>(
+            r#"
+            SELECT id, name, description,
+                   ST_X(location::geometry) as lon, ST_Y(location::geometry) as lat,
+                   elevation_m, location_type, country, region, properties,
+                   COALESCE((properties->>'population')::bigint, 0) as population
+            FROM locations
+            WHERE location_type = 'populated_place'
+              AND COALESCE((properties->>'population')::bigint, 0) >= $4
+              AND ST_DWithin(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+            ORDER BY ST_Distance(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography)
+            LIMIT $5
+            "#,
+        )
+        .bind(lon)
+        .bind(lat)
+        .bind(radius_m)
+        .bind(min_population)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            WmsError::DatabaseError(format!("Get populated places in radius failed: {}", e))
+        })?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get a single populated place by ID (only returns type='populated_place').
+    pub async fn get_populated_place(&self, id: &str) -> WmsResult<Option<Location>> {
+        let row = sqlx::query_as::<_, PopulatedPlaceRow>(
+            r#"
+            SELECT id, name, description,
+                   ST_X(location::geometry) as lon, ST_Y(location::geometry) as lat,
+                   elevation_m, location_type, country, region, properties,
+                   COALESCE((properties->>'population')::bigint, 0) as population
+            FROM locations
+            WHERE id = $1 AND location_type = 'populated_place'
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get populated place failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
     }
 
     // ========== Observation Methods ==========

@@ -25,7 +25,7 @@ pub use catalog::{
 pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,
 };
-pub use stations_bootstrap::bootstrap_locations;
+pub use stations_bootstrap::{bootstrap_locations, bootstrap_populated_places};
 pub use storm_events::{
     CountyAggregate, CountyEventsResult, StormEvent, StormEventCatalog, StormEventFeature,
 };

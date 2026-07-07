@@ -834,7 +834,21 @@ impl Catalog {
         model: &str,
         parameter: &str,
     ) -> WmsResult<Vec<CatalogEntry>> {
-        let now = Utc::now();
+        self.get_all_levels_forecast_at_time(model, parameter, Utc::now())
+            .await
+    }
+
+    /// Get all levels for forecast data whose valid time is closest to
+    /// `target`. Uses the latest reference_time (model run) and picks the
+    /// forecast hour whose valid time is nearest `target`. Powers point
+    /// forecasts "at a particular timestamp".
+    pub async fn get_all_levels_forecast_at_time(
+        &self,
+        model: &str,
+        parameter: &str,
+        target: DateTime<Utc>,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = target;
 
         // Query that:
         // 1. Finds the latest reference_time
@@ -928,7 +942,19 @@ impl Catalog {
         model: &str,
         parameter: &str,
     ) -> WmsResult<Vec<CatalogEntry>> {
-        let now = Utc::now();
+        self.get_all_levels_observation_at_time(model, parameter, Utc::now())
+            .await
+    }
+
+    /// Get all levels for observation data whose observation time is closest
+    /// to `target`.
+    pub async fn get_all_levels_observation_at_time(
+        &self,
+        model: &str,
+        parameter: &str,
+        target: DateTime<Utc>,
+    ) -> WmsResult<Vec<CatalogEntry>> {
+        let now = target;
 
         // Find the observation time closest to now, then get all levels at that time
         let rows = sqlx::query_as::<_, DatasetRow>(

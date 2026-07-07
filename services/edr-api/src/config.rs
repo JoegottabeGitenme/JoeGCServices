@@ -24,6 +24,13 @@ pub enum DataType {
     /// plus a custom county-aggregate endpoint.
     #[serde(rename = "featurecollection")]
     FeatureCollection,
+    /// Populated places (US cities) - a coordinate registry in the PostGIS
+    /// `locations` table (location_type='populated_place'). Holds NO weather
+    /// data itself; its /locations and /radius endpoints resolve places to
+    /// coordinates and proxy point-forecast data from configured gridded
+    /// collections (default GFS).
+    #[serde(rename = "populated_places")]
+    PopulatedPlaces,
 }
 
 impl DataType {
@@ -50,6 +57,11 @@ impl DataType {
     /// Check if this is a feature collection (storm events, etc.).
     pub fn is_feature_data(&self) -> bool {
         matches!(self, DataType::FeatureCollection)
+    }
+
+    /// Check if this is a populated-places registry collection.
+    pub fn is_populated_places(&self) -> bool {
+        matches!(self, DataType::PopulatedPlaces)
     }
 }
 
@@ -237,6 +249,12 @@ pub struct ModelEdrConfig {
     /// longer data latency (e.g., 12 for DART, 6 for NDBC).
     #[serde(default)]
     pub locations_recency_hours: Option<u32>,
+
+    /// Default gridded collections to sample for point forecasts when a
+    /// populated-places request omits `?collections=`. Only used when
+    /// data_type is "populated_places". Defaults to ["gfs-surface"].
+    #[serde(default)]
+    pub default_backing_collections: Option<Vec<String>>,
 }
 
 impl ModelEdrConfig {
@@ -563,6 +581,19 @@ pub struct LimitsConfig {
     /// Maximum corridor length in km.
     #[serde(default = "default_max_corridor_length")]
     pub max_corridor_length_km: Option<f64>,
+
+    /// Populated-places: default population floor for the unfiltered /locations
+    /// list (overridden per-request by ?min-population=).
+    #[serde(default = "default_min_population")]
+    pub default_min_population: i64,
+
+    /// Populated-places: max places returned by one /locations or /radius request.
+    #[serde(default = "default_max_places")]
+    pub max_places_per_request: i64,
+
+    /// Populated-places: max backing collections proxied per place in /radius.
+    #[serde(default = "default_max_collections_per_place")]
+    pub max_collections_per_request: usize,
 }
 
 impl Default for LimitsConfig {
@@ -577,8 +608,21 @@ impl Default for LimitsConfig {
             max_radius_km: default_max_radius(),
             max_trajectory_points: default_max_trajectory_points(),
             max_corridor_length_km: default_max_corridor_length(),
+            default_min_population: default_min_population(),
+            max_places_per_request: default_max_places(),
+            max_collections_per_request: default_max_collections_per_place(),
         }
     }
+}
+
+fn default_min_population() -> i64 {
+    25000
+}
+fn default_max_places() -> i64 {
+    500
+}
+fn default_max_collections_per_place() -> usize {
+    5
 }
 
 fn default_max_params() -> usize {
@@ -609,6 +653,33 @@ fn default_max_corridor_length() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_populated_places_config_deserializes() {
+        let yaml = r#"
+model: populated
+data_type: populated_places
+default_backing_collections:
+  - gfs-surface
+collections:
+  - id: populated
+    title: "US Populated Places"
+    run_mode: latest
+limits:
+  default_min_population: 25000
+  max_places_per_request: 500
+  max_collections_per_request: 5
+"#;
+        let cfg: ModelEdrConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.data_type.is_populated_places());
+        assert_eq!(
+            cfg.default_backing_collections,
+            Some(vec!["gfs-surface".to_string()])
+        );
+        assert_eq!(cfg.limits.default_min_population, 25000);
+        assert_eq!(cfg.limits.max_places_per_request, 500);
+        assert_eq!(cfg.limits.max_collections_per_request, 5);
+    }
 
     // =========================================================================
     // DataType Tests

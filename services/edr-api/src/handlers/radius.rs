@@ -84,6 +84,13 @@ pub struct RadiusQueryParams {
     /// Requires 'run' to be specified.
     #[serde(rename = "forecast-hour")]
     pub forecast_hour: Option<String>,
+
+    /// Backing collections to sample (populated-places collection only).
+    pub collections: Option<String>,
+
+    /// Minimum population filter (populated-places collection only).
+    #[serde(rename = "min-population")]
+    pub min_population: Option<i64>,
 }
 
 /// GET /edr/collections/:collection_id/radius
@@ -100,6 +107,25 @@ pub async fn radius_handler(
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_populated_places() {
+                let pop_params = crate::handlers::locations::PopulatedForecastParams {
+                    coords: params.coords.clone(),
+                    collections: params.collections.clone(),
+                    datetime: params.datetime.clone(),
+                    within: params.within.clone(),
+                    within_units: params.within_units.clone(),
+                    min_population: params.min_population,
+                    limit: None,
+                    f: params.f.clone(),
+                };
+                drop(config);
+                return crate::handlers::locations::populated_radius_handler(
+                    Extension(state.clone()),
+                    Path(collection_id),
+                    Query(pop_params),
+                )
+                .await;
+            }
             if model_config.data_type.is_feature_data() {
                 let storm_params = crate::handlers::storm_events::StormRadiusParams {
                     coords: params.coords.clone(),

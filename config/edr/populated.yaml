@@ -1,0 +1,49 @@
+# Populated Places EDR Configuration
+#
+# A coordinate registry of US cities (Census Gazetteer 2023 coords + PEP 2023
+# population), stored in the PostGIS `locations` table with
+# location_type='populated_place'. This collection holds NO weather data of
+# its own — it exists so the frontend can:
+#   1. Discover cities:   GET /edr/collections/populated/locations?min-population=25000
+#   2. Fetch a forecast:  GET /edr/collections/populated/locations/{id}?collections=gfs-surface
+#   3. Radius forecast:   GET /edr/collections/populated/radius?coords=POINT(lon lat)&within=100km
+#
+# Point-forecast data is proxied from configured gridded collections
+# (default GFS). This replaces external geocoding/forecast API calls.
+#
+# NOTE: population is filterable per request via `min-population=`. The
+# unfiltered /locations list applies a default floor to keep responses sane.
+
+model: populated
+data_type: populated_places
+
+# Gridded collections sampled for point forecasts when `?collections=` is omitted.
+default_backing_collections:
+  - gfs-surface
+
+collections:
+  - id: populated
+    title: "US Populated Places"
+    description: >-
+      Registry of US cities/towns (population >= 1000) for point-forecast
+      lookup. Use /locations to discover places (filter with min-population),
+      /locations/{id} to fetch a point forecast at a city (select models with
+      collections=), and /radius to fetch forecasts for all cities near a point.
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+
+limits:
+  # Default population floor for the unfiltered /locations list (override with
+  # ?min-population=). Keeps the default response to major cities.
+  default_min_population: 25000
+  # Max places returned by a single /locations or /radius request.
+  max_places_per_request: 500
+  # Max collections proxied per place in /radius (bounds fan-out).
+  max_collections_per_request: 5

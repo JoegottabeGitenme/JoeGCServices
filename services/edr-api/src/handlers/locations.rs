@@ -56,6 +56,12 @@ use crate::validation::validate_z_against_vertical_extent;
 pub struct LocationsListParams {
     /// Output format.
     pub f: Option<String>,
+
+    /// Populated-places filters.
+    #[serde(rename = "min-population")]
+    pub min_population: Option<i64>,
+    pub bbox: Option<String>,
+    pub limit: Option<i64>,
 }
 
 /// Query parameters for location data query endpoint.
@@ -86,6 +92,9 @@ pub struct LocationQueryParams {
     /// Requires 'run' to be specified.
     #[serde(rename = "forecast-hour")]
     pub forecast_hour: Option<String>,
+
+    /// Backing collections to sample (populated-places collection only).
+    pub collections: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/locations
@@ -146,11 +155,28 @@ async fn locations_list(
     let config = state.edr_config.read().await;
 
     // Validate the collection exists
-    if config.find_collection(&collection_id).is_none() {
+    let Some((model_config, _)) = config.find_collection(&collection_id) else {
         return error_response(
             StatusCode::NOT_FOUND,
             ExceptionResponse::not_found(format!("Collection not found: {}", collection_id)),
         );
+    };
+
+    // Populated-places: list cities from PostGIS (filterable by population)
+    if model_config.data_type.is_populated_places() {
+        let pop_params = PopulatedListParams {
+            min_population: params.min_population,
+            bbox: params.bbox.clone(),
+            limit: params.limit,
+            f: params.f.clone(),
+        };
+        drop(config);
+        return populated_locations_list_handler(
+            Extension(state.clone()),
+            Path(collection_id),
+            Query(pop_params),
+        )
+        .await;
     }
 
     // Get all locations from config
@@ -215,6 +241,20 @@ pub async fn location_query_handler(
     {
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
+            if model_config.data_type.is_populated_places() {
+                let pop_params = PopulatedForecastParams {
+                    collections: params.collections.clone(),
+                    datetime: params.datetime.clone(),
+                    ..Default::default()
+                };
+                drop(config);
+                return populated_location_query_handler(
+                    Extension(state.clone()),
+                    Path((collection_id, location_id)),
+                    Query(pop_params),
+                )
+                .await;
+            }
             if model_config.data_type.is_point_data() {
                 // Dispatch to observation handler for both point observations and point forecasts
                 let obs_params = ObsLocationQueryParams {
@@ -1657,6 +1697,511 @@ async fn fetch_gridded_collection_data(
     lon: f64,
     lat: f64,
 ) -> Option<GriddedCollectionData> {
+    fetch_gridded_collection_data_at(state, config, collection_id, lon, lat, None).await
+}
+
+// ============================================================================
+// Populated Places collection (data_type: populated_places)
+//
+// A coordinate registry of US cities. /locations discovers places; /locations/{id}
+// and /radius resolve places to coordinates and proxy point-forecast data from
+// configured gridded collections (default GFS). Holds no weather data itself.
+// ============================================================================
+
+/// Query params for the populated-places /locations list.
+#[derive(Debug, Deserialize, Default)]
+pub struct PopulatedListParams {
+    /// Minimum population filter (defaults to the collection's configured floor).
+    #[serde(rename = "min-population")]
+    pub min_population: Option<i64>,
+    /// Bounding box filter: "min_lon,min_lat,max_lon,max_lat".
+    pub bbox: Option<String>,
+    /// Max places to return (capped by config).
+    pub limit: Option<i64>,
+    pub f: Option<String>,
+}
+
+/// Query params for populated-places forecast (per-place and radius).
+#[derive(Debug, Deserialize, Default)]
+pub struct PopulatedForecastParams {
+    /// WKT point for /radius, e.g. "POINT(-86.8 33.5)".
+    pub coords: Option<String>,
+    /// Comma-separated gridded collections to sample (default from config).
+    pub collections: Option<String>,
+    /// Target valid time (ISO8601). Omit for closest-to-now.
+    pub datetime: Option<String>,
+    /// Radius (for /radius), e.g. "100km" or "50" (+ within-units).
+    pub within: Option<String>,
+    #[serde(rename = "within-units")]
+    pub within_units: Option<String>,
+    /// Minimum population filter (for /radius).
+    #[serde(rename = "min-population")]
+    pub min_population: Option<i64>,
+    pub limit: Option<i64>,
+    pub f: Option<String>,
+}
+
+/// Resolve the backing collections for a request: explicit `?collections=` or
+/// the collection's configured default.
+fn resolve_backing_collections(
+    requested: Option<&str>,
+    model_config: &crate::config::ModelEdrConfig,
+) -> Vec<String> {
+    if let Some(list) = requested {
+        let v: Vec<String> = list
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    model_config
+        .default_backing_collections
+        .clone()
+        .unwrap_or_else(|| vec!["gfs-surface".to_string()])
+}
+
+/// Build a GeoJSON point feature for a populated place, with population/state
+/// properties and ready-to-use forecast links.
+fn populated_place_feature(
+    loc: &storage::observations::Location,
+    base_url: &str,
+    default_collections: &[String],
+) -> serde_json::Value {
+    let pop = loc.properties.get("population").cloned();
+    let state = loc.region.clone().or_else(|| {
+        loc.properties
+            .get("state")
+            .and_then(|v| v.as_str().map(String::from))
+    });
+
+    // Pre-built forecast links per default backing collection
+    let forecast_links: Vec<serde_json::Value> = default_collections
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "collection": c,
+                "href": format!(
+                    "{}/collections/{}/position?coords=POINT({} {})",
+                    base_url, c, loc.lon, loc.lat
+                ),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "type": "Feature",
+        "id": loc.id,
+        "geometry": { "type": "Point", "coordinates": [loc.lon, loc.lat] },
+        "properties": {
+            "name": loc.name,
+            "state": state,
+            "population": pop,
+            "forecast": format!("{}/collections/populated/locations/{}", base_url, loc.id),
+            "forecast_links": forecast_links,
+        },
+    })
+}
+
+/// GET /edr/collections/populated/locations
+///
+/// Discover populated places (GeoJSON FeatureCollection). Filter with
+/// ?min-population= and ?bbox=; capped by config.
+pub async fn populated_locations_list_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(_collection_id): Path<String>,
+    Query(params): Query<PopulatedListParams>,
+) -> Response {
+    let config = state.edr_config.read().await;
+    let Some((model_config, _)) = config.find_collection("populated") else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found("Collection not found: populated"),
+        );
+    };
+    let limits = &model_config.limits;
+    let min_pop = params
+        .min_population
+        .unwrap_or(limits.default_min_population);
+    let limit = params
+        .limit
+        .unwrap_or(limits.max_places_per_request)
+        .clamp(1, limits.max_places_per_request);
+
+    let bbox = match &params.bbox {
+        Some(s) => match parse_bbox(s) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e))
+            }
+        },
+        None => None,
+    };
+
+    let default_collections = model_config
+        .default_backing_collections
+        .clone()
+        .unwrap_or_else(|| vec!["gfs-surface".to_string()]);
+
+    let places = match state
+        .observation_catalog
+        .get_populated_places(min_pop, bbox, limit)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("get_populated_places failed: {}", e);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ExceptionResponse::internal_error("Failed to query populated places"),
+            );
+        }
+    };
+
+    let features: Vec<serde_json::Value> = places
+        .iter()
+        .map(|p| populated_place_feature(p, &state.base_url, &default_collections))
+        .collect();
+
+    let fc = serde_json::json!({
+        "type": "FeatureCollection",
+        "numberReturned": features.len(),
+        "min_population": min_pop,
+        "features": features,
+    });
+
+    json_response(fc, "max-age=86400")
+}
+
+/// GET /edr/collections/populated/locations/{id}
+///
+/// Fetch point-forecast data at a city, proxied from backing collections.
+pub async fn populated_location_query_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((_collection_id, location_id)): Path<(String, String)>,
+    Query(params): Query<PopulatedForecastParams>,
+) -> Response {
+    let location_id = location_id.to_uppercase();
+    let config = state.edr_config.read().await;
+    let Some((model_config, _)) = config.find_collection("populated") else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found("Collection not found: populated"),
+        );
+    };
+
+    let place = match state.observation_catalog.get_populated_place(&location_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                ExceptionResponse::not_found(format!(
+                    "Populated place not found: {}. Use GET /collections/populated/locations to list places.",
+                    location_id
+                )),
+            )
+        }
+        Err(e) => {
+            tracing::error!("get_populated_place failed: {}", e);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ExceptionResponse::internal_error("Failed to query place"),
+            );
+        }
+    };
+
+    let target_time = match parse_optional_datetime(&params.datetime) {
+        Ok(t) => t,
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e))
+        }
+    };
+
+    let backing = resolve_backing_collections(params.collections.as_deref(), model_config);
+    let max_collections = model_config.limits.max_collections_per_request;
+    if backing.len() > max_collections {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(format!(
+                "Too many collections: {} exceeds limit of {}",
+                backing.len(),
+                max_collections
+            )),
+        );
+    }
+
+    let feature = build_place_forecast_feature(
+        &state,
+        &config,
+        &place,
+        &backing,
+        target_time,
+        &state.base_url,
+    )
+    .await;
+
+    json_response(feature, "max-age=300")
+}
+
+/// GET /edr/collections/populated/radius
+///
+/// Fetch point forecasts for all populated places within a radius of a point.
+pub async fn populated_radius_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(_collection_id): Path<String>,
+    Query(params): Query<PopulatedForecastParams>,
+) -> Response {
+    let config = state.edr_config.read().await;
+    let Some((model_config, _)) = config.find_collection("populated") else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found("Collection not found: populated"),
+        );
+    };
+    let limits = &model_config.limits;
+
+    let (lon, lat) = match parse_wkt_point(params.coords.as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e))
+        }
+    };
+
+    let radius_m = match parse_within(&params.within, params.within_units.as_deref()) {
+        Ok(m) => m,
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e))
+        }
+    };
+    if let Some(max_km) = limits.max_radius_km {
+        if radius_m > max_km * 1000.0 {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!("Radius exceeds limit of {} km", max_km)),
+            );
+        }
+    }
+
+    let target_time = match parse_optional_datetime(&params.datetime) {
+        Ok(t) => t,
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, ExceptionResponse::bad_request(e))
+        }
+    };
+
+    let min_pop = params
+        .min_population
+        .unwrap_or(limits.default_min_population);
+    let limit = params
+        .limit
+        .unwrap_or(limits.max_places_per_request)
+        .clamp(1, limits.max_places_per_request);
+
+    let backing = resolve_backing_collections(params.collections.as_deref(), model_config);
+    if backing.len() > limits.max_collections_per_request {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(format!(
+                "Too many collections: {} exceeds limit of {}",
+                backing.len(),
+                limits.max_collections_per_request
+            )),
+        );
+    }
+
+    let places = match state
+        .observation_catalog
+        .get_populated_places_in_radius(lon, lat, radius_m, min_pop, limit)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("get_populated_places_in_radius failed: {}", e);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ExceptionResponse::internal_error("Failed to query places"),
+            );
+        }
+    };
+
+    let mut features = Vec::with_capacity(places.len());
+    for place in &places {
+        features.push(
+            build_place_forecast_feature(
+                &state,
+                &config,
+                place,
+                &backing,
+                target_time,
+                &state.base_url,
+            )
+            .await,
+        );
+    }
+
+    let fc = serde_json::json!({
+        "type": "FeatureCollection",
+        "numberReturned": features.len(),
+        "min_population": min_pop,
+        "features": features,
+    });
+
+    json_response(fc, "max-age=300")
+}
+
+/// Build a GeoJSON feature for a place with forecast values flattened into
+/// properties (one nested object per backing collection).
+async fn build_place_forecast_feature(
+    state: &Arc<AppState>,
+    config: &crate::config::EdrConfig,
+    place: &storage::observations::Location,
+    backing: &[String],
+    target_time: Option<DateTime<Utc>>,
+    _base_url: &str,
+) -> serde_json::Value {
+    let mut forecasts = serde_json::Map::new();
+    for coll in backing {
+        if let Some(data) =
+            fetch_gridded_collection_data_at(state, config, coll, place.lon, place.lat, target_time)
+                .await
+        {
+            forecasts.insert(
+                coll.clone(),
+                serde_json::to_value(&data).unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+
+    let pop = place.properties.get("population").cloned();
+    let st = place.region.clone().or_else(|| {
+        place
+            .properties
+            .get("state")
+            .and_then(|v| v.as_str().map(String::from))
+    });
+
+    serde_json::json!({
+        "type": "Feature",
+        "id": place.id,
+        "geometry": { "type": "Point", "coordinates": [place.lon, place.lat] },
+        "properties": {
+            "name": place.name,
+            "state": st,
+            "population": pop,
+            "forecasts": forecasts,
+        },
+    })
+}
+
+// ---- small helpers for the populated handlers ----
+
+fn json_response(value: serde_json::Value, cache: &str) -> Response {
+    let json = serde_json::to_string(&value).unwrap_or_default();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header(header::CACHE_CONTROL, cache)
+        .body(json.into())
+        .unwrap()
+}
+
+fn parse_bbox(s: &str) -> Result<(f64, f64, f64, f64), String> {
+    let parts: Vec<f64> = s
+        .split(',')
+        .map(|p| p.trim().parse::<f64>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "bbox must be numeric: min_lon,min_lat,max_lon,max_lat".to_string())?;
+    if parts.len() != 4 {
+        return Err("bbox must have 4 comma-separated values".to_string());
+    }
+    Ok((parts[0], parts[1], parts[2], parts[3]))
+}
+
+fn parse_optional_datetime(dt: &Option<String>) -> Result<Option<DateTime<Utc>>, String> {
+    match dt {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() => Ok(None),
+        Some(s) => DateTime::parse_from_rfc3339(s.trim())
+            .map(|t| Some(t.with_timezone(&Utc)))
+            .map_err(|_| format!("Invalid datetime '{}': expected ISO8601/RFC3339", s)),
+    }
+}
+
+/// Parse a `within` distance (e.g. "100km", "50000m", or bare number with
+/// `within-units`) into meters. Defaults to km when units are absent.
+fn parse_within(within: &Option<String>, units: Option<&str>) -> Result<f64, String> {
+    let raw = within
+        .as_deref()
+        .ok_or_else(|| "radius requires `within`".to_string())?
+        .trim();
+
+    // Split trailing unit letters from the number
+    let (num_str, unit_str) = raw
+        .find(|c: char| c.is_alphabetic())
+        .map(|i| (&raw[..i], &raw[i..]))
+        .unwrap_or((raw, ""));
+
+    let value: f64 = num_str
+        .trim()
+        .parse()
+        .map_err(|_| format!("Invalid radius value: {}", raw))?;
+
+    let unit = if !unit_str.is_empty() {
+        unit_str.trim()
+    } else {
+        units.unwrap_or("km")
+    };
+
+    let meters = match unit.to_lowercase().as_str() {
+        "km" | "kilometers" | "kilometres" => value * 1000.0,
+        "m" | "meters" | "metres" => value,
+        "mi" | "miles" => value * 1609.344,
+        other => return Err(format!("Unsupported radius unit: {}", other)),
+    };
+    Ok(meters)
+}
+
+/// Parse a WKT `POINT(lon lat)` into (lon, lat).
+fn parse_wkt_point(coords: Option<&str>) -> Result<(f64, f64), String> {
+    let s = coords
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| "radius requires `coords=POINT(lon lat)`".to_string())?;
+
+    let inner = s
+        .trim()
+        .strip_prefix("POINT")
+        .or_else(|| s.strip_prefix("point"))
+        .map(|r| r.trim())
+        .and_then(|r| r.strip_prefix('('))
+        .and_then(|r| r.strip_suffix(')'))
+        .ok_or_else(|| format!("Invalid WKT point: {}", s))?;
+
+    let nums: Vec<f64> = inner
+        .split_whitespace()
+        .map(|p| p.parse::<f64>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| format!("Invalid WKT point coordinates: {}", s))?;
+
+    if nums.len() != 2 {
+        return Err(format!("POINT must have lon and lat: {}", s));
+    }
+    Ok((nums[0], nums[1]))
+}
+
+/// Sample a gridded collection's parameters at a point, optionally at a target
+/// valid time (`None` = closest to now). Shared by the global location proxy
+/// and the populated-places collection.
+async fn fetch_gridded_collection_data_at(
+    state: &Arc<AppState>,
+    config: &crate::config::EdrConfig,
+    collection_id: &str,
+    lon: f64,
+    lat: f64,
+    target_time: Option<DateTime<Utc>>,
+) -> Option<GriddedCollectionData> {
     // Find the collection definition
     let (model_config, collection_def) = config.find_collection(collection_id)?;
 
@@ -1673,19 +2218,28 @@ async fn fetch_gridded_collection_data(
     for param_def in &collection_def.parameters {
         let param_name = &param_def.name;
 
-        // Get all levels for this parameter at the time closest to now
-        let entries = if is_observation {
-            state
+        // Get all levels for this parameter at the target time (or closest to now)
+        let entries = match (is_observation, target_time) {
+            (true, Some(t)) => state
+                .catalog
+                .get_all_levels_observation_at_time(model_name, param_name, t)
+                .await
+                .ok()?,
+            (true, None) => state
                 .catalog
                 .get_all_levels_observation_closest_to_now(model_name, param_name)
                 .await
-                .ok()?
-        } else {
-            state
+                .ok()?,
+            (false, Some(t)) => state
+                .catalog
+                .get_all_levels_forecast_at_time(model_name, param_name, t)
+                .await
+                .ok()?,
+            (false, None) => state
                 .catalog
                 .get_all_levels_forecast_closest_to_now(model_name, param_name)
                 .await
-                .ok()?
+                .ok()?,
         };
 
         if entries.is_empty() {
@@ -1772,6 +2326,72 @@ async fn fetch_gridded_collection_data(
 #[cfg(test)]
 mod tests {
     use edr_protocol::Location;
+
+    #[test]
+    fn test_parse_wkt_point() {
+        use super::parse_wkt_point;
+        assert_eq!(
+            parse_wkt_point(Some("POINT(-86.8 33.5)")).unwrap(),
+            (-86.8, 33.5)
+        );
+        assert_eq!(
+            parse_wkt_point(Some("point(-100 40)")).unwrap(),
+            (-100.0, 40.0)
+        );
+        assert!(parse_wkt_point(Some("POINT(-86.8)")).is_err());
+        assert!(parse_wkt_point(Some("not wkt")).is_err());
+        assert!(parse_wkt_point(None).is_err());
+        assert!(parse_wkt_point(Some("")).is_err());
+    }
+
+    #[test]
+    fn test_parse_within() {
+        use super::parse_within;
+        assert_eq!(
+            parse_within(&Some("100km".to_string()), None).unwrap(),
+            100_000.0
+        );
+        assert_eq!(
+            parse_within(&Some("50000m".to_string()), None).unwrap(),
+            50_000.0
+        );
+        assert_eq!(
+            parse_within(&Some("50".to_string()), Some("km")).unwrap(),
+            50_000.0
+        );
+        assert_eq!(
+            parse_within(&Some("10".to_string()), Some("mi")).unwrap(),
+            16093.44
+        );
+        assert!(parse_within(&None, None).is_err());
+        assert!(parse_within(&Some("5furlongs".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn test_parse_bbox() {
+        use super::parse_bbox;
+        assert_eq!(
+            parse_bbox("-100,30,-90,40").unwrap(),
+            (-100.0, 30.0, -90.0, 40.0)
+        );
+        assert!(parse_bbox("-100,30,-90").is_err());
+        assert!(parse_bbox("a,b,c,d").is_err());
+    }
+
+    #[test]
+    fn test_parse_optional_datetime() {
+        use super::parse_optional_datetime;
+        assert!(parse_optional_datetime(&None).unwrap().is_none());
+        assert!(parse_optional_datetime(&Some("".to_string()))
+            .unwrap()
+            .is_none());
+        assert!(
+            parse_optional_datetime(&Some("2026-07-07T12:00:00Z".to_string()))
+                .unwrap()
+                .is_some()
+        );
+        assert!(parse_optional_datetime(&Some("garbage".to_string())).is_err());
+    }
 
     #[test]
     fn test_location_lookup() {

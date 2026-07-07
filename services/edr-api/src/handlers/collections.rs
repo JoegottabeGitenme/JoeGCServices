@@ -391,6 +391,39 @@ async fn build_storm_event_collection(
     collection
 }
 
+/// Build the metadata Collection for the populated-places registry.
+///
+/// It exposes `locations` (discover cities) and `radius` (forecasts for cities
+/// near a point) queries. It holds no weather parameters of its own.
+fn build_populated_places_collection(
+    state: &AppState,
+    _model_config: &ModelEdrConfig,
+    collection_def: &CollectionDefinition,
+    place_count: i64,
+) -> Collection {
+    let description = format!(
+        "{} ({} places loaded)",
+        collection_def.description, place_count
+    );
+
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&description);
+
+    collection.build_links(&state.base_url);
+
+    let queries = DataQueries::default()
+        .with_locations(&state.base_url, &collection_def.id)
+        .with_radius(&state.base_url, &collection_def.id);
+    collection = collection.with_data_queries(queries);
+
+    // CONUS-ish US extent
+    let extent = Extent::with_spatial([-170.0, 15.0, -60.0, 72.0], None);
+    collection = collection.with_extent(extent);
+
+    collection
+}
+
 /// GET /edr/collections - List all collections
 ///
 /// Only returns collections that have data available in the catalog.
@@ -515,6 +548,26 @@ pub async fn list_collections_handler(
             .await;
 
             collections.push(collection);
+            continue;
+        }
+
+        // Populated-places registry collection (no weather data of its own)
+        if model_config.data_type.is_populated_places() {
+            let count = state
+                .observation_catalog
+                .count_locations_by_type("populated_place")
+                .await
+                .unwrap_or(0);
+            if count == 0 {
+                tracing::debug!("Skipping populated collection - no places loaded");
+                continue;
+            }
+            collections.push(build_populated_places_collection(
+                &state,
+                model_config,
+                coll_def,
+                count,
+            ));
             continue;
         }
 
@@ -674,6 +727,24 @@ pub async fn get_collection_handler(
             .body(json.into())
             .unwrap();
     };
+
+    // Populated-places registry collection
+    if model_config.data_type.is_populated_places() {
+        let count = state
+            .observation_catalog
+            .count_locations_by_type("populated_place")
+            .await
+            .unwrap_or(0);
+        let collection =
+            build_populated_places_collection(&state, model_config, collection_def, count);
+        let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=3600")
+            .body(json.into())
+            .unwrap();
+    }
 
     // Handle feature collections (storm events) differently
     if model_config.data_type.is_feature_data() {
