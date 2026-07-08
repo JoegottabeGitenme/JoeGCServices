@@ -118,6 +118,49 @@ Behavior notes:
 
 ---
 
+## 1b-ZIP. ZIP-code lookup — `?q=<5 digits>`
+
+The **same** `?q=` param does an exact ZIP lookup when the query is a 5-digit
+number (all ~33,600 US ZIPs). ZIP+4 (`80202-1234`) and a `ZIP` prefix
+(`ZIP80202`) also work.
+
+```
+GET /edr/collections/populated/locations?q=80202
+```
+
+```jsonc
+{
+  "type": "FeatureCollection",
+  "numberReturned": 1,
+  "features": [
+    { "type": "Feature", "id": "ZIP80202",
+      "geometry": { "type": "Point", "coordinates": [-104.99767, 39.75153] },
+      "properties": {
+        "name": "Denver",          // nearest recognizable city
+        "state": "CO",
+        "zip": "80202",
+        "nearest_place": "Denver",
+        "forecast": ".../collections/populated/locations/ZIP80202",
+        "forecast_links": [ /* ... */ ]
+      } }
+  ]
+}
+```
+
+- The ZIP resolves to its interior-point coordinates and is **labeled with the
+  nearest recognizable city** (population-weighted, so a downtown ZIP names its
+  metro — `80202` → *Denver*, not a tiny adjacent enclave).
+- Fetch a forecast exactly like a city: use the `id` (`ZIP80202`) with §2, or
+  the `coordinates` directly.
+- Unknown ZIP → **200** with `features: []`.
+
+```
+GET /edr/collections/populated/locations/ZIP80202?collections=gfs-surface
+# -> point forecast at that ZIP, same shape as a city forecast (§2)
+```
+
+---
+
 ## 1c. Reverse geocoding — name a dropped pin
 
 Use the `/radius` endpoint with a small radius and `limit=1` to get the nearest
