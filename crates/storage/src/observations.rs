@@ -844,10 +844,17 @@ impl ObservationCatalog {
                 FROM locations pp
                 WHERE pp.location_type = 'populated_place'
                   AND ST_DWithin(pp.location, z.location, 40000)
+                -- Score = population divided by a distance penalty. Because a
+                -- large city's *centroid* can be several km from a ZIP that
+                -- lies inside it (e.g. Denver's centroid is ~10 km from a
+                -- downtown ZIP), pure nearest-centroid mislabels ZIPs with
+                -- tiny adjacent enclaves. Weighting by population over
+                -- (distance_km + 2) picks the recognizable city while still
+                -- favoring closer options among similar-sized places.
                 ORDER BY
-                    (ST_DWithin(pp.location, z.location, 8000)) DESC,
-                    COALESCE((pp.properties->>'population')::bigint, 0) DESC,
-                    ST_Distance(pp.location, z.location) ASC
+                    COALESCE((pp.properties->>'population')::bigint, 0)::float8
+                        / (ST_Distance(pp.location, z.location) / 1000.0 + 2.0)
+                    DESC
                 LIMIT 1
             ) p ON true
             WHERE z.id = $1 AND z.location_type = 'zip'
