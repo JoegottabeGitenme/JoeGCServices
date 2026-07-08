@@ -1990,19 +1990,29 @@ pub async fn populated_location_query_handler(
         );
     };
 
-    let place = match state.observation_catalog.get_populated_place(&location_id).await {
+    // ZIP ids (ZIP<code>) resolve via the ZIP lookup (labeled with nearest
+    // city); PP<GEOID> ids via the populated-place lookup.
+    let lookup = if location_id.starts_with("ZIP") {
+        state.observation_catalog.get_zip_code(&location_id).await
+    } else {
+        state
+            .observation_catalog
+            .get_populated_place(&location_id)
+            .await
+    };
+    let place = match lookup {
         Ok(Some(p)) => p,
         Ok(None) => {
             return error_response(
                 StatusCode::NOT_FOUND,
                 ExceptionResponse::not_found(format!(
-                    "Populated place not found: {}. Use GET /collections/populated/locations to list places.",
+                    "Location not found: {}. Use GET /collections/populated/locations to list or search places.",
                     location_id
                 )),
             )
         }
         Err(e) => {
-            tracing::error!("get_populated_place failed: {}", e);
+            tracing::error!("populated location lookup failed: {}", e);
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ExceptionResponse::internal_error("Failed to query place"),
