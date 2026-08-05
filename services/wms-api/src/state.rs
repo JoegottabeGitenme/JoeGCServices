@@ -181,7 +181,20 @@ impl AppState {
         };
 
         let catalog = Catalog::connect_with_pool_size(&database_url, db_pool_size).await?;
+        // Redis is an L2 cache only: a failure here degrades performance but must
+        // not prevent startup (a Redis outage previously stopped the service and
+        // with it the retention task, which filled the disk).
         let cache = TileCache::connect(&redis_url, redis_tile_ttl_secs).await?;
+        if cache.is_enabled() {
+            info!(
+                ttl_secs = redis_tile_ttl_secs,
+                "L2 Redis tile cache connected"
+            );
+        } else {
+            tracing::warn!(
+                "L2 Redis tile cache DISABLED (Redis unreachable) - serving from L1 + object storage"
+            );
+        }
         let storage = Arc::new(ObjectStorage::new(&storage_config)?);
         let metrics = Arc::new(MetricsCollector::new());
 

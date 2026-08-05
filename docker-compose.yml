@@ -65,6 +65,11 @@ services:
       mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
       mc mb --ignore-existing minio/$${S3_BUCKET};
       mc anonymous set download minio/$${S3_BUCKET};
+      echo 'Applying lifecycle expiry rules (server-side retention backstop)';
+      for r in aigefs:4 aigfs:4 gfs:4 gfswave:4 hrrr:3 ndfd:3 nbm-conus:3 nbm-alaska:3 nbm-guam:3 nbm-hawaii:3 nbm-puertorico:3 mrms:3 goes18:3 goes19:3 goes18-fulldisk:3 goes19-fulldisk:3 nldas-forcing:32 nldas-noah:32 gldas-noah:32 unknown-cf:3; do
+        m=$${r%%:*}; d=$${r##*:};
+        mc ilm rule add minio/$${S3_BUCKET} --expire-days $${d} --prefix grids/$${m}/ >/dev/null 2>&1 || true;
+      done;
       echo 'Bucket $${S3_BUCKET} created and configured';
       exit 0;
       "

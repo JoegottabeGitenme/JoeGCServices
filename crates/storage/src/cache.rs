@@ -8,38 +8,86 @@ use std::time::Duration;
 use wms_common::{BoundingBox, CrsCode, WmsError, WmsResult};
 
 /// Redis tile cache client.
+///
+/// # Degraded mode
+///
+/// Redis is an **L2 cache** — it accelerates responses but is not required for
+/// correctness. `conn` is therefore optional: when Redis is unreachable at
+/// startup, [`TileCache::connect`] returns a *disabled* cache instead of an
+/// error. All operations then become no-ops (gets miss, sets are dropped), so
+/// the service still starts, serves from the L1 in-memory cache and object
+/// storage, and — critically — keeps running its background retention/cleanup
+/// tasks.
+///
+/// This exists because a Redis outage once prevented wms-api from starting at
+/// all, which silently stopped data retention and filled the disk.
 pub struct TileCache {
-    conn: MultiplexedConnection,
+    conn: Option<MultiplexedConnection>,
     default_ttl: Duration,
 }
 
 impl TileCache {
     /// Connect to Redis with a specified TTL for cached tiles.
     ///
+    /// Never fails on connection problems: if Redis is unreachable, a disabled
+    /// cache is returned (see the type-level docs) and the caller should log a
+    /// warning. Check [`TileCache::is_enabled`] to report status.
+    ///
     /// # Arguments
     /// - `redis_url`: Redis connection URL (e.g., "redis://redis:6379")
     /// - `ttl_secs`: Time-to-live for cached tiles in seconds (default: 3600 = 1 hour)
     pub async fn connect(redis_url: &str, ttl_secs: u64) -> WmsResult<Self> {
-        let client = Client::open(redis_url)
-            .map_err(|e| WmsError::CacheError(format!("Redis connection failed: {}", e)))?;
+        let default_ttl = Duration::from_secs(ttl_secs);
 
-        let conn = client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| WmsError::CacheError(format!("Redis connection failed: {}", e)))?;
+        let client = match Client::open(redis_url) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    url = redis_url,
+                    "Invalid Redis URL - continuing with L2 tile cache DISABLED"
+                );
+                return Ok(Self {
+                    conn: None,
+                    default_ttl,
+                });
+            }
+        };
 
-        Ok(Self {
-            conn,
-            default_ttl: Duration::from_secs(ttl_secs),
-        })
+        match client.get_multiplexed_async_connection().await {
+            Ok(conn) => Ok(Self {
+                conn: Some(conn),
+                default_ttl,
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    url = redis_url,
+                    "Redis unreachable - continuing with L2 tile cache DISABLED \
+                     (service still serves from L1 + object storage, and background \
+                     retention keeps running)"
+                );
+                Ok(Self {
+                    conn: None,
+                    default_ttl,
+                })
+            }
+        }
     }
 
-    /// Get a cached tile.
+    /// Whether the Redis L2 cache is connected and in use.
+    pub fn is_enabled(&self) -> bool {
+        self.conn.is_some()
+    }
+
+    /// Get a cached tile. Always a miss when Redis is disabled.
     pub async fn get(&mut self, key: &CacheKey) -> WmsResult<Option<Bytes>> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(None);
+        };
         let key_str = key.to_string();
 
-        let result: Option<Vec<u8>> = self
-            .conn
+        let result: Option<Vec<u8>> = conn
             .get(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache get failed: {}", e)))?;
@@ -47,30 +95,34 @@ impl TileCache {
         Ok(result.map(Bytes::from))
     }
 
-    /// Store a tile in cache.
+    /// Store a tile in cache. No-op when Redis is disabled.
     pub async fn set(
         &mut self,
         key: &CacheKey,
         data: &[u8],
         ttl: Option<Duration>,
     ) -> WmsResult<()> {
-        let key_str = key.to_string();
         let ttl = ttl.unwrap_or(self.default_ttl);
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(());
+        };
+        let key_str = key.to_string();
 
-        self.conn
-            .set_ex::<_, _, ()>(&key_str, data, ttl.as_secs())
+        conn.set_ex::<_, _, ()>(&key_str, data, ttl.as_secs())
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache set failed: {}", e)))?;
 
         Ok(())
     }
 
-    /// Check if a key exists.
+    /// Check if a key exists. Always false when Redis is disabled.
     pub async fn exists(&mut self, key: &CacheKey) -> WmsResult<bool> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(false);
+        };
         let key_str = key.to_string();
 
-        let exists: bool = self
-            .conn
+        let exists: bool = conn
             .exists(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache exists check failed: {}", e)))?;
@@ -78,12 +130,14 @@ impl TileCache {
         Ok(exists)
     }
 
-    /// Delete a specific key.
+    /// Delete a specific key. No-op when Redis is disabled.
     pub async fn delete(&mut self, key: &CacheKey) -> WmsResult<()> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(());
+        };
         let key_str = key.to_string();
 
-        self.conn
-            .del::<_, ()>(&key_str)
+        conn.del::<_, ()>(&key_str)
             .await
             .map_err(|e| WmsError::CacheError(format!("Cache delete failed: {}", e)))?;
 
@@ -102,18 +156,21 @@ impl TileCache {
         self.delete_by_pattern(&pattern).await
     }
 
-    /// Get keys matching a pattern.
+    /// Get keys matching a pattern. Empty when Redis is disabled.
     pub async fn keys(&mut self, pattern: &str) -> WmsResult<Vec<String>> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(Vec::new());
+        };
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg(pattern)
-            .query_async(&mut self.conn)
+            .query_async(conn)
             .await
             .map_err(|e| WmsError::CacheError(format!("Pattern search failed: {}", e)))?;
 
         Ok(keys)
     }
 
-    /// Delete keys matching a pattern.
+    /// Delete keys matching a pattern. No-op when Redis is disabled.
     async fn delete_by_pattern(&mut self, pattern: &str) -> WmsResult<u64> {
         let keys = self.keys(pattern).await?;
 
@@ -122,10 +179,12 @@ impl TileCache {
         }
 
         let count = keys.len() as u64;
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(0);
+        };
 
         for key in keys {
-            let _: () = self
-                .conn
+            let _: () = conn
                 .del(&key)
                 .await
                 .map_err(|e| WmsError::CacheError(format!("Delete failed: {}", e)))?;
@@ -134,11 +193,17 @@ impl TileCache {
         Ok(count)
     }
 
-    /// Get cache statistics.
+    /// Get cache statistics. Zeroed when Redis is disabled.
     pub async fn stats(&mut self) -> WmsResult<CacheStats> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(CacheStats {
+                key_count: 0,
+                memory_used: 0,
+            });
+        };
         let info: String = redis::cmd("INFO")
             .arg("memory")
-            .query_async(&mut self.conn)
+            .query_async(&mut *conn)
             .await
             .map_err(|e| WmsError::CacheError(format!("Info failed: {}", e)))?;
 
@@ -153,7 +218,7 @@ impl TileCache {
         }
 
         let db_size: u64 = redis::cmd("DBSIZE")
-            .query_async(&mut self.conn)
+            .query_async(&mut *conn)
             .await
             .map_err(|e| WmsError::CacheError(format!("DBSIZE failed: {}", e)))?;
 
@@ -228,6 +293,38 @@ pub struct CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Redis outage must not prevent startup: connect() returns a disabled
+    /// cache whose operations are no-ops. Regression guard for the incident
+    /// where Redis being down stopped wms-api and therefore data retention.
+    #[tokio::test]
+    async fn test_connect_unreachable_redis_returns_disabled_cache() {
+        // Port 1 is reserved/unused, so this connection always fails fast.
+        let cache = TileCache::connect("redis://127.0.0.1:1", 3600).await;
+        let mut cache = cache.expect("connect must not error when Redis is down");
+        assert!(!cache.is_enabled(), "cache should report disabled");
+
+        let key = CacheKey::new(
+            "layer",
+            "style",
+            CrsCode::Epsg4326,
+            BoundingBox::new(0.0, 0.0, 1.0, 1.0),
+            256,
+            256,
+            None,
+            "png",
+        );
+
+        // All operations degrade gracefully instead of erroring.
+        assert!(cache.get(&key).await.unwrap().is_none());
+        assert!(cache.set(&key, b"data", None).await.is_ok());
+        assert!(!cache.exists(&key).await.unwrap());
+        assert!(cache.delete(&key).await.is_ok());
+        assert!(cache.keys("wms:*").await.unwrap().is_empty());
+        let stats = cache.stats().await.unwrap();
+        assert_eq!(stats.key_count, 0);
+        assert_eq!(stats.memory_used, 0);
+    }
 
     #[test]
     fn test_cache_key_format() {
