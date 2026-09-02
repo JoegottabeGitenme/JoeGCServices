@@ -11,6 +11,7 @@ path = "src/main.rs"
 # Internal crates
 storage = { path = "../../crates/storage" }
 ingestion = { path = "../../crates/ingestion" }
+retention = { path = "../../crates/retention" }
 
 # Async runtime
 tokio = { workspace = true }

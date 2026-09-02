@@ -80,11 +80,23 @@ tail /opt/weather-wms/logs/disk.log
 not live behind an optional dependency. If retention can't run, the system must
 either fail loudly or have an independent backstop — now it has both.
 
-## Follow-ups (not blocking)
+## Follow-ups
+
+- **DONE — retention decoupled from wms-api.** The `CleanupTask` and `SyncTask`
+  moved out of `services/wms-api` into a new `crates/retention`, and are now
+  hosted by the **ingester**. This removes link #3 structurally rather than just
+  tolerating link #2: retention no longer depends on the most fragile,
+  dependency-heavy service in the stack. `wms-api` still links the crate to
+  serve its `/api/admin/cleanup/*` and `/api/admin/sync/*` endpoints (so the
+  dashboard is unaffected) but deliberately does **not** run the background
+  loops — running them in two places would double-delete.
+
+  Why the ingester: it has no Redis dependency, already holds a `Catalog` and
+  `ObjectStorage`, already mounts `config/` (needed to read per-model retention
+  settings), and already waits for Postgres + MinIO to be healthy. If the
+  ingester is down there is no new data to retain anyway.
 
 - Re-measure steady-state MinIO footprint now that retention works, and confirm
   the 384 h GFS / 264 h NBM horizons fit comfortably in 884 GB.
-- Consider moving the CleanupTask out of wms-api into its own service or a
-  scheduled job so it is structurally independent of API health.
 - Local dev box also hit 100% during recovery: `weather-wms/target` had 189 GB
   of stale debug artifacts (`cargo clean --profile dev` reclaimed 202 GB).

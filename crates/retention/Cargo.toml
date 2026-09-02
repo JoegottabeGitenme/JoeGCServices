@@ -1,0 +1,24 @@
+[package]
+name = "retention"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Internal crates
+storage = { path = "../storage" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization (model config YAML parsing + stats responses)
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Time handling for retention cutoffs
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }

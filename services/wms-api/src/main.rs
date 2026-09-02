@@ -3,7 +3,7 @@
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
 use wms_api::{
-    admin, chunk_warming, cleanup, handlers, memory_pressure, startup_validation, state, warming,
+    admin, chunk_warming, handlers, memory_pressure, startup_validation, state, warming,
 };
 
 use anyhow::Result;
@@ -237,43 +237,15 @@ async fn async_main(args: Args) -> Result<()> {
         }
     }
 
-    // Start data cleanup background task
-    {
-        let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
-        let cleanup_config = cleanup::CleanupConfig::from_env_and_configs(&config_dir);
-
-        if cleanup_config.enabled {
-            info!(
-                interval_secs = cleanup_config.interval_secs,
-                models = ?cleanup_config.model_configs.keys().collect::<Vec<_>>(),
-                "Starting data cleanup background task"
-            );
-            let cleanup_task = cleanup::CleanupTask::new(state.clone(), cleanup_config);
-            tokio::spawn(async move {
-                cleanup_task.run_forever().await;
-            });
-        } else {
-            info!("Data cleanup disabled (set ENABLE_CLEANUP=true to enable)");
-        }
-    }
-
-    // Start database sync background task (cleans orphan MinIO files not tracked in DB)
-    {
-        let sync_config = cleanup::SyncConfig::from_env();
-
-        if sync_config.enabled {
-            info!(
-                interval_secs = sync_config.interval_secs,
-                "Starting database sync background task"
-            );
-            let sync_task = cleanup::SyncTask::new(state.clone(), sync_config);
-            tokio::spawn(async move {
-                sync_task.run_forever().await;
-            });
-        } else {
-            info!("Database sync disabled (set ENABLE_SYNC=true to enable)");
-        }
-    }
+    // NOTE: the data-retention and storage-sync background tasks used to be
+    // spawned here. They now run in the **ingester** (see crates/retention).
+    //
+    // Keeping them here made retention depend on wms-api staying up. In Aug
+    // 2026 a Redis outage stopped wms-api from starting, silently halting
+    // retention for ~3 weeks until the disk filled and Postgres died. wms-api
+    // still links the `retention` crate to serve its admin endpoints, but must
+    // NOT run the background loops - doing so would double-delete.
+    // See docs/incident-2026-08-disk-exhaustion.md.
 
     // Start chunk warming background task (proactive cache warming for GOES/observation data)
     {

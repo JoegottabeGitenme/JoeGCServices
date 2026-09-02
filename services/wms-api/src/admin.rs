@@ -1378,8 +1378,8 @@ pub async fn cleanup_status_handler(
     info!("Admin: Getting cleanup status");
 
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
-    let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
-    let cleanup_task = crate::cleanup::CleanupTask::new(state.clone(), config.clone());
+    let config = retention::CleanupConfig::from_env_and_configs(&config_dir);
+    let cleanup_task = retention::CleanupTask::new(state.retention_context(), config.clone());
 
     let expired_count = state.catalog.count_expired().await.unwrap_or(0);
 
@@ -1412,9 +1412,9 @@ pub async fn cleanup_status_handler(
             .collect();
 
         let model_type_str = match model_config.model_type {
-            crate::cleanup::ModelType::Forecast => "forecast",
-            crate::cleanup::ModelType::Observation => "observation",
-            crate::cleanup::ModelType::Static => "static",
+            retention::ModelType::Forecast => "forecast",
+            retention::ModelType::Observation => "observation",
+            retention::ModelType::Static => "static",
         };
 
         model_retentions.push(ModelRetentionInfo {
@@ -1481,9 +1481,9 @@ pub async fn cleanup_status_handler(
     for (model, model_config) in &config.model_configs {
         if !models.contains(model) {
             let model_type_str = match model_config.model_type {
-                crate::cleanup::ModelType::Forecast => "forecast",
-                crate::cleanup::ModelType::Observation => "observation",
-                crate::cleanup::ModelType::Static => "static",
+                retention::ModelType::Forecast => "forecast",
+                retention::ModelType::Observation => "observation",
+                retention::ModelType::Static => "static",
             };
 
             model_retentions.push(ModelRetentionInfo {
@@ -1515,9 +1515,9 @@ pub async fn cleanup_run_handler(Extension(state): Extension<Arc<AppState>>) -> 
     info!("Admin: Manual cleanup triggered");
 
     let config_dir = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
-    let config = crate::cleanup::CleanupConfig::from_env_and_configs(&config_dir);
+    let config = retention::CleanupConfig::from_env_and_configs(&config_dir);
 
-    let cleanup_task = crate::cleanup::CleanupTask::new(state.clone(), config);
+    let cleanup_task = retention::CleanupTask::new(state.retention_context(), config);
 
     match cleanup_task.run_once().await {
         Ok(stats) => Json(CleanupRunResponse {
@@ -1564,7 +1564,7 @@ pub struct SyncStatusResponse {
 pub async fn sync_status_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync status (dry run)");
 
-    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
+    let sync_task = retention::SyncTask::new_default(state.retention_context());
 
     match sync_task.dry_run().await {
         Ok(stats) => {
@@ -1619,7 +1619,7 @@ pub struct SyncPreviewResponse {
 pub async fn sync_preview_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Getting sync preview (detailed orphan list)");
 
-    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
+    let sync_task = retention::SyncTask::new_default(state.retention_context());
 
     match sync_task.preview().await {
         Ok(preview) => Json(SyncPreviewResponse {
@@ -1644,7 +1644,7 @@ pub async fn sync_preview_handler(Extension(state): Extension<Arc<AppState>>) ->
 pub async fn sync_run_handler(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
     info!("Admin: Running sync to clean up orphans");
 
-    let sync_task = crate::cleanup::SyncTask::new_default(state.clone());
+    let sync_task = retention::SyncTask::new_default(state.retention_context());
 
     match sync_task.run().await {
         Ok(stats) => {

@@ -8,6 +8,12 @@ use uuid::Uuid;
 use wms_common::{BoundingBox, LayerId, WmsError, WmsResult};
 
 /// Database connection pool and catalog operations.
+///
+/// `Clone` is cheap and shares the underlying connection pool (`PgPool` is
+/// `Arc`-backed), so cloning does not open new connections. This lets a single
+/// service hand a catalog handle to background tasks (e.g. the retention
+/// tasks in `crates/retention`) without a second pool.
+#[derive(Clone)]
 pub struct Catalog {
     pool: PgPool,
 }

@@ -2803,6 +2803,7 @@ dependencies = [
  "chrono",
  "clap",
  "ingestion",
+ "retention",
  "serde",
  "serde_json",
  "storage",
@@ -4452,6 +4453,19 @@ dependencies = [
  "svgtypes",
  "tiny-skia",
  "usvg",
+]
+
+[[package]]
+name = "retention"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_yaml",
+ "storage",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6795,6 +6809,7 @@ dependencies = [
  "quick-xml 0.31.0",
  "renderer",
  "reqwest 0.11.27",
+ "retention",
  "rusttype",
  "serde",
  "serde_json",

@@ -11,6 +11,7 @@ members = [
     "crates/grid-processor",
     "crates/ingestion",
     "crates/edr-protocol",
+    "crates/retention",
     "crates/test-utils",
     "services/downloader",
     "services/ingester",

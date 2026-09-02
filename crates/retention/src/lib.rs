@@ -1,7 +1,22 @@
-//! Data retention and cleanup background task.
+//! Data retention and storage-reconciliation background tasks.
 //!
-//! This module handles automatic cleanup of expired datasets based on
-//! retention settings in model configuration files.
+//! This crate handles automatic cleanup of expired datasets based on
+//! retention settings in model configuration files, plus reconciliation
+//! between the database catalog and object storage.
+//!
+//! # Why this is a standalone crate
+//!
+//! These tasks previously ran inside `wms-api`. In Aug 2026 a Redis outage
+//! prevented `wms-api` from starting, which silently stopped retention for
+//! ~3 weeks: object storage grew 165 GB -> 623 GB, the disk hit 100%, Postgres
+//! died mid-WAL-redo and every API returned 502.
+//!
+//! Retention is now hosted by the `ingester`, which has a much smaller
+//! dependency surface (no Redis) and is already essential to the ingest
+//! pipeline. `wms-api` still links this crate to serve its admin endpoints,
+//! but no longer runs the background loops.
+//!
+//! See `docs/incident-2026-08-disk-exhaustion.md`.
 //!
 //! # Retention Safeguards
 //!
@@ -25,7 +40,31 @@ use std::sync::Arc;
 use tokio::time::{interval, Duration as TokioDuration};
 use tracing::{debug, error, info, warn};
 
-use crate::state::AppState;
+use storage::{Catalog, ObjectStorage};
+
+/// Everything the retention tasks need to do their job.
+///
+/// Deliberately minimal: just the database catalog and object storage. Keeping
+/// this small is what allows retention to run in any service (it is hosted by
+/// the ingester) rather than being tied to one service's full application
+/// state.
+///
+/// Cloning is cheap: `Catalog` shares its connection pool and `ObjectStorage`
+/// is behind an `Arc`.
+#[derive(Clone)]
+pub struct RetentionContext {
+    /// Database catalog (dataset records, expiry marking, deletion).
+    pub catalog: Catalog,
+    /// Object storage holding the zarr grids.
+    pub storage: Arc<ObjectStorage>,
+}
+
+impl RetentionContext {
+    /// Create a context from a catalog and object storage handle.
+    pub fn new(catalog: Catalog, storage: Arc<ObjectStorage>) -> Self {
+        Self { catalog, storage }
+    }
+}
 
 /// Model type for determining retention behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,14 +429,14 @@ pub struct ProtectedRunInfo {
 
 /// Background cleanup task.
 pub struct CleanupTask {
-    state: Arc<AppState>,
+    ctx: RetentionContext,
     config: CleanupConfig,
 }
 
 impl CleanupTask {
     /// Create a new cleanup task.
-    pub fn new(state: Arc<AppState>, config: CleanupConfig) -> Self {
-        Self { state, config }
+    pub fn new(ctx: RetentionContext, config: CleanupConfig) -> Self {
+        Self { ctx, config }
     }
 
     /// Get the cleanup configuration.
@@ -412,7 +451,7 @@ impl CleanupTask {
         info!("Starting cleanup cycle");
 
         // Get list of models from the database
-        let models = self.state.catalog.list_models().await?;
+        let models = self.ctx.catalog.list_models().await?;
 
         for model in &models {
             let model_config = self.config.get_model_config(model);
@@ -458,7 +497,7 @@ impl CleanupTask {
         }
 
         // Get storage paths of expired datasets
-        let expired_paths = self.state.catalog.get_expired_storage_paths().await?;
+        let expired_paths = self.ctx.catalog.get_expired_storage_paths().await?;
 
         if !expired_paths.is_empty() {
             info!(
@@ -472,9 +511,9 @@ impl CleanupTask {
                 let result = if path.ends_with(".zarr") {
                     // Add trailing slash to ensure we only delete within the zarr directory
                     let prefix = format!("{}/", path);
-                    self.state.storage.delete_prefix(&prefix).await.map(|_| ())
+                    self.ctx.storage.delete_prefix(&prefix).await.map(|_| ())
                 } else {
-                    self.state.storage.delete(path).await
+                    self.ctx.storage.delete(path).await
                 };
 
                 match result {
@@ -490,18 +529,16 @@ impl CleanupTask {
             }
 
             // Delete expired records from database
-            let deleted = self.state.catalog.delete_expired().await?;
+            let deleted = self.ctx.catalog.delete_expired().await?;
             stats.records_deleted = deleted;
             info!(count = deleted, "Deleted expired records from database");
 
-            // Invalidate capabilities cache when data is deleted
-            if deleted > 0 {
-                self.state.capabilities_cache.invalidate().await;
-                debug!(
-                    "Invalidated capabilities cache after cleanup deleted {} records",
-                    deleted
-                );
-            }
+            // NOTE: this previously invalidated wms-api's in-process
+            // GetCapabilities cache. Retention now runs outside wms-api, so
+            // that is no longer reachable - and it is not needed: the
+            // capabilities cache has a short TTL (CAPABILITIES_CACHE_TTL_SECS,
+            // default 120s), so documents refresh on their own shortly after
+            // data is removed.
         }
 
         info!(
@@ -524,7 +561,7 @@ impl CleanupTask {
         cutoff: DateTime<Utc>,
     ) -> Result<u64> {
         // Get all runs for this model, sorted by reference_time DESC
-        let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
+        let runs = self.ctx.catalog.get_model_runs_with_counts(model).await?;
 
         if runs.is_empty() {
             debug!(model = %model, "No runs found, skipping cleanup");
@@ -548,7 +585,7 @@ impl CleanupTask {
         );
 
         // Mark expired datasets where reference_time < cutoff, except protected runs
-        self.state
+        self.ctx
             .catalog
             .mark_model_expired_except_runs(model, cutoff, &runs_to_protect)
             .await
@@ -564,7 +601,7 @@ impl CleanupTask {
         cutoff: DateTime<Utc>,
     ) -> Result<u64> {
         // For observation models, each reference_time is essentially one observation
-        let observations = self.state.catalog.get_model_runs_with_counts(model).await?;
+        let observations = self.ctx.catalog.get_model_runs_with_counts(model).await?;
 
         if observations.is_empty() {
             debug!(model = %model, "No observations found, skipping cleanup");
@@ -591,7 +628,7 @@ impl CleanupTask {
         );
 
         // Mark expired datasets, but exclude protected observations
-        self.state
+        self.ctx
             .catalog
             .mark_model_expired_except_runs(model, cutoff, &protected_obs)
             .await
@@ -602,7 +639,7 @@ impl CleanupTask {
     pub async fn get_protected_runs(&self, model: &str) -> Result<Vec<ProtectedRunInfo>> {
         let model_config = self.config.get_model_config(model);
         // Runs are already sorted by reference_time DESC from the query
-        let runs = self.state.catalog.get_model_runs_with_counts(model).await?;
+        let runs = self.ctx.catalog.get_model_runs_with_counts(model).await?;
 
         if runs.is_empty() {
             return Ok(vec![]);
@@ -752,20 +789,20 @@ struct SyncAnalysis {
 
 /// Sync task for reconciling database and MinIO storage.
 pub struct SyncTask {
-    state: Arc<AppState>,
+    ctx: RetentionContext,
     config: SyncConfig,
 }
 
 impl SyncTask {
     /// Create a new sync task.
-    pub fn new(state: Arc<AppState>, config: SyncConfig) -> Self {
-        Self { state, config }
+    pub fn new(ctx: RetentionContext, config: SyncConfig) -> Self {
+        Self { ctx, config }
     }
 
     /// Create a new sync task with default config (for admin API use).
-    pub fn new_default(state: Arc<AppState>) -> Self {
+    pub fn new_default(ctx: RetentionContext) -> Self {
         Self {
-            state,
+            ctx,
             config: SyncConfig::default(),
         }
     }
@@ -847,10 +884,10 @@ impl SyncTask {
         // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data),
         // and grids/ (Zarr data). This listing is taken BEFORE the DB snapshot
         // (see race-safety notes above).
-        let mut minio_paths = self.state.storage.list_with_modified("shredded/").await?;
-        let raw_paths = self.state.storage.list_with_modified("raw/").await?;
+        let mut minio_paths = self.ctx.storage.list_with_modified("shredded/").await?;
+        let raw_paths = self.ctx.storage.list_with_modified("raw/").await?;
         minio_paths.extend(raw_paths);
-        let grid_paths = self.state.storage.list_with_modified("grids/").await?;
+        let grid_paths = self.ctx.storage.list_with_modified("grids/").await?;
         minio_paths.extend(grid_paths);
 
         // For Zarr directories, we need to extract the parent .zarr path from
@@ -885,12 +922,12 @@ impl SyncTask {
         //   - full set: used to decide which MinIO objects are orphans
         //   - aged set (ingested more than grace_secs ago): candidates for
         //     orphan DB record detection
-        let db_paths = self.state.catalog.get_all_storage_paths().await?;
+        let db_paths = self.ctx.catalog.get_all_storage_paths().await?;
         let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
         let db_records_checked = db_paths.len() as u64;
 
         let aged_db_paths = self
-            .state
+            .ctx
             .catalog
             .get_storage_paths_older_than(self.config.grace_secs)
             .await?;
@@ -959,7 +996,7 @@ impl SyncTask {
 
             if delete {
                 match self
-                    .state
+                    .ctx
                     .catalog
                     .delete_orphan_records(&orphan_db_paths)
                     .await
@@ -998,9 +1035,9 @@ impl SyncTask {
                     let result = if path.ends_with(".zarr") {
                         // Add trailing slash to ensure we only delete within the zarr directory
                         let prefix = format!("{}/", path);
-                        self.state.storage.delete_prefix(&prefix).await.map(|_| ())
+                        self.ctx.storage.delete_prefix(&prefix).await.map(|_| ())
                     } else {
-                        self.state.storage.delete(path).await
+                        self.ctx.storage.delete(path).await
                     };
 
                     match result {

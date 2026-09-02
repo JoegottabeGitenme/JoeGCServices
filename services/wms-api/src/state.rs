@@ -278,4 +278,17 @@ impl AppState {
             capabilities_cache,
         })
     }
+
+    /// Build a [`retention::RetentionContext`] from this state.
+    ///
+    /// Used only by the admin endpoints (`/api/admin/cleanup/*`,
+    /// `/api/admin/sync/*`), which let an operator inspect status or trigger a
+    /// run on demand. The recurring background loops deliberately do NOT run in
+    /// wms-api - they run in the ingester (see crates/retention).
+    ///
+    /// Both clones are cheap: `Catalog` shares its connection pool and
+    /// `ObjectStorage` is behind an `Arc`.
+    pub fn retention_context(&self) -> retention::RetentionContext {
+        retention::RetentionContext::new(self.catalog.clone(), Arc::clone(&self.storage))
+    }
 }

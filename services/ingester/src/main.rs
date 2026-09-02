@@ -155,6 +155,53 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Data retention + storage reconciliation background tasks.
+    //
+    // These used to run inside wms-api. A Redis outage there stopped them for
+    // ~3 weeks, which filled the disk and took the whole stack down (see
+    // docs/incident-2026-08-disk-exhaustion.md). They now live here: the
+    // ingester has a much smaller dependency surface (no Redis) and is already
+    // required for new data to exist at all.
+    //
+    // Context is built BEFORE `Ingester::new` takes ownership of the storage
+    // and catalog handles. Both clones are cheap (Arc / shared pool).
+    // ------------------------------------------------------------------
+    {
+        let retention_ctx = retention::RetentionContext::new(catalog.clone(), Arc::clone(&storage));
+
+        let config_dir = env::var("CONFIG_DIR").unwrap_or_else(|_| "/app/config".to_string());
+        let cleanup_config = retention::CleanupConfig::from_env_and_configs(&config_dir);
+
+        if cleanup_config.enabled {
+            info!(
+                interval_secs = cleanup_config.interval_secs,
+                models = ?cleanup_config.model_configs.keys().collect::<Vec<_>>(),
+                "Starting data cleanup background task"
+            );
+            let cleanup_task = retention::CleanupTask::new(retention_ctx.clone(), cleanup_config);
+            tokio::spawn(async move {
+                cleanup_task.run_forever().await;
+            });
+        } else {
+            info!("Data cleanup disabled (set ENABLE_CLEANUP=true to enable)");
+        }
+
+        let sync_config = retention::SyncConfig::from_env();
+        if sync_config.enabled {
+            info!(
+                interval_secs = sync_config.interval_secs,
+                "Starting database sync background task"
+            );
+            let sync_task = retention::SyncTask::new(retention_ctx, sync_config);
+            tokio::spawn(async move {
+                sync_task.run_forever().await;
+            });
+        } else {
+            info!("Database sync disabled (set ENABLE_SYNC=true to enable)");
+        }
+    }
+
     // Create ingester
     let ingester = Ingester::new(storage, catalog);
 
