@@ -644,6 +644,7 @@
             <nav class="nav-links">
                 <a href="#services" class="nav-link">Services</a>
                 <a href="#ocean" class="nav-link">Ocean</a>
+                <a href="#trails" class="nav-link">Trails</a>
                 <a href="#examples" class="nav-link">Examples</a>
                 <a href="#edr-png-examples" class="nav-link">EDR PNG</a>
                 <a href="#api" class="nav-link">API</a>
@@ -805,6 +806,143 @@
                             <div class="edr-example-title">Deep-Ocean Tsunami Detection</div>
                             <div class="edr-example-desc">Water column height from DART buoys across Pacific, Atlantic, and Indian Oceans</div>
                             <div class="edr-example-endpoint">GET /edr/collections/dart/locations/{station_id}?datetime=2026-02-06T00:00:00Z/..</div>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Trail & Land Conditions Section -->
+        <section class="section" id="trails">
+            <h2 class="section-title">
+                <span class="icon">&#128692;</span>
+                Trail &amp; Land Conditions
+            </h2>
+            <div class="examples-section">
+                <p class="card-description">
+                    OSM-sourced trail geometry (one feature per trail segment, not merged per system)
+                    plus the raw HRRR soil/snow ingredients for answering "will I be able to ride here today?"
+                    This is geometry and weather data only &mdash; no rideability judgment is computed server-side yet.
+                    See the <a href="/edr" style="color: var(--primary-light);">API docs</a> for the physics/validation roadmap.
+                </p>
+                <div class="edr-examples-grid">
+                    <!-- Trail geometry bbox query -->
+                    <a href="/edr/collections/trails/items?bbox=-106.05,38.48,-105.90,38.60&limit=10" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#128692;</span>
+                            <span class="location-name">Trails Near Salida, CO</span>
+                            <span class="location-id">bbox query</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"type"</span>: <span class="string">"Feature"</span>,
+<span class="key">"id"</span>: <span class="number">105222702</span>,
+<span class="key">"geometry"</span>: {
+  <span class="key">"type"</span>: <span class="string">"LineString"</span>,
+  <span class="key">"coordinates"</span>: [[<span class="number">-105.981</span>, <span class="number">38.543</span>], <span class="string">...</span>]
+},
+<span class="key">"properties"</span>: {
+  <span class="key">"feature_id"</span>: <span class="number">105222702</span>,
+  <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span>,
+  <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>,
+  <span class="key">"active"</span>: <span class="string">true</span>
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Trail Geometry (OSM)</div>
+                            <div class="edr-example-desc">One feature per OSM way &mdash; segment-level, so part of a trail can show different conditions than the rest once physics lands</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=minLon,minLat,maxLon,maxLat</div>
+                        </div>
+                    </a>
+
+                    <!-- Trail name search -->
+                    <a href="/edr/collections/trails/items?q=tenderfoot" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#128269;</span>
+                            <span class="location-name">Search: "tenderfoot"</span>
+                            <span class="location-id">?q=</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"numberReturned"</span>: <span class="number">3</span>,
+<span class="key">"features"</span>: [
+  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>, <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span> },
+  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>, <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span> },
+  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Drive"</span>, <span class="key">"feature_class"</span>: <span class="string">"track"</span> }
+]</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Trail Name Search</div>
+                            <div class="edr-example-desc">Ranked exact &gt; prefix &gt; substring, accent-insensitive. Add <code>&amp;class=mtb_trail</code> to filter by type</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?q=tenderfoot</div>
+                        </div>
+                    </a>
+
+                    <!-- Soil moisture & temperature -->
+                    <a href="/edr/collections/hrrr-soil/position?coords=POINT(-105.99%2038.54)&parameter-name=SOILW,TSOIL&z=4" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#128167;</span>
+                            <span class="location-name">Soil Moisture &amp; Temperature</span>
+                            <span class="location-id">hrrr-soil</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"ranges"</span>: {
+  <span class="key">"SOILW"</span>: { <span class="key">"values"</span>: [<span class="number">0.1327</span>] },
+  <span class="key">"TSOIL"</span>: { <span class="key">"values"</span>: [<span class="number">297.5</span>] }
+}
+<span class="key">"units"</span>: <span class="string">"SOILW: fraction 0-1, TSOIL: Kelvin"</span>
+<span class="key">"depths (z=cm)"</span>: <span class="string">"0, 1, 4, 10, 30"</span></pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Soil Moisture &amp; Temperature</div>
+                            <div class="edr-example-desc">HRRR RUC land model, native SI units. TSOIL &le; 273.15K is a practical frozen-ground proxy</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/hrrr-soil/position?coords=POINT(lon lat)&amp;parameter-name=SOILW,TSOIL&amp;z=4</div>
+                        </div>
+                    </a>
+
+                    <!-- Snowpack & precipitation -->
+                    <a href="/edr/collections/hrrr-snow/position?coords=POINT(-105.99%2038.54)&parameter-name=SNOD,WEASD,PRATE,CRAIN,CSNOW" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#10052;</span>
+                            <span class="location-name">Snowpack &amp; Precipitation</span>
+                            <span class="location-id">hrrr-snow</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"ranges"</span>: {
+  <span class="key">"SNOD"</span>:  { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
+  <span class="key">"WEASD"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
+  <span class="key">"PRATE"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
+  <span class="key">"CRAIN"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
+  <span class="key">"CSNOW"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Snow Depth, SWE &amp; Precip Type</div>
+                            <div class="edr-example-desc">SNOD (m), WEASD (kg/m&sup2; = mm SWE), PRATE (kg/m&sup2;/s), plus mutually-exclusive rain/snow/ice flags &mdash; hourly, 48h forecast</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/hrrr-snow/position?coords=POINT(lon lat)&amp;parameter-name=SNOD,WEASD,PRATE</div>
+                        </div>
+                    </a>
+
+                    <!-- Trailhead one-call forecast proxy -->
+                    <a href="/edr/locations/TH8116742258?collections=hrrr-soil,hrrr-snow" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#129449;</span>
+                            <span class="location-name">F Street Bridge Trailhead</span>
+                            <span class="location-id">TH8116742258</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"data"</span>: {
+  <span class="key">"hrrr-soil"</span>: {
+    <span class="key">"valid_time"</span>: <span class="string">"2026-09-22T20:00:00Z"</span>,
+    <span class="key">"parameters"</span>: {
+      <span class="key">"TSOIL"</span>: { <span class="key">"0 cm below ground"</span>: <span class="number">308.1</span> },
+      <span class="key">"SOILW"</span>: { <span class="key">"4 cm below ground"</span>: <span class="number">0.133</span> }
+    }
+  }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Trailhead Forecast Proxy</div>
+                            <div class="edr-example-desc">Any location &mdash; trailhead, city, airport &mdash; pulls forecasts from any collection in one call. Trailheads come from the same OSM sync, discoverable via <code>/edr/locations</code></div>
+                            <div class="edr-example-endpoint">GET /edr/locations/{trailhead_id}?collections=hrrr-soil,hrrr-snow</div>
                         </div>
                     </a>
                 </div>
