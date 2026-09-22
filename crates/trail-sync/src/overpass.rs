@@ -128,7 +128,47 @@ fn build_query(bbox: BBox) -> String {
 }
 
 /// Query Overpass for a region and parse the response into ways + trailheads.
+/// Query Overpass for a region, retrying transient failures.
+///
+/// Confirmed live during the trail-conditions session: a run that hammered
+/// Overpass across many tiles in quick succession (during an OOM-restart
+/// loop, before the memory fix) got itself network-refused for most of a
+/// statewide pass ("Connection refused" / "Network is unreachable"), and
+/// since a failed tile makes the caller skip the soft-delete pass entirely
+/// (see `run_once`), a transient blip shouldn't cost the whole tile. Retries
+/// up to `MAX_ATTEMPTS` times with a fixed backoff -- deliberately simple,
+/// not exponential, since Overpass rate-limiting responds to *any* patience
+/// at all, not to a particular curve.
 pub async fn fetch_region(
+    client: &reqwest::Client,
+    overpass_url: &str,
+    bbox: BBox,
+) -> anyhow::Result<OverpassResult> {
+    const MAX_ATTEMPTS: u32 = 3;
+    const BACKOFF: Duration = Duration::from_secs(15);
+
+    let mut last_err = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match fetch_region_once(client, overpass_url, bbox).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                tracing::warn!(
+                    attempt,
+                    max_attempts = MAX_ATTEMPTS,
+                    error = %e,
+                    "Overpass tile fetch failed, will retry"
+                );
+                last_err = Some(e);
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(BACKOFF).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+async fn fetch_region_once(
     client: &reqwest::Client,
     overpass_url: &str,
     bbox: BBox,

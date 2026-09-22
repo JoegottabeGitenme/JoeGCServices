@@ -47,6 +47,15 @@ fn default_tile_deg() -> f64 {
     1.0
 }
 
+/// Whether a region's `seen_ids` is complete enough to safely run the
+/// soft-delete pass. Extracted as its own function specifically so this
+/// safety condition has a name and a unit test, after a prior version
+/// (`tile_errors < tiles.len()`) let a partial failure through and wrongly
+/// deactivated ~44,500 real features -- see the call site's comment.
+fn safe_to_soft_delete(tile_errors: usize) -> bool {
+    tile_errors == 0
+}
+
 /// Trail sync configuration, re-read from disk at the start of every cycle
 /// (see [`TrailSyncConfig::load`]) so adding a region takes effect on the
 /// next scheduled run or admin-triggered refresh — no restart required.
@@ -233,20 +242,29 @@ pub async fn run_once(
             );
 
             // Be a considerate Overpass citizen: a courtesy pause between
-            // tile requests, not just back-to-back hammering.
+            // tile requests, not just back-to-back hammering. Widened from
+            // 500ms after a statewide pass got itself network-refused for
+            // most of a run (see fetch_region's retry doc comment) -- this
+            // is a weekly background job, an extra couple of minutes per
+            // cycle costs nothing.
             if i + 1 < tiles.len() {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
         }
 
         summary.ways_upserted += region_ways_upserted;
 
         // Soft-delete ways no longer present in this region's pass. Skipped
-        // if every tile errored -- an empty seen_ids from total fetch
-        // failure would otherwise mark the entire region's existing
-        // features inactive, which is exactly the kind of destructive
-        // behavior soft-delete exists to avoid triggering by accident.
-        if tile_errors < tiles.len() {
+        // if ANY tile errored, not just if every tile errored -- confirmed
+        // live during the trail-conditions splash-page verification session:
+        // a partial failure (34/40 tiles down) left `seen_ids` covering only
+        // the surviving tiles, and the original `tile_errors < tiles.len()`
+        // guard let the pass proceed anyway, wrongly marking ~44,500 real,
+        // still-existing ways in the untouched tiles' area inactive. A
+        // partial `seen_ids` is just as unsafe to soft-delete against as an
+        // empty one -- only a fully successful pass has the complete
+        // picture needed to know what's actually missing.
+        if safe_to_soft_delete(tile_errors) {
             match linear_catalog
                 .mark_inactive_except(&region.name, &seen_ids)
                 .await
@@ -264,7 +282,12 @@ pub async fn run_once(
                 }
             }
         } else {
-            warn!(region = %region.name, "All tiles failed, skipping soft-delete pass to avoid marking everything inactive");
+            warn!(
+                region = %region.name,
+                tile_errors,
+                total_tiles = tiles.len(),
+                "One or more tiles failed, skipping soft-delete pass (seen_ids is incomplete, would wrongly deactivate real features in untouched tiles)"
+            );
         }
 
         // Upsert trailheads into the shared locations registry.
@@ -367,6 +390,19 @@ impl TrailSyncTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for the wrongly-deactivated-44,500-ways incident
+    /// (see `safe_to_soft_delete`'s doc comment). The bug was `tile_errors
+    /// < tiles.len()`, which is true for ANY partial failure short of a
+    /// total wipeout -- these cases must all be false.
+    #[test]
+    fn test_safe_to_soft_delete_only_when_zero_errors() {
+        assert!(safe_to_soft_delete(0));
+        assert!(!safe_to_soft_delete(1));
+        assert!(!safe_to_soft_delete(34)); // the exact incident: 34/40 tiles failed
+        assert!(!safe_to_soft_delete(39)); // the old buggy condition's edge case
+        assert!(!safe_to_soft_delete(40)); // total failure -- also unsafe
+    }
 
     #[test]
     fn test_config_defaults_when_file_missing() {
