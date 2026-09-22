@@ -104,9 +104,17 @@ pub async fn fetch_region(
 ) -> anyhow::Result<OverpassResult> {
     let query = build_query(bbox);
 
+    // Overpass API (and the Apache instance in front of it) reject requests
+    // with no User-Agent / a generic one with a 406 -- confirmed live during
+    // the trail-conditions session. A descriptive UA is effectively required,
+    // not optional, for this API.
     let response = client
         .post(overpass_url)
         .timeout(Duration::from_secs(200))
+        .header(
+            reqwest::header::USER_AGENT,
+            "weather-wms-trailsync/0.1 (https://folkweather.com)",
+        )
         .form(&[("data", query.as_str())])
         .send()
         .await?
