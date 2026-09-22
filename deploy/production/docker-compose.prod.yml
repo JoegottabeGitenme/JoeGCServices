@@ -145,7 +145,15 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          # Bumped from 4G during the trail-conditions session: the weekly
+          # OSM/Overpass sync (crates/trail-sync) parses large tiled JSON
+          # responses concurrently with normal GRIB/NetCDF ingestion, and
+          # RSS climbed to the 4G limit and triggered a restart even after
+          # tiling bounded any single fetch's peak allocation (likely
+          # allocator retention across many tile iterations, not a true
+          # leak -- see the tiling fix commit). Host has 31G total, ~22G
+          # available, so 8G leaves ample headroom for everything else.
+          memory: 8G
 
   downloader:
     ports: []
