@@ -75,6 +75,37 @@ pub struct OverpassResult {
     pub trailheads: Vec<OsmTrailhead>,
 }
 
+/// Split a bounding box into a grid of smaller tiles.
+///
+/// Exists because a single statewide Overpass request (confirmed live: all
+/// of Colorado's path/track/bridleway ways in one `out geom;` response) is
+/// ~300 MB of JSON, which parses into a Rust structure large enough to push
+/// the ingester over its memory limit and crash it mid-sync -- confirmed
+/// during the trail-conditions session's deploy verification (repeated
+/// restarts, memory at 99.97% of a 4 GiB limit). Tiling bounds peak memory
+/// to roughly one tile's worth of parsed data regardless of region size.
+pub fn subdivide_bbox(bbox: BBox, tile_deg: f64) -> Vec<BBox> {
+    let tile_deg = tile_deg.max(0.1); // guard against a pathological near-zero config value
+    let mut tiles = Vec::new();
+    let mut lat = bbox.min_lat;
+    while lat < bbox.max_lat {
+        let next_lat = (lat + tile_deg).min(bbox.max_lat);
+        let mut lon = bbox.min_lon;
+        while lon < bbox.max_lon {
+            let next_lon = (lon + tile_deg).min(bbox.max_lon);
+            tiles.push(BBox {
+                min_lon: lon,
+                min_lat: lat,
+                max_lon: next_lon,
+                max_lat: next_lat,
+            });
+            lon = next_lon;
+        }
+        lat = next_lat;
+    }
+    tiles
+}
+
 /// Build the Overpass QL query for a bounding box.
 ///
 /// Matches `highway=path|track|bridleway` ways (generic unpaved linear
@@ -195,6 +226,48 @@ mod tests {
             max_lon: -102.04,
             max_lat: 41.00,
         }
+    }
+
+    #[test]
+    fn test_subdivide_bbox_covers_whole_area_with_no_gaps() {
+        let tiles = subdivide_bbox(bbox(), 1.0);
+        // Colorado is ~7.02 deg wide, ~4.01 deg tall -> 8 x 5 = 40 tiles
+        assert_eq!(tiles.len(), 40);
+        // Every tile must stay within the original bbox.
+        for t in &tiles {
+            assert!(t.min_lon >= bbox().min_lon - 1e-9);
+            assert!(t.max_lon <= bbox().max_lon + 1e-9);
+            assert!(t.min_lat >= bbox().min_lat - 1e-9);
+            assert!(t.max_lat <= bbox().max_lat + 1e-9);
+        }
+        // First tile starts exactly at the region's corner.
+        assert_eq!(tiles[0].min_lon, bbox().min_lon);
+        assert_eq!(tiles[0].min_lat, bbox().min_lat);
+        // Last tile ends exactly at the region's far corner.
+        let last = tiles.last().unwrap();
+        assert_eq!(last.max_lon, bbox().max_lon);
+        assert_eq!(last.max_lat, bbox().max_lat);
+    }
+
+    #[test]
+    fn test_subdivide_bbox_small_region_single_tile() {
+        let small = BBox {
+            min_lon: -105.3,
+            min_lat: 39.6,
+            max_lon: -105.1,
+            max_lat: 39.8,
+        };
+        let tiles = subdivide_bbox(small, 1.0);
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].min_lon, small.min_lon);
+        assert_eq!(tiles[0].max_lon, small.max_lon);
+    }
+
+    #[test]
+    fn test_subdivide_bbox_guards_against_tiny_tile_size() {
+        // A pathological config value shouldn't create an unbounded number of tiles.
+        let tiles = subdivide_bbox(bbox(), 0.0);
+        assert!(tiles.len() < 10_000);
     }
 
     #[test]
