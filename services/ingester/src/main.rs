@@ -116,6 +116,11 @@ async fn main() -> Result<()> {
     catalog.migrate_trail_reports().await?;
     info!("Trail reports schema migrated");
 
+    // Migrate segment conditions schema (trail-physics service output;
+    // written by Python, not by this ingester -- see services/trail-physics)
+    catalog.migrate_segment_conditions().await?;
+    info!("Segment conditions schema migrated");
+
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
 

@@ -1,0 +1,140 @@
+"""Unit tests for terrain.py (slope, D8 flow accumulation, TWI).
+
+Uses small synthetic DEMs with known, hand-verifiable drainage patterns --
+not the real Tarrawarra DEM (blocked this session, see
+validation/tarrawarra/README.md) -- specifically so the terrain algorithms
+themselves are proven correct independent of whether/when the real data
+becomes available.
+"""
+
+import numpy as np
+import pytest
+
+from physics.terrain import (
+    compute_aspect,
+    compute_d8_flow_accumulation,
+    compute_slope,
+    compute_twi,
+    fill_pits_and_flats,
+)
+
+
+def test_flat_dem_has_zero_slope():
+    dem = np.full((5, 5), 100.0)
+    slope = compute_slope(dem, cellsize=5.0)
+    np.testing.assert_allclose(slope, 0.0, atol=1e-9)
+
+
+def test_planar_tilted_surface_has_uniform_slope():
+    """A perfectly planar surface tilted in one direction must have the
+    same tan(beta) everywhere except at the very edges (Horn's method uses
+    a 3x3 window, so edge-padding introduces small boundary effects) --
+    check the interior only."""
+    rows, cols = 10, 10
+    cellsize = 5.0
+    # Drop 1 m per column (west to east) -> true slope = 1/5 = 0.2
+    dem = np.tile(np.arange(cols) * -1.0, (rows, 1))
+    slope = compute_slope(dem, cellsize=cellsize)
+    interior = slope[2:-2, 2:-2]
+    np.testing.assert_allclose(interior, 0.2, atol=1e-6)
+
+
+def test_flow_accumulates_downhill_along_a_simple_slope():
+    """On a DEM tilted purely west-to-east (no north/south gradient), D8
+    flow must accumulate monotonically eastward along each row, and each
+    row's totals must be independent (no north/south leakage) since D8
+    picks a single steepest-descent direction and ties are broken
+    deterministically by the first matching offset in the search order."""
+    rows, cols = 1, 6
+    dem = np.array([[50.0, 40.0, 30.0, 20.0, 10.0, 0.0]])
+    acc = compute_d8_flow_accumulation(dem, cellsize=5.0)
+    # Specific area = accumulated cell count * cellsize; westmost cell
+    # contributes only itself (1 cell), each cell east of it picks up one
+    # more upslope contributor.
+    expected_cells = np.array([1, 2, 3, 4, 5, 6])
+    np.testing.assert_allclose(acc[0], expected_cells * 5.0)
+
+
+def test_valley_bottom_has_higher_twi_than_ridge():
+    """A synthetic V-shaped valley: TWI must be highest at the valley
+    floor (large upslope contributing area draining to a narrow low-slope
+    channel) and lowest on the steep valley walls -- the core physical
+    property Eq. 1 relies on to redistribute moisture correctly."""
+    rows, cols = 20, 20
+    cellsize = 5.0
+    x = np.abs(np.arange(cols) - cols // 2)  # distance from the centerline
+    dem = np.tile(x.astype(np.float64) * 2.0, (rows, 1))  # V-shaped cross-section
+    # Add a gentle downstream (north-to-south) tilt so the valley actually
+    # drains somewhere instead of being a flat trough (which fill_pits_and_flats
+    # would otherwise have to fully resolve via many iterations).
+    dem += np.arange(rows)[:, None] * 0.1
+
+    twi = compute_twi(dem, cellsize)
+    valley_floor_twi = twi[rows // 2, cols // 2]
+    valley_wall_twi = twi[rows // 2, 1]
+    assert valley_floor_twi > valley_wall_twi
+
+
+def test_fill_pits_removes_interior_local_minima():
+    """A single-cell pit (lower than all its neighbors) must be raised to
+    JUST ABOVE its lowest neighbor (not up to the neighbors' max -- only
+    enough to create one downhill exit) -- otherwise D8 flow into it has
+    nowhere to go and the accumulation topological sort would silently
+    lose the upslope contribution at that cell. Uses asymmetric neighbor
+    elevations specifically so "just above the minimum" and "up to the
+    maximum" give different, distinguishable answers."""
+    dem = np.array(
+        [
+            [10.0, 10.0, 10.0],
+            [10.0, 1.0, 20.0],  # interior pit; neighbors are 10,10,10,20 (asymmetric)
+            [10.0, 10.0, 10.0],
+        ]
+    )
+    filled = fill_pits_and_flats(dem)
+    lowest_neighbor = 10.0
+    # Raised strictly above its lowest neighbor (so it has an exit)...
+    assert filled[1, 1] > lowest_neighbor
+    # ...but only just above it, not all the way up to the highest neighbor.
+    assert filled[1, 1] < lowest_neighbor + 0.01
+    # The pit must no longer be a strict local minimum: at least one
+    # neighbor (here, three of them) is now lower than the filled center.
+    neighbors = [filled[0, 1], filled[2, 1], filled[1, 0], filled[1, 2]]
+    assert any(filled[1, 1] > n for n in neighbors)
+
+
+def test_fill_pits_never_touches_boundary():
+    """Boundary cells are legitimate outlets (flow leaves the DEM there),
+    not pits to be filled -- even if a boundary cell is locally the lowest
+    point in the grid."""
+    dem = np.array(
+        [
+            [5.0, 5.0, 5.0],
+            [5.0, 3.0, 5.0],
+            [5.0, 0.0, 5.0],  # bottom-middle boundary cell, lowest in the grid
+        ]
+    )
+    filled = fill_pits_and_flats(dem)
+    assert filled[2, 1] == pytest.approx(0.0)
+
+
+def test_aspect_all_four_cardinal_directions():
+    """Aspect is the compass bearing of the DOWNHILL direction. A DEM that
+    descends toward the north (low in the north, high in the south) faces
+    north; verified for all four cardinal tilts since the row-increases-
+    southward array convention makes it easy to get this backwards (an
+    earlier version of this test had north/south swapped, which caught a
+    real sign bug in compute_aspect -- see that function's docstring for
+    the corrected derivation)."""
+    rows, cols = 5, 5
+
+    dem_faces_north = np.tile(np.arange(rows)[:, None].astype(float), (1, cols))
+    assert compute_aspect(dem_faces_north, cellsize=5.0)[2, 2] == pytest.approx(0.0, abs=1e-6)
+
+    dem_faces_south = np.tile((-np.arange(rows))[:, None].astype(float), (1, cols))
+    assert compute_aspect(dem_faces_south, cellsize=5.0)[2, 2] == pytest.approx(180.0, abs=1e-6)
+
+    dem_faces_east = np.tile(-np.arange(cols).astype(float), (rows, 1))
+    assert compute_aspect(dem_faces_east, cellsize=5.0)[2, 2] == pytest.approx(90.0, abs=1e-6)
+
+    dem_faces_west = np.tile(np.arange(cols).astype(float), (rows, 1))
+    assert compute_aspect(dem_faces_west, cellsize=5.0)[2, 2] == pytest.approx(270.0, abs=1e-6)

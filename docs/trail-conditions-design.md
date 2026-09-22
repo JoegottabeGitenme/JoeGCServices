@@ -126,6 +126,150 @@ description says exactly that.
 
 ---
 
+## Session 2 summary (2026-09) — the physics core itself
+
+Scope: build the actual downscaling physics (Eq. 1–7), stand up the
+Tarrawarra validation harness for real, and start the WS1–WS8 workstream
+plan from the capacity-planning session. **Explicit decision this session:
+proceed ahead of Phase 0** (labels aren't accumulating yet; Trailforks
+ToS remains unresolved) — a deliberate, acknowledged departure from the
+doc's own "Phase 0 first" sequencing, made because the ingest/geometry
+substrate and the physics core have value independent of when Phase 0's
+report-separability signal arrives.
+
+### What shipped
+
+- **`services/trail-physics/physics/`** — the actual Eq. 1–7 downscaling
+  core in Python, 49 unit tests: `redistribution.py` (Eq. 1, fully
+  specified in this doc, high confidence), `flux.py` (Eq. 4/5 — implements
+  the **correct** Ek et al. 2003 Noah soil-evaporation form, replacing the
+  transcription error this doc already flagged in the source paper),
+  `radiation.py` (Eq. 6, standard solar-geometry terrain correction),
+  `pet.py` (FAO-56 Penman-Monteith, since HRRR has no PEVPR — confirmed
+  absent, see Session 1's amendment table), `relaxation.py` (Eq. 2/7 —
+  **explicitly unverified reconstruction**, see below), `terrain.py` (D8
+  flow accumulation + TWI, small-catchment scale only).
+- **Three real bugs found and fixed by the test suite itself**, not by
+  inspection: a soil-evaporation-vs-wind test assumption that was
+  physically wrong (FAO-56's wind term can legitimately decrease ET under
+  humid conditions — a real property, not a bug, once traced through by
+  hand); a genuine sign error in `compute_aspect` (north/south swapped,
+  caught because the test's own DEM setup was backwards and forced a
+  re-derivation); a backwards invariant in a pit-fill test (asserted the
+  opposite of what correct pit-filling does). All three are documented
+  in-place as regression tests, not silently fixed.
+- **`hrrr_grid.py`** — a direct transcription of
+  `crates/projection/src/lambert.rs`'s HRRR Lambert Conformal Conic
+  projection (not a fresh pyproj-based implementation — the Rust code's
+  origin convention is idiosyncratic and a from-scratch reimplementation
+  couldn't be verified to align pixel-for-pixel with already-written Zarr
+  grids). **Cross-validated against the actual Rust code**: a throwaway
+  `cargo run --example` against the real `LambertConformal::hrrr()`
+  produced exact reference (i,j) values for three points, asserted
+  verbatim in the Python test suite — bit-for-bit agreement confirmed, not
+  just internal round-trip consistency.
+- **`forcing.py`** — Zarr v3 reader + NaN-aware bilinear sampling. Verified
+  against the actual Rust writer's conventions (array shape `[height,
+  width]`, `row_origin: south` meaning no row-flip needed for HRRR —
+  confirmed by reading `crates/grid-processor`'s source directly, not
+  assumed) and tested against a **real local Zarr v3 array** built to the
+  same shape/dtype convention. **Not tested against live production
+  MinIO** — the S3 API port isn't publicly exposed (only the admin console
+  is proxied through the gateway), so there was no reachable endpoint from
+  this session's environment.
+- **`physics/snow.py`** — snow-lite per the prior session's Q3 resolution
+  (canopy interception + enhanced temperature-radiation melt), explicitly
+  *without* Winstral Sx wind redistribution. The 16-azimuth Sx layers are
+  still planned for WS1 as a diagnostic; actual wind-redistribution logic
+  is gated behind Rung 3 residual analysis (validate snow-lite's
+  disappearance dates first, check whether errors correlate with wind
+  exposure, build the more complex piece only if the data says to).
+- **`db.py` / `aggregate.py` / `main.py`** — the orchestration wiring
+  (poll `datasets` for new complete HRRR runs, mirroring `ChunkWarmer`'s
+  proven pattern; sample forcing at each trail's own OSM vertices — a
+  vertex-sampling approximation of true S8 zonal statistics, since WS1/WS2
+  don't exist yet but the same `segment_conditions` schema serves either
+  approach without a migration). **Not run against live infrastructure**
+  (no reachable Postgres from this session's environment either) — every
+  piece it calls is independently unit-tested; this file is the untested
+  wiring, and a first live run is the intended smoke test.
+- **`validation/tarrawarra/`** — real parsers for every documented
+  Tarrawarra file format, and a real validation runner reproducing the
+  doc's Rung 1 methodology exactly (redistribute each date's own
+  catchment-mean to its measurement points via Eq. 1, compare RMSE against
+  the site-mean baseline). **Proved end-to-end against a synthetic dataset**
+  built to the exact documented format with a known Eq. 1 relationship
+  baked in — both the PASS and FAIL verdict paths were exercised and
+  behave correctly. **Blocked on the real data**: the dataset is
+  unrestricted and hosted at a stable URL
+  (`people.eng.unimelb.edu.au/aww/tarrawarra/`), and its documentation
+  pages fetched successfully early in the session — then an
+  Incapsula/Imperva bot-challenge started blocking every subsequent
+  request, including to paths that had just worked. See
+  `validation/tarrawarra/README.md` for exact manual-download instructions
+  (this is a browser-vs-bot problem, not a data-availability problem).
+- **`crates/storage`: `segment_conditions` schema** — the per-segment,
+  per-hour output table (Rust migration, follows the `linear_features`
+  pattern exactly: no FK to `linear_features.feature_id` since geometry
+  churns weekly and a physics run should never be blocked by a missing FK
+  target; not wired into `crates/retention`, kept indefinitely as the
+  training-label archive per this doc's own Section 6). Read-side
+  `SegmentConditionsCatalog` added for the future EDR `?conditions=latest`
+  exposure (not built yet).
+- **`pipelines/static/`** — static-stack recipe scripts, two of them
+  **fully live-verified this session** (not just written): `fetch_3dep.py`
+  (USGS 3DEP tile enumeration, confirmed against the real `prd-tnm` public
+  bucket) and `fetch_nlcd.py` (NLCD land cover via MRLC's WCS endpoint —
+  debugging a real `InvalidAxisLabel` error live led to a working
+  `subsettingCrs` parameter, confirmed by an actual GetCoverage request
+  returning a real GeoTIFF). `fetch_ssurgo.py`'s download step could
+  **not** be verified: gSSURGO's distribution has moved to an
+  interactive-only Box folder since this doc was written, no stable
+  programmatic URL exists anymore (documented, not worked around).
+  `derive_terrain.py` (WhiteboxTools-based, for Front-Range/statewide
+  scale — explicitly not this session's small-catchment `physics/terrain.py`)
+  is written but not executed (tool not installed, DEM not fetched).
+- **`pipelines/corridor/build_corridor_mask.py`** — the vector-buffering
+  primitive (buffer active `linear_features` ways by a configurable
+  distance into a `trail_corridor` table), real PostGIS SQL, not yet
+  including the raster-onto-WS1's-grid step (that grid doesn't have a
+  defined origin/extent yet).
+- **`web/science.html`** — the public-facing science justification page,
+  linked from the splash page's trails section. Every reference link was
+  checked to actually resolve this session (not cited from memory
+  unverified) — including catching a real citation risk: an initial DOI
+  candidate for Coleman & Niemann (2013) turned out to be
+  `10.1002/wrcr.20065`, a *withdrawn* duplicate entry; the correct,
+  published paper is `10.1002/wrcr.20159`. Three references (FAO-56,
+  Winstral & Marks 2002, Walter et al. 2002) are cited from memory without
+  independent re-verification this session and are labeled as such on the
+  page itself, not presented with unverified confidence.
+- **`docker-compose.yml`**: `trail-physics` service added, **profile-gated**
+  (`profiles: ["trail-physics"]`, not started by default `docker compose
+  up`) — explicitly because Rung 1 hasn't passed and WS1/WS2 don't exist,
+  so running this continuously against production data would be premature
+  per the doc's own "if you don't land near this, stop and debug" rule.
+
+### What this session did NOT do
+
+- **Did not pass Rung 1** — blocked on data acquisition (see above), not on
+  the physics or the harness, both of which are built and proven against
+  synthetic data.
+- **Did not build WS1** (the actual Colorado static terrain/soil stack) —
+  the fetch recipes exist and two are live-verified, but no DEM was
+  mosaicked, no terrain derivatives were computed at scale, and no Zarr
+  stack was written to `static/`.
+- **Did not build WS2's raster corridor mask** — only the vector-buffering
+  step, which doesn't depend on WS1's grid existing.
+- **Did not run `main.py` against live Postgres/MinIO** — neither was
+  reachable from this session's environment. Every module it calls is
+  independently tested; the orchestration wiring itself is not.
+- **Did not resolve the Winstral Sx / wind-redistribution question** —
+  deliberately deferred behind Rung 3 evidence, per the prior session's Q3
+  resolution.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

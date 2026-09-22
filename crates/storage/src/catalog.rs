@@ -137,6 +137,32 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for per-segment trail condition output
+    /// (requires PostGIS, though the table itself has no geometry column --
+    /// geometry lives in `linear_features`; this just needs PostGIS enabled
+    /// first in the migration sequence).
+    ///
+    /// Written to by `services/trail-physics` (Python), not by any Rust
+    /// service. Call this after `migrate_linear_features()`.
+    pub async fn migrate_segment_conditions(&self) -> WmsResult<()> {
+        for statement in SEGMENT_CONDITIONS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!(
+                            "Segment conditions migration failed: {}",
+                            e
+                        ))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -2236,6 +2262,60 @@ CREATE TABLE IF NOT EXISTS trail_reports (
 CREATE INDEX IF NOT EXISTS idx_trail_reports_geom ON trail_reports USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_trail_reports_reported_at ON trail_reports(reported_at);
 CREATE INDEX IF NOT EXISTS idx_trail_reports_feature ON trail_reports(feature_id)
+"#;
+
+/// Schema for `segment_conditions` -- per-segment, per-hour output of the
+/// `trail-physics` downscaling pipeline (S8 aggregation; see
+/// docs/trail-conditions-design.md Section 5 and
+/// services/trail-physics/). One row per (feature_id, valid_time): analysis
+/// plus each forecast hour, matching the "pre-render everything, EDR reads
+/// precomputed rows" architecture already used for gridded model output.
+///
+/// `feature_id` intentionally has **no foreign key** to
+/// `linear_features.feature_id` -- the same loose-coupling choice already
+/// made for `trail_reports.feature_id`. Trail geometry churns weekly (OSM
+/// sync, soft-delete); condition rows for a way that's gone inactive (or
+/// been reassigned a new OSM id after a mapper edit) should not be silently
+/// deleted by a geometry sync, and a physics run should never be blocked by
+/// a missing FK target.
+///
+/// Not wired into `crates/retention` -- this is the training-label/history
+/// archive the design doc calls out keeping indefinitely (Section 6:
+/// "keep the full segment timeseries indefinitely (small, and it is your
+/// training set)"), same posture as `storm_events` and `trail_reports`.
+///
+/// v1 caveat: as of this session, only `soil_moisture` (Eq. 1 +
+/// reconstructed Eq. 2/7 relaxation) and `frozen_fraction` (the TSOIL<=273.15K
+/// proxy, since HRRR has no soil-ice-fraction field) have an implemented
+/// producer. `swe`, `frost_depth_m`, `softness_index`, and `confidence` are
+/// schema'd now so later phases (S2 snow-lite, S6 softness index, S1
+/// triple-collocation confidence) don't require a migration to add them --
+/// they are nullable and unpopulated until those stages exist.
+pub const SEGMENT_CONDITIONS_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS segment_conditions (
+    id BIGSERIAL PRIMARY KEY,
+    feature_id BIGINT NOT NULL,
+    run_time TIMESTAMPTZ NOT NULL,
+    valid_time TIMESTAMPTZ NOT NULL,
+    forecast_hour INT NOT NULL,
+    soil_moisture REAL,
+    frozen_fraction REAL,
+    frost_depth_m REAL,
+    swe_mm REAL,
+    softness_index REAL,
+    confidence REAL,
+    model_version TEXT NOT NULL DEFAULT 'trail-physics-v0',
+    raw JSONB DEFAULT '{}',
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(feature_id, valid_time, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_segment_conditions_feature_valid
+    ON segment_conditions(feature_id, valid_time);
+CREATE INDEX IF NOT EXISTS idx_segment_conditions_valid_time
+    ON segment_conditions(valid_time);
+CREATE INDEX IF NOT EXISTS idx_segment_conditions_run_time
+    ON segment_conditions(run_time)
 "#;
 
 #[cfg(test)]

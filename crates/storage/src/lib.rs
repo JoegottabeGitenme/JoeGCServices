@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod linear_features;
 pub mod object_store;
 pub mod observations;
+pub mod segment_conditions;
 pub mod stations_bootstrap;
 pub mod storm_events;
 pub mod tile_memory_cache;
@@ -28,6 +29,7 @@ pub use linear_features::{LinearFeature, LinearFeatureCatalog, LinearFeatureItem
 pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,
 };
+pub use segment_conditions::{SegmentCondition, SegmentConditionsCatalog};
 pub use stations_bootstrap::{
     bootstrap_locations, bootstrap_populated_places, bootstrap_zip_codes,
 };

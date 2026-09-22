@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Science — FolkWeather Trail Conditions</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #f59e0b;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --border: #334155;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .header {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, #1e1b4b 100%);
+            padding: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+        }
+        .header-content {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--text);
+        }
+        .logo-icon { font-size: 1.75rem; }
+        .logo-text {
+            font-size: 1.3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .back-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+        .back-link:hover { color: var(--text); }
+        .main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 3rem 1.5rem 5rem;
+        }
+        h1 {
+            font-size: clamp(1.8rem, 5vw, 2.5rem);
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+        }
+        h1 span {
+            background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-bottom: 2.5rem;
+        }
+        .status-box {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+        .status-box .status-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 700;
+            color: var(--warning);
+            margin-bottom: 0.5rem;
+        }
+        .status-box p { color: var(--text); font-size: 0.95rem; }
+        .status-box p + p { margin-top: 0.5rem; }
+        section { margin-bottom: 3rem; }
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin: 1.5rem 0 0.75rem;
+            color: var(--primary-light);
+        }
+        p { margin-bottom: 1rem; color: var(--text); }
+        .text-muted { color: var(--text-muted); }
+        code {
+            background: var(--bg-card);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85em;
+            border: 1px solid var(--border);
+        }
+        .equation-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+        }
+        .pipeline-diagram {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .pipeline-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.5rem;
+        }
+        .pipeline-step {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem 0.9rem;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+        .pipeline-arrow { color: var(--text-muted); }
+        .confidence-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.9rem;
+        }
+        .confidence-table th, .confidence-table td {
+            text-align: left;
+            padding: 0.6rem 0.8rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .confidence-table th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-high { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid rgba(34, 197, 94, 0.3); }
+        .badge-medium { background: rgba(129, 140, 248, 0.15); color: var(--primary-light); border: 1px solid rgba(129, 140, 248, 0.3); }
+        .badge-unverified { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .refs-list {
+            list-style: none;
+        }
+        .ref-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--primary);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .ref-item.unverified { border-left-color: var(--warning); }
+        .ref-citation { font-size: 0.95rem; margin-bottom: 0.35rem; }
+        .ref-link { color: var(--primary-light); text-decoration: none; font-size: 0.85rem; }
+        .ref-link:hover { text-decoration: underline; }
+        .ref-note { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.35rem; }
+        .footer {
+            border-top: 1px solid var(--border);
+            padding: 2rem 1.5rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        .footer a { color: var(--primary-light); text-decoration: none; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">
+                <span class="logo-icon">&#9729;</span>
+                <span class="logo-text">FolkWeather</span>
+            </a>
+            <a href="/#trails" class="back-link">&larr; Back to Trails</a>
+        </div>
+    </header>
+
+    <main class="main">
+        <h1>The Science Behind <span>Trail Conditions</span></h1>
+        <p class="subtitle">Why we don't just show you the weather model's soil moisture number, and what we do instead.</p>
+
+        <div class="status-box">
+            <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
+            <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
+            <p>The validation gate for any of this (Rung 1, described below) has not passed yet — it's currently blocked on acquiring a public research dataset, not on the physics itself. Until it passes, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+        </div>
+
+        <section id="problem">
+            <h2>The Problem With Asking a Weather Model</h2>
+            <p>
+                HRRR — the weather model most of this site's data comes from — reports soil moisture on a
+                3&nbsp;km grid. That's a real number, but it's an <em>average over 9 square kilometers</em>.
+                A single 3km cell over the Colorado Front Range foothills routinely contains a sunny,
+                south-facing decomposed-granite ridge that's rideable by 9am, and a shaded, north-facing
+                clay drainage 800m away that's still soup three days after a storm. The model reports one
+                number for both.
+            </p>
+            <p>
+                Worse: land-surface models like HRRR's are tuned so the <em>atmosphere</em> behaves correctly
+                — soil moisture there is a boundary condition for weather forecasting, not a validated
+                ground-truth product. Its absolute level drifts to a model-specific "attractor" that has
+                only a loose relationship to actual volumetric water content in the ground.
+            </p>
+            <p>
+                Both of these are solved problems in adjacent fields. Foresters use exactly this kind of
+                physics to route logging equipment around soft ground. Precision-agriculture platforms use
+                it to time field operations. Northern-state DOTs use the freeze-thaw half of it to time
+                spring load restrictions on roads. Nobody, as far as we've found, has pointed it at
+                recreational trails — which is the gap this project fills.
+            </p>
+        </section>
+
+        <section id="lineage">
+            <h2>The Physics, and Where We Got It</h2>
+            <p>
+                The core method — <strong>redistributing a coarse-resolution soil moisture value to fine
+                resolution using terrain</strong> — comes from a lineage that starts with TOPMODEL
+                (Beven &amp; Kirkby, 1979): the observation that a landscape's topographic wetness index
+                (how much upslope area drains through a point, relative to how steeply that point drains)
+                predicts where water accumulates, independent of weather.
+            </p>
+            <p>
+                The specific downscaling equation we implement is adapted from GeoWATCH (Eylander et al.,
+                2023) — a U.S. Army Corps of Engineers system built to give soldiers block-by-block terrain
+                trafficability, extending TOPMODEL with soil transmissivity (how fast water moves through
+                different soil types) on top of pure topography:
+            </p>
+            <div class="equation-box">
+                &theta;* = &theta;<sub>ws</sub> &minus; (1/k)(&lambda;&#772; &minus; &lambda;) &minus; (1/k)(ln(K<sub>s</sub>) &minus; ln(K<sub>s</sub>)&#772;)
+            </div>
+            <p class="text-muted" style="font-size: 0.9rem;">
+                &theta;<sub>ws</sub> = the coarse (grid-cell or catchment) mean moisture &middot;
+                &lambda; = topographic wetness index at a point &middot;
+                &lambda;&#772; = its domain mean &middot;
+                K<sub>s</sub> = saturated hydraulic conductivity (how fast the local soil drains) &middot;
+                k = 13, an empirical scaling constant
+            </p>
+            <p>
+                Read the two correction terms as two independent physical effects. A point with
+                <strong>above-average topographic wetness</strong> — a valley bottom, a footslope, anywhere
+                water converges — gets wetter than the grid-cell mean. A point with
+                <strong>above-average soil permeability</strong> — sandy, free-draining ground — gets drier,
+                because water moves through it faster. Neither term needs today's weather to compute; they're
+                static properties of the ground itself, which is exactly why this approach can discriminate
+                between two trailheads that experienced the identical storm.
+            </p>
+            <p>
+                For soil moisture's day-to-day <em>evolution</em> — not just a single downscaled snapshot —
+                we lean on a second, more directly Colorado-relevant lineage: the Equilibrium Moisture
+                Theory family (Coleman &amp; Niemann, 2013; extended by Ranney et al., 2015), developed and
+                field-tested on Colorado Front Range catchments specifically. Where a snapshot redistribution
+                answers "given today's average, what does this point look like right now," EMT-style
+                relaxation answers "how fast does a wet or dry anomaly fade back toward normal," which is what
+                lets a forecast run forward instead of just downscaling a single instant.
+            </p>
+            <p>
+                The soil-evaporation physics that governs how fast that relaxation happens is the standard
+                Noah land-surface-model formulation (Ek et al., 2003) — the same land-surface model family
+                embedded inside HRRR itself, so the downscaling logic and the weather model it's correcting
+                speak a consistent physical language.
+            </p>
+        </section>
+
+        <section id="honest-gaps">
+            <h2>What We Reconstructed vs. What We Verified</h2>
+            <p>
+                GeoWATCH's own paper is behind a journal paywall we could not get through this project
+                (multiple fetch attempts blocked). Rather than guess at the exact published equations and
+                present that guess as fact, we tracked confidence level per physics module explicitly:
+            </p>
+            <table class="confidence-table">
+                <thead>
+                    <tr><th>Component</th><th>Status</th><th>Basis</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Topographic redistribution (equation above)</td>
+                        <td><span class="badge badge-high">High confidence</span></td>
+                        <td>Fully specified with an explicit constant (k=13); this is also the exact piece Rung&nbsp;1 validation below tests directly</td>
+                    </tr>
+                    <tr>
+                        <td>Soil evaporation efficiency</td>
+                        <td><span class="badge badge-high">High confidence</span></td>
+                        <td>Standard, independently-published Ek et al. (2003) / Noah LSM formulation — not paywall-dependent</td>
+                    </tr>
+                    <tr>
+                        <td>Terrain radiation correction</td>
+                        <td><span class="badge badge-high">High confidence</span></td>
+                        <td>Standard solar-geometry / terrain-radiation methods (comparable to Dozier &amp; Frew, 1990 lineage)</td>
+                    </tr>
+                    <tr>
+                        <td>Potential evapotranspiration</td>
+                        <td><span class="badge badge-high">High confidence</span></td>
+                        <td>FAO-56 Penman-Monteith (Allen et al., 1998) — the standard reference-ET equation, freely published</td>
+                    </tr>
+                    <tr>
+                        <td>Time-relaxation of a redistributed anomaly</td>
+                        <td><span class="badge badge-unverified">Unverified</span></td>
+                        <td>Physically-motivated reconstruction (Equilibrium Moisture Theory lineage) using the source paper's own named constants and bounds — not a transcription of the primary source</td>
+                    </tr>
+                    <tr>
+                        <td>Frozen-ground infiltration gate</td>
+                        <td><span class="badge badge-medium">Simplified</span></td>
+                        <td>HRRR does not export a soil-ice-fraction field (confirmed absent from its public output); we use a frozen/thawed proxy (soil temperature &le; 0&deg;C) instead of a true ice fraction</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>
+                We'd rather publish an honest gap than a confident-looking number we can't stand behind.
+                That posture is deliberate and carries through to the disclaimer on every trail-conditions
+                page: this is an advisory model, not a closure authority.
+            </p>
+        </section>
+
+        <section id="pipeline">
+            <h2>The Pipeline, Today</h2>
+            <div class="pipeline-diagram">
+                <div class="pipeline-row">
+                    <span class="pipeline-step">HRRR forcing (hourly, 3km)</span>
+                    <span class="pipeline-arrow">&rarr;</span>
+                    <span class="pipeline-step">Sample at trail vertices</span>
+                    <span class="pipeline-arrow">&rarr;</span>
+                    <span class="pipeline-step">Eq.&nbsp;1 redistribution</span>
+                    <span class="pipeline-arrow">&rarr;</span>
+                    <span class="pipeline-step">Frozen-ground gate</span>
+                    <span class="pipeline-arrow">&rarr;</span>
+                    <span class="pipeline-step">Per-segment aggregate</span>
+                </div>
+            </div>
+            <p>
+                What exists right now is real, tested code (82 unit tests covering the physics core, the
+                HRRR grid transform, the snow model, and the aggregation logic), wired together end-to-end —
+                but running with a placeholder in place of real terrain data, since the actual 10-meter
+                elevation/soil/canopy stack for Colorado hasn't been built yet. That means today's pipeline
+                run outputs the same value HRRR already gives you at each point, not yet a
+                topographically-downscaled one. The terrain-derived discrimination — the entire point of
+                this project — plugs into an already-built, already-tested slot; it isn't running yet.
+            </p>
+            <p>
+                We deliberately did <em>not</em> implement Winstral-style wind-driven snow redistribution
+                this round. Front Range trail miles are overwhelmingly below treeline, where canopy shading
+                and slope-aspect radiation dominate melt timing far more than wind-blown drift does — so we
+                built the terrain layers wind redistribution would need (16-direction horizon angles) as a
+                diagnostic, but gated the actual redistribution logic behind evidence: validate the simpler
+                model against real snow-disappearance dates first, see if the errors correlate with wind
+                exposure, and only build the more complex piece if the data says it's worth it.
+            </p>
+        </section>
+
+        <section id="validation">
+            <h2>How We'll Know If It's Right</h2>
+            <p>
+                Before any of this feeds a public rideability claim, it has to pass a validation ladder, in
+                order — each rung gates the next:
+            </p>
+            <h3>Rung 1 — Reproduce a Published Result (blocked, not failed)</h3>
+            <p>
+                A public research catchment in Australia (Tarrawarra; Western &amp; Grayson, 1998) has
+                thirteen days of dense, ground-truth soil moisture measurements alongside detailed terrain
+                and soil surveys — a clean, no-snow, no-weather-model test of exactly the redistribution
+                equation above. We built the complete pipeline to run this validation (data parsers, the
+                statistical comparison, pass/fail criteria matching the published target), and proved the
+                pipeline itself works correctly using synthetic data shaped like the real dataset.
+            </p>
+            <p>
+                The actual historical dataset — freely available, unrestricted for research use — sits
+                behind a bot-detection service that blocked our automated download mid-session. The data
+                itself isn't the obstacle; a script triggering a security challenge is. This is a
+                to-do, not a dead end.
+            </p>
+            <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
+            <p>
+                Before investing further, the cheap test: pull a winter of Trailforks/MTB Project condition
+                reports, join them to the terrain/soil features above, and check whether aspect, soil
+                texture, and canopy actually explain the reported differences. If they don't, that's
+                important to know before building more.
+            </p>
+            <h3>Rung 3 — Snow-Disappearance Dates</h3>
+            <p>
+                Satellite-derived snow cover (Landsat/Sentinel-2) gives a free, per-pixel check on whether
+                our melt timing is right — and specifically the test that will tell us whether the
+                wind-redistribution physics we deferred (above) is actually worth building.
+            </p>
+            <h3>Rung 4 — Forward Testing</h3>
+            <p>
+                Predict, publish, compare against what actually happens. Track the false-"good" rate above
+                everything else — the error that costs both trails and credibility.
+            </p>
+        </section>
+
+        <section id="references">
+            <h2>References</h2>
+            <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1.5rem;">
+                Every link below was checked to actually resolve during this project (not cited from memory
+                without verification) — including catching one citation risk along the way: an early DOI
+                candidate for the Coleman &amp; Niemann paper turned out to be a since-withdrawn duplicate
+                entry, not the real, published paper. The correct DOI is linked below.
+            </p>
+            <ul class="refs-list">
+                <li class="ref-item">
+                    <div class="ref-citation">Eylander, J., Bieszczad, J., Ueckermann, M., Peters, J., Brooks, C., Audette, W., &amp; Ekegren, M. (2023). Geospatial Weather Affected Terrain Conditions and Hazards (GeoWATCH) description and evaluation. <em>Environmental Modelling &amp; Software</em>, 160, 105606.</div>
+                    <a class="ref-link" href="https://doi.org/10.1016/j.envsoft.2022.105606" target="_blank">doi.org/10.1016/j.envsoft.2022.105606 &#8599;</a>
+                    <div class="ref-note">The source algorithm this project adapts. Full text is paywalled — we could not read the primary equations directly; see the confidence table above.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Western, A. W., &amp; Grayson, R. B. (1998). The Tarrawarra data set: Soil moisture patterns, soil characteristics, and hydrological flux measurements. <em>Water Resources Research</em>, 34(10), 2765–2768.</div>
+                    <a class="ref-link" href="https://doi.org/10.1029/98WR01833" target="_blank">doi.org/10.1029/98WR01833 &#8599;</a>
+                    &middot;
+                    <a class="ref-link" href="https://people.eng.unimelb.edu.au/aww/tarrawarra/" target="_blank">Data (unrestricted, research use) &#8599;</a>
+                    <div class="ref-note">Our Rung 1 validation target — see above.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Beven, K. J., &amp; Kirkby, M. J. (1979). A physically based, variable contributing area model of basin hydrology. <em>Hydrological Sciences Bulletin</em>, 24(1), 43–69.</div>
+                    <a class="ref-link" href="https://doi.org/10.1080/02626667909491834" target="_blank">doi.org/10.1080/02626667909491834 &#8599;</a>
+                    <div class="ref-note">TOPMODEL — the foundational topographic-wetness-index concept everything here builds on.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Coleman, M. L., &amp; Niemann, J. D. (2013). Controls on topographic dependence and temporal instability in catchment-scale soil moisture patterns. <em>Water Resources Research</em>, 49(3), 1625–1642.</div>
+                    <a class="ref-link" href="https://doi.org/10.1002/wrcr.20159" target="_blank">doi.org/10.1002/wrcr.20159 &#8599;</a>
+                    <div class="ref-note">Equilibrium Moisture Theory (EMT) — developed and tested on Colorado catchments. Note: a similarly-titled DOI (10.1002/wrcr.20065) is a withdrawn duplicate entry, not this paper.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Ranney, K. J., Niemann, J. D., Lehman, B. M., Green, T. R., &amp; Jones, A. S. (2015). A method to downscale soil moisture to fine resolutions using topographic, vegetation, and soil data. <em>Advances in Water Resources</em>, 76, 81–96.</div>
+                    <a class="ref-link" href="https://doi.org/10.1016/j.advwatres.2014.12.003" target="_blank">doi.org/10.1016/j.advwatres.2014.12.003 &#8599;</a>
+                    <div class="ref-note">EMT-VS — extends Coleman &amp; Niemann with vegetation and soil data; also Colorado-developed.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Ek, M. B., Mitchell, K. E., Lin, Y., Rogers, E., Grunmann, P., Koren, V., Gayno, G., &amp; Tarpley, J. D. (2003). Implementation of Noah land surface model advances in the National Centers for Environmental Prediction operational mesoscale Eta model. <em>Journal of Geophysical Research</em>, 108(D22).</div>
+                    <a class="ref-link" href="https://doi.org/10.1029/2002JD003296" target="_blank">doi.org/10.1029/2002JD003296 &#8599;</a>
+                    <div class="ref-note">The Noah land-surface-model soil-evaporation formulation we implement — the same family embedded in HRRR itself.</div>
+                </li>
+                <li class="ref-item unverified">
+                    <div class="ref-citation">Allen, R. G., Pereira, L. S., Raes, D., &amp; Smith, M. (1998). Crop evapotranspiration — Guidelines for computing crop water requirements. <em>FAO Irrigation and Drainage Paper 56</em>. Food and Agriculture Organization of the United Nations.</div>
+                    <div class="ref-note">Standard reference; FAO-56's own site was not re-checked this session for a stable link — search "FAO Paper 56 Penman-Monteith" if the above doesn't resolve.</div>
+                </li>
+                <li class="ref-item unverified">
+                    <div class="ref-citation">Winstral, A., &amp; Marks, D. (2002). Simulating wind fields and snow redistribution using terrain-based parameters to model snow accumulation and melt over a semi-arid mountain catchment. <em>Hydrological Processes</em>, 16(18), 3585–3603.</div>
+                    <div class="ref-note">The Sx terrain parameter for wind-driven snow redistribution — computed as a diagnostic this round, not yet used (see "The Pipeline, Today" above). Citation from memory, not independently re-verified this session.</div>
+                </li>
+                <li class="ref-item unverified">
+                    <div class="ref-citation">Walter, M. T., Steenhuis, T. S., Mehta, V. K., Thongs, D., Zion, M., &amp; Schneiderman, E. (2002). Refined conceptualization of TOPMODEL for shallow subsurface flows. <em>Hydrological Processes</em>, 16(10), 2087–2097.</div>
+                    <div class="ref-note">STOPMODEL — the shallow-subsurface-flow refinement referenced in the design lineage. Citation from memory, not independently re-verified this session.</div>
+                </li>
+            </ul>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>Questions, corrections, or a copy of the GeoWATCH paper you're willing to share? <a href="/">Get in touch via the main site.</a></p>
+    </footer>
+</body>
+</html>
