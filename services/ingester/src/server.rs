@@ -26,6 +26,7 @@ use uuid::Uuid;
 use ingestion::{IngestOptions, Ingester, IngestionResult};
 use storage::observations::{Location, Observation, ObservationCatalog, TafForecast, TafPeriod};
 use storage::storm_events::{StormEvent, StormEventCatalog};
+use storage::trail_reports::{TrailReport, TrailReportCatalog};
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -35,6 +36,8 @@ pub struct ServerState {
     pub observation_catalog: Option<ObservationCatalog>,
     /// Storm event catalog for severe-convective reports (hail/wind/tornado)
     pub storm_event_catalog: Option<StormEventCatalog>,
+    /// Trail report catalog (Phase 0 label archive; not EDR-exposed)
+    pub trail_report_catalog: Option<TrailReportCatalog>,
     /// Tracking for active/completed ingestions
     pub tracker: IngestionTracker,
 }
@@ -1017,6 +1020,120 @@ async fn refresh_counties_handler(
     }
 }
 
+// =============================================================================
+// Trail reports ingest (Phase 0 label archive; scripts/scrape_trail_reports.py)
+// =============================================================================
+
+/// Request body for /ingest/trail-reports.
+#[derive(Debug, Deserialize)]
+pub struct TrailReportIngestRequest {
+    pub reports: Vec<TrailReportData>,
+}
+
+/// A single trail report in an ingest request. Mirrors
+/// `storage::trail_reports::TrailReport` but with an RFC3339 string time,
+/// matching the JSON-over-HTTP convention used by the other ingest endpoints.
+#[derive(Debug, Deserialize)]
+pub struct TrailReportData {
+    pub source: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub trail_ref: Option<String>,
+    #[serde(default)]
+    pub feature_id: Option<i64>,
+    pub reported_at: String,
+    #[serde(default)]
+    pub condition_raw: Option<String>,
+    #[serde(default)]
+    pub condition_class: Option<String>,
+    #[serde(default)]
+    pub lon: Option<f64>,
+    #[serde(default)]
+    pub lat: Option<f64>,
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+/// Response for /ingest/trail-reports.
+#[derive(Debug, Serialize)]
+pub struct TrailReportIngestResponse {
+    pub success: bool,
+    pub message: String,
+    pub reports_ingested: usize,
+}
+
+/// POST /ingest/trail-reports - Insert/upsert trail condition reports.
+async fn ingest_trail_reports_handler(
+    Extension(state): Extension<Arc<ServerState>>,
+    Json(request): Json<TrailReportIngestRequest>,
+) -> impl IntoResponse {
+    let catalog = match &state.trail_report_catalog {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(TrailReportIngestResponse {
+                    success: false,
+                    message: "Trail report catalog not configured".to_string(),
+                    reports_ingested: 0,
+                }),
+            );
+        }
+    };
+
+    info!(
+        count = request.reports.len(),
+        "Received trail report ingest request"
+    );
+
+    let mut reports = Vec::with_capacity(request.reports.len());
+    for r in &request.reports {
+        let reported_at = match DateTime::parse_from_rfc3339(&r.reported_at) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(e) => {
+                warn!(source = %r.source, error = %e, "Bad reported_at, skipping");
+                continue;
+            }
+        };
+
+        reports.push(TrailReport {
+            source: r.source.clone(),
+            source_id: r.source_id.clone(),
+            trail_ref: r.trail_ref.clone(),
+            feature_id: r.feature_id,
+            reported_at,
+            condition_raw: r.condition_raw.clone(),
+            condition_class: r.condition_class.clone(),
+            lon: r.lon,
+            lat: r.lat,
+            raw: r.raw.clone(),
+        });
+    }
+
+    match catalog.insert_reports(&reports).await {
+        Ok(n) => (
+            StatusCode::OK,
+            Json(TrailReportIngestResponse {
+                success: true,
+                message: format!("Ingested {} trail reports", n),
+                reports_ingested: n,
+            }),
+        ),
+        Err(e) => {
+            error!(error = %e, "Trail report ingest failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(TrailReportIngestResponse {
+                    success: false,
+                    message: format!("Ingest failed: {}", e),
+                    reports_ingested: 0,
+                }),
+            )
+        }
+    }
+}
+
 pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/ingest", post(ingest_handler))
@@ -1027,6 +1144,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             "/ingest/storm-events/refresh-counties",
             post(refresh_counties_handler),
         )
+        .route("/ingest/trail-reports", post(ingest_trail_reports_handler))
         .route("/status", get(status_handler))
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))

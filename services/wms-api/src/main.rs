@@ -419,6 +419,11 @@ async fn async_main(args: Args) -> Result<()> {
         .route("/api/admin/sync/status", get(admin::sync_status_handler))
         .route("/api/admin/sync/preview", get(admin::sync_preview_handler))
         .route("/api/admin/sync/run", post(admin::sync_run_handler))
+        // Trail sync (OSM/Overpass) manual trigger
+        .route(
+            "/api/admin/trails/refresh",
+            post(admin::trails_refresh_handler),
+        )
         // Ingestion tracking endpoint
         .route(
             "/api/admin/ingestion/active",

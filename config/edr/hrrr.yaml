@@ -64,6 +64,9 @@ collections:
       - name: DSWRF
         levels: [surface]
         valid_range: { min: 0, max: 1500 }  # W/m^2 (downward shortwave / solar)
+      - name: DLWRF
+        levels: [surface]
+        valid_range: { min: 0, max: 700 }  # W/m^2 (downward longwave)
     run_mode: instances
 
   - id: hrrr-height-agl
@@ -141,12 +144,14 @@ collections:
         valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
-  # Soil temperature (RUC land model POINT depths; level values = depth in cm)
-  # z parameter selects the depth: z=0, z=4, z=10, z=30, z=100 (cm below
-  # ground). Units: Kelvin. Same query contract as hrrr-surface.
+  # Soil temperature & moisture (RUC land model POINT depths; level values =
+  # depth in cm). z parameter selects the depth. TSOIL: Kelvin, native SI.
+  # SOILW: volumetric fraction 0-1, native SI. Note the two params have
+  # different depth sets ingested (TSOIL to 100cm, SOILW to 30cm) — each
+  # parameter's `levels` list is independent within the shared level_code.
   - id: hrrr-soil
     title: "HRRR - Soil"
-    description: "Soil temperature at RUC land-model point depths (0, 4, 10, 30, 100 cm below ground)"
+    description: "Soil temperature and volumetric moisture at RUC land-model point depths"
     level_filter:
       level_type: depth_below_surface
       level_code: 106
@@ -154,6 +159,43 @@ collections:
       - name: TSOIL
         levels: [0, 4, 10, 30, 100]
         valid_range: { min: 200, max: 350 }  # Kelvin
+      - name: SOILW
+        levels: [0, 1, 4, 10, 30]
+        valid_range: { min: 0, max: 1 }  # fraction (Proportion)
+    run_mode: instances
+
+  # Snow and precipitation ingredients for trail-conditions / trafficability
+  # use cases (see docs/trail-conditions-design.md). All native SI units —
+  # no display conversion is wired since there is no WMS style for these yet.
+  # Precip-type flags are categorical (0/1), sampled nearest not averaged.
+  - id: hrrr-snow
+    title: "HRRR - Snow & Precipitation"
+    description: "Surface snowpack state and precipitation rate/type"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: WEASD
+        levels: [surface]
+        valid_range: { min: 0, max: 2000 }  # kg/m^2 (mm water equivalent)
+      - name: SNOD
+        levels: [surface]
+        valid_range: { min: 0, max: 20 }  # meters
+      - name: PRATE
+        levels: [surface]
+        valid_range: { min: 0, max: 0.05 }  # kg/m^2/s (mm/s)
+      - name: CRAIN
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CSNOW
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CFRZR
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CICEP
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
     run_mode: instances
 
 settings:

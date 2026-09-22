@@ -127,6 +127,22 @@ pub async fn radius_handler(
                 .await;
             }
             if model_config.data_type.is_feature_data() {
+                if model_config.observation_source.as_deref() == Some("linear_features") {
+                    let trail_params = crate::handlers::linear_features::TrailRadiusParams {
+                        coords: params.coords.clone(),
+                        within: params.within.clone(),
+                        within_units: params.within_units.clone(),
+                        limit: None,
+                        f: params.f.clone(),
+                    };
+                    drop(config);
+                    return crate::handlers::linear_features::trail_radius_handler(
+                        Extension(state.clone()),
+                        Path(collection_id),
+                        Query(trail_params),
+                    )
+                    .await;
+                }
                 let storm_params = crate::handlers::storm_events::StormRadiusParams {
                     coords: params.coords.clone(),
                     within: params.within.clone(),

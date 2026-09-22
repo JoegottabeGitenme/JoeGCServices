@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use grid_processor::{GridDataService, MinioConfig};
+use storage::linear_features::LinearFeatureCatalog;
 use storage::observations::ObservationCatalog;
 use storage::storm_events::StormEventCatalog;
 use storage::Catalog;
@@ -28,6 +29,10 @@ pub struct AppState {
     /// Storm event catalog for severe-convective feature collections
     /// (hail/wind/tornado).
     pub storm_event_catalog: Arc<StormEventCatalog>,
+
+    /// Linear feature catalog for the trails feature collection (OSM-sourced
+    /// trails/tracks/bridleways; see crates/trail-sync).
+    pub linear_feature_catalog: Arc<LinearFeatureCatalog>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -99,6 +104,9 @@ impl AppState {
         // Create storm event catalog for feature collections (hail/wind/tornado)
         let storm_event_catalog = Arc::new(StormEventCatalog::new(catalog.pool_clone()));
 
+        // Create linear feature catalog for the trails feature collection
+        let linear_feature_catalog = Arc::new(LinearFeatureCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -133,6 +141,7 @@ impl AppState {
             grid_data_service,
             observation_catalog,
             storm_event_catalog,
+            linear_feature_catalog,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,

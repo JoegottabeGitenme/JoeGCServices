@@ -391,6 +391,60 @@ async fn build_storm_event_collection(
     collection
 }
 
+/// Build a Collection for linear-feature data (trails/tracks/bridleways).
+///
+/// Unlike storm events, there is no per-feature temporal extent (a trail
+/// doesn't have a begin_time) and no county-aggregate endpoint -- discovery
+/// is bbox (`/area`, `/items?bbox=`) and name search (`/items?q=`) only, per
+/// the trail-conditions design session. `/locations` is intentionally not
+/// advertised: unlike storm events (which links it despite it not actually
+/// being implemented), trailheads are discoverable via the `locations`
+/// collection instead (`location_type=trailhead`), not through this one.
+fn build_linear_feature_collection(
+    state: &AppState,
+    _model_config: &ModelEdrConfig,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+    feature_count: i64,
+) -> Collection {
+    let description = format!(
+        "{} ({} features available)",
+        collection_def.description, feature_count
+    );
+
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&description);
+
+    collection.build_links(&state.base_url);
+
+    // items (bbox + q) is served via a dedicated route, not a standard EDR
+    // dataQuery, so it is documented in the description rather than linked
+    // here -- same convention as storm events' items/counties routes.
+    let queries = DataQueries::default()
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+
+    collection = collection.with_data_queries(queries);
+
+    // No per-feature temporal extent. Spatial extent is Colorado-wide today
+    // (the one configured trail-sync region); this is metadata, not a
+    // filter, so it's fine for it to widen automatically as regions are
+    // added to config/trail-sync.yaml.
+    let spatial_bbox = [-109.06, 36.99, -102.04, 41.00];
+    let extent = Extent::with_spatial(spatial_bbox, None);
+    collection = collection.with_extent(extent);
+
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        let param = Parameter::new(param_name, param_name);
+        params.insert(param_name.clone(), param);
+    }
+    collection = collection.with_parameters(params);
+
+    collection
+}
+
 /// Build the metadata Collection for the populated-places registry.
 ///
 /// It exposes `locations` (discover cities) and `radius` (forecasts for cities
@@ -447,8 +501,38 @@ pub async fn list_collections_handler(
             continue;
         };
 
-        // Feature collections (storm events: hail/wind/tornado)
+        // Feature collections (storm events: hail/wind/tornado; or trails)
         if model_config.data_type.is_feature_data() {
+            let available_params: Vec<String> =
+                coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            if model_config.observation_source.as_deref() == Some("linear_features") {
+                let count = state
+                    .linear_feature_catalog
+                    .count_features(None)
+                    .await
+                    .unwrap_or(0);
+
+                if count == 0 {
+                    tracing::debug!(
+                        "Skipping feature collection {} - no linear features in database",
+                        collection_def.id
+                    );
+                    continue;
+                }
+
+                let collection = build_linear_feature_collection(
+                    &state,
+                    model_config,
+                    coll_def,
+                    &available_params,
+                    count,
+                );
+
+                collections.push(collection);
+                continue;
+            }
+
             let event_type = &collection_def.id;
             let count = state
                 .storm_event_catalog
@@ -463,9 +547,6 @@ pub async fn list_collections_handler(
                 );
                 continue;
             }
-
-            let available_params: Vec<String> =
-                coll_def.parameters.iter().map(|p| p.name.clone()).collect();
 
             let collection = build_storm_event_collection(
                 &state,
@@ -746,8 +827,51 @@ pub async fn get_collection_handler(
             .unwrap();
     }
 
-    // Handle feature collections (storm events) differently
+    // Handle feature collections (storm events, or trails) differently
     if model_config.data_type.is_feature_data() {
+        let available_params: Vec<String> = collection_def
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        if model_config.observation_source.as_deref() == Some("linear_features") {
+            let count = state
+                .linear_feature_catalog
+                .count_features(None)
+                .await
+                .unwrap_or(0);
+
+            if count == 0 {
+                let exc = ExceptionResponse::not_found(format!(
+                    "Collection {} has no features",
+                    collection_id
+                ));
+                let json = serde_json::to_string(&exc).unwrap_or_default();
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(json.into())
+                    .unwrap();
+            }
+
+            let collection = build_linear_feature_collection(
+                &state,
+                model_config,
+                collection_def,
+                &available_params,
+                count,
+            );
+
+            let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CACHE_CONTROL, "max-age=60")
+                .body(json.into())
+                .unwrap();
+        }
+
         let count = state
             .storm_event_catalog
             .count_events(&collection_id)
@@ -764,12 +888,6 @@ pub async fn get_collection_handler(
                 .body(json.into())
                 .unwrap();
         }
-
-        let available_params: Vec<String> = collection_def
-            .parameters
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
 
         let collection = build_storm_event_collection(
             &state,

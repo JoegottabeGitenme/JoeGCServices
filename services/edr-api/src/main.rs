@@ -178,10 +178,11 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/instances/:instance_id/radius",
             get(handlers::radius::instance_radius_handler),
         )
-        // Items query (OGC-Features-style GeoJSON; storm-event feature collections)
+        // Items query (OGC-Features-style GeoJSON; feature collections --
+        // storm events or linear features, dispatched by observation_source)
         .route(
             "/edr/collections/:collection_id/items",
-            get(handlers::storm_events::storm_items_handler),
+            get(handlers::items::items_handler),
         )
         // County aggregate (custom EDR-adjacent endpoint; storm-event feature collections)
         .route(

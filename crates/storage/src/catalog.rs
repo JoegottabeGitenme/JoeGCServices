@@ -95,6 +95,48 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for linear features (trails/tracks; requires PostGIS).
+    ///
+    /// Creates the `linear_features` table backing the EDR `trails` collection.
+    /// Call this after `migrate_observations()` (which enables PostGIS, unaccent,
+    /// and pg_trgm).
+    pub async fn migrate_linear_features(&self) -> WmsResult<()> {
+        for statement in LINEAR_FEATURES_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Linear features migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run database migrations for trail condition reports (requires PostGIS).
+    ///
+    /// Phase-0 label archive for the trail-conditions design (see
+    /// `docs/trail-conditions-design.md`). Call this after
+    /// `migrate_observations()` (which enables PostGIS).
+    pub async fn migrate_trail_reports(&self) -> WmsResult<()> {
+        for statement in TRAIL_REPORTS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Trail reports migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -2113,6 +2155,87 @@ GROUP BY county_fips, event_type, EXTRACT(YEAR FROM begin_time);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_county_event_counts_key
     ON mv_county_event_counts(county_fips, event_type, year)
+"#;
+
+/// Schema for `linear_features` — OSM-sourced trail/track/road centerlines
+/// backing the EDR `trails` feature collection (see trail-conditions design
+/// doc). One row per OSM way. Geometry, extension enablement, and query
+/// style (raw GeoJSON via ST_AsGeoJSON, no Rust geometry crate) intentionally
+/// mirror STORM_EVENTS_SCHEMA_SQL above.
+///
+/// Unlike storm events, rows are periodically re-synced from a live source
+/// (Overpass/OSM) rather than append-only. Since OSM way ids can be reused
+/// after a mapper splits or redraws a way, a sync pass never hard-deletes:
+/// features missing from the latest pass for their region are marked
+/// `active = false` (see LinearFeatureCatalog::mark_inactive_except) rather
+/// than removed, so historical geometry referenced by a client is never
+/// pulled out from under it without at least a soft-delete signal.
+pub const LINEAR_FEATURES_SCHEMA_SQL: &str = r#"
+-- PostGIS is enabled by the observations schema migration. Enabling it here
+-- too so this script works standalone (matches STORM_EVENTS_SCHEMA_SQL).
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE TABLE IF NOT EXISTS linear_features (
+    feature_id BIGINT PRIMARY KEY,       -- OSM way id
+    feature_class VARCHAR(30) NOT NULL,  -- 'mtb_trail' | 'hiking_trail' | 'track' | 'bridleway' | ...
+    name TEXT,
+    system TEXT,                         -- trail-system / area grouping (from OSM tags, best-effort)
+    geom GEOMETRY(LineString, 4326) NOT NULL,
+    tags JSONB DEFAULT '{}',
+    region TEXT NOT NULL,                -- sync-region key (config/trail-sync.yaml) that produced this row
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    source VARCHAR(30) NOT NULL DEFAULT 'osm',
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_linear_features_geom ON linear_features USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_linear_features_class ON linear_features(feature_class);
+CREATE INDEX IF NOT EXISTS idx_linear_features_region ON linear_features(region);
+CREATE INDEX IF NOT EXISTS idx_linear_features_active ON linear_features(active);
+
+-- Name search (?q= on the trails collection). Matches idx_locations_name_trgm's
+-- actual index expression exactly: trigram index on lower(name) only. unaccent()
+-- is STABLE, not IMMUTABLE, so it cannot appear in the index expression itself
+-- (Postgres would reject the CREATE INDEX) -- it is applied query-side instead,
+-- same as the populated-places search, with the trigram index serving as an
+-- approximate pre-filter.
+CREATE INDEX IF NOT EXISTS idx_linear_features_name_trgm
+    ON linear_features USING GIN (lower(coalesce(name, '')) gin_trgm_ops)
+"#;
+
+/// Schema for `trail_reports` -- Phase 0 groundwork from the trail-conditions
+/// design doc (Rung 2). This is a raw label store, not a served collection:
+/// crowdsourced/scraped condition reports (Trailforks, MTB Project, manual
+/// org exports) accumulate here so a future session can test whether the
+/// physics feature stack (aspect, soil texture, canopy, frozen state)
+/// separates reported condition classes at all, before any physics gets
+/// built. No EDR exposure, no retention policy -- this is a training-label
+/// archive, kept indefinitely like storm_events.
+pub const TRAIL_REPORTS_SCHEMA_SQL: &str = r#"
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE IF NOT EXISTS trail_reports (
+    id BIGSERIAL PRIMARY KEY,
+    source VARCHAR(30) NOT NULL,
+    source_id TEXT,
+    trail_ref TEXT,
+    feature_id BIGINT,
+    reported_at TIMESTAMPTZ NOT NULL,
+    condition_raw TEXT,
+    condition_class VARCHAR(20),
+    geom GEOMETRY(Point, 4326),
+    raw JSONB DEFAULT '{}',
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(source, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trail_reports_geom ON trail_reports USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_trail_reports_reported_at ON trail_reports(reported_at);
+CREATE INDEX IF NOT EXISTS idx_trail_reports_feature ON trail_reports(feature_id)
 "#;
 
 #[cfg(test)]

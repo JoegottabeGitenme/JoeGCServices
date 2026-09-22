@@ -107,11 +107,29 @@ async fn main() -> Result<()> {
     catalog.migrate_storm_events().await?;
     info!("Storm events schema migrated");
 
+    // Migrate linear features schema (trails/tracks backing the EDR `trails`
+    // collection; see docs/trail-conditions-design.md)
+    catalog.migrate_linear_features().await?;
+    info!("Linear features schema migrated");
+
+    // Migrate trail reports schema (Phase 0 label archive; not EDR-exposed)
+    catalog.migrate_trail_reports().await?;
+    info!("Trail reports schema migrated");
+
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
 
     // Create storm event catalog sharing the same connection pool
     let storm_event_catalog = StormEventCatalog::new(catalog.pool_clone());
+
+    // Create linear feature catalog sharing the same connection pool
+    let linear_feature_catalog =
+        storage::linear_features::LinearFeatureCatalog::new(catalog.pool_clone());
+
+    // Create trail report catalog sharing the same connection pool (Phase 0
+    // label archive; see docs/trail-conditions-design.md)
+    let trail_report_catalog =
+        storage::trail_reports::TrailReportCatalog::new(catalog.pool_clone());
 
     // Bootstrap locations if needed (loads initial airport data)
     // Threshold of 100 means: if we have fewer than 100 locations, populate from embedded data
@@ -202,6 +220,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Trail sync background task (OSM/Overpass; see crates/trail-sync and
+    // docs/trail-conditions-design.md). Uses its own ObservationCatalog
+    // instance sharing the same pool, since `observation_catalog` above is
+    // moved into ServerState below.
+    // ------------------------------------------------------------------
+    {
+        let trail_observation_catalog = ObservationCatalog::new(catalog.pool_clone());
+        tokio::spawn(async move {
+            trail_sync::TrailSyncTask::run_forever(
+                linear_feature_catalog,
+                trail_observation_catalog,
+            )
+            .await;
+        });
+        info!("Started trail sync background task (config/trail-sync.yaml)");
+    }
+
     // Create ingester
     let ingester = Ingester::new(storage, catalog);
 
@@ -215,6 +251,7 @@ async fn main() -> Result<()> {
         ingester,
         observation_catalog: Some(observation_catalog),
         storm_event_catalog: Some(storm_event_catalog),
+        trail_report_catalog: Some(trail_report_catalog),
         tracker: IngestionTracker::new(),
     });
 

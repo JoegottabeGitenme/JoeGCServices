@@ -242,6 +242,8 @@ fn extract_cf_model_from_filename(filename: &str) -> Option<String> {
         Some("nldas-noah".to_string())
     } else if upper.starts_with("NLDAS_FORA") || upper.starts_with("NLDAS_FOR") {
         Some("nldas-forcing".to_string())
+    } else if upper.starts_with("GLDAS_NOAH") {
+        Some("gldas-noah".to_string())
     } else {
         None
     }
@@ -373,6 +375,30 @@ mod tests {
     fn test_extract_cf_model_unknown() {
         assert_eq!(extract_cf_model_from_filename("random_file.nc"), None);
         assert_eq!(extract_cf_model_from_filename("goes19_data.nc"), None);
+    }
+
+    /// Regression test for the `unknown-cf` model-attribution bug found during
+    /// the trail-conditions design session (2026-09): the top-level router in
+    /// `metadata::extract_model_from_filename` already recognized GLDAS and
+    /// routed correctly to this CF NetCDF path, but this function's own
+    /// (separate) model tag lookup did not know about GLDAS, so every
+    /// ingested dataset was tagged `unknown-cf` instead of `gldas-noah` and
+    /// accumulated outside the model's retention/anchor tracking.
+    #[test]
+    fn test_extract_cf_model_gldas_noah() {
+        // Raw NASA GES DISC filename (as it would appear if ingested directly)
+        assert_eq!(
+            extract_cf_model_from_filename("GLDAS_NOAH025_3H_EP.A20260205.0000.021.nc4"),
+            Some("gldas-noah".to_string())
+        );
+        // Actual downloader-generated local filename (lis_runner.rs output_filename):
+        // "{model_id}_{date}_{doy}_{hour}{minute}.{ext}" — this is the filename
+        // that reaches this function in production via the downloader's
+        // /data/downloads/ path.
+        assert_eq!(
+            extract_cf_model_from_filename("gldas_noah_20260205_036_0000.nc4"),
+            Some("gldas-noah".to_string())
+        );
     }
 
     // ==================== Level Inference ====================

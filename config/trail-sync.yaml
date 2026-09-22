@@ -1,0 +1,19 @@
+# Trail sync regions (OSM/Overpass) backing the EDR `trails` collection.
+#
+# Add a region here to sync a new area -- no code change or redeploy needed.
+# Config is re-read at the start of every sync cycle (weekly by default) and
+# whenever the admin refresh endpoint is hit, so a config-only edit takes
+# effect on the next cycle without an ingester restart.
+#
+# bbox is [min_lon, min_lat, max_lon, max_lat] (same convention as every
+# other bbox in this codebase -- EDR area queries, populated-places, etc.).
+# Overpass itself wants south,west,north,east; the conversion happens in
+# crates/trail-sync, not here.
+
+enabled: true
+interval_secs: 604800 # weekly
+overpass_url: "https://overpass-api.de/api/interpreter"
+
+regions:
+  - name: colorado
+    bbox: [-109.06, 36.99, -102.04, 41.00]

@@ -2121,6 +2121,56 @@ async fn load_style_config_summary(
     }))
 }
 
+// ============================================================================
+// Trail sync (OSM/Overpass) manual trigger
+// ============================================================================
+
+/// POST /api/admin/trails/refresh - Manually trigger an OSM/Overpass trail
+/// sync now, instead of waiting for the weekly scheduled cycle in the
+/// ingester. Shares the exact same `trail_sync::run_once` logic as the
+/// scheduled loop (see crates/trail-sync) -- this is a one-off invocation,
+/// not a separate code path, so behavior never drifts between "scheduled"
+/// and "on demand".
+pub async fn trails_refresh_handler(
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    info!("Admin: Manual trail sync triggered");
+
+    let config = match trail_sync::TrailSyncConfig::load_from_config_dir() {
+        Ok(c) => c,
+        Err(e) => {
+            error!(error = %e, "Failed to load trail sync config");
+            return Json(trail_sync::SyncSummary {
+                errors: vec![format!("Failed to load config: {}", e)],
+                ..Default::default()
+            });
+        }
+    };
+
+    if config.regions.is_empty() {
+        return Json(trail_sync::SyncSummary {
+            errors: vec!["No regions configured in config/trail-sync.yaml".to_string()],
+            ..Default::default()
+        });
+    }
+
+    let linear_catalog = storage::LinearFeatureCatalog::new(state.catalog.pool_clone());
+    let observation_catalog = storage::ObservationCatalog::new(state.catalog.pool_clone());
+
+    let summary = trail_sync::run_once(&config, &linear_catalog, &observation_catalog).await;
+
+    info!(
+        regions = summary.regions_synced,
+        ways_upserted = summary.ways_upserted,
+        ways_deactivated = summary.ways_deactivated,
+        trailheads_upserted = summary.trailheads_upserted,
+        errors = summary.errors.len(),
+        "Manual trail sync complete"
+    );
+
+    Json(summary)
+}
+
 async fn load_ingestion_config() -> anyhow::Result<serde_json::Value> {
     use std::fs;
     use std::path::Path;

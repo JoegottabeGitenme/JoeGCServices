@@ -627,6 +627,23 @@ parameters:
     display_units: W/m^2
     valid_range: [0, 1500] # 0..1500 W/m^2 (clear-sky noon ~1000)
 
+  # Downward Longwave Radiation Flux (thermal IR; note category 5, not 4 like DSWRF)
+  # Confirmed via eccodes against a live wrfprs message: discipline=0 category=5 number=3.
+  - name: DLWRF
+    description: "Downward Longwave Radiation Flux"
+    grib2:
+      discipline: 0
+      category: 5
+      number: 3
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: W/m^2
+    display_units: W/m^2
+    valid_range: [0, 700] # 0..700 W/m^2 (typical clear/cloudy range)
+
   # ==========================================================================
   # Soil (RUC land model POINT depths, GRIB2 depth-below-land code 106)
   # ==========================================================================
@@ -674,6 +691,167 @@ parameters:
     display_units: °C
     conversion: K_to_C
     valid_range: [200, 350]
+
+  # Volumetric Soil Moisture Content (fraction, RUC LSM).
+  # NCEP local table entry, not the standard WMO "Soil Moisture Content" (num=3).
+  # Confirmed via eccodes against a live wrfprs message: discipline=2 category=0
+  # number=192, typeOfFirstFixedSurface=106 (same depth-below-ground family as
+  # TSOIL). Depths chosen to span the trail-conditions frost/infiltration range;
+  # 1 cm added here (not ingested for TSOIL) to resolve the immediate surface film.
+  - name: SOILW
+    description: "Volumetric Soil Moisture Content"
+    grib2:
+      discipline: 2
+      category: 0
+      number: 192
+    downsample: mean
+    levels:
+      - type: depth_below_surface
+        level_code: 106
+        value: 0
+        idx_level: "0-0 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 1
+        idx_level: "0.01-0.01 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 4
+        idx_level: "0.04-0.04 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 10
+        idx_level: "0.1-0.1 m below ground"
+        display_template: "{value} cm below ground"
+      - type: depth_below_surface
+        level_code: 106
+        value: 30
+        idx_level: "0.3-0.3 m below ground"
+        display_template: "{value} cm below ground"
+    units: "1" # fraction, 0-1 (eccodes reports "Proportion")
+    display_units: ""
+    valid_range: [0, 1]
+
+  # ==========================================================================
+  # Snow & precipitation (trail-conditions ingredients)
+  # ==========================================================================
+  # All discipline/category/number values confirmed via eccodes against a live
+  # hrrr.tXXz.wrfprsfYY.grib2 message (not from memory/tables) — see the
+  # inspection notes in docs/trail-conditions-design.md.
+
+  # Snow water equivalent, instantaneous (not the 0-6h/5-6h accumulated
+  # variants also present in the file under the same idx name — the plain
+  # "6 hour fcst" WEASD entry is the instantaneous field at forecast valid time).
+  - name: WEASD
+    description: "Water Equivalent of Accumulated Snow Depth"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 13
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2 # numerically equals mm of water equivalent
+    display_units: kg/m^2
+    valid_range: [0, 2000]
+
+  - name: SNOD
+    description: "Snow Depth"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 11
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: m
+    display_units: m
+    valid_range: [0, 20]
+
+  - name: PRATE
+    description: "Precipitation Rate"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2/s # numerically equals mm/s
+    display_units: kg/m^2/s
+    valid_range: [0, 0.05] # 0..0.05 kg/m^2/s = 0..180 mm/hr
+
+  # Categorical precipitation-type flags (0/1). All four are mutually exclusive
+  # per HRRR's diagnostic scheme; together with PRATE they distinguish rain
+  # (infiltrates) from snow/ice (accumulates, see S2/S4 in the design doc).
+  - name: CRAIN
+    description: "Categorical Rain"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 33
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CSNOW
+    description: "Categorical Snow"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 36
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CFRZR
+    description: "Categorical Freezing Rain"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 34
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CICEP
+    description: "Categorical Ice Pellets"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 35
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
 
 # Composite layers
 composites:

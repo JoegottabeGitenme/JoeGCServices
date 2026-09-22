@@ -1,0 +1,59 @@
+# Trails EDR Configuration
+#
+# OSM-sourced trail/track/bridleway centerlines, synced weekly via
+# crates/trail-sync (see docs/trail-conditions-design.md) and stored in the
+# PostGIS `linear_features` table, served as a GeoJSON feature collection.
+#
+# This is feature-collection data with LINESTRING geometry: one feature per
+# OSM way (not merged per trail system), so that a rider can see one part of
+# a trail as rideable and another as not once the physics/condition layers
+# land in a later phase. v1 exposes geometry + metadata only -- no condition
+# data yet; the app is expected to query the gridded HRRR collections
+# (hrrr-soil, hrrr-snow) along a trail's own geometry itself.
+#
+# Supported EDR queries:
+# - /collections/trails/radius - Trail features near a point
+# - /collections/trails/area   - Trail features intersecting a bounding box
+# - /collections/trails/items  - GeoJSON items (bbox viewport query, or
+#                                 ?q=<name> for name search, e.g. ?q=apex)
+#
+# Trailheads (point locations, not linear features) are served separately
+# through the shared `locations` collection with `location_type=trailhead`
+# -- see /edr/locations?q=apex.
+#
+# Advisory disclaimer: this collection is geometry + OSM metadata only. It
+# carries no condition/rideability judgment. See docs/trail-conditions-design.md
+# for the validation gates (Phase 0 report-separability, Tarrawarra physics-port
+# reproduction) that must pass before any derived condition parameter ships.
+
+model: trails
+data_type: featurecollection
+observation_source: linear_features
+
+collections:
+  - id: trails
+    title: "Trails, Tracks & Bridleways (OSM)"
+    description: "OSM-sourced trail centerlines (mountain bike trails, hiking trails, tracks, bridleways). One feature per OSM way. Geometry and tags only -- no condition/rideability data in this collection yet."
+    parameters:
+      - name: feature_class # mtb_trail | hiking_trail | track | bridleway
+        levels: [surface]
+      - name: name
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 3600
+
+limits:
+  max_parameters_per_request: 5
+  max_time_steps: 1
+  max_vertical_levels: 1
+  max_response_size_mb: 50
+  max_radius_km: 50
+  max_area_sq_degrees: 25

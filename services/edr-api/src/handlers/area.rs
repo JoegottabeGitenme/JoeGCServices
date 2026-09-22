@@ -211,6 +211,20 @@ pub async fn area_handler(
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
             if model_config.data_type.is_feature_data() {
+                if model_config.observation_source.as_deref() == Some("linear_features") {
+                    let trail_params = crate::handlers::linear_features::TrailAreaParams {
+                        coords: params.coords.clone(),
+                        limit: None,
+                        f: params.f.clone(),
+                    };
+                    drop(config);
+                    return crate::handlers::linear_features::trail_area_handler(
+                        Extension(state.clone()),
+                        Path(collection_id),
+                        Query(trail_params),
+                    )
+                    .await;
+                }
                 let storm_params = crate::handlers::storm_events::StormAreaParams {
                     coords: params.coords.clone(),
                     datetime: params.datetime.clone(),

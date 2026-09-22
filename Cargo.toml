@@ -12,6 +12,7 @@ members = [
     "crates/ingestion",
     "crates/edr-protocol",
     "crates/retention",
+    "crates/trail-sync",
     "crates/test-utils",
     "services/downloader",
     "services/ingester",

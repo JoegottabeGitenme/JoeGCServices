@@ -1,0 +1,29 @@
+[package]
+name = "trail-sync"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Internal crates
+storage = { path = "../storage" }
+
+# Async runtime + HTTP client (Overpass API)
+tokio = { workspace = true }
+reqwest = { workspace = true }
+
+# Serialization (config YAML, Overpass JSON responses)
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
