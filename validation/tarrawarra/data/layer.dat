@@ -1,0 +1,140 @@
+Copyright (c) 1995-1998 Centre for Environmental Applied Hydrology, The University of Melbourne.
+
+Location: Tarrawarra						
+Data: soil layer depths and textures						
+"Collection period: May, 1996"						
+Measurement method: 75mm core with visual inspection and hand texture estimation						
+Record format: see headings						
+Depth Units: cm						
+Delimeter: white space						
+Coordinates: Tarrawarra coordinates						
+
+
+x	y	A horizon	B1 horizon	B1 horizon	B2 horizon	B2 horizon
+coord	coord	depth to bottom	depth to bottom	texture	depth to bottom	texture
+m	m	cm	cm	category	cm	category
+805	950	24	39	clay	>72	clay
+805	930	24	46	clay	>75	clay
+805	910	16	51	clay	>74	clay
+805	890	23	>73	clay		
+845	890	29	58	silt	>72	clay
+845	910	19	50	silt	>74	silt clay
+845	930	32	>72	silt		
+845	950	26	>76	silt		
+845	970	27	>76	silt		
+845	990	22	56	silt	>71	silt clay
+845	1010	18	35	silt clay	>71	clay
+845	1030	22	51	silt clay	>70	clay
+885	1050	29	43	silt clay	>67	clay
+885	1030	21	40	silt	>72	clay
+885	1010	20	37		>69	silt
+885	990	18	>73	silt		
+885	970	17	>66	silt		
+885	950	22	>74	silt		
+885	930	22	>70	silt		
+885	910	37	>73	silt		
+885	890	24	>72	silt		
+885	870	30	54	silt	>69	clay
+965	970	25	56	silt	>72	clay
+965	990	20	47	silt clay	>70	clay
+965	1010	31	60	silt clay		
+965	950	25	45	silt	>68	clay
+965	930	23	44	silt	>69	clay
+965	910	23	55	silt	>66	clay
+965	890	25	53	silt	>73	silt clay
+965	870	18	40	silt	>75	silt clay
+965	850	15	41	silt	>71	silt clay
+1005	830	21	>75	silt clay		
+1005	850	23	>76	silt clay		
+1005	870	24	51	silt	>74	silt clay
+1005	890	17	62	silt	>70	silt clay
+1005	910	16	44	silt	>72	silt clay
+1005	930	17	59	silt	>70	silt clay
+1005	950	32	65	silt	>70	silt clay
+1005	970	28	61	silt	>68	silt clay
+1005	990	26	43(band of ochre 32-39)	silt clay	>72	clay
+1005	1010	18	41	silt clay	>72	clay
+1085	1010	24	50	silt clay	>69	clay
+1085	990	29	52	silt clay	>72	clay
+1085	970	15	>68	silt clay		
+1085	950	17	52	silt	>70	silt clay
+1085	930	26	>75	silt		
+1085	910	32	>66	silt		
+1085	890	30	53	silt	>71	silt clay
+1085	870	28	40	silt	>72	silt clay
+1085	850	15	35	silt clay	>68	clay
+1085	830	16	35	silt clay	>75	clay
+1165	850	22	43	silt clay	>64	clay
+1165	870	13	20	clay	>52	clay
+1165	890	25	37	clay	>61	clay
+1165	910	27	>55	silt		
+1165	930	35	>75	silt		
+1165	950	18	>63	silt		
+1165	970	22	37	silt	>71	silt clay
+1165	990	22	42	silt clay	>74	clay
+1165	1010	22	35	silt clay	>72	clay
+1205	1010	16	34	silt clay	>67	clay
+1205	990	11	36	silt clay	>69	clay
+1205	970	17	31	silt	>68	silt
+1205	950	30	>65	silt		
+1205	930	23	54	silt	>71	silt clay
+1205	910	31	44	silt	>79	silt
+1205	890	26	45	silt clay	>77	clay
+1205	870	28	>70	clay		
+1205	850	23	39	clay	>60	clay
+1205	830	19	25	clay		
+1245	850	14	28	clay	>43	clay
+1245	870	24	>61	clay	>61	clay
+1245	890	29	>69	clay		
+1245	910	37	45	silt	>68	clay
+1245	930	25	47	silt	>68	silt clay
+1245	950	35	>72	silt		
+1245	970	12	35	silt	>70	clay
+1245	990	15	45	silt	>73	clay
+1245	1010	27	>75	clay		
+1285	1010	17	45	clay	>70	clay
+1285	990	24	>70	clay		
+1285	970	17	52	silt	>72	clay
+1285	950	32	45	silt	>74	clay
+1285	930	37	>72	silt		
+1285	910	20	38	silt	>74	clay
+1285	890	11	19	silt clay	>73	clay
+1285	870	18	34	silt clay	>65	clay
+1285	850	14	32	silt&mudsone	>42	clay
+1325	890	16	25	silt clay	>71	clay
+1325	910	14	31	silt clay	>72	clay
+1325	930	26	39	silt clay	>63	clay
+1325	950	15	>62	clay		
+1325	970	17	44	clay	>73	clay
+1325	990	17	27	silt clay	>71	clay
+1325	1010	17	30	silt clay	>69	clay
+1125	830	31	>31	silt clay	>68	clay
+1125	850	25	37	silt clay	>69	clay
+1125	870	30	>58	clay		
+1125	890	22	37	silt	>57	silt clay
+1125	910	42	>74	silt		
+1125	930	25	>76	silt		
+1125	950	14	60	silt	>73	siltclay
+1125	970	26	>73	silt		
+1125	990	25	33	silt clay	>72	clay
+1125	1010	24	42	clay	62	clay
+1045	830	20	>57	clay		
+1045	850	17	37	silt clay	>69	clay
+1045	870	26	41	silt	>73	clay
+1045	890	21	>69	silt		
+1045	910	33	>72	silt		
+1045	930	25	56	silt	>75	silt clay
+1045	950	28	>74	silt		
+1045	970	16	32	silt clay	>71	clay
+1045	990	30	52	silt clay	>74	clay
+1045	1010	20	46	silt clay	>73	clay
+925	850	43	>72	silt		
+925	870	22	58	silt	>69	silt clay
+925	890	19	53	silt	>63	silt clay
+925	910	14	59	silt	>70	silt clay
+925	930	23	>70	silt		
+925	950	28	66	silt	>71	clay
+925	970	30	43	silt	>64	clay
+925	990	16	55	silt	>70	clay
+925	1010	17	32	silt	51	clay
+925	1030	34	>74	silt		

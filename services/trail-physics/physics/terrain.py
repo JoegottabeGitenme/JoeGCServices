@@ -176,6 +176,21 @@ def compute_twi(dem: np.ndarray, cellsize: float) -> np.ndarray:
     is local slope (compute_slope). A small tan(beta) floor prevents
     division blow-up on genuinely flat cells (a standard TWI implementation
     detail, not a physics assumption).
+
+    **Known gap (Session 4, real-data Rung 1 run)**: this D8-based
+    implementation is structurally correct -- against real Tarrawarra data,
+    its per-date correlation with observed moisture anomalies is strongly
+    positive (0.07-0.62), and weakest on exactly the driest dates, matching
+    the GeoWATCH paper's own described physical behavior -- but it is NOT
+    numerically compatible with GeoWATCH's own TWI computation. The paper
+    (Eylander et al. 2023, Section 2.2) computed TWI using pyDEM
+    (Ueckermann et al. 2018, github.com/creare-com/pydem), a specific tool
+    this implementation was never cross-checked against. A least-squares
+    fit against real Tarrawarra data implies this function's TWI deviations
+    are roughly 5-6x larger than whatever k=13 (redistribution.py) was
+    actually calibrated against -- see validation/tarrawarra/README.md for
+    the full diagnosis. Do not "fix" this by tuning k; the concrete next
+    step is adopting pyDEM itself.
     """
     filled = fill_pits_and_flats(dem)
     a = compute_d8_flow_accumulation(filled, cellsize)

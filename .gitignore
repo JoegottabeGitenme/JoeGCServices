@@ -125,3 +125,9 @@ compile_commands.json
 
 # Copyrighted reference material kept locally for development, not for distribution
 /geowatch.pdf
+
+# Tarrawarra dataset archive zips -- the extracted ASCII files under
+# validation/tarrawarra/data/ are committed (small, license permits
+# redistribution with citation); the zip archives themselves are redundant
+# with those extracted files and not worth tracking.
+/validation/tarrawarra/data/*.zip

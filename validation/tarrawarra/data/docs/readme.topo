@@ -1,0 +1,152 @@
+Readme.topo
+-----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied 
+Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its 
+documentation, for non-commercial purposes, is hereby granted 
+without fee, provided that the above copyright notice appear in 
+all copies, that both that copyright notice and this permission 
+notice appear in supporting documentation, and that any 
+publication resulting from the use of this data cites: A W Western 
+and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, 
+soil characteristics and hydrological flux measurements", Water 
+Resources Research, in review.
+
+Authors are requested to forward 2 copies of any publication 
+utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks 
+(Tarrawarra) who have provided free access to their land and 
+willing cooperation throughout the project.  Funding for this work 
+was provided by: the Australian Research Council (project 
+A39531077); the Cooperative Research Centre for Catchment 
+Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); 
+the Department of Industry, Science and Technology, International 
+Science and Technology Program; The University of Melbourne and 
+The Ian Potter Foundation.  The European Space Agency and the 
+National Aeronautical and Space Agency provided SAR data free of 
+charge.  Assistance in the field and with data processing has been 
+provided by Karen Moore.  Field assistance has also been provided 
+by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian 
+Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony 
+Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic 
+Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael 
+Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff 
+Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  
+Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh 
+Turral, and Brian Finlayson have provided useful suggestions on 
+the field data collection. Veronique Gomendy and Hugh Turral 
+assisted with interpretation of the soil cores.  Graham Moore has 
+provided help with instrumentation on the DCV.  Fred Watson 
+provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Topographic, site and digital elevation model data
+--------------------------------------------------
+
+This file contains information about three inter-related data sets 
+that provide the basic terrain and feature data for Tarrawarra.
+
+Topographic Survey
+------------------
+
+A topographic survey of Tarrawarra was conducted using total 
+stations.  A set of control benchmarks was established about the 
+catchment and used for all survey work.  All survey work was 
+conducted within the Tarrawarra coordinate system.  Spot 
+elevations were measured on a 10 by 10 m (approx) paced grid.  
+Elevations were measure to +/- 0.05 m and plan position to +/- 
+0.1m.  
+
+Surveyed natural surface data: toposurv.dat.  
+header:    contains site, date and unit information
+data:      x y z 
+units:     meters in Tarrawarra coordinates
+delimiter: white space
+
+
+Site locations
+--------------
+
+A series of files contain site locations.  They are all arranged 
+in the same format (with white space field separation):
+
+header:     what the sites are, grid, units
+data:       x  y  site_identification
+units:      meters in Tarrawarra coordinates
+delimiter:  whitespace
+
+Site files exist for the following:
+
+neutron access tubes                 neutron.pos
+piezometers                          piezo.pos
+rain gauges                          rain.pos
+weather station                      weather.pos
+flume                                flume.pos
+
+Digital Elevation Models
+------------------------
+
+Two digital elevation models (dem) have been developed for 
+Tarrawarra.  Both are 5 m grid based dem's.  One is in the 
+Tarrawarra coordinate system (tarrawar.dem) and the other is in 
+Universal Transverse Mercator (zone 55) and Australian Height 
+datum (tarrautm.dem).  Details of the conversion between these two 
+coordinate systems are provided in Readme.1st.
+
+Format:
+The files contain a 6 line header with the boundaries of the dem 
+and the number of rows and columns.  Then the elevations (in 
+metres) are provided starting in the North western corner of the 
+dem and proceeding row by row.  Note that the dem boundaries refer 
+to the outer edges of the bounding cells while the elevations 
+refer to the cell centres.  Thus the boundaries are 2.5 m outside 
+the outer elevations.
+
+Files
+-----
+
+archive: (unix) topodata/siteinfo.tar.Z; (DOS/windows) 
+topodata/siteinfo.zip; and (Macintosh) topodata/siteinfo.sit.
+
+ascii:
+toposurv.dat
+neutron.pos
+piezo.pos
+rain.pos
+weather.pos
+flume.pos
+tarrawar.dem
+tarrautm.dem

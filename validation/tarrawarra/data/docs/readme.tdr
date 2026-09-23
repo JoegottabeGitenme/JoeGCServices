@@ -1,0 +1,241 @@
+Readme.tdr
+----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied 
+Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its 
+documentation, for non-commercial purposes, is hereby granted 
+without fee, provided that the above copyright notice appear in 
+all copies, that both that copyright notice and this permission 
+notice appear in supporting documentation, and that any 
+publication resulting from the use of this data cites: A W Western 
+and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, 
+soil characteristics and hydrological flux measurements", Water 
+Resources Research, in review.
+
+Authors are requested to forward 2 copies of any publication 
+utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks 
+(Tarrawarra) who have provided free access to their land and 
+willing cooperation throughout the project.  Funding for this work 
+was provided by: the Australian Research Council (project 
+A39531077); the Cooperative Research Centre for Catchment 
+Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); 
+the Department of Industry, Science and Technology, International 
+Science and Technology Program; The University of Melbourne and 
+The Ian Potter Foundation.  The European Space Agency and the 
+National Aeronautical and Space Agency provided SAR data free of 
+charge.  Assistance in the field and with data processing has been 
+provided by Karen Moore.  Field assistance has also been provided 
+by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian 
+Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony 
+Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic 
+Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael 
+Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff 
+Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  
+Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh 
+Turral, and Brian Finlayson have provided useful suggestions on 
+the field data collection. Veronique Gomendy and Hugh Turral 
+assisted with interpretation of the soil cores.  Graham Moore has 
+provided help with instrumentation on the DCV.  Fred Watson 
+provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Time Domain Reflectometry Data
+------------------------------
+
+Soil moisture maps have been collected at Tarrawarra using Time
+Domain Reflectometry on 13 occasions.  Soil moisture measurements
+were made using the following methods:
+
+Soil moisture measurements were made using an all terrain data 
+collection vehicle (DCV) fitted with a position fixing system, 
+Time Domain Reflectometry (TDR) soil moisture sensors, hydraulic 
+systems for inserting the sensors, a computer for directing the 
+operator to the desired sampling location and for logging data, 
+and a variety of subsidiary equipment [Tyndal-Biscoe, 1994, 
+Western et al., 1996].  The position fixing system allows 
+measurements to be taken within 0.5 m of the planned location.  
+Soil moisture measurements were made by driving the DCV to the 
+required location, inserting the TDR probes with the hydraulic 
+insertion system, taking a reading, removing the probes and moving 
+on to the next location.  Either one or four probes were used to 
+make the measurements.  When four probes were used they were 
+mounted at the corners of a 1.7 m by 1.9 m rectangle.
+
+A TRASE system TDR [Soil Moisture Equipment Corp., 1989] fitted 
+with 30 cm, two-wire probes mounted in standard TRASE Baluns, was 
+used for the soil moisture measurements.  On occasions when we 
+used four TDR probes, they were connected to the TDR via a TRASE 
+multiplexer.  Probes were regularly inspected to ensure they had 
+not been bent or damaged, and were either straightened or replaced 
+if necessary.  We monitored the soil moisture measurements as they 
+were collected and repeated any anomalously high or low 
+measurement, having moved the sample location slightly (by 
+approximately 10 cm).  Usually these repeated measurements were 
+similar to the original measurement, in which case we retained the 
+original measurement as the soil moisture recorded for that site.  
+If there was a significant discrepancy (more than 2% by volume) 
+the second measurement was used to represent the soil moisture at 
+that location.
+
+The TDR measurements were made on regular grids.  On most 
+occasions a single TDR probe was used to make measurements on a 10 
+by 20 m grid oriented with the 20 m dimension along the long axis 
+of the catchment (i.e. approximately east-west).  The measurements 
+were collected starting at the western end of the catchment and 
+moving alternately north and south along neighbouring rows.  
+Measurements were completed for each paddock in turn and were 
+generally collected within a 15 hour period (each measurement has 
+the date and time of measurement associated with it).  We have 
+also collected one set of measurements on the 10 by 20 m grid 
+using four probes and one set on a 10 by 10 m grid using a single 
+probe. Available soil moisture maps are summarised in the table 
+below.
+
+Nature of the data
+------------------
+
+TDR measures the apparent dielectric constant of the soil-water-
+air media by measuring the time taken for a pulse of microwave 
+energy to travel along the TDR probe.  For our measurements, the 
+measurement volume can be approximated by a cylinder 5 cm in 
+diameter and 30 cm in length; however, the measurement process 
+leads to a weighting of the measurement toward the soil nearest 
+the wires of the probe.  The apparent dielectric 
+constant is then converted to a volumetric soil moisture using an 
+appropriate calibration.  The measured soil moisture represents 
+the average soil moisture in the top 30 cm of the soil profile.
+
+We conducted a calibration of the TDR against gravimetric 
+measurement of soil moisture to ensure the accuracy of our data.  
+We did this by measuring the soil moisture using the TDR under 
+typical field conditions, then taking a soil sample for which we 
+determined the moisture content in the laboratory using standard 
+gravimetric techniques.  Soil samples were taken either using a 
+coring device or by auguring a sample.  The sample was taken over 
+a depth of approximately 30 cm at the point where the TDR 
+measurement was made.  The volume of the soil sample was estimated 
+either from the diameter of the corer and the length of the core 
+or by finding the volume of water required to fill the hole 
+remaining after an augured sample was taken.  In the later case, 
+we compared the volume with the volume estimated from the diameter 
+of the augured hole and the depth of the hole.  The variance of 
+the differences between the gravimetric and TDR soil moisture 
+measurements is 6.6(%V/V)^2.  The error variance in the 
+gravimetrically determined volumetric soil moisture are likely to 
+be about 3(%V/V)^2, and is mainly due to uncertainty in 
+determining the measurement volume.  This implies a random error 
+variance in the TDR derived estimates of soil moisture of 
+3(%V/V)^2.  Geostatistical analyses [Western et al., submitted to 
+J.  Hydrology] confirm this (nuggets are typically 3(%V/V)^2).
+
+Errors in the TDR measurements can occur when measurements are 
+made below significant surface water i.e. in the drainage lines 
+when there is significant overland flow there.  This is thought to
+be due to slight gaps (due to the soft (wet) soils) filling with 
+water.  This problem is apparent in data from the 2 and 20 
+September, 1996.  For some analyses, truncation of the data to a 
+maximum moisture of about 55%V/V would be justified.
+
+Data Availability
+-----------------
+Date                               Sample grid
+--------------------------------------------------------
+25-27 September 1995               10x20m, 1 probe
+13-14 February 1996                10x20m, 1 probe
+22-23 February 1996                10x20m, 1 probe
+28 March 1996                      10x20m, 1 probe
+13 April 1996                      10x20m, 1 probe (a)
+22 April 1996                      10x20m, 1 probe
+2-3 May 1996                       10x20m, 4 probes (a)
+3 July 1996                        10x20m, 1 probe
+2 September 1996                   10x20m, 1 probe
+20 September 1996                  10x20m, 1 probe (a)
+25 October 1996                    10x20m, 1 probe (a)
+10-11 November 1996                10x10m, 1 probe (b)
+29 November 1996                   10x20m, 1 probe (a)
+------------------------------------------------------------------
+(a) coincident with ERS1 and/or ERS2 SAR
+(b) coincident with NASA AirSAR
+
+File naming
+-----------
+
+The TDR data is provided in separate files for each sampling.  The 
+file name convention is smddmmyy.tdr, where dd is day, mm is 
+month, and yy is year.
+
+File format
+-----------
+
+header:
+
+contains information on the grid, number of points, 
+measurement depth, coordinate system, etc
+
+data records:
+
+the data is provided with one line per measurement 
+and each data record contains date, time, x, y, dielectric 
+constant, moisture.  x and y are the coordinates of the 
+measurement location in the Tarrawarra coordinate system (except 
+for the transect which is in universal transverse mercator, zone 
+55) in units of meters.  Moisture is percentage soil moisture 
+determined on a volumetric basis.
+
+Files
+-----
+
+Individual moisture patterns are contained in the files below.  
+Archives of all the patterns are contained in (unix) 
+patterns.tar.Z, (dos/windows) patterns.zip, and (macintosh) 
+patterns.sit.
+
+individual patterns (ascii)
+
+sm270995.tdr
+sm140296.tdr
+sm230296.tdr
+sm280396.tdr
+sm130496.tdr
+sm220496.tdr
+sm020596.tdr
+sm030796.tdr
+sm020996.tdr
+sm200996.tdr
+sm251096.tdr
+sm101196.tdr
+sm291196.tdr

@@ -34,12 +34,23 @@ alone doesn't reach 0.0321, that is not necessarily a sign Eq. 1 is wrong
 -- it may mean stage 2 is required to close the gap. Don't over-interpret
 a near-miss without accounting for this.
 
-**Requires the actual Tarrawarra data files.** `data/ksat.dat` is already
-present (fetched live in Session 3); the DEM elevation grid and 13 TDR
-files still need a manual browser download -- see README.md for exactly
-why (an intermittent WAF) and how to supply them. This script will refuse
-to run with a clear message if the data directory is incomplete, rather
-than silently produce no output.
+**Requires the actual Tarrawarra data files** (see README.md for how to
+obtain them -- Session 4 finally got all of them via the site's zip
+archives). This script will refuse to run with a clear message if the
+data directory is incomplete, rather than silently produce no output.
+
+**Uses `tarrawar.dem`, not `tarrautm.dem`** -- a real bug caught in Session
+4. `readme.tdr` states TDR coordinates are in "the Tarrawarra coordinate
+system," not UTM (its own words: UTM only applies "for the transect,"
+which isn't used here); `ksat.dat`'s own header says the same
+("Coordinates: Tarrawarra coordinates"). `tarrawar.dem`'s extent (x:
+732.5-1462.5, y: 752.5-1132.5) matches that local coordinate system;
+`tarrautm.dem`'s extent (UTM meters, ~362000/5831000) does not overlap it
+at all. Using the wrong DEM produces silent, total interpolation failure
+(every point falls "outside" the DEM in griddata's eyes) -- the
+`valid.sum() < len(records) * 0.5` warning in `validate_one_date` below
+is what caught this, not a crash, so watch that warning if this ever
+regresses.
 
 Usage:
     python3 run_validation.py --data-dir ./data
@@ -83,7 +94,7 @@ TARGET_DATES_IMPROVED = 9  # of 13
 
 
 def check_data_available(data_dir: Path) -> None:
-    dem_path = data_dir / "tarrautm.dem"
+    dem_path = data_dir / "tarrawar.dem"
     ksat_path = data_dir / "ksat.dat"
     missing = [p for p in (dem_path, ksat_path) if not p.exists()]
     missing += [
@@ -121,8 +132,32 @@ def build_terrain_predictors(dem_path: Path, ksat_path: Path):
     xx, yy = np.meshgrid(xs, ys_from_north)
 
     ksat_records = parse_ksat_file(str(ksat_path))
+    # The real ksat.dat (Session 4) contains at least one measured 0.0 mm/hr
+    # conductivity (an effectively impermeable point -- a real measurement,
+    # not obviously a data error). ln(0) = -inf, which would poison not just
+    # that single point but the domain-wide log_ks_mean (mean of any array
+    # containing -inf is -inf), corrupting Eq. 1's prediction at EVERY
+    # location, not just near the zero-conductivity point. Rather than
+    # silently substitute an arbitrary floor value, exclude non-positive
+    # measurements from both the domain mean and the interpolation source
+    # pool, with a loud count of how many were dropped.
+    n_before = len(ksat_records)
+    ksat_records = [r for r in ksat_records if r.ksat_mm_hr > 0]
+    n_dropped = n_before - len(ksat_records)
+    if n_dropped:
+        print(
+            f"NOTE: excluded {n_dropped}/{n_before} ksat.dat record(s) with "
+            f"non-positive conductivity (ln(Ks) undefined) from ln(Ks) "
+            f"processing -- see build_terrain_predictors' comment.",
+            file=sys.stderr,
+        )
     ksat_xy = np.array([(r.x, r.y) for r in ksat_records])
     ksat_ln = np.log(np.array([r.ksat_mm_hr for r in ksat_records]))
+    # Computed from the SAME filtered ksat_records used for interpolation
+    # above -- deliberately not recomputed separately elsewhere, so there is
+    # exactly one place that decides how non-positive conductivity is
+    # handled, not two independent (and previously inconsistent) ones.
+    log_ks_mean = float(np.mean(ksat_ln))
 
     def predictors_at(points_xy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         twi_at_points = griddata(
@@ -131,13 +166,21 @@ def build_terrain_predictors(dem_path: Path, ksat_path: Path):
         log_ks_at_points = griddata(ksat_xy, ksat_ln, points_xy, method="nearest")
         return twi_at_points, log_ks_at_points
 
-    return predictors_at, twi_grid
+    return predictors_at, twi_grid, log_ks_mean
 
 
 def validate_one_date(tdr_path: Path, predictors_at, twi_mean: float, log_ks_mean: float):
     records = parse_tdr_file(str(tdr_path))
     xy = np.array([(r.x, r.y) for r in records])
-    observed = np.array([r.moisture_pct for r in records])
+    # TDR files store %V/V (e.g. 39.1 meaning 39.1%); the design doc's
+    # published targets (0.0352, 0.0321) are in fractional m3/m3 (the
+    # paper's own units), a factor of 100 different. Converting here --
+    # not just when reporting the final RMSE -- matters because Eq. 1's
+    # k=13 constant is an additive correction on whatever scale theta is
+    # expressed in; applying it to %-scale theta while k was calibrated
+    # against fractional-scale theta would apply a correction of the wrong
+    # relative magnitude, not just report a wrongly-scaled number.
+    observed = np.array([r.moisture_pct / 100.0 for r in records])
 
     twi_at_points, log_ks_at_points = predictors_at(xy)
     valid = ~(np.isnan(twi_at_points) | np.isnan(log_ks_at_points))
@@ -172,7 +215,7 @@ def main():
     parser.add_argument(
         "--data-dir",
         default="./data",
-        help="Directory containing tarrautm.dem, ksat.dat, and a tdr/ subdirectory "
+        help="Directory containing tarrawar.dem, ksat.dat, and a tdr/ subdirectory "
         "with the 13 sm*.tdr files (see README.md for exact manual-download layout)",
     )
     parser.add_argument(
@@ -210,11 +253,10 @@ def main():
 
     check_data_available(data_dir)
 
-    predictors_at, twi_grid = build_terrain_predictors(data_dir / "tarrautm.dem", data_dir / "ksat.dat")
+    predictors_at, twi_grid, log_ks_mean = build_terrain_predictors(
+        data_dir / "tarrawar.dem", data_dir / "ksat.dat"
+    )
     twi_mean = float(np.nanmean(twi_grid))
-
-    ksat_records = parse_ksat_file(str(data_dir / "ksat.dat"))
-    log_ks_mean = float(np.mean(np.log([r.ksat_mm_hr for r in ksat_records])))
 
     baseline_rmses = []
     model_rmses = []

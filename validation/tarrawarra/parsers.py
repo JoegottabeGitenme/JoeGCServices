@@ -290,26 +290,55 @@ class ParticleRecord:
 
 def parse_particle_file(path: str) -> list[ParticleRecord]:
     """Per Readme.soil: coordinate, depth range, stone%, then coarse sand /
-    fine sand / coarse silt / fine silt / clay percentages -- 8 fields (2
-    coordinate + 1 depth-range text + 5 numeric), or 9 if the depth range
-    itself is two whitespace-separated numbers rather than one hyphenated
-    token. Handles both layouts."""
+    fine sand / coarse silt / fine silt / clay percentages.
+
+    **Confirmed against the real file (Session 4)**: the depth range is
+    given as ONE token, either hyphenated ("0-13") or open-ended (">24",
+    for the bottommost sample at a site) -- never as two separate numeric
+    tokens; and clay IS given explicitly as a 9th numeric column, not left
+    to be computed as a residual (the original assumption, kept below as a
+    fallback for whichever synthetic/other-source file doesn't include it).
+    Disambiguation: if the token right after (x, y) fails to parse as a
+    float, it's a single depth-range token (hyphenated or open-ended);
+    otherwise it's the documented-but-unconfirmed two-separate-numeric-
+    tokens form, and the next token is consumed as its second half.
+    Whatever numeric tokens remain after the depth range is exactly 5
+    (clay as residual) or 6 (clay explicit)."""
     records = []
     with open(path, "r") as f:
         for line in f:
             parts = line.split()
-            if len(parts) == 8:
-                x, y, depth_range, stone, cs, fs, csi, fsi = parts
-                clay = None
-            elif len(parts) == 9:
-                # depth range given as two separate tokens (e.g. "0 10" not "0-10")
-                x, y, d0, d1, stone, cs, fs, csi, fsi = parts
-                depth_range = f"{d0}-{d1}"
+            if len(parts) < 8:
+                continue
+            try:
+                x_f, y_f = float(parts[0]), float(parts[1])
+            except ValueError:
+                continue  # header/comment line
+
+            depth_token_is_numeric = True
+            try:
+                float(parts[2])
+            except ValueError:
+                depth_token_is_numeric = False
+
+            if depth_token_is_numeric:
+                if len(parts) < 9:
+                    continue
+                depth_range = f"{parts[2]}-{parts[3]}"
+                rest = parts[4:]
+            else:
+                depth_range = parts[2]
+                rest = parts[3:]
+
+            if len(rest) == 6:
+                stone, cs, fs, csi, fsi, clay = rest
+            elif len(rest) == 5:
+                stone, cs, fs, csi, fsi = rest
                 clay = None
             else:
                 continue
+
             try:
-                x_f, y_f = float(x), float(y)
                 stone_f, cs_f, fs_f, csi_f, fsi_f = (
                     float(stone),
                     float(cs),
@@ -317,13 +346,15 @@ def parse_particle_file(path: str) -> list[ParticleRecord]:
                     float(csi),
                     float(fsi),
                 )
+                clay_f = float(clay) if clay is not None else None
             except ValueError:
                 continue
-            # Clay is the residual (fractions sum to 100% of the <2mm fraction)
-            # when not given explicitly as a 9th/10th numeric column.
-            clay_f = clay if clay is not None else max(
-                0.0, 100.0 - cs_f - fs_f - csi_f - fsi_f
-            )
+
+            # Clay is the residual (fractions sum to 100% of the <2mm
+            # fraction) only when not given explicitly as a numeric column.
+            if clay_f is None:
+                clay_f = max(0.0, 100.0 - cs_f - fs_f - csi_f - fsi_f)
+
             records.append(
                 ParticleRecord(x_f, y_f, depth_range, stone_f, cs_f, fs_f, csi_f, fsi_f, clay_f)
             )
@@ -337,41 +368,54 @@ class LayerRecord:
     x: float
     y: float
     depth_a_cm: float
-    depth_b1_cm: float
-    texture_b1: str
-    depth_b2_cm: float | None
+    # depth_b1_cm/depth_b2_cm are kept as RAW TEXT, not float, deliberately:
+    # the real file (confirmed, Session 4) uses open-ended depths like
+    # ">73" (the core didn't reach the bottom of that horizon) for roughly
+    # a third of rows -- converting that to a float would either crash or
+    # require fabricating a number the data doesn't actually give. None
+    # means the field was blank in the source row (B2 not recorded, or
+    # occasionally B1 texture not recorded either).
+    depth_b1_cm: str | None
+    texture_b1: str | None
+    depth_b2_cm: str | None
     texture_b2: str | None
 
 
 @dataclass
 class NmmProfile:
     site: int
-    date: str  # dd/mm/yyyy
-    time: str  # hhmm, AEST
+    date: str  # e.g. "20-Sep-95" -- see date_line_re note below on the doc/reality mismatch
+    time: str  # e.g. "11:10"
     depths_cm: np.ndarray
     moisture_pct: np.ndarray  # %V/V
 
 
 def parse_nmm_file(path: str, site: int | None = None) -> list[NmmProfile]:
-    """Parse a Tarrawarra nmm_data/tube_N.dat file. Per Readme.nmm (fetched
-    live, Session 3): a header (site ID/coordinates/depth-to-bedrock/profile
-    description, unspecified exact length -- skipped by scanning for the
-    first date/time line rather than assuming a fixed header length), then
-    repeated blocks separated by blank lines:
+    """Parse a Tarrawarra nmm_data/tube_N.dat file. Per Readme.nmm: a header
+    (site ID/coordinates/collection period/measurement method, unspecified
+    exact length -- skipped by scanning for the first date/time line rather
+    than assuming a fixed header length), then repeated blocks separated by
+    blank lines:
 
-        date(dd/mm/yyyy)   time(hhmm, AEST)
+        date   time
         depth(cm)   moisture(%V/V)
         ...
         depth(cm)   moisture(%V/V)
 
+    **Confirmed against real downloaded tube_N.dat files (all 20, Session
+    4)**: Readme.nmm documents the date/time format as "dd/mm/yyyy" and
+    "hhmm" -- the real files instead use "DD-Mon-YY" and "HH:MM" (e.g.
+    "20-Sep-95" / "11:10"), matching the TDR files' own date convention
+    rather than their own readme. `date_line_re` accepts both forms since
+    the documented one might appear in some other distribution of this
+    data. Fields are tab-separated with leading whitespace/tabs on every
+    line (including blank-looking separator lines, which are a lone tab +
+    CRLF, not truly empty) -- handled fine by `str.split()`'s any-whitespace
+    behavior and `str.strip()` correctly treating a lone tab as blank.
+
     `site` defaults to parsing it from the filename (`tube_N.dat` -> N) if
     not given explicitly -- callers that already know the site number
     (e.g. iterating `tube_1.dat` .. `tube_20.dat`) can skip that guess.
-
-    NOT YET VALIDATED against a real tube_N.dat file (still blocked on
-    manual download -- see README.md); this is a direct transcription of
-    Readme.nmm's documented format, exercised only against a synthetic
-    fixture in tests/test_parsers.py.
     """
     if site is None:
         m = re.search(r"tube_(\d+)", Path(path).name)
@@ -383,12 +427,14 @@ def parse_nmm_file(path: str, site: int | None = None) -> list[NmmProfile]:
         site = int(m.group(1))
 
     with open(path, "r") as f:
-        raw_lines = [line.rstrip("\n") for line in f]
+        raw_lines = [line.rstrip("\r\n") for line in f]
 
-    # A "date line" is exactly 2 tokens: dd/mm/yyyy and hhmm. Depth/moisture
-    # lines are exactly 2 numeric tokens. Skip everything before the first
-    # date line (the free-text header, whose exact length isn't documented).
-    date_line_re = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+    # A "date line" is exactly 2 tokens: a date and a time. Accept both the
+    # documented dd/mm/yyyy form and the real DD-Mon-YY form actually used
+    # in the files (see docstring). Depth/moisture lines are exactly 2
+    # numeric tokens. Skip everything before the first date line (the
+    # free-text header, whose exact length isn't documented).
+    date_line_re = re.compile(r"^(\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})$")
 
     profiles: list[NmmProfile] = []
     i = 0
@@ -435,24 +481,37 @@ def parse_layer_file(path: str) -> list[LayerRecord]:
     """Per Readme.soil: 'coordinate coordinate, depth to bottom of A
     horizon, depth to bottom of B1 horizon, texture category of B1, depth
     to bottom of B2 horizon [if present], texture category of B2 [if
-    present]' -- 5 or 7 fields (B2 columns optional per-row)."""
+    present]' -- 7 columns, always present as 7 tab-separated fields in the
+    real file (confirmed, Session 4), with missing B1/B2 texture or B2
+    depth represented as an EMPTY field (not a dropped column) -- this is
+    why this parser splits on the literal tab character rather than
+    generic whitespace: several texture values are themselves multi-word
+    ("silt clay", "silt&mudsone"), which a plain `.split()` on whitespace
+    would incorrectly break into extra fields and misalign every column
+    after it. Splitting on tabs keeps a multi-word texture as one field."""
     records = []
     with open(path, "r") as f:
         for line in f:
-            parts = line.split()
-            if len(parts) == 5:
-                x, y, da, db1, tb1 = parts
-                db2, tb2 = None, None
-            elif len(parts) == 7:
-                x, y, da, db1, tb1, db2, tb2 = parts
-            else:
+            line = line.rstrip("\r\n")
+            parts = line.split("\t")
+            if len(parts) != 7:
                 continue
+            x, y, da, db1, tb1, db2, tb2 = parts
             try:
-                x_f, y_f, da_f, db1_f = float(x), float(y), float(da), float(db1)
-                db2_f = float(db2) if db2 is not None else None
+                x_f, y_f, da_f = float(x), float(y), float(da)
             except ValueError:
-                continue
-            records.append(LayerRecord(x_f, y_f, da_f, db1_f, tb1, db2_f, tb2))
+                continue  # header/comment line
+            records.append(
+                LayerRecord(
+                    x_f,
+                    y_f,
+                    da_f,
+                    db1 or None,
+                    tb1 or None,
+                    db2 or None,
+                    tb2 or None,
+                )
+            )
     if not records:
         raise ValueError(f"No layer records parsed from {path}")
     return records

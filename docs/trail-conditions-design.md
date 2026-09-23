@@ -413,6 +413,102 @@ manual browser download to actually run Rung 1.
 
 ---
 
+## Session 4 summary (2026-09, continued) — real data, real Rung 1 run, real FAIL
+
+The user obtained the full Tarrawarra dataset via the site's own zip
+archives (browser download, bypassing the WAF that blocked automated
+fetches all of Session 3) and supplied it. This is the first session Rung
+1 was actually run against real data, not synthetic fixtures.
+
+### Five real bugs found and fixed before Rung 1 would even run cleanly
+
+1. Session 3's committed `ksat.dat` had a stray `</content>` tag leaked in
+   from a tool-output copy-paste — harmless to the parser, embarrassing,
+   fixed by replacing with the zip archive's clean copy.
+2. **A coordinate-system bug, and it was Session 3's own fault**: the
+   README told future sessions to use `tarrautm.dem` (UTM) "NOT
+   tarrawar.dem" — backwards. `Readme.tdr`'s own text says TDR coordinates
+   are in "the Tarrawarra coordinate system," not UTM; `ksat.dat`'s header
+   says the same. Using the UTM DEM against local-coordinate TDR/ksat data
+   produced a *silent* total failure — every point interpolated to NaN,
+   caught only by an existing defensive warning, not a crash. Switched to
+   `tarrawar.dem`; the wrong file is no longer committed at all, to
+   prevent a third session repeating this.
+3. A genuine `Ksat = 0.0 mm/hr` measurement in the real data made
+   `ln(Ks)` = `-inf`, which poisoned the **domain-wide** mean (not just
+   that one point) and corrupted every single prediction. Fixed by
+   excluding non-positive conductivity from both the mean and the
+   interpolation pool, loudly logged (1 of 42 excluded). A related
+   duplication bug (the domain mean was independently recomputed
+   elsewhere, unfiltered) was fixed by making one function the single
+   source of truth.
+4. **A units mismatch**: TDR data is %V/V, the paper's targets are
+   fractional m3/m3. Converting only at the final RMSE-reporting step
+   would have been wrong — Eq. 1's `k=13` is an additive correction on
+   whatever scale theta is expressed in, so the conversion has to happen
+   before `redistribute()` is called, not after. Fixing this alone brought
+   the baseline (site-mean) RMSE to 0.0370 — strikingly close to the
+   paper's own 0.0352, confirming data/coordinates/units were now all
+   correct.
+5. **Parser bugs in `parse_nmm_file`, `parse_particle_file`,
+   `parse_layer_file`**, all only surfaced by testing against real files
+   for the first time: NMM dates are `DD-Mon-YY`, not the documented
+   `dd/mm/yyyy`; particle.dat gives clay explicitly (a 9th column), not as
+   a residual, and the depth-range disambiguation logic mishandled it;
+   layer.dat is TAB-delimited with multi-word texture values that a plain
+   whitespace `.split()` silently misaligned, plus open-ended depths
+   (`">73"`) that can't be a float. All fixed; see
+   `validation/tarrawarra/README.md` for full detail and
+   `tests/test_parsers.py` for real-file regression tests.
+
+### The actual Rung 1 result: FAIL, with a diagnosed (not guessed) cause
+
+With all five bugs fixed:
+
+```
+Overall baseline (site-mean) RMSE: 0.0370  (doc target: 0.0352)
+Overall Eq. 1 redistribution RMSE: 0.1127  (doc target: 0.0321)
+Dates improved: 0/13  (doc target: >= 9)
+```
+
+Eq. 1's correction makes every single date *worse*, not a near-miss.
+Diagnosis: per-date correlation between TWI anomaly and observed moisture
+anomaly is real and mostly strong (0.07 to 0.62), and the two weakest
+dates are the driest of the 13 — matching the paper's *own* stated
+behavior ("topography does not strongly influence... extremely dry" or
+"extremely wet" conditions) almost exactly. The structural signal is
+right. A least-squares fit implies an effective `k≈74`, not the paper's
+`k=13` — a ~5-6x magnitude mismatch, not a sign or structural error.
+
+The most likely explanation: the paper computed TWI using **pyDEM**
+(Ueckermann et al. 2018, a purpose-built Python package cited by name),
+not a from-scratch D8 implementation like `physics/terrain.py`'s. `k=13`
+was calibrated against pyDEM's specific numerical output, which was never
+checked against ours. **Deliberately not done**: fitting a local `k≈74` to
+make the gate pass — that would defeat Rung 1's actual purpose. `k=13`
+stays as documented; the gate stays FAIL, honestly reported.
+
+**Concrete next step**: install pyDEM directly and compute TWI through it
+instead of `physics/terrain.py`'s own implementation, to get numerically
+compatible results. Not "try a different constant" — literally use the
+tool the paper's own authors used.
+
+### What this session did NOT do
+
+- **Did not pass Rung 1** — a specific, diagnosed root cause (TWI
+  numerical incompatibility with pyDEM) remains unresolved, honestly
+  reported rather than papered over with a fitted constant.
+- **Did not install or try pyDEM** — identified as the concrete next step,
+  not attempted this session.
+- **Did not wire NMM into `run_validation.py`** — parser now validated
+  against all 20 real files, but harness logic doesn't exist yet, and is
+  moot until the Eq. 1/TWI issue above is resolved (per the design doc: no
+  building on top of an unresolved Rung 1 failure).
+- **Did not implement `--with-flux-correction`** — same reasoning, doubly
+  moot now that stage 1 alone doesn't pass.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

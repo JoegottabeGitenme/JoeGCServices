@@ -1,0 +1,239 @@
+Readme.met
+----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied 
+Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its 
+documentation, for non-commercial purposes, is hereby granted 
+without fee, provided that the above copyright notice appear in 
+all copies, that both that copyright notice and this permission 
+notice appear in supporting documentation, and that any 
+publication resulting from the use of this data cites: A W Western 
+and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, 
+soil characteristics and hydrological flux measurements", Water 
+Resources Research, in review.
+
+Authors are requested to forward 2 copies of any publication 
+utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks 
+(Tarrawarra) who have provided free access to their land and 
+willing cooperation throughout the project.  Funding for this work 
+was provided by: the Australian Research Council (project 
+A39531077); the Cooperative Research Centre for Catchment 
+Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); 
+the Department of Industry, Science and Technology, International 
+Science and Technology Program; The University of Melbourne and 
+The Ian Potter Foundation.  The European Space Agency and the 
+National Aeronautical and Space Agency provided SAR data free of 
+charge.  Assistance in the field and with data processing has been 
+provided by Karen Moore.  Field assistance has also been provided 
+by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian 
+Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony 
+Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic 
+Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael 
+Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff 
+Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  
+Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh 
+Turral, and Brian Finlayson have provided useful suggestions on 
+the field data collection. Veronique Gomendy and Hugh Turral 
+assisted with interpretation of the soil cores.  Graham Moore has 
+provided help with instrumentation on the DCV.  Fred Watson 
+provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Meteorological and runoff data
+------------------------------
+
+An automatic weather station, flume and 5 collecting raingauges 
+are installed in the catchment.  This data is summarised below.
+
+Automatic Weather Station
+-------------------------
+
+The location of the weather station is provided in the file 
+weather.pos.  The measurements made are:
+
+---------------------------------------------------------------
+Variable                  Meas't    Meas't    Meas't   Accuracy
+                          Height    Period    Type        
+---------------------------------------------------------------
+Dry bulb air temperature  1.40m     6 minute  average  +/-0.2 C
+Wet bulb air temperature  1.40m     6 minute  average  +/-0.2 C
+Surface air temperature   0.08m     6 minute  average  +/-0.2 C
+Rainfall (tipping bucket) 0.30m     6 minute  total    0.2mm tips
+Wind speed                2.0m      6 minute  average  +/-0.1km/hr
+Wind speed                2.0m      6 minute  maximum  +/-0.1km/hr
+Wind direction            2.0m      6 minute  average  +/-10º
+Global radiation          1.1m      6 minute  total    +/-10kJ/m^2
+Net radiation             0.9m      6 minute  mean     +/-3%
+Soil temperature          -0.02m    30minute  mean     +/-0.5 C
+Soil temperature          -0.05m    30minute  mean     +/-0.5 C
+Soil temperature          -0.10m    30minute  mean     +/-0.5 C
+Soil temperature          -0.20m    30minute  mean     +/-0.5 C
+Soil temperature          -0.50m    30minute  mean     +/-0.5 C
+---------------------------------------------------------------
+
+The meteorology data is available in 2 forms - raw (6 minute) data 
+and daily summaries.  
+
+Raw (6 minute) data
+-------------------
+
+The raw data is available in yearly files which have a header and 
+then lines with white space field separation.  Variables and units 
+are provided in the headers.
+
+File Naming:  the naming convention 6minyy.dat, where yy 
+              refers to the year is used.
+
+Format:
+header:       general info including variables and units
+data records: date(ddmmyyyy)  time(hhmm)  data  data  ...
+delimiter:    white space
+units:        see header
+missing data: denoted by "*"
+thresholds:   some sensors have a detection threshold (i.e. wind
+              data).  Data below the threshold are denoted with 
+              "t".  The wind speed sensor has a threshold of
+              0.4 km/hr and the wind direction sensor has a 
+              threshold windspeed of 0.8km/hr.
+
+Daily data
+----------
+
+A daily summary of the meteorological data is provided.  Minimum, 
+maximum and mean values of temperatures, daily accumulations of 
+rainfall and radiation variables, and wind-run and maximum wind 
+speed are provided.  The summary is provided for 9am Australian 
+eastern standard time for the 24 hours up to the date and time 
+provided with the record.  Variables and units are provided in the 
+header.
+
+Daily meterologic data File: daily.met
+
+Format:
+header:       general info including measurements and units
+data records: date(dd/mm/yyyy)  time(hh:mm:ss)  data  data  ...
+delimiter:    white space
+units:        see header
+missing data: denoted by "*" (more than 4% or readings missing)
+
+
+Surface Runoff
+--------------
+
+Surface runoff leaving the catchment is monitored with a flume.  
+The flume location is provided in the file flume.pos.  There is a 
+road running along the northern boundary of the catchment; 
+however, no runoff from that road enters the catchment.  There is 
+a farm access track running along the southern boundary of the 
+catchment.  Most of the runoff from this laneway is diverted past 
+the flume; however, an area of approximately 40 m^2 unavoidably 
+contributes water to the flume.  Water levels in the flume are 
+measured every minute and are saved if the change in water level 
+exceeds 1.5 mm.  Measurement accuracy as a function of discharge 
+is:
+
+Discharge  Accuracy
+(l/s)     (mm/hr)       error
+1         0.0343        +/-20%
+2         0.0686        +/-19%
+5         0.171         +/-11%
+10        0.343         +/-7.0%
+20        0.646         +/-5.0%
+50        1.71          +/-3.1%
+100       3.43          +/-2.2%
+150       5.14          +/-1.8%
+
+The discharge data is provided in two forms - instantaneous 
+discharge and daily discharge.  
+
+Instantaneous discharge file: instant.sro 
+
+Format:
+header:       general info including units
+data records: date(dd/mm/yyyy)    time(hh:mm:ss)   discharge
+delimiter:    white space
+units:        mm/hr
+missing data: denoted by "*"
+
+Daily discharge file: daily.sro
+
+Format: 
+header:       general info including units
+data records: date(dd/mm/yyyy)    time(hh:mm:ss)   discharge
+delimiter:    white space
+units:        mm/d
+missing data: denoted by "*"
+
+
+Collecting Rain gauges
+---------------------
+
+Five collecting rain gauges are installed around the catchment.  
+Their locations are given in rain.pos.  The rain gauge at the 
+automatic weather station is comparable to the pluviometer.  The 
+other four rain gauges are located in the corners of the catchment 
+and were installed so that they had similar exposures.  All rain 
+gauges are standard Bureau of Meteorology, Australia gauges with a 
+203mm diameter orifice and they are installed with the collector 
+30cm above the natural surface.  Collecting gauges were read on 
+each site visit.  Readings were made to the nearest 0.1mm and 
+represent the cumulative rainfall since the previous reading.  
+Errors will be introduced by wind effects and possibly evaporation 
+during summer.  Comparisons of the rain gauges indicate that the 
+rainfall is generally spatially uniform.  Rain gauge data is in 
+the file collect.dat which has a header plus records with the 
+following format (with white space field separation):
+
+File name: collect.dat
+
+Format:
+
+header:       general info including units
+data records: date(ddmmyyyy) time(hhmm) guage1 g2 g3 g4 gauge5
+units:        rainfall depths are in units of mm.
+delimiter:    white space
+
+Files
+-----
+weather.pos
+flume.pos
+rain.pos
+6minyy.dat
+daily.met
+instant.sro
+daily.sro
+collect.dat

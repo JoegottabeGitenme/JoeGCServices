@@ -1,0 +1,196 @@
+Readme.1st
+----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its documentation, for non-commercial purposes, is hereby granted without fee, provided that the above copyright notice appear in all copies, that both that copyright notice and this permission notice appear in supporting documentation, and that any publication resulting from the use of this data cites: A W Western and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, soil characteristics and hydrological flux measurements", Water Resources Research, 34(10): pp2765-2768.
+
+Authors are requested to forward 2 copies of any publication utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks (Tarrawarra) who have provided free access to their land and willing cooperation throughout the project.  Funding for this work was provided by: the Australian Research Council (project A39531077); the Cooperative Research Centre for Catchment Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); the Department of Industry, Science and Technology, International Science and Technology Program; The University of Melbourne and The Ian Potter Foundation.  The European Space Agency and the National Aeronautical and Space Agency provided SAR data free of charge.  Assistance in the field and with data processing has been provided by Karen Moore.  Field assistance has also been provided by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh Turral, and Brian Finlayson have provided useful suggestions on the field data collection. Veronique Gomendy and Hugh Turral assisted with interpretation of the soil cores.  Graham Moore has provided help with instrumentation on the DCV.  Fred Watson provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Catchment location and characteristics
+--------------------------------------
+
+The Tarrawarra catchment is located near Melbourne in Victoria, 
+Australia.  Its coordinates are 37 deg 39 min south and 145 deg 26 
+min east.
+
+The climate is temperate with a mean annual rainfall of 820 mm 
+and a potential evapotranspiration of 830 m.  The maximum 
+mean monthly rainfall occurs in October and the minimum 
+occurs in January [Land Conservation Council of Victoria, 
+1973].  Maximum potential evaporation occurs in summer.  Mean 
+summer minimum and maximum temperatures are 9 C and 24 C 
+respectively and average winter minimum and maximum temperatures 
+are 3 C and 10 C respectively [Bureau of Meteorology, 1988].  
+Compared with evapotranspiration, there is a significant rainfall 
+deficit in summer, while in winter there is a significant rainfall 
+excess.  Winter storms typically result from cold fronts and 
+synoptic scale depressions while summer storms are predominantly 
+frontal and convective.  The respective six minute, one hour and 
+one day rainfall intensities are 49 mm/hr, 16 mm/hr and 2.4 mm/hr 
+for a one year average recurrence interval storm and 100 mm/hr, 30 
+mm/hr and 4.3 mm/hr for a ten year average recurrence interval 
+storm.
+
+Tarrawarra is underlain by the Humevale formation which consists 
+of siltstone with interbedded thin sandstone and local bedded 
+limestone lenses and is from the lower Devonian period [Garratt 
+and Spencer-Jones, 1981].  The soils in the Tarrawarra catchment 
+consist of three units.  On the upper slopes is a texture contrast 
+soil with a loam-clay loam A horizon (15-25 cm deep) and a heavy 
+yellow-grey clay B horizon. The midslope soils have a loam-clay 
+loam A horizon (15-30 cm deep) with a silty B1 horizon and a 
+silty-clay B2 horizon.   The soils in the depressions have a 
+deeper 25-40 cm silty A horizon, and a silty B horizon.  Parts of 
+the catchment, particularly the upper slopes, have a bleached A2 
+horizon.  The depth of unconsolidated sediments varies from 40 cm 
+at some points on or near the ridge-tops to in excess of 2 m in 
+the depressions. Small amounts of ironstone gravel are present in 
+the profile, particularly in the A2 horizon on the upper slopes 
+and ridge-tops.  Perched water tables form in the A horizon during 
+the wetter months of the year.  The surface soils crack during dry 
+periods.  A detailed description of the available soils data is 
+provided later.
+
+The local terrain is undulating and has an elevation of 
+approximately 100 mAHD (Australian Height Datum).  In the 
+catchment, hillslopes vary from strongly convergent through to 
+divergent and the aspect ranges from east through south to north-
+west (see site map).  The maximum relief is 27 m and the 
+hillslopes typically have slopes of 11-14%.  The main drainage 
+line has a slope of 4%.  There are no channels within the 
+catchment.  The catchment area is 10.8 ha and the land is used for 
+dryland grazing of dairy cows.  It has perennial (improved) 
+pastures and is divided into four main paddocks.  Wind breaks 
+exist along two-thirds of the northern boundary (10 m Cypress 
+trees) and a small part of the southern boundary (5 m mixed 
+Australian native trees) and there are two Eucalyptus sp. trees 
+located in the south eastern corner of the catchment (see site 
+map).  A sealed road follows the northern boundary of the 
+catchment and an access laneway follows the southern boundary (see 
+site map).  Runoff from the road does not flow into the catchment.  
+The fate of runoff from the access laneway is described later.
+
+We believe that the Tarrawarra catchment is representative of 
+landscapes with relatively shallow soils of low to moderately high 
+lateral permeability with an impeding layer at depth, for which 
+topography plays a significant role in routing water through the 
+landscape, and for climates ranging from temperate to subhumid.  
+These conditions apply over large parts of south-eastern Australia 
+and in many other parts of the world.
+
+
+Catchment Coordinate system
+---------------------------
+
+Due to the natural orientation of the catchment, the main sampling 
+grids used at Tarrawarra (referred to as Tarrawarra coordinates) 
+are rotated 14 degrees anticlockwise relative to Universal 
+Transverse Mercator.  For convenience an arbitrary grid system has 
+been used and the majority of information presented here is in 
+this coordinate system.  Tarrawarra coordinates are related to 
+Universal Transverse Mercator, Zone 55 using (relative to the Australian geodetic Datum 1966):
+
+Easting  =  361474 + sqrt(x^2+y^2).cos(14.00+atan(y/x))
+Northing = 5829892 + sqrt(x^2+y^2).sin(14.00+atan(y/x))
+
+where all distances are in meters and angles are in degrees.
+
+   N                             y
+   ^                             ^
+   |                              .
+   |                               .        .>x 
+   |                                .    .
+   ---------> E                      . 
+                                  
+                                        
+      UTM                       Tarrawarra coordinates 
+
+Elevations for the Tarrawarra coordinate system are established 
+relative to an arbitrary bench mark.  Elevations relative to the 
+Australian Height Datum (i.e. elevation above mean sea level) can 
+be calculated using:
+
+AHD = Z - 2.6 (metres)
+
+Data set overview
+-----------------
+
+The Tarrawarra data set consists of a range of measurements which 
+were made with the aim of investigating the spatial 
+characteristics (patterns) of soil moisture variation and the 
+evolution of these patterns over time. The data set 
+includes:
+1.  Topographic survey, sites and digital elevation model data 
+    (see Readme.topo)
+2.  Time Domain Reflectometry (TDR) surface soil moisture
+    measurements made on grids of 500-2000 sites(see Readme.tdr)
+3.  Neutron Moisture Meter soil moisture profile measurements (see
+    Readme.nmm)
+4.  Piezometer data (Readme.piez) 
+5.  Soils data (see Readme.soil)
+6.  Meteorological and runoff data (see Readme.met)
+7.  Surface roughness and vegetation data (see Readme.veg)
+8.  Photographs and maps or the Tarrawarra site (see Readme.pics)
+
+Data Access
+-----------
+
+The data can be accessed directly from the World Wide Web (http://www.civag.unimelb.edu.au/data/tarrawarra).  
+
+Other relevant data
+-------------------
+
+European Space Agency, ERS1 and ERS2 and NASA AirSAR data were 
+also collected for the catchment at times coincident with some of 
+the soil moisture maps (see Readme.tdr).
+
+Photographs and Maps
+--------------------
+
+A digital photo library for Tarrawarra is available with the data 
+set, along with a general site map.  These are in the photos 
+directory and Readme.pics provides details of each photograph 
+location and subject.
+
+Relevant publications
+---------------------
+
+A list of publications relevant to the Tarrawarra data set is 
+provided in tw_pubs.doc. Authors are requested to forward two 
+copies of any publication utilising this data set to the address 
+above.
+

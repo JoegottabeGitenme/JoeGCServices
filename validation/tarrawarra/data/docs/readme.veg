@@ -1,0 +1,156 @@
+Readme.veg
+----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied 
+Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its 
+documentation, for non-commercial purposes, is hereby granted 
+without fee, provided that the above copyright notice appear in 
+all copies, that both that copyright notice and this permission 
+notice appear in supporting documentation, and that any 
+publication resulting from the use of this data cites: A W Western 
+and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, 
+soil characteristics and hydrological flux measurements", Water 
+Resources Research, in review.
+
+Authors are requested to forward 2 copies of any publication 
+utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks 
+(Tarrawarra) who have provided free access to their land and 
+willing cooperation throughout the project.  Funding for this work 
+was provided by: the Australian Research Council (project 
+A39531077); the Cooperative Research Centre for Catchment 
+Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); 
+the Department of Industry, Science and Technology, International 
+Science and Technology Program; The University of Melbourne and 
+The Ian Potter Foundation.  The European Space Agency and the 
+National Aeronautical and Space Agency provided SAR data free of 
+charge.  Assistance in the field and with data processing has been 
+provided by Karen Moore.  Field assistance has also been provided 
+by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian 
+Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony 
+Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic 
+Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael 
+Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff 
+Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  
+Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh 
+Turral, and Brian Finlayson have provided useful suggestions on 
+the field data collection. Veronique Gomendy and Hugh Turral 
+assisted with interpretation of the soil cores.  Graham Moore has 
+provided help with instrumentation on the DCV.  Fred Watson 
+provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Surface roughness data
+----------------------
+
+Surface roughness was characterised by using a pin profiler which 
+has a pin spacing of 25 mm and a total length of 1 m (i.e. 41 
+pins).  Profiles were measured by setting up the profiler so that 
+it was approximately parallel to the surface being measured and 
+the elevation of each pin was read visually from a scale located 
+behind the pins.  The elevation of each pin was read to an 
+accuracy of ±1 mm, and the pin location at the ground surface is 
+accurate to ±3 mm.  We measured six profiles at each site: two 
+across the slope; two up the slope; and two at 45º to the slope.  
+Profile measurements were made adjacent to NMM access tubes.  Most 
+of the surface roughness is due to cow hoof prints.  Surface 
+profile measurement dates and locations are summarised in the 
+table below.
+
+One files contains all the surface roughness data.
+
+File:   roughnes.dat
+Format: 
+Each set of roughness data (i.e. 1 site/date combination)
+there is a 7 column table.  Column 1 is the pin location (mm), 
+columns 2-7 contain surface profiles in mm.  Columns 2 and 3 are 
+across slope profiles, columns 4 and 5 are upslope profiles and 
+columns 6 and 7 are at 45 degrees to the slope.  Each table has a 
+header with the sample date and location of the neutron access 
+tube that the measurements were taken at.
+
+Vegetation data
+---------------
+
+Vegetation was sampled from 1 by 1 m plots at the same time as 
+performing surface profile measurements.  The distribution of 
+biomass was very patchy on some occasions.  On those occasions we 
+sampled the vegetation from plots which were selected to represent 
+high and low biomass patches, and made a visual estimate of the 
+proportion of low and high biomass patches within the vicinity of 
+the NMM access tube.  Dry mass and water contents were determined 
+in the laboratory and area weighted average values were 
+calculated.  The vegetation consists predominantly of perennial 
+and annual introduced grass and clover pasture species typical of 
+the region.  Vegetation sampling dates and locations 
+are summarised below.
+
+File: vegetat.dat
+
+Format:
+Vegetation data is provided in a single file with 1 table per 
+sampling date.  The table contains columns for:
+- sampling coordinates (x, y) in Tarrawarra coordinates
+- water content and biomass are given in g/m^2.  
+
+A header for each table provides sample dates and column headings.
+
+------------------------------------------------------------------
+Surface roughness and vegetation sampling dates and sites
+------------------------------------------------------------------
+Date                roughness site           vegetation site
+------------------------------------------------------------------
+22 February 1996    3,5,7,9,14,15,16,17,18
+28 March 1996       2,5,7,9,16,17,18         7,16,18 (a)
+13 April 1996                                7,16,18 (a)
+2-3 May 1996        2,5,7,9,16,17,18         2,5,7,9,16,17,18 (a)
+20 September 1996   2,4,5,7,9,12,16,17,18    2,4,5,7,9,12,16,17,18
+25 October 1996     2,4,5,7,9,12,16,17,18    2,4,5,7,9,12,16,17,18
+10-11 November 1996 2,4,5,7,9,12,16,17,18    2,4,5,7,9,12,16,17,18
+29 November 1996    2,4,5,7,9,12,16,17,18    2,4,5,7,9,12,16,17,18
+------------------------------------------------------------------
+(a)high and low biomass patches sampled.
+
+Files
+-----
+
+archive: (unix) otherdat.tar.Z; (DOS/windows) otherdat.zip; and 
+(Macintosh) otherdat.sit.
+
+ascii:
+roughnes.dat
+vegetat.dat
+neutron.pos

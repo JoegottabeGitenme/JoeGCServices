@@ -121,6 +121,24 @@ def test_parse_dem_real_tarrawarra_format_zero_is_nodata(real_format_dem_file):
     assert np.isnan(grid.elevation[1, 0])
 
 
+def test_parse_dem_against_real_downloaded_data():
+    """If the real tarrawar.dem (downloaded in Session 4) is present, parse
+    it end-to-end. This is `tarrawar.dem` (Tarrawarra local coordinates),
+    NOT `tarrautm.dem` (UTM) -- run_validation.py's own docstring explains
+    why the coordinate system matters (TDR/ksat data is in Tarrawarra
+    coordinates, not UTM)."""
+    real_path = Path(__file__).parent.parent / "data" / "tarrawar.dem"
+    if not real_path.exists():
+        pytest.skip("real data/tarrawar.dem not present (see README.md)")
+    grid = parse_dem(str(real_path))
+    assert grid.elevation.shape == (76, 146)
+    assert grid.cellsize == pytest.approx(5.0)
+    # Real elevations at this site are ~80-112m AHD per the paper.
+    valid = grid.elevation[~np.isnan(grid.elevation)]
+    assert valid.min() > 50.0
+    assert valid.max() < 150.0
+
+
 def test_parse_dem_real_format_takes_priority_over_esri_fallback(tmp_path):
     """If a file happens to parse under both header conventions, the
     confirmed-real Tarrawarra format must win -- it's the one actually
@@ -217,6 +235,42 @@ def test_parse_particle_file_hyphenated_depth_range(tmp_path):
     assert r.clay_pct == pytest.approx(35.0)
 
 
+def test_parse_particle_file_explicit_clay_column(tmp_path):
+    """Confirmed against the real file (Session 4): clay is usually given
+    explicitly as a 9th numeric column, not left to be computed as a
+    residual."""
+    content = "header\n10.0 20.0 0-10 5.0 20.0 15.0 10.0 20.0 30.0\n"
+    path = tmp_path / "particle.dat"
+    path.write_text(content)
+    records = parse_particle_file(str(path))
+    assert records[0].clay_pct == pytest.approx(30.0)
+
+
+def test_parse_particle_file_open_ended_depth_range(tmp_path):
+    """The bottommost sample at a site uses an open-ended depth range
+    ('>24') rather than a hyphenated one -- confirmed in the real file."""
+    content = "header\n10.0 20.0 >24 0.0 0.2 1.6 10.2 25.0 59.1\n"
+    path = tmp_path / "particle.dat"
+    path.write_text(content)
+    records = parse_particle_file(str(path))
+    assert records[0].depth_range_cm == ">24"
+    assert records[0].clay_pct == pytest.approx(59.1)
+
+
+def test_parse_particle_file_against_real_downloaded_data():
+    """If the real particle.dat (downloaded in Session 4) is present, parse
+    it end-to-end and sanity-check against known real values."""
+    real_path = Path(__file__).parent.parent / "data" / "particle.dat"
+    if not real_path.exists():
+        pytest.skip("real data/particle.dat not present (see README.md)")
+    records = parse_particle_file(str(real_path))
+    assert len(records) == 34
+    first = records[0]
+    assert first.x == pytest.approx(805.0)
+    assert first.depth_range_cm == "0-13"
+    assert first.clay_pct == pytest.approx(28.3)
+
+
 def test_parse_nmm_file_multiple_profiles(tmp_path):
     """Per Readme.nmm: header of unspecified length, then blank-line-
     separated date/time + depth/moisture blocks."""
@@ -271,14 +325,76 @@ def test_parse_nmm_file_no_profiles_raises(tmp_path):
         parse_nmm_file(str(path))
 
 
+def test_parse_nmm_file_real_date_format(tmp_path):
+    """Confirmed against the real files (Session 4): dates are 'DD-Mon-YY'
+    (e.g. '20-Sep-95'), not the 'dd/mm/yyyy' Readme.nmm documents."""
+    content = "header\n\n20-Sep-95\t11:10\n 15\t36.4\n 30\t36.7\n"
+    path = tmp_path / "tube_1.dat"
+    path.write_text(content)
+    profiles = parse_nmm_file(str(path))
+    assert profiles[0].date == "20-Sep-95"
+    assert profiles[0].time == "11:10"
+
+
+def test_parse_nmm_file_against_real_downloaded_data():
+    """If the real tube_1.dat (downloaded in Session 4) is present, parse
+    it end-to-end and confirm it hits the paper's documented 59 dates."""
+    real_path = Path(__file__).parent.parent / "data" / "nmm" / "tube_1.dat"
+    if not real_path.exists():
+        pytest.skip("real data/nmm/tube_1.dat not present (see README.md)")
+    profiles = parse_nmm_file(str(real_path))
+    assert len(profiles) == 59  # per geowatch.pdf Section 4.2.1
+    assert profiles[0].site == 1
+
+
 def test_parse_layer_file_with_and_without_b2(tmp_path):
-    """Per Readme.soil: B2 horizon columns are optional per-row ('[if present]')."""
-    content = "header\n10.0 20.0 20.0 45.0 silt\n30.0 40.0 15.0 40.0 clay 70.0 silt-clay\n"
+    """Per Readme.soil: B2 horizon columns are optional per-row. Confirmed
+    against the real file (Session 4): always 7 TAB-separated fields, with
+    a missing B2 depth/texture represented as an EMPTY field, not a
+    dropped column -- and depths can be open-ended ('>NN', core didn't
+    reach the horizon bottom), so depth_b1_cm/depth_b2_cm are kept as raw
+    text, not float."""
+    content = "header\n10.0\t20.0\t20.0\t45.0\tsilt\t\t\n30.0\t40.0\t15.0\t40.0\tclay\t70.0\tsilt-clay\n"
     path = tmp_path / "layer.dat"
     path.write_text(content)
     records = parse_layer_file(str(path))
     assert len(records) == 2
     assert records[0].depth_b2_cm is None
     assert records[0].texture_b2 is None
-    assert records[1].depth_b2_cm == pytest.approx(70.0)
+    assert records[1].depth_b2_cm == "70.0"
     assert records[1].texture_b2 == "silt-clay"
+
+
+def test_parse_layer_file_open_ended_depth_kept_as_text(tmp_path):
+    """A depth of '>73' (core didn't reach the horizon bottom) must be
+    preserved verbatim, not crash or get silently coerced."""
+    content = "header\n10.0\t20.0\t20.0\t>73\tclay\t\t\n"
+    path = tmp_path / "layer.dat"
+    path.write_text(content)
+    records = parse_layer_file(str(path))
+    assert records[0].depth_b1_cm == ">73"
+
+
+def test_parse_layer_file_multiword_texture_not_split(tmp_path):
+    """A texture value containing an internal space ('silt clay') must stay
+    one field -- this is exactly why the parser splits on tabs, not
+    generic whitespace."""
+    content = "header\n10.0\t20.0\t20.0\t45.0\tsilt clay\t>72\tclay\n"
+    path = tmp_path / "layer.dat"
+    path.write_text(content)
+    records = parse_layer_file(str(path))
+    assert records[0].texture_b1 == "silt clay"
+
+
+def test_parse_layer_file_against_real_downloaded_data():
+    """If the real layer.dat (downloaded in Session 4) is present, parse it
+    end-to-end and sanity-check against known real values."""
+    real_path = Path(__file__).parent.parent / "data" / "layer.dat"
+    if not real_path.exists():
+        pytest.skip("real data/layer.dat not present (see README.md)")
+    records = parse_layer_file(str(real_path))
+    assert len(records) == 125
+    first = records[0]
+    assert first.x == pytest.approx(805.0)
+    assert first.depth_b1_cm == "39"
+    assert first.texture_b1 == "clay"

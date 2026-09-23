@@ -1,0 +1,31 @@
+Copyright (c) 1995-1998 Centre for Environmental Applied Hydrology, The University of Melbourne.
+
+Site: Tarrawarra
+Data: Neutron access tube sites
+Collection dates: 3, 10, 11 August 1995
+Measurement method: Survey using Sokkia total station
+Coordinate System:  Tarrawarra coordinate (meters X and Y)
+Accuracy: +/- 10cm plan
+Record Format: x y site_number 
+Delimiter: white space
+
+1049.84   828.49   1
+1077.05   906.48   2
+1119.13   969.82   3
+1118.62  1011.15   4
+1116.23   878.23   5
+1155.39   838.22   6
+1207.11   931.56   7
+1222.93   885.56   8
+1237.58   834.59   9
+1324.95   901.92  10
+1274.75   922.65  11
+1227.75   975.44  12
+1417.47  1016.07  13
+1239.73  1009.27  14
+1024.61  1013.35  15
+ 988.97   953.14  16
+ 933.97   847.09  17
+ 864.09   951.02  18
+ 814.50   898.87  19
+ 856.01   909.77  20

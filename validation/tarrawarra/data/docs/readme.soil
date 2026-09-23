@@ -1,0 +1,139 @@
+Readme.soil
+-----------
+
+The TARRAWARRA DATA SET
+-----------------------
+
+COLLECTED BY:
+Dr Andrew Western and Dr Rodger Grayson
+Centre for Environmental Applied Hydrology
+Department of Civil and Environmental Engineering
+The University of Melbourne
+Parkville 3052 Australia
+
+fax:
++61 3 9344 6215
+
+email:
+a.western@engineering.unimelb.edu.au
+r.grayson@engineering.unimelb.edu.au
+
+
+*******************     Copyright     **************************
+
+    Copyright (c) 1995-1998 Centre for Environmental Applied 
+Hydrology, The University of Melbourne.
+
+Permission to use, copy and distribute this data and its 
+documentation, for non-commercial purposes, is hereby granted 
+without fee, provided that the above copyright notice appear in 
+all copies, that both that copyright notice and this permission 
+notice appear in supporting documentation, and that any 
+publication resulting from the use of this data cites: A W Western 
+and R B Grayson, "The Tarrawarra data set: Soil moisture patterns, 
+soil characteristics and hydrological flux measurements", Water 
+Resources Research, in review.
+
+Authors are requested to forward 2 copies of any publication 
+utilising this data set to the address above.
+
+Any problems with interpreting the data or requests for further 
+information should be addressed to Dr Andrew Western or Dr Rodger 
+Grayson.
+
+******************************************************************
+
+Acknowledgments
+---------------
+
+The Tarrawarra catchment is owned by the Cistercian Monks 
+(Tarrawarra) who have provided free access to their land and 
+willing cooperation throughout the project.  Funding for this work 
+was provided by: the Australian Research Council (project 
+A39531077); the Cooperative Research Centre for Catchment 
+Hydrology; Oesterreichische Nationalbank, Vienna (project 5309); 
+the Department of Industry, Science and Technology, International 
+Science and Technology Program; The University of Melbourne and 
+The Ian Potter Foundation.  The European Space Agency and the 
+National Aeronautical and Space Agency provided SAR data free of 
+charge.  Assistance in the field and with data processing has been 
+provided by Karen Moore.  Field assistance has also been provided 
+by Jenny Barkley, Alison Dedman, Judy Dunai, Sarah Ewing, Brian 
+Finlayson, Myriam Ghali, Tim Green, Veronique Gomendy, Tony 
+Ladson, Lee Heng, Natasha Heron, Neela Janakiramanan, Loic 
+Mangeot, Tom McMahon, Graham Moore, Joorst Overbeek, Michael 
+Roberts, Kate Smolenska, Hugh Turral, Mariska te Vaarwerk, Jeff 
+Walker, Fred Watson, Garry Willgoose, Mark Wood, and Rodger Young.  
+Garry Willgoose, Tom McMahon, Günter Blöschl, David Goodrich, Hugh 
+Turral, and Brian Finlayson have provided useful suggestions on 
+the field data collection. Veronique Gomendy and Hugh Turral 
+assisted with interpretation of the soil cores.  Graham Moore has 
+provided help with instrumentation on the DCV.  Fred Watson 
+provided advice on GIS and data management.
+
+------------------------------------------------------------------
+
+Well Permeamter Data
+--------------------
+
+Saturated hydraulic conductivity was measured using well 
+permeameter methods.  A 5.5 cm diameter well was used with a water 
+depth of 20-25cm.  Wells were augered under dry conditions.  
+Steady-state saturated hydraulic conductivity was calculated using 
+the Glover equation.  The hydraulic conductivity data is supplied 
+with a header and data records consisting of x coordinate, y 
+coordinate (m Tarrawarra coordinates), depth to well base (cm), 
+depth to water surface (cm), saturated hydraulic conductivity 
+(mm/hr).  The data delimiter is white space and the file is 
+ksat.dat.
+
+Particle Size Data
+------------------
+
+Particle size distributions were established using sieving, 
+followed by settling of the silt and clay fraction.  The data 
+consists of a table with the sample coordinate (m Tarrawarra 
+coordinates), the depth range (cm) sample was taken within, the 
+percentage of stone (>2mm diameter) as a fraction of the whole 
+sample, and the percentages of coarse sand (2-0.2mm), fine sand 
+(0.2-0.05mm), coarse silt (50-20 micrometers), fine silt (20-2 
+micrometers and clay (less than 2 micrometers) as a fraction of 
+the fine part of the sample (less than 2mm). A header provides 
+sampling and related information.  The delimeter is whitespace and 
+the file is particle.dat.
+
+Soil Profile Data
+-----------------
+
+Layer depths and textures were estimated from 75mm cores taken to 
+a depth of ~75cm.  The data provides the layer depth and texture 
+information.  Depths were estimated visually and are accurate to 
++-2 cm of the layer boundary selected.  Layer boundaries could be 
+defined to +-2cm for sharply defined boundaries but are less 
+accurate for gradual boundaries between layers.  The A horizon 
+consists of approximately 75% silt and 25% clay.  B horizons are 
+assigned to one of three qualitative texture categories based on 
+appearance and hand texture.  These three categories are silt 
+(approximately 75% silt and 25% clay), clay (greater than 
+approximately 50% clay) and silt clay which is intermediate 
+between silt and clay.  Note that these categories only 
+approximately coincide with standard soil science definitions.  
+The data consists of a header plus a table of coordinate 
+coordinate (m Tarrawarra coordinates), the depth to the bottom of 
+the A horizon (cm), the depth to the bottom of the B1 horizon 
+(cm), the texture category of the B1 horizon, the depth to the 
+bottom of the B2 horizon (cm)[if present], the texture category of 
+the B2 horizon [if present]. It is white space delimeted.  The 
+file is layer.dat.
+
+
+Files
+-----
+
+archive: (unix) otherdat.tar.Z; (DOS/windows) otherdat.zip; and 
+(Macintosh) otherdat.sit.
+
+ascii:
+ksat.dat
+partical.dat
+layer.dat

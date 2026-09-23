@@ -223,7 +223,7 @@
         <div class="status-box">
             <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
             <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
-            <p>The validation gate for any of this (Rung 1, described below) has not passed yet — it's currently blocked on acquiring a public research dataset, not on the physics itself. Until it passes, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+            <p>The validation gate for any of this (Rung 1, described below) has not passed yet. We now have the real data and have run the real test — it currently fails, for a specific, understood reason (see below), which we're treating as a stop sign rather than working around. Until it passes, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
         </div>
 
         <section id="problem">
@@ -320,8 +320,8 @@
                 <tbody>
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
-                        <td><span class="badge badge-high">High confidence</span></td>
-                        <td>Transcribed directly from the primary source and confirmed to be an exact match to our independent implementation — this is also the exact piece Rung&nbsp;1 validation below tests directly</td>
+                        <td><span class="badge badge-medium">Formula confirmed, terrain input not yet</span></td>
+                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain-wetness values it's fed, however, are not yet numerically compatible with the specific software the original paper used to compute them — see Rung&nbsp;1 below, where this exact gap is what's currently failing the test</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -398,20 +398,33 @@
                 Before any of this feeds a public rideability claim, it has to pass a validation ladder, in
                 order — each rung gates the next:
             </p>
-            <h3>Rung 1 — Reproduce a Published Result (blocked, not failed)</h3>
+            <h3>Rung 1 — Reproduce a Published Result (attempted with real data: failed, cause identified)</h3>
             <p>
                 A public research catchment in Australia (Tarrawarra; Western &amp; Grayson, 1998) has
                 thirteen days of dense, ground-truth soil moisture measurements alongside detailed terrain
                 and soil surveys — a clean, no-snow, no-weather-model test of exactly the redistribution
-                equation above. We built the complete pipeline to run this validation (data parsers, the
-                statistical comparison, pass/fail criteria matching the published target), and proved the
-                pipeline itself works correctly using synthetic data shaped like the real dataset.
+                equation above. We obtained the real dataset and ran the actual validation. It does not
+                pass yet, and we're not going to dress that up: every one of the 13 dates came out worse
+                than simply guessing the catchment-wide average, not a near-miss.
             </p>
             <p>
-                The actual historical dataset — freely available, unrestricted for research use — sits
-                behind a bot-detection service that blocked our automated download mid-session. The data
-                itself isn't the obstacle; a script triggering a security challenge is. This is a
-                to-do, not a dead end.
+                We don't think the equation itself is wrong. Checking each date individually, the
+                correlation between our terrain-wetness computation and the real measured pattern is
+                genuinely there (strongly positive on most dates) — and it gets weak on exactly the driest
+                two of the thirteen dates, which matches something the source paper itself says happens
+                physically in very dry or very wet conditions. What doesn't match is the <em>size</em> of
+                the correction: it's roughly 5-6&times; too large relative to what the published calibration
+                constant (k=13) assumes. The likely explanation is a boring one — the original paper computed
+                its terrain-wetness values with a specific piece of software (pyDEM) that we haven't yet
+                cross-checked our own implementation against, and different terrain-analysis tools are known
+                to disagree on absolute scale even when they agree on pattern.
+            </p>
+            <p>
+                The tempting shortcut here would be to just find a constant that makes the numbers match and
+                move on. We're deliberately not doing that — quietly re-tuning a published constant to pass
+                a validation test defeats the entire point of having the test. The honest status is: real
+                data, real result, real failure, specific known next step (adopt the same terrain-analysis
+                tool the original paper used). Nothing past this gate is being built until it's resolved.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>
