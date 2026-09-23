@@ -321,7 +321,7 @@
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
                         <td><span class="badge badge-medium">Formula confirmed, terrain input not yet</span></td>
-                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain-wetness values it's fed, however, are not yet numerically compatible with the specific software the original paper used to compute them — see Rung&nbsp;1 below, where this exact gap is what's currently failing the test</td>
+                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain-wetness values it's fed, however, still don't produce a correction the right size — we've now tried the same terrain-analysis software the original paper used and confirmed that alone isn't the explanation — see Rung&nbsp;1 below, where this exact gap is what's currently failing the test</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -414,17 +414,27 @@
                 two of the thirteen dates, which matches something the source paper itself says happens
                 physically in very dry or very wet conditions. What doesn't match is the <em>size</em> of
                 the correction: it's roughly 5-6&times; too large relative to what the published calibration
-                constant (k=13) assumes. The likely explanation is a boring one — the original paper computed
-                its terrain-wetness values with a specific piece of software (pyDEM) that we haven't yet
-                cross-checked our own implementation against, and different terrain-analysis tools are known
-                to disagree on absolute scale even when they agree on pattern.
+                constant (k=13) assumes.
+            </p>
+            <p>
+                Our first guess was a boring one — the original paper computed its terrain-wetness values
+                with a specific piece of software (pyDEM) we hadn't yet cross-checked our own implementation
+                against. So we installed it and checked, directly, on the real data. The result: pyDEM's
+                numbers are close enough to ours that switching to it barely moves the needle — a small,
+                genuine improvement in how well the pattern matches, but nowhere near enough to close a
+                5-6&times; gap. That specific guess turned out to be wrong, or at least not the whole story.
+                Two remaining candidates we haven't tested yet: the calibration might assume terrain data at
+                a coarser resolution than what we're using, or the reference software has some optional
+                smoothing settings we haven't enabled. Both are concrete, checkable things — not vague
+                hand-waving.
             </p>
             <p>
                 The tempting shortcut here would be to just find a constant that makes the numbers match and
-                move on. We're deliberately not doing that — quietly re-tuning a published constant to pass
-                a validation test defeats the entire point of having the test. The honest status is: real
-                data, real result, real failure, specific known next step (adopt the same terrain-analysis
-                tool the original paper used). Nothing past this gate is being built until it's resolved.
+                move on. We're deliberately not doing that, twice now — testing a real hypothesis and having
+                it not pan out is a normal, honest part of debugging, and quietly re-tuning a published
+                constant to pass a validation test would defeat the entire point of having the test. The
+                honest status is: real data, real result, real failure, one hypothesis tested and ruled out,
+                two more identified. Nothing past this gate is being built until it's resolved.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>

@@ -169,6 +169,63 @@ def fill_pits_and_flats(dem: np.ndarray, epsilon: float = 1e-4) -> np.ndarray:
     return filled
 
 
+def compute_twi_pydem(dem: np.ndarray, cellsize: float, scaled: bool = False) -> np.ndarray:
+    """Topographic wetness index computed via pyDEM (Ueckermann et al. 2018,
+    github.com/creare-com/pydem) -- the specific tool the GeoWATCH paper
+    (Eylander et al. 2023, Section 2.2) states it used to compute TWI, as
+    opposed to `compute_twi` above (this module's own from-scratch D8
+    implementation, never independently verified against pyDEM's numbers).
+
+    **Session 5 finding**: pyDEM uses D-infinity flow routing (Tarboton
+    1997) rather than D8, and its formula differs slightly (`ln(uca / (mag
+    + twi_min_slope))` with an additive slope floor, vs. this module's
+    `ln(a / max(tan_beta, floor))` with a clamping floor). Cross-checked
+    against the real Tarrawarra DEM: pyDEM's TWI has *similar* (not
+    dramatically different) standard deviation to `compute_twi`'s own
+    output (1.43 vs. 1.28), and per-date correlation with real observed
+    soil moisture anomalies is modestly BETTER using pyDEM (see
+    validation/tarrawarra/README.md) -- but this alone does *not* close the
+    ~5x gap between the design doc's k=13 and the locally best-fit
+    coefficient. Kept here because it's still the more faithful
+    reproduction of the paper's own method, and because ruling out "which
+    flow-routing algorithm" was a necessary step regardless of whether it
+    alone explains the discrepancy.
+
+    Args:
+        dem: elevation grid, NaN for nodata (same convention as
+            `compute_twi`).
+        cellsize: grid cell size in meters (assumed square cells).
+        scaled: if True, return pyDEM's own stored `self.twi` value, which
+            is the natural-log TWI multiplied by 10 ("for better integer
+            resolution when storing" -- pyDEM's own module docstring). If
+            GeoWATCH's k=13 was calibrated against pyDEM's saved GeoTIFF
+            rasters directly (as opposed to calling `calc_twi()` and using
+            its return value), this is the version that would match. False
+            (default) returns the plain, unscaled ln(uca/slope) value.
+
+    Raises:
+        ImportError: if the `pydem` package isn't installed. This is a
+            deliberately optional, lazily-imported dependency -- heavier
+            (rasterio, Cython) than anything else in this package, and
+            only needed for this specific cross-check / validation path,
+            not for the live HRRR-forced pipeline.
+    """
+    try:
+        from pydem.dem_processing import DEMProcessor
+    except ImportError as e:
+        raise ImportError(
+            "pyDEM is required for compute_twi_pydem but is not installed. "
+            "Install with `pip install pydem` (requires a working C/Cython "
+            "build toolchain for its upstream-contributing-area extension)."
+        ) from e
+
+    dp = DEMProcessor(elev=dem.copy(), dX=float(cellsize), dY=float(cellsize))
+    dp.calc_slopes_directions()
+    dp.calc_uca()
+    unscaled = dp.calc_twi()
+    return dp.twi.copy() if scaled else unscaled.copy()
+
+
 def compute_twi(dem: np.ndarray, cellsize: float) -> np.ndarray:
     """Topographic wetness index: lambda = ln(a / tan(beta)).
 

@@ -52,8 +52,24 @@ at all. Using the wrong DEM produces silent, total interpolation failure
 is what caught this, not a crash, so watch that warning if this ever
 regresses.
 
+**Session 5: `--twi-engine`**. Session 4's diagnosis (implied k~74 vs. the
+paper's stated k=13) hypothesized this module's own from-scratch D8 TWI
+implementation was numerically incompatible with pyDEM (Ueckermann et al.
+2018), the specific tool the paper's Section 2.2 says it used. Directly
+testing that hypothesis (`--twi-engine pydem`, requires `pip install
+pydem`): pyDEM's D-infinity TWI has similar (not dramatically different)
+standard deviation to this module's D8 TWI, and per-date correlation with
+real observed anomalies is only modestly better -- switching flow-routing
+algorithms alone does NOT close the ~5x gap. See
+physics/terrain.py::compute_twi_pydem's docstring and
+validation/tarrawarra/README.md for the full comparison. Kept as an option
+since it's still the more paper-faithful method and rules out one concrete
+hypothesis, even though it isn't sufficient by itself.
+
 Usage:
     python3 run_validation.py --data-dir ./data
+    python3 run_validation.py --data-dir ./data --twi-engine pydem
+    python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-scaled  # pyDEM's stored (x10) TWI
     python3 run_validation.py --data-dir ./data --with-flux-correction  # not yet implemented, see --help
 """
 
@@ -70,7 +86,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "services" / "trail
 
 from parsers import parse_dem, parse_ksat_file, parse_tdr_file  # noqa: E402
 from physics.redistribution import redistribute  # noqa: E402
-from physics.terrain import compute_twi  # noqa: E402
+from physics.terrain import compute_twi, compute_twi_pydem  # noqa: E402
 
 TDR_FILENAMES = [
     "sm270995.tdr",
@@ -117,12 +133,27 @@ def check_data_available(data_dir: Path) -> None:
         sys.exit(1)
 
 
-def build_terrain_predictors(dem_path: Path, ksat_path: Path):
+def build_terrain_predictors(
+    dem_path: Path, ksat_path: Path, twi_engine: str = "builtin", twi_scaled: bool = False
+):
     """Compute TWI on the DEM grid, then return a function that interpolates
     (TWI, ln(Ks)) to arbitrary (x, y) points -- since TDR measurement points
-    don't sit exactly on DEM grid nodes."""
+    don't sit exactly on DEM grid nodes.
+
+    twi_engine: "builtin" (this repo's own D8 implementation,
+        physics.terrain.compute_twi) or "pydem" (Ueckermann et al. 2018 --
+        the tool the GeoWATCH paper itself used; requires `pip install
+        pydem`). See physics/terrain.py::compute_twi_pydem's docstring.
+    twi_scaled: only meaningful for twi_engine="pydem" -- use pyDEM's own
+        stored (x10) TWI value instead of the plain unscaled ln() value.
+    """
     grid = parse_dem(str(dem_path))
-    twi_grid = compute_twi(grid.elevation, grid.cellsize)
+    if twi_engine == "builtin":
+        twi_grid = compute_twi(grid.elevation, grid.cellsize)
+    elif twi_engine == "pydem":
+        twi_grid = compute_twi_pydem(grid.elevation, grid.cellsize, scaled=twi_scaled)
+    else:
+        raise ValueError(f"Unknown twi_engine {twi_engine!r} -- must be 'builtin' or 'pydem'")
 
     nrows, ncols = grid.elevation.shape
     # Grid cell centers in the DEM's coordinate system. Row 0 = north edge
@@ -231,6 +262,23 @@ def main():
         "up yet. Passing this flag currently exits with an explanatory error "
         "rather than silently falling back to Eq. 1 only.",
     )
+    parser.add_argument(
+        "--twi-engine",
+        choices=["builtin", "pydem"],
+        default="builtin",
+        help="TWI computation to use: 'builtin' (this repo's own D8 "
+        "implementation) or 'pydem' (Ueckermann et al. 2018 -- the tool "
+        "the GeoWATCH paper itself used; requires `pip install pydem`). "
+        "See module docstring's Session 5 note for what this test found.",
+    )
+    parser.add_argument(
+        "--twi-scaled",
+        action="store_true",
+        help="Only meaningful with --twi-engine pydem: use pyDEM's own "
+        "stored TWI value (natural-log TWI x10, 'for better integer "
+        "resolution when storing' per pyDEM's own docstring) instead of "
+        "the plain unscaled ln() value.",
+    )
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
 
@@ -254,9 +302,17 @@ def main():
     check_data_available(data_dir)
 
     predictors_at, twi_grid, log_ks_mean = build_terrain_predictors(
-        data_dir / "tarrawar.dem", data_dir / "ksat.dat"
+        data_dir / "tarrawar.dem",
+        data_dir / "ksat.dat",
+        twi_engine=args.twi_engine,
+        twi_scaled=args.twi_scaled,
     )
     twi_mean = float(np.nanmean(twi_grid))
+    print(
+        f"TWI engine: {args.twi_engine}"
+        + (" (scaled x10)" if args.twi_scaled else ""),
+        file=sys.stderr,
+    )
 
     baseline_rmses = []
     model_rmses = []

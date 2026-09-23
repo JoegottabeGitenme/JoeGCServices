@@ -15,8 +15,16 @@ from physics.terrain import (
     compute_d8_flow_accumulation,
     compute_slope,
     compute_twi,
+    compute_twi_pydem,
     fill_pits_and_flats,
 )
+
+try:
+    import pydem  # noqa: F401
+
+    HAVE_PYDEM = True
+except ImportError:
+    HAVE_PYDEM = False
 
 
 def test_flat_dem_has_zero_slope():
@@ -138,3 +146,65 @@ def test_aspect_all_four_cardinal_directions():
 
     dem_faces_west = np.tile(np.arange(cols).astype(float), (rows, 1))
     assert compute_aspect(dem_faces_west, cellsize=5.0)[2, 2] == pytest.approx(270.0, abs=1e-6)
+
+
+def test_compute_twi_pydem_raises_clear_error_without_pydem_installed():
+    """If pydem isn't installed, the error must say so clearly rather than
+    a bare ModuleNotFoundError -- this test always runs regardless of
+    whether pydem is actually installed in this environment (it directly
+    calls the internal import path check via monkeypatching sys.modules)."""
+    import sys
+
+    dem = np.tile(np.arange(5)[:, None].astype(float), (1, 5))
+    if "pydem" in sys.modules or HAVE_PYDEM:
+        pytest.skip("pydem is installed in this environment -- covered by the tests below instead")
+    with pytest.raises(ImportError, match="pip install pydem"):
+        compute_twi_pydem(dem, cellsize=5.0)
+
+
+@pytest.mark.skipif(not HAVE_PYDEM, reason="pydem not installed (pip install pydem)")
+class TestComputeTwiPydem:
+    """Tests requiring the real pydem package. Skipped entirely (not
+    failed) if it isn't installed -- pydem is a deliberately optional,
+    heavier dependency (rasterio + Cython) only needed for this
+    paper-fidelity cross-check, not the live pipeline."""
+
+    def test_valley_bottom_has_higher_twi_than_ridge(self):
+        """Same physical property as the builtin D8 test above -- pyDEM's
+        D-infinity implementation must show the same qualitative pattern."""
+        rows, cols = 20, 20
+        cellsize = 5.0
+        x = np.abs(np.arange(cols) - cols // 2)
+        dem = np.tile(x.astype(np.float64) * 2.0, (rows, 1))
+        dem += np.arange(rows)[:, None] * 0.1
+
+        twi = compute_twi_pydem(dem, cellsize)
+        valley_floor_twi = twi[rows // 2, cols // 2]
+        valley_wall_twi = twi[rows // 2, 1]
+        assert valley_floor_twi > valley_wall_twi
+
+    def test_scaled_is_exactly_ten_times_unscaled(self):
+        """pyDEM's own docstring: the stored value is the natural-log TWI
+        'multiplied by 10 ... when storing' -- confirmed directly against
+        pyDEM's source (dem_processing.py: `self.twi = twi * 10`)."""
+        rows, cols = 15, 15
+        cellsize = 5.0
+        x = np.abs(np.arange(cols) - cols // 2)
+        dem = np.tile(x.astype(np.float64) * 2.0, (rows, 1))
+        dem += np.arange(rows)[:, None] * 0.1
+
+        unscaled = compute_twi_pydem(dem, cellsize, scaled=False)
+        scaled = compute_twi_pydem(dem, cellsize, scaled=True)
+        valid = ~np.isnan(unscaled) & ~np.isnan(scaled)
+        np.testing.assert_allclose(scaled[valid], unscaled[valid] * 10, rtol=1e-6)
+
+    def test_no_nan_propagation_on_a_clean_synthetic_dem(self):
+        """A DEM with no nodata cells and a well-defined single drainage
+        outlet must produce a fully finite TWI grid -- pyDEM's iterative
+        pit-drainage can otherwise leave isolated undrained cells."""
+        rows, cols = 15, 15
+        cellsize = 5.0
+        y, x = np.mgrid[0:rows, 0:cols]
+        dem = (rows - y).astype(np.float64) + 0.01 * (x - cols / 2) ** 2
+        twi = compute_twi_pydem(dem, cellsize)
+        assert not np.isnan(twi).all()

@@ -8,3 +8,10 @@ python-dotenv>=1.0
 
 # dev/test only
 pytest>=8.0
+
+# optional -- only needed for physics.terrain.compute_twi_pydem, a
+# paper-fidelity cross-check used by validation/tarrawarra/run_validation.py
+# --twi-engine pydem. Not needed by the live pipeline. Heavier than
+# everything else here (rasterio + a Cython build step), so kept optional
+# rather than a hard requirement. Install with `pip install pydem`.
+# pydem>=1.2

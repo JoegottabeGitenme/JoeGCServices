@@ -509,6 +509,82 @@ tool the paper's own authors used.
 
 ---
 
+## Session 5 summary (2026-09, continued) — pyDEM tested directly: hypothesis ruled out (mostly)
+
+Session 4 ended with a specific, testable hypothesis: our `compute_twi()`
+(from-scratch D8) is numerically incompatible with pyDEM (Ueckermann et
+al. 2018), which the paper's Section 2.2 states it used, and that
+incompatibility explains the ~5-6x magnitude gap between our best-fit `k`
+and the paper's stated `k=13`. This session installed pyDEM and tested
+that hypothesis directly rather than leaving it as a plausible-sounding
+guess.
+
+### What was built
+
+- `physics/terrain.py::compute_twi_pydem()` — computes TWI via pyDEM's
+  `DEMProcessor` (in-memory numpy array input, no GeoTIFF I/O needed),
+  with a `scaled` flag for pyDEM's own stored `x10` TWI value vs. its
+  plain unscaled return value.
+- `run_validation.py --twi-engine {builtin,pydem}` and `--twi-scaled` —
+  lets the harness use either TWI implementation without duplicating the
+  rest of the pipeline.
+- `pydem` added to `services/trail-physics/requirements.txt` as a
+  commented-out **optional** dependency (heavier than everything else in
+  that file — rasterio + a Cython build step — and not needed by the live
+  pipeline, only this cross-check).
+- New tests in `tests/test_terrain.py` (skip-if-not-installed pattern):
+  physical-property parity with the builtin D8 test, the exact x10 scaling
+  relationship (confirmed directly against pyDEM's own source), and a
+  clean-DEM no-NaN-propagation check.
+
+### The actual result: the hypothesis was wrong, or at least insufficient
+
+|                        | builtin (D8) | pyDEM (D-infinity) | pyDEM, x10-scaled |
+|---|---|---|---|
+| Overall Eq. 1 RMSE     | 0.1127       | 0.1089              | 0.9581             |
+| Dates improved         | 0/13         | 0/13                | 0/13               |
+| Implied best-fit k     | ~74          | ~64                 | (ruled out by construction) |
+
+Switching from D8 to pyDEM's D-infinity flow routing produced only a
+marginal improvement — both in RMSE and in per-date correlation with real
+observed anomalies (a genuine, small win, e.g. `sm101196`: 0.515 → 0.588)
+— but nowhere near enough to close a 5-6x magnitude gap. The x10-scaled
+variant (in case a saved GeoWATCH raster, rather than the API return
+value, is what `k=13` was calibrated against) is dramatically *worse*,
+exactly as basic dimensional reasoning predicts (a 10x larger correction
+term) — this specific sub-hypothesis is now decisively ruled out, not just
+unlikely.
+
+**Two things ruled out by direct algebra this session, not empirical
+testing** (because the math makes empirical testing pointless): Ks's
+measurement units cancel out of Eq. 1's `ln(Ks)` deviation term regardless
+of unit choice (any unit conversion is a multiplicative constant on Ks,
+hence additive on `ln(Ks)`, which washes out against the domain mean); the
+same argument rules out "specific catchment area" normalization
+convention (per-unit-contour-length vs. raw area) as an explanation.
+
+**Two candidates that remain, neither yet tested**:
+1. A resolution-scale mismatch — `k=13` might assume TWI computed on a
+   coarser grid than the full 5m DEM (coarser grids reduce TWI's spread,
+   which is the direction needed).
+2. pyDEM's non-default `apply_twi_limits`/`uca_saturation_limit` capping
+   options, which compress the upper tail of the TWI distribution and are
+   off by default in what this session ran.
+
+**What was deliberately NOT done, again**: fit a local `k` (64-74) to pass
+the gate. `k=13` remains untouched in every tested configuration.
+
+### What this session did NOT do
+
+- **Did not pass Rung 1** — still FAIL, with the leading hypothesis from
+  the prior session now tested and found insufficient by itself.
+- **Did not test the resolution-scale or capping-options hypotheses** —
+  identified as the next concrete steps, not attempted.
+- **Did not revisit NMM or `--with-flux-correction`** — both remain moot
+  until Rung 1's root cause is actually resolved.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

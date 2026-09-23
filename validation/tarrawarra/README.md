@@ -139,15 +139,17 @@ All of the above are now covered by dedicated tests in
 gracefully if the data isn't present, so CI doesn't require the data to be
 committed to pass -- though it is committed here).
 
-### Why it fails: TWI is structurally correct but not numerically compatible with the paper's own tool
+### Why it fails: still unresolved -- pyDEM was tried directly and it is NOT the (whole) answer
 
 With all five bugs above fixed, Eq. 1's redistribution makes every single
 date's prediction **worse** than the site-mean baseline (0.1127 vs.
 0.0370 overall) -- not a near-miss, a consistent ~3x degradation across
-every date. Diagnosis, not a guess:
+every date.
+
+**What is confirmed real, not a guess:**
 
 - **The correlation structure is real.** Checking `corr(TDR anomaly, TWI
-  anomaly)` per date shows values from 0.07 up to 0.62, strongly positive
+  anomaly)` per date shows values from 0.07 up to 0.68, strongly positive
   for most dates -- and the two weakest dates (`sm140296`, `sm230296`,
   both February/late-summer, driest of the 13) match the paper's *own*
   described behavior almost exactly: "the only times that topography does
@@ -156,37 +158,70 @@ every date. Diagnosis, not a guess:
   real, physically-correct signal.
 - **The magnitude is wrong by roughly 5-6x.** A least-squares fit of the
   TWI-anomaly-to-observed-anomaly relationship across all 13 dates implies
-  an effective `k` of about 74, not the paper's stated 13 -- meaning our
-  `compute_twi()` (D8 flow accumulation, natural-log TWI) produces
-  deviations roughly 5-6x larger than whatever `k=13` was actually
-  calibrated against.
-- **The paper explains why this is plausible, not a bug in the formula
-  itself**: Section 2.2 states the TWI values were computed using
-  **pyDEM** (Ueckermann et al. 2018, `github.com/creare-com/pydem`), "a
-  Python package developed specifically for this project." It also states
-  (Section 2.2.1) that "the GeoWATCH calculation of the TWI was modified
-  to use volumetric soil moisture instead of relative soil moisture" --
-  language that most likely describes the overall Eq. 1 output
-  calibration (STOPMODEL nominally predicts a relative moisture deficit;
-  GeoWATCH's `k=13` recalibrates the whole relationship to output absolute
-  volumetric theta directly), not a redefinition of the TWI formula itself
-  -- but the paper does not give pyDEM's exact flow-accumulation algorithm
-  or normalization inline, and our `compute_twi()` is a from-scratch D8
-  implementation that was never checked against pyDEM's actual numerical
-  output.
+  an effective `k` of about 74, not the paper's stated 13.
 
-**What was deliberately NOT done**: fit a local `k` (~74) to make this
-gate pass. That would defeat the entire purpose of Rung 1 -- reproducing a
-literature-published, independently-calibrated constant, not curve-fitting
-our own implementation to hit a target number. `k=13` stays as documented.
+**Session 4 hypothesized** this was because `compute_twi()`'s from-scratch
+D8 implementation was numerically incompatible with **pyDEM** (Ueckermann
+et al. 2018), the specific tool Section 2.2 of the paper says it used.
+**Session 5 tested this directly** -- installed pyDEM, computed TWI
+through it (`physics/terrain.py::compute_twi_pydem`, run via
+`--twi-engine pydem`) on the real Tarrawarra DEM, and re-ran the full
+harness. Result:
 
-**Concrete next step for a future session**: install pyDEM
-(`github.com/creare-com/pydem`, open source, citable, literally the tool
-the paper's own authors used) and compute TWI through it instead of
-`physics/terrain.py`'s own D8 implementation, to get numerically
-compatible results with whatever scale `k=13` assumes. This is a
-well-scoped, non-speculative fix -- not "try a different constant until it
-works."
+```
+                     builtin (D8)   pydem (D-infinity)   pydem, x10-scaled
+Overall Eq. 1 RMSE       0.1127            0.1089              0.9581
+Dates improved            0/13              0/13                0/13
+```
+
+**The hypothesis was wrong, or at least insufficient.** pyDEM's TWI has
+similar standard deviation to `compute_twi()`'s own output (1.43 vs. 1.28
+-- not the dramatic difference the ~5-6x gap would need), and per-date
+correlation with real observed anomalies is only modestly better (e.g.
+`sm230296`: 0.084 -> 0.132; `sm101196`: 0.515 -> 0.588) -- a genuine,
+worthwhile improvement, but the implied-k gap barely moves (74 -> 64,
+both far from 13). The x10-scaled variant (pyDEM's own stored value, in
+case that's what a saved GeoWATCH raster would contain) is dramatically
+*worse* (0.958), as basic dimensional reasoning predicts (a 10x larger
+correction term, decisively ruled out).
+
+**What this means**: switching flow-routing algorithms (D8 -> D-infinity)
+does not close the gap. The two candidates that remain most plausible,
+neither yet tested:
+
+1. **A resolution-scale mismatch.** `k=13` might be calibrated against TWI
+   computed on a coarser "high-resolution" grid (e.g. 30m) than the full
+   5m DEM used here -- coarser grids average out small-scale variability
+   and would shrink TWI's spread, which is the direction needed (smaller
+   deviations -> smaller k needed for the same correction magnitude).
+   Untested: would require regridding the DEM and repeating this exact
+   comparison at 2-3 coarser resolutions.
+2. **pyDEM's non-default options.** `apply_twi_limits` and
+   `uca_saturation_limit=32` are both off by default in the version we
+   ran; a production GeoWATCH configuration might enable them, compressing
+   the upper tail of the TWI distribution. Untested.
+
+Two things ruled out by direct algebra, not tested empirically (no point):
+Ks's measurement units (mm/hr vs. any other unit) cancel out of Eq. 1's
+`(ln(Ks) - ln(Ks)-bar)` deviation term regardless of choice (a unit
+conversion is a uniform multiplicative constant on Ks, hence an additive
+constant on ln(Ks), which washes out against the mean); the same argument
+rules out "specific catchment area" normalization conventions (per-unit-
+contour-length vs. raw area) as an explanation, for the same reason.
+
+**What was deliberately NOT done**: fit a local `k` (64-74, depending on
+TWI engine) to make this gate pass. That would defeat the entire purpose
+of Rung 1 -- reproducing a literature-published, independently-calibrated
+constant, not curve-fitting our own implementation to hit a target number.
+`k=13` stays as documented, unmodified, in every configuration tested.
+
+**How to reproduce any of the above**:
+```bash
+pip install pydem   # optional, heavier dep (rasterio + Cython)
+python3 run_validation.py --data-dir ./data                              # builtin D8
+python3 run_validation.py --data-dir ./data --twi-engine pydem           # pyDEM, unscaled
+python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-scaled  # pyDEM, x10
+```
 
 ### If the DEM parser fails
 
