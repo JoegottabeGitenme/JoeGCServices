@@ -270,6 +270,149 @@ report-separability signal arrives.
 
 ---
 
+## Session 3 summary (2026-09, continued) — the primary source, finally
+
+The user supplied `geowatch.pdf` (Eylander et al. 2023) directly, resolving
+Session 2's biggest gap: two of the seven governing equations had been
+built without ever seeing the paper that specifies them. This session did
+a full equation-by-equation audit and fixed what needed fixing.
+
+### Equation-by-equation audit result
+
+| Eq. | What the paper says | Session 2's version | Verdict |
+|---|---|---|---|
+| 1 (static disaggregation) | `θ* = θws − (1/k)(λ̄−λ) − (1/k)(ln Ks̄ − ln Ks)`, k=13 | Identical | ✅ exact match, no change |
+| 3 (total flux) | `F(θ) = −Et(θ) − Edir(θ)` | Sign convention differed trivially | ✅ fine, `f_theta()` added matching Eq. 3's sign |
+| 4 (vegetation transpiration) | Chen et al. (1996) form | Identical | ✅ exact match, no change |
+| 5 (direct soil evaporation) | `[Rd+(1−Rd)ι]·Ep·(1−σf)·(θ−θref)/(θs−θref)`, Rd=0.15, **unclipped ratio, verbatim** | Ek et al. (2003) form substituted, radiative prefactor missing entirely | ⚠️ two real gaps — see below |
+| 6 (solar view factor ι) | daily integral of sun-surface alignment over the sun's azimuth sweep, sunrise to sunset | Not implemented (only instantaneous incidence existed) | ❌ missing, now built |
+| 2 (flux-difference correction) | `θ = θ* + Δt·(F(θ*) − F'(θws))`, F' uses weather-scale-**averaged** soil properties | Exponential anomaly decay (physically similar direction, algebraically unrelated) | ❌ replaced entirely |
+| 7 (relaxation timestep) | `Δt = δts·(θws−θref)/F(θs)`, `δts = Cts·{1 if θ*<θs, else e^−(θ*−θs)/θs}`, Cts=0.1, clipped [0,30 days] | Session 2 misassigned Rd (Eq. 5's diffuse-light fraction) as a timescale coefficient and invented a different form | ❌ replaced entirely |
+
+**On Eq. 5's discrepancy**: the design doc (written without the paper)
+predicted the printed ratio must be a transcription error and should
+really be the well-established Ek-2003 form. Having read the paper: it
+really does print `(θ−θref)/(θs−θref)`, verbatim, unclipped — this is not
+a transcription error between the paper and the doc, it's genuinely what
+the paper's text says (whether that's itself an error in the paper is
+unresolvable from the text alone). Decision made with the user: implement
+**both** forms (`form="ek2003"` default, `form="geowatch"` paper-literal)
+in `flux.py`, `relaxation.py`, and let the Tarrawarra harness empirically
+determine which one reproduces the published RMSE, once real data is
+available.
+
+**Discovered property, not a bug**: `compute_delta_t`'s Eq. 7 evaluates
+`F(theta_s)` — the flux AT saturation. Both Eq. 5 forms give
+beta/ratio = 1.0 exactly at `theta=theta_s` whenever `theta_s > theta_ref`
+(the normal case) — `ek2003` clips there, `geowatch`'s ratio is trivially 1
+by construction. So `Δt` itself is form-independent; the two forms only
+diverge in Eq. 2's `F(theta*)`/`F'(theta_ws)` terms, evaluated away from
+saturation. Documented and asserted via a dedicated test
+(`test_compute_delta_t_is_form_independent_when_theta_s_exceeds_theta_ref`)
+so a future change that breaks this invariant is caught.
+
+**One genuine open question the paper doesn't resolve**: for Eq. 2's units
+to work out (`theta` dimensionless, `delta_t` in days), `F` must already be
+a volumetric-fraction-per-day rate, not FAO-56's depth-per-time (mm/day) —
+the paper never states the depth-normalization this requires. Flagged in
+`relaxation.py`'s module docstring as an open calibration question, on the
+same footing as k=13 — something only empirical reproduction against
+Tarrawarra can pin down.
+
+**A second, larger methodology question, also newly discovered**: Section
+2.2 describes the model as "a two-stage approach" (Eq. 1 static
+disaggregation + Eq. 2/7 flux correction) used together "to generate the
+higher resolution products," and Section 4.2.1's Tarrawarra validation
+text doesn't state whether the published **0.0321 m3/m3** target used
+stage 1 alone or the full two-stage pipeline. `run_validation.py`'s Rung 1
+gate currently validates stage 1 (Eq. 1) only — the fully-specified part
+the design doc scoped Rung 1 around — and now says so explicitly in its
+own docstring, rather than silently assuming the published number is
+Eq.-1-only. If Eq. 1 alone doesn't land on 0.0321 once real data is
+available, that is not necessarily proof Eq. 1 is wrong.
+
+### New validation targets discovered (not previously known)
+
+The paper's Section 4.2.1/4.2.2 documents two additional published
+comparisons beyond the 13-date TDR result the design doc already knew
+about:
+
+- **NMM (neutron moisture meter)**: same Tarrawarra site, 20 locations per
+  date (vs. ~508 for TDR — worse spatial coverage) but **59 dates** (vs.
+  13) — denser temporal check. Published target: RMSE 0.040 → 0.030
+  m3/m3, improving on 56/59 dates (95%).
+- **Shale Hills catchment** (a second, independent, publicly-available
+  site): 74 dates, published target RMSE 0.060 → 0.054, 55/74 dates
+  improved (74%). Not yet pursued this session (Tarrawarra alone already
+  hit the WAF blocker); noted here as a future third validation target.
+
+### What shipped this session
+
+- `physics/flux.py` rewritten: `radiative_factor()`, `geowatch_soil_moisture_ratio()`
+  (new, unclipped-by-design), `direct_soil_evaporation()`/`total_actual_et()`
+  updated to dispatch on `form=`, `f_theta()` new (Eq. 3). 24 tests.
+- `physics/radiation.py` extended: `solar_view_factor()` (Eq. 6), numerically
+  integrating the sun's daily azimuth sweep, normalized so flat ground gives
+  ι=1.0 by construction (an interpretive normalization choice — the paper
+  doesn't state one explicitly). 7 tests, manually sanity-checked against
+  physical intuition (winter north-facing slopes stay heavily shadowed,
+  ι≈0.11 vs. south-facing ≈1.84).
+- `physics/relaxation.py` **completely rewritten**: true Eq. 2/7 (piecewise
+  `delta_ts`, `SoilProperties` dataclass kept as two separate required
+  fine-vs-coarse arguments specifically so that distinction can't be
+  silently dropped, per the parameter-matching discipline
+  Section 5.1 already flagged). 15 tests, including the two discovered
+  properties above (veg-split invariance under `ek2003`; delta_t
+  form-independence at saturation).
+- `physics/__init__.py`'s confidence-level docstring updated to reflect
+  transcribed-not-reconstructed status for all modules.
+- `validation/tarrawarra/parsers.py`: **DEM header format corrected against
+  a real downloaded file** (see below) — was an unconfirmed ESRI-grid
+  guess, now a confirmed `north:`/`south:`/`east:`/`west:`/`rows:`/`cols:`
+  format with derived cellsize (cross-checked two ways, both give 5.0m).
+  New `parse_nmm_file()` (Eq.-7-motivated denser validation target, format
+  transcribed from `Readme.nmm`, tested against a synthetic fixture only —
+  not yet against a real file).
+- `run_validation.py`: `--with-flux-correction` added as an honest,
+  documented stub (exits with a clear explanation of exactly what
+  additional Tarrawarra inputs and modeling choices it needs), rather than
+  a fabricated implementation of a pedotransfer function the paper doesn't
+  specify.
+
+### A real-data acquisition attempt, partially successful
+
+Retrying the Tarrawarra fetch this session (via this environment's
+WebFetch tool rather than direct `curl`, which is immediately WAF-blocked)
+found a brief window where the WAF let two real files through:
+`sundry/ksat.dat` (fetched completely, 42 rows, now committed at
+`validation/tarrawarra/data/ksat.dat` and tested against directly) and
+`topodata/tarrautm.dem`'s 7-line header (kept and used to fix the parser;
+the 8000-value elevation grid body was fetched too but failed a post-fetch
+integrity check — expected 8000 values, found 7878 with malformed rows —
+and was discarded rather than committed, since hand-reproducing thousands
+of numbers through a chat-mediated fetch tool isn't reliable enough to
+trust as scientific ground truth, and a silently-wrong DEM would be worse
+than an honestly-missing one). See `validation/tarrawarra/README.md` for
+the full story. The 13 TDR files and the DEM body are still needed via
+manual browser download to actually run Rung 1.
+
+### What this session did NOT do
+
+- **Still did not pass Rung 1** — still blocked on the TDR files and DEM
+  body specifically (not on the physics, which is now transcribed directly
+  from the primary source rather than reconstructed).
+- **Did not implement `--with-flux-correction`** — deliberately left as a
+  documented stub rather than fabricating a pedotransfer function and Ep
+  source the paper doesn't specify for Tarrawarra.
+- **Did not wire the NMM or Shale Hills targets into `run_validation.py`**
+  — parser exists for NMM (untested against real data), no harness logic
+  yet for either.
+- **Did not resolve whether the published 0.0321 target includes stage 2**
+  — flagged as a real, currently-unresolvable-from-the-paper-text
+  ambiguity rather than silently picking an assumption.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

@@ -15,14 +15,35 @@ baselines:
   2. The Eq. 1 redistribution -- the design doc's target is RMSE ~= 0.0321
      %V/V, beating the site mean, improving on >= 9 of the 13 dates.
 
-**Requires the actual Tarrawarra data files, which this session could not
-download** -- see README.md for exactly why (a WAF that only started
-blocking mid-session) and how to supply them. This script will refuse to
-run with a clear message if the data directory is empty, rather than
-silently produce no output.
+**Session 3 methodology caveat, worth stating plainly**: having now read
+the full GeoWATCH paper (`geowatch.pdf`), Section 2.2 describes the model
+as "a two-stage approach" -- Eq. 1 (static topographic disaggregation) AND
+Eq. 2/7 (flux-based time-relaxation correction) -- and Section 4.2.1's
+Tarrawarra description says "GeoWATCH soil moisture downscaling algorithms
+were applied" without stating whether the published 0.0321 m3/m3 figure
+used stage 1 alone or the full two-stage pipeline. This script currently
+validates **stage 1 (Eq. 1) only** -- the fully-specified, unambiguous part
+that the design doc's Rung 1 gate is scoped around ("do this before
+anything else"). Applying stage 2 here would require Tarrawarra inputs
+this session couldn't fetch (daily meteorological data for Ep, vegetation
+greenness fraction, and soil-texture-derived theta_wilt/theta_ref/theta_s
+via a pedotransfer function the paper doesn't specify for this site) --
+`--with-flux-correction` exists as a documented stub for a future session
+(see its help text) rather than a fabricated implementation. If Eq. 1
+alone doesn't reach 0.0321, that is not necessarily a sign Eq. 1 is wrong
+-- it may mean stage 2 is required to close the gap. Don't over-interpret
+a near-miss without accounting for this.
+
+**Requires the actual Tarrawarra data files.** `data/ksat.dat` is already
+present (fetched live in Session 3); the DEM elevation grid and 13 TDR
+files still need a manual browser download -- see README.md for exactly
+why (an intermittent WAF) and how to supply them. This script will refuse
+to run with a clear message if the data directory is incomplete, rather
+than silently produce no output.
 
 Usage:
     python3 run_validation.py --data-dir ./data
+    python3 run_validation.py --data-dir ./data --with-flux-correction  # not yet implemented, see --help
 """
 
 from __future__ import annotations
@@ -154,8 +175,38 @@ def main():
         help="Directory containing tarrautm.dem, ksat.dat, and a tdr/ subdirectory "
         "with the 13 sm*.tdr files (see README.md for exact manual-download layout)",
     )
+    parser.add_argument(
+        "--with-flux-correction",
+        action="store_true",
+        help="Apply Eq. 2/7 (physics/relaxation.py) on top of Eq. 1, per the "
+        "paper's full two-stage pipeline (see module docstring for why this "
+        "might be what the published 0.0321 target actually represents). "
+        "NOT YET IMPLEMENTED -- requires Tarrawarra daily meteorological "
+        "data (for Ep), vegetation greenness fraction, and soil-texture- "
+        "derived theta_wilt/theta_ref/theta_s (via a pedotransfer function "
+        "the paper doesn't specify for this site), none of which are wired "
+        "up yet. Passing this flag currently exits with an explanatory error "
+        "rather than silently falling back to Eq. 1 only.",
+    )
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
+
+    if args.with_flux_correction:
+        print(
+            "--with-flux-correction is not yet implemented. It requires "
+            "additional Tarrawarra inputs not yet integrated into this "
+            "harness:\n"
+            "  - met_flux/daily.met (daily meteorological data, for Ep)\n"
+            "  - sundry/vegetat.dat (vegetation greenness fraction)\n"
+            "  - sundry/layer.dat texture classes -> theta_wilt/theta_ref/"
+            "theta_s via a pedotransfer function (not specified by the "
+            "paper for this site -- a modeling choice a future session "
+            "needs to make deliberately, not guess at here)\n"
+            "See run_validation.py's module docstring and README.md's "
+            "'Session 3 update' section for the full context.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     check_data_available(data_dir)
 

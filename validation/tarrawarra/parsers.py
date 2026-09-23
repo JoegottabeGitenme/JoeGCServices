@@ -1,35 +1,78 @@
 """Parsers for the Tarrawarra dataset's ASCII file formats.
 
 Format specifications transcribed directly from the dataset's own
-documentation (Readme.topo, Readme.tdr, Readme.soil -- fetched successfully
-this session via the site's HTML pages before its WAF started blocking
-every raw-data-file request; see README.md in this directory for the full
-story and how to supply the actual data files).
+documentation (Readme.topo, Readme.tdr, Readme.soil, Readme.nmm -- fetched
+successfully via the site's HTML pages; see README.md in this directory for
+the full story of an intermittent WAF blocking most, but not all, requests).
 
-**The DEM header format is a documented assumption, not a confirmed fact**:
-Readme.topo says only "a 6 line header with the boundaries of the dem and
-the number of rows and columns" -- it does not give the exact key names or
-line order. This parser assumes the standard ESRI ASCII grid header
-(ncols/nrows/xllcorner/yllcorner/cellsize/NODATA_value, one per line, in
-that or a similar order) since that is the overwhelmingly common 6-line DEM
-header convention this description matches. If the real file's header
-doesn't parse, `parse_dem` raises with the actual header lines shown, so
-whoever has file access can adjust the key-pattern list in
-`_DEM_HEADER_KEY_PATTERNS` in five minutes rather than guess blind.
+**The DEM header format was confirmed against a real downloaded file in
+Session 3** (`tarrautm.dem`, briefly fetched through a lucky WAF window --
+see README.md), correcting an earlier documented *assumption*. The real
+header is NOT the standard ESRI ASCII grid format originally guessed; it is:
+
+    Copyright (c) 1995-1998 ...   (a free-text copyright line, ignored)
+    <blank line>
+    north: 5831250.00
+    south: 5830930.00
+    east: 362615.00
+    west: 361990.00
+    rows: 64
+    cols: 125
+    <rows*cols whitespace-separated elevation values, row 0 = north edge>
+
+`cellsize` is not given directly -- it's derived as
+`(east-west)/cols` (cross-checked equal to `(north-south)/rows`, both
+giving 5.0m, matching the dataset's own "5m Digital Elevation Model"
+description). `0.00` is used as the fill value for cells outside the
+surveyed catchment (visible as a border of zeros around the real data in
+the actual file) -- there's no explicit NODATA_value line in this format,
+so `0.00` is treated as nodata by convention specific to this dataset.
+
+The full elevation grid body (8000 values) was NOT hand-transcribed into
+this repo from the fetch tool's output -- reproducing thousands of numeric
+values by hand through a chat-mediated tool is not a reliable way to build
+ground-truth validation data, and a silently-corrupted DEM would be worse
+than an honestly-missing one. Only the header format (7 lines, low
+transcription risk, independently sanity-checked via the cellsize
+cross-check above) was captured. See README.md for how to get the real grid
+body via manual browser download.
+
+The old ESRI-grid-header parsing path is kept as a fallback (some other
+DEM tool might still produce that format) but the Tarrawarra-native format
+above is now the primary, confirmed-correct path.
 
 Every other parser (TDR, ksat, particle, layer) is a straightforward
-whitespace-delimited-columns-after-a-header format per the docs, which is
-unambiguous regardless of the exact header wording -- these should work
-against the real files without adjustment.
+whitespace-delimited-columns-after-a-header format per the docs. `ksat.dat`
+was also fetched for real this session (see README.md) and confirms the
+format: `x y bottom_depth_cm top_depth_cm ksat_mm_hr`, 5 whitespace fields
+-- matching this parser's existing 5-field assumption positionally (field
+names in the dataclass below say "well_base"/"water" per the original
+Readme.soil wording; the real column headers say "bottom depth"/"top
+depth" instead, but it's the same 5 numeric columns in the same order).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
+# The confirmed-real Tarrawarra format: "key: value" lines using these
+# exact names (north/south/east/west/rows/cols).
+_TARRAWARRA_HEADER_KEY_PATTERNS = {
+    "north": re.compile(r"^north$", re.IGNORECASE),
+    "south": re.compile(r"^south$", re.IGNORECASE),
+    "east": re.compile(r"^east$", re.IGNORECASE),
+    "west": re.compile(r"^west$", re.IGNORECASE),
+    "rows": re.compile(r"^rows?$", re.IGNORECASE),
+    "cols": re.compile(r"^cols?$", re.IGNORECASE),
+}
+
+# Fallback: the originally-assumed (and NOT confirmed against a real file)
+# standard ESRI ASCII grid header, kept in case some other tool in this
+# lineage produces that format instead.
 _DEM_HEADER_KEY_PATTERNS = {
     "ncols": re.compile(r"n\s*cols?", re.IGNORECASE),
     "nrows": re.compile(r"n\s*rows?", re.IGNORECASE),
@@ -49,42 +92,99 @@ class DemGrid:
     nodata_value: float | None
 
 
-def parse_dem(path: str) -> DemGrid:
-    """Parse a Tarrawarra .dem file (assumed ESRI ASCII grid header -- see
-    module docstring). Raises ValueError with the actual header text if the
-    assumption doesn't hold, rather than silently misparsing."""
-    with open(path, "r") as f:
-        lines = f.readlines()
-
-    header = {}
+def _try_parse_tarrawarra_header(lines: list[str]) -> tuple[dict, int] | None:
+    """Try the confirmed-real "key: value" format (north/south/east/west/
+    rows/cols). Returns (header, data_start_line) or None if this isn't
+    that format."""
+    header: dict = {}
     data_start_line = 0
-    for i, line in enumerate(lines[:10]):  # header is documented as 6 lines; scan a few extra
+    for i, line in enumerate(lines[:12]):
+        if ":" not in line:
+            continue
+        key_text, _, value_text = line.partition(":")
+        key_text = key_text.strip()
+        value_text = value_text.strip()
+        for key, pattern in _TARRAWARRA_HEADER_KEY_PATTERNS.items():
+            if pattern.match(key_text):
+                try:
+                    header[key] = float(value_text)
+                except ValueError:
+                    return None
+                data_start_line = i + 1
+                break
+    if {"north", "south", "east", "west", "rows", "cols"} <= header.keys():
+        return header, data_start_line
+    return None
+
+
+def _try_parse_esri_header(lines: list[str]) -> tuple[dict, int] | None:
+    """Try the originally-assumed-but-unconfirmed ESRI ASCII grid header,
+    kept as a fallback -- see module docstring."""
+    header: dict = {}
+    data_start_line = 0
+    for i, line in enumerate(lines[:10]):
         parts = line.split()
         if len(parts) != 2:
             continue
         key_text, value_text = parts
-        matched = False
         for key, pattern in _DEM_HEADER_KEY_PATTERNS.items():
             if pattern.match(key_text):
                 try:
                     header[key] = float(value_text)
                 except ValueError:
                     pass
-                matched = True
+                data_start_line = i + 1
                 break
-        if matched:
-            data_start_line = i + 1
+    if {"ncols", "nrows", "cellsize"} <= header.keys():
+        return header, data_start_line
+    return None
 
-    missing = [k for k in ("ncols", "nrows", "cellsize") if k not in header]
-    if missing:
-        raise ValueError(
-            f"Could not parse DEM header from {path} -- missing {missing}. "
-            f"Assumed ESRI ASCII grid key names (see this module's docstring); "
-            f"actual header lines found:\n" + "".join(lines[:8])
-        )
 
-    ncols = int(header["ncols"])
-    nrows = int(header["nrows"])
+def parse_dem(path: str) -> DemGrid:
+    """Parse a Tarrawarra .dem file. Tries the confirmed-real Tarrawarra
+    "key: value" header format first (north/south/east/west/rows/cols --
+    see module docstring), then falls back to the originally-assumed (never
+    confirmed) ESRI ASCII grid header. Raises ValueError with the actual
+    header text if neither matches, rather than silently misparsing."""
+    with open(path, "r") as f:
+        lines = f.readlines()
+
+    tarrawarra_result = _try_parse_tarrawarra_header(lines)
+    if tarrawarra_result is not None:
+        header, data_start_line = tarrawarra_result
+        nrows = int(header["rows"])
+        ncols = int(header["cols"])
+        # cellsize isn't given directly in this format -- derive it, and
+        # cross-check the two independent derivations agree (see module
+        # docstring: both give 5.0m for the real Tarrawarra DEM).
+        cellsize_ew = (header["east"] - header["west"]) / ncols
+        cellsize_ns = (header["north"] - header["south"]) / nrows
+        if abs(cellsize_ew - cellsize_ns) > 0.01 * max(cellsize_ew, cellsize_ns):
+            raise ValueError(
+                f"DEM {path}: derived cellsize disagrees between east-west "
+                f"({cellsize_ew}) and north-south ({cellsize_ns}) -- header "
+                f"values may not describe a square-celled grid as assumed."
+            )
+        xllcorner = header["west"]
+        yllcorner = header["south"]
+        cellsize = cellsize_ew
+        nodata = 0.0  # this dataset's convention -- see module docstring
+    else:
+        esri_result = _try_parse_esri_header(lines)
+        if esri_result is None:
+            raise ValueError(
+                f"Could not parse DEM header from {path} as either the "
+                f"confirmed Tarrawarra format (north/south/east/west/rows/cols) "
+                f"or the fallback ESRI ASCII grid format. Actual header lines "
+                f"found:\n" + "".join(lines[:8])
+            )
+        header, data_start_line = esri_result
+        nrows = int(header["nrows"])
+        ncols = int(header["ncols"])
+        xllcorner = header.get("xllcorner", 0.0)
+        yllcorner = header.get("yllcorner", 0.0)
+        cellsize = header["cellsize"]
+        nodata = header.get("nodata_value")
 
     values: list[float] = []
     for line in lines[data_start_line:]:
@@ -99,15 +199,14 @@ def parse_dem(path: str) -> DemGrid:
         )
 
     elevation = np.array(values, dtype=np.float64).reshape(nrows, ncols)
-    nodata = header.get("nodata_value")
     if nodata is not None:
         elevation = np.where(elevation == nodata, np.nan, elevation)
 
     return DemGrid(
         elevation=elevation,
-        cellsize=header["cellsize"],
-        xllcorner=header.get("xllcorner", 0.0),
-        yllcorner=header.get("yllcorner", 0.0),
+        cellsize=cellsize,
+        xllcorner=xllcorner,
+        yllcorner=yllcorner,
         nodata_value=nodata,
     )
 
@@ -242,6 +341,94 @@ class LayerRecord:
     texture_b1: str
     depth_b2_cm: float | None
     texture_b2: str | None
+
+
+@dataclass
+class NmmProfile:
+    site: int
+    date: str  # dd/mm/yyyy
+    time: str  # hhmm, AEST
+    depths_cm: np.ndarray
+    moisture_pct: np.ndarray  # %V/V
+
+
+def parse_nmm_file(path: str, site: int | None = None) -> list[NmmProfile]:
+    """Parse a Tarrawarra nmm_data/tube_N.dat file. Per Readme.nmm (fetched
+    live, Session 3): a header (site ID/coordinates/depth-to-bedrock/profile
+    description, unspecified exact length -- skipped by scanning for the
+    first date/time line rather than assuming a fixed header length), then
+    repeated blocks separated by blank lines:
+
+        date(dd/mm/yyyy)   time(hhmm, AEST)
+        depth(cm)   moisture(%V/V)
+        ...
+        depth(cm)   moisture(%V/V)
+
+    `site` defaults to parsing it from the filename (`tube_N.dat` -> N) if
+    not given explicitly -- callers that already know the site number
+    (e.g. iterating `tube_1.dat` .. `tube_20.dat`) can skip that guess.
+
+    NOT YET VALIDATED against a real tube_N.dat file (still blocked on
+    manual download -- see README.md); this is a direct transcription of
+    Readme.nmm's documented format, exercised only against a synthetic
+    fixture in tests/test_parsers.py.
+    """
+    if site is None:
+        m = re.search(r"tube_(\d+)", Path(path).name)
+        if m is None:
+            raise ValueError(
+                f"Could not infer site number from filename {path!r} -- "
+                f"pass site= explicitly."
+            )
+        site = int(m.group(1))
+
+    with open(path, "r") as f:
+        raw_lines = [line.rstrip("\n") for line in f]
+
+    # A "date line" is exactly 2 tokens: dd/mm/yyyy and hhmm. Depth/moisture
+    # lines are exactly 2 numeric tokens. Skip everything before the first
+    # date line (the free-text header, whose exact length isn't documented).
+    date_line_re = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+
+    profiles: list[NmmProfile] = []
+    i = 0
+    while i < len(raw_lines):
+        parts = raw_lines[i].split()
+        if len(parts) == 2 and date_line_re.match(parts[0]):
+            date, time = parts
+            i += 1
+            depths: list[float] = []
+            moistures: list[float] = []
+            while i < len(raw_lines) and raw_lines[i].strip():
+                dparts = raw_lines[i].split()
+                if len(dparts) != 2:
+                    break
+                try:
+                    depth, moisture = float(dparts[0]), float(dparts[1])
+                except ValueError:
+                    break
+                depths.append(depth)
+                moistures.append(moisture)
+                i += 1
+            if depths:
+                profiles.append(
+                    NmmProfile(
+                        site=site,
+                        date=date,
+                        time=time,
+                        depths_cm=np.array(depths),
+                        moisture_pct=np.array(moistures),
+                    )
+                )
+        else:
+            i += 1
+
+    if not profiles:
+        raise ValueError(
+            f"No NMM profiles parsed from {path} -- check the file's actual "
+            f"layout against Readme.nmm's documented date-line/depth-line format."
+        )
+    return profiles
 
 
 def parse_layer_file(path: str) -> list[LayerRecord]:

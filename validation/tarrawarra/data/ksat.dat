@@ -1,0 +1,57 @@
+Copyright (c) 1995-1998 Centre for Environmental Applied Hydrology, The University of Melbourne.
+
+Location: Tarrawarra
+Data: soil saturated hydraulic conductivity
+Collection period: December 1996 - January 1997
+Measurement method: Constant head well permeameter
+Record format: see headings
+Units: see header
+Delimeter: white space
+Coordinates: Tarrawarra coordinates
+
+x	y	bottom	top	hydraulic
+coord	coord	depth	depth	conductivity
+m	m	cm	cm	mm/hr
+1241	876	25	4	74.3
+1248	895	27	5	38.9
+1251	916	27	7	13.4
+1254	926	30	10	30.5
+1257	935	30	9	11.6
+1261	954	28	5	6.2
+1269	974	27	6	5.0
+1171	849	24	4	3.4
+1172	849	53	36	1.1
+1178	868	25	10	89.4
+1179	868	60	45	138.0
+1187	886	25	5	23.4
+1188	886	60	35	6.1
+1195	904	30	10	2.9
+1196	904	60	36	2.9
+1202	922	30	5	25.3
+1203	922	60	32	5.6
+1210	941	30	9	38.4
+1211	941	60	38	1.6
+1221	968	30	8	7.8
+1222	968	60	42	3.5
+1230	986	26	1	19.1
+1231	986	57	29	3.1
+1236	1005	28	7	7.3
+1237	1005	55	34	0.0
+1244	1023	29	4	3.2
+1245	1023	59	33	6.7
+1047	840	28	4	7.2
+1054	859	28	4	8.5
+1060	877	28	4	6.0
+1067	897	29	9	139.8
+1075	916	29	6	14.7
+1081	936	31	6	0.7
+1087	953	30	4	7.5
+1094	970	27	1	19.5
+1100	988	28	2	4.3
+959	842	28	3	25.0
+930	859	29	6	24.6
+944	896	29	7	7.8
+959	933	27	5	10.5
+974	971	29	3	11.2
+988	1009	29	2	6.4
+</content>

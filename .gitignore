@@ -122,3 +122,6 @@ compile_commands.json
 # other stuff
 /VNL_npp_2024_global_vcmslcfg_v2_c202502261200.average_masked.dat.tif.gz
 /validation/ogc-compliance/png-worldfiles-wms-1.3.0.zip
+
+# Copyrighted reference material kept locally for development, not for distribution
+/geowatch.pdf

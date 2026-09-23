@@ -287,27 +287,31 @@
             </p>
             <p>
                 For soil moisture's day-to-day <em>evolution</em> — not just a single downscaled snapshot —
-                we lean on a second, more directly Colorado-relevant lineage: the Equilibrium Moisture
-                Theory family (Coleman &amp; Niemann, 2013; extended by Ranney et al., 2015), developed and
-                field-tested on Colorado Front Range catchments specifically. Where a snapshot redistribution
-                answers "given today's average, what does this point look like right now," EMT-style
-                relaxation answers "how fast does a wet or dry anomaly fade back toward normal," which is what
-                lets a forecast run forward instead of just downscaling a single instant.
-            </p>
-            <p>
-                The soil-evaporation physics that governs how fast that relaxation happens is the standard
-                Noah land-surface-model formulation (Ek et al., 2003) — the same land-surface model family
-                embedded inside HRRR itself, so the downscaling logic and the weather model it's correcting
-                speak a consistent physical language.
+                GeoWATCH adds a second stage: a flux-difference correction that accounts for vegetation
+                transpiration (following Chen et al., 1996) and direct soil evaporation (following Ek et al.,
+                2003 — the same land-surface-model family embedded inside HRRR itself, so the downscaling
+                logic and the weather model it's correcting speak a consistent physical language), combined
+                with a terrain-aware solar view factor so a north-facing slope and a south-facing slope at
+                the same elevation dry out at different rates. Where the topographic term above answers
+                "given today's average, what does this point look like right now," this second stage answers
+                "how fast does a wet or dry anomaly fade back toward normal," which is what lets a forecast
+                run forward instead of just downscaling a single instant. (An earlier version of this page
+                attributed this stage to the Equilibrium Moisture Theory lineage — Coleman &amp; Niemann,
+                2013; Ranney et al., 2015 — written before we had the primary source in hand. Having since
+                read it directly: EMT is real, relevant literature, but GeoWATCH's own paper cites it only as
+                <em>related work</em>, not as what its own equations are built from. Corrected here.)
             </p>
         </section>
 
         <section id="honest-gaps">
             <h2>What We Reconstructed vs. What We Verified</h2>
             <p>
-                GeoWATCH's own paper is behind a journal paywall we could not get through this project
-                (multiple fetch attempts blocked). Rather than guess at the exact published equations and
-                present that guess as fact, we tracked confidence level per physics module explicitly:
+                We obtained the primary source (Eylander et al., 2023) directly and did a full
+                equation-by-equation audit against it. Two real gaps turned up in what we'd built without
+                it — one substitution the paper's own methodology section explicitly rules out and one
+                equation genuinely absent — both are now fixed. We still track confidence per physics module
+                explicitly, because "we have the paper now" doesn't automatically mean every remaining open
+                question is resolved:
             </p>
             <table class="confidence-table">
                 <thead>
@@ -317,27 +321,27 @@
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
                         <td><span class="badge badge-high">High confidence</span></td>
-                        <td>Fully specified with an explicit constant (k=13); this is also the exact piece Rung&nbsp;1 validation below tests directly</td>
+                        <td>Transcribed directly from the primary source and confirmed to be an exact match to our independent implementation — this is also the exact piece Rung&nbsp;1 validation below tests directly</td>
                     </tr>
                     <tr>
-                        <td>Soil evaporation efficiency</td>
+                        <td>Vegetation transpiration &amp; direct soil evaporation</td>
                         <td><span class="badge badge-high">High confidence</span></td>
-                        <td>Standard, independently-published Ek et al. (2003) / Noah LSM formulation — not paywall-dependent</td>
+                        <td>Transcribed directly. One nuance: the paper's printed direct-evaporation ratio is unclipped and differs from the well-established Ek et al. (2003) form our independent build had used instead — we now implement <em>both</em> and let empirical validation (below) determine which one actually reproduces the published accuracy</td>
                     </tr>
                     <tr>
-                        <td>Terrain radiation correction</td>
+                        <td>Terrain radiation / solar view factor</td>
                         <td><span class="badge badge-high">High confidence</span></td>
-                        <td>Standard solar-geometry / terrain-radiation methods (comparable to Dozier &amp; Frew, 1990 lineage)</td>
+                        <td>Transcribed directly (a daily integral of sun-surface alignment); the paper doesn't state how this factor should be normalized, so we chose flat-ground-equals-1.0 as the natural convention and documented that choice explicitly</td>
                     </tr>
                     <tr>
                         <td>Potential evapotranspiration</td>
                         <td><span class="badge badge-high">High confidence</span></td>
-                        <td>FAO-56 Penman-Monteith (Allen et al., 1998) — the standard reference-ET equation, freely published</td>
+                        <td>FAO-56 Penman-Monteith (Allen et al., 1998) — the standard reference-ET equation, freely published, used because HRRR doesn't export potential evapotranspiration directly</td>
                     </tr>
                     <tr>
                         <td>Time-relaxation of a redistributed anomaly</td>
-                        <td><span class="badge badge-unverified">Unverified</span></td>
-                        <td>Physically-motivated reconstruction (Equilibrium Moisture Theory lineage) using the source paper's own named constants and bounds — not a transcription of the primary source</td>
+                        <td><span class="badge badge-high">Transcribed</span></td>
+                        <td>Previously an unverified physically-motivated reconstruction; now transcribed directly from the primary source's own equations. One open question the paper itself doesn't resolve: making the units work out requires a depth-normalization the text never states — an empirical calibration question, same as the topographic term's own scaling constant</td>
                     </tr>
                     <tr>
                         <td>Frozen-ground infiltration gate</td>
@@ -433,15 +437,17 @@
             <h2>References</h2>
             <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1.5rem;">
                 Every link below was checked to actually resolve during this project (not cited from memory
-                without verification) — including catching one citation risk along the way: an early DOI
-                candidate for the Coleman &amp; Niemann paper turned out to be a since-withdrawn duplicate
-                entry, not the real, published paper. The correct DOI is linked below.
+                without verification) — including catching a couple of citation risks along the way: an
+                early DOI candidate for the Coleman &amp; Niemann paper turned out to be a since-withdrawn
+                duplicate entry, not the real, published paper, and (once we had the GeoWATCH paper's own
+                reference list in hand to check against) the Walter et al. citation below had the wrong page
+                range from an earlier unverified, memory-based entry. Both are corrected below.
             </p>
             <ul class="refs-list">
                 <li class="ref-item">
                     <div class="ref-citation">Eylander, J., Bieszczad, J., Ueckermann, M., Peters, J., Brooks, C., Audette, W., &amp; Ekegren, M. (2023). Geospatial Weather Affected Terrain Conditions and Hazards (GeoWATCH) description and evaluation. <em>Environmental Modelling &amp; Software</em>, 160, 105606.</div>
                     <a class="ref-link" href="https://doi.org/10.1016/j.envsoft.2022.105606" target="_blank">doi.org/10.1016/j.envsoft.2022.105606 &#8599;</a>
-                    <div class="ref-note">The source algorithm this project adapts. Full text is paywalled — we could not read the primary equations directly; see the confidence table above.</div>
+                    <div class="ref-note">The source algorithm this project adapts. We've now read the full text directly and transcribed every governing equation against it (see the confidence table above).</div>
                 </li>
                 <li class="ref-item">
                     <div class="ref-citation">Western, A. W., &amp; Grayson, R. B. (1998). The Tarrawarra data set: Soil moisture patterns, soil characteristics, and hydrological flux measurements. <em>Water Resources Research</em>, 34(10), 2765–2768.</div>
@@ -470,17 +476,20 @@
                     <a class="ref-link" href="https://doi.org/10.1029/2002JD003296" target="_blank">doi.org/10.1029/2002JD003296 &#8599;</a>
                     <div class="ref-note">The Noah land-surface-model soil-evaporation formulation we implement — the same family embedded in HRRR itself.</div>
                 </li>
-                <li class="ref-item unverified">
+                <li class="ref-item">
                     <div class="ref-citation">Allen, R. G., Pereira, L. S., Raes, D., &amp; Smith, M. (1998). Crop evapotranspiration — Guidelines for computing crop water requirements. <em>FAO Irrigation and Drainage Paper 56</em>. Food and Agriculture Organization of the United Nations.</div>
-                    <div class="ref-note">Standard reference; FAO-56's own site was not re-checked this session for a stable link — search "FAO Paper 56 Penman-Monteith" if the above doesn't resolve.</div>
+                    <a class="ref-link" href="https://www.fao.org/4/x0490e/x0490e00.htm" target="_blank">fao.org/4/x0490e/x0490e00.htm &#8599;</a>
+                    <div class="ref-note">Standard reference, confirmed live at FAO's own site (authors and title match exactly).</div>
                 </li>
-                <li class="ref-item unverified">
+                <li class="ref-item">
                     <div class="ref-citation">Winstral, A., &amp; Marks, D. (2002). Simulating wind fields and snow redistribution using terrain-based parameters to model snow accumulation and melt over a semi-arid mountain catchment. <em>Hydrological Processes</em>, 16(18), 3585–3603.</div>
-                    <div class="ref-note">The Sx terrain parameter for wind-driven snow redistribution — computed as a diagnostic this round, not yet used (see "The Pipeline, Today" above). Citation from memory, not independently re-verified this session.</div>
+                    <a class="ref-link" href="https://doi.org/10.1002/hyp.1238" target="_blank">doi.org/10.1002/hyp.1238 &#8599;</a>
+                    <div class="ref-note">The Sx terrain parameter for wind-driven snow redistribution — computed as a diagnostic this round, not yet used (see "The Pipeline, Today" above). Not part of GeoWATCH's own lineage — GeoWATCH's own paper doesn't cite this work at all; we use it independently for a snow-specific technique GeoWATCH itself doesn't need. DOI independently verified via Crossref.</div>
                 </li>
-                <li class="ref-item unverified">
-                    <div class="ref-citation">Walter, M. T., Steenhuis, T. S., Mehta, V. K., Thongs, D., Zion, M., &amp; Schneiderman, E. (2002). Refined conceptualization of TOPMODEL for shallow subsurface flows. <em>Hydrological Processes</em>, 16(10), 2087–2097.</div>
-                    <div class="ref-note">STOPMODEL — the shallow-subsurface-flow refinement referenced in the design lineage. Citation from memory, not independently re-verified this session.</div>
+                <li class="ref-item">
+                    <div class="ref-citation">Walter, M. T., Steenhuis, T. S., Mehta, V. K., Thongs, D., Zion, M., &amp; Schneiderman, E. (2002). Refined conceptualization of TOPMODEL for shallow subsurface flows. <em>Hydrological Processes</em>, 16(10), 2041–2046.</div>
+                    <a class="ref-link" href="https://doi.org/10.1002/hyp.5030" target="_blank">doi.org/10.1002/hyp.5030 &#8599;</a>
+                    <div class="ref-note">STOPMODEL — confirmed, via the primary source now in hand, as the actual basis for GeoWATCH's own topographic-redistribution stage (Eq. 1 above). An earlier version of this page had the wrong page range (2087–2097) from an unverified memory-based citation; corrected here (2041–2046) and DOI added, both independently verified via Crossref.</div>
                 </li>
             </ul>
         </section>

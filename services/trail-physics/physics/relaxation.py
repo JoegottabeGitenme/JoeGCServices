@@ -1,90 +1,192 @@
-"""Eq. 2 / Eq. 7 -- flux-driven relaxation of the redistributed anomaly
-over time.
+"""Eq. 2 / Eq. 7 -- the flux-difference correction and its timestep,
+transcribed directly from Eylander et al. (2023) Section 2.2.2 (user-
+supplied copy, Session 3). Session 2 had no access to the paper for this
+equation and built a physically-motivated but ultimately WRONG
+reconstruction (an exponential anomaly decay) -- replaced entirely below.
 
-*** UNVERIFIED AGAINST THE PRIMARY SOURCE. *** Eylander et al. (2023) is
-behind a ScienceDirect paywall; every fetch attempt this session (WebFetch
-direct, DOI resolver, ACM mirror) returned 400/403/blocked. Do not treat
-the exact algebraic form below as validated -- it is a physically-motivated
-reconstruction, not a transcription. See physics/__init__.py's module
-docstring for the full confidence-level breakdown across this package.
+**Eq. 7** (the timestep):
 
-What the design doc *does* specify (Section 5, "S5 -- Downscale"):
-- Eq. 2 "subtracts F'(theta_ws), a flux evaluated at the coarse state using
-  coarse-scale soil properties" -- i.e. the correction is driven by a flux
-  anomaly (local flux minus coarse-scale flux), not just the moisture
-  anomaly itself.
-- Eq. 7 produces a timestep/timescale bounded to [0, 30] days, using named
-  constants Cts=0.1 and Rd=0.15.
-- "S4 flux added as a source term in Eq. 2" -- the frozen-ground
-  infiltration-gate output (not implemented in this session; HRRR has no
-  soil-ice-fraction field, see the design doc's amendment table) would
-  enter here as an additional source/sink once it exists.
+    delta_t = delta_ts * (theta_ws - theta_ref) / F(theta_s)
 
-Reconstruction implemented here: the local anomaly (theta_local -
-theta_coarse) decays exponentially toward zero, at a rate set by how
-different the local and coarse-scale actual-ET fluxes are -- a larger flux
-difference relaxes the anomaly faster (a wetter-than-average pixel
-evaporates faster than the mean, drying back toward it; a drier-than-
-average pixel evaporates slower, staying dry longer -- both effects pull
-the anomaly toward zero, consistent with the Equilibrium Moisture Theory
-lineage the design doc names, Coleman & Niemann 2013 / Ranney et al. 2015).
-The relaxation TIMESCALE (not the model integration timestep) is bounded to
-[0, 30] days per the doc's Eq. 7, using Cts/Rd as tunable coefficients.
+    delta_ts = Cts * { 1                                if theta* < theta_s
+                        exp(-(theta* - theta_s)/theta_s) if theta* >= theta_s }
 
-Before trusting this module's numerical output beyond qualitative sanity
-(anomalies shrink, wetter-than-mean points dry faster than drier-than-mean
-points recover): get the primary source (institutional access, a co-author
-copy, or interlibrary loan) and reconcile against the actual Eq. 2/6/7 text,
-the same way the design doc already reconciled Eq. 5 against Ek et al. 2003.
+    Cts = 0.1 (the paper's calibration coefficient)
+
+delta_t is clipped to [0, 30] days. The design doc (written without the
+paper) called this expression "mangled in the text" -- having read it, it
+isn't mangled at all: the two-branch `delta_ts` is a straightforward
+piecewise/indicator-function expression once written out plainly, which
+Session 2's reconstruction (`Cts / (Rd * |flux_anomaly| + eps)`) got
+completely wrong in both form and which named constant does what. Rd
+(0.15) is NOT part of Eq. 7 at all -- it's Eq. 5's diffuse-light fraction
+(see flux.py). Session 2 conflated the two.
+
+Physical reading of Eq. 7, confirmed against the paper's own text: "Delta_t
+is the time required for the soil moisture to drop from field capacity
+(theta_ref) to the weather-scale soil moisture value theta_ws," using
+F(theta_s) -- the flux evaluated AT SATURATION, i.e. the fastest possible
+drying rate -- as a reference rate. This is a linear-rate time-to-dry
+estimate, not a physical time-integration in the ODE sense.
+
+**Eq. 2** (the correction itself):
+
+    theta = theta* + delta_t * (F(theta*) - F'(theta_ws))
+
+F(theta*) is evaluated with FINE-resolution soil/vegetation properties at
+the point being corrected. F'(theta_ws) is evaluated with WEATHER-SCALE-
+AVERAGED soil/vegetation properties at the coarse state -- the paper is
+explicit about this ("the weather-scale flux terms use soil properties
+averaged to weather-scale resolution soil"), which is exactly the
+parameter-matching discipline docs/trail-conditions-design.md Section 5.1
+already flagged as critical (mixing a fine-resolution state with
+coarse-resolution parameters, or vice versa, silently corrupts the
+correction). `SoilProperties` below exists specifically so a caller cannot
+accidentally pass one properties bundle where two distinct ones (fine vs.
+coarse-averaged) are required.
+
+**Units, an unresolved ambiguity the paper does not spell out**: for
+`theta = theta* + delta_t * (F(...) - F'(...))` to be dimensionally
+consistent (theta is a dimensionless volumetric fraction), delta_t (days)
+times F (an ET-rate flux) must itself be dimensionless -- meaning F must
+already be expressed as a volumetric-fraction-per-day rate, not a
+depth-per-time rate like FAO-56's mm/day. The paper never states the
+depth-normalization (e.g. dividing by a root-zone or active-layer depth)
+this requires. Treat this as a genuine open calibration question, on the
+same footing as k=13 (Eq. 1) -- something only empirical reproduction
+against Tarrawarra can pin down, not something to silently assume a value
+for here.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
-DEFAULT_CTS = 0.1  # per docs/trail-conditions-design.md Section 5 ("S5 -- Downscale")
-DEFAULT_RD = 0.15  # per docs/trail-conditions-design.md Section 5 ("S5 -- Downscale")
-MAX_RELAXATION_DAYS = 30.0  # per the doc's stated Eq. 7 clip bound
+from . import flux
+
+DEFAULT_CTS = 0.1  # per the paper Eq. 7: "Cts = 0.1 is a calibration coefficient"
+MAX_RELAXATION_DAYS = 30.0  # per the paper: "clipped between 0 and a maximum allowed value (e.g. 30 days)"
 
 
-def relaxation_timescale_hours(
-    flux_anomaly_mm_per_day: np.ndarray,
-    cts: float = DEFAULT_CTS,
-    rd: float = DEFAULT_RD,
-    max_days: float = MAX_RELAXATION_DAYS,
+@dataclass
+class SoilProperties:
+    """A bundle of the soil/vegetation properties Eq. 2/5 need, kept
+    together specifically so a caller can't accidentally mix a fine-
+    resolution property with a coarse-resolution one -- see this module's
+    docstring on the parameter-matching requirement."""
+
+    theta_wilt: np.ndarray | float
+    theta_ref: np.ndarray | float
+    theta_s: np.ndarray | float
+    green_veg_fraction: np.ndarray | float
+    iota: np.ndarray | float = 1.0  # Eq. 6 solar view factor; 1.0 = no self-shading info yet
+
+
+def delta_ts(
+    theta_star: np.ndarray, theta_s: np.ndarray | float, cts: float = DEFAULT_CTS
 ) -> np.ndarray:
-    """Reconstructed Eq. 7. A larger |flux anomaly| -> shorter relaxation
-    timescale (faster convergence back to the coarse-scale value); a
-    near-zero flux anomaly -> the timescale saturates at `max_days` (the
-    anomaly barely relaxes at all, since there's no flux difference driving
-    it to)."""
-    epsilon = 1e-6  # avoids a divide-by-zero when flux_anomaly is exactly 0
-    tau_days = cts / (rd * np.abs(flux_anomaly_mm_per_day) + epsilon)
-    tau_days = np.clip(tau_days, 0.0, max_days)
-    return tau_days * 24.0
+    """The piecewise indicator-function part of Eq. 7."""
+    theta_star = np.asarray(theta_star, dtype=np.float64)
+    theta_s = np.asarray(theta_s, dtype=np.float64)
+    below_saturation = theta_star < theta_s
+    decay = np.exp(-(theta_star - theta_s) / theta_s)
+    return cts * np.where(below_saturation, 1.0, decay)
+
+
+def compute_delta_t(
+    theta_star: np.ndarray,
+    theta_ws: float,
+    theta_ref: np.ndarray | float,
+    theta_s: np.ndarray | float,
+    ep: np.ndarray | float,
+    fine_props: SoilProperties,
+    cts: float = DEFAULT_CTS,
+    max_days: float = MAX_RELAXATION_DAYS,
+    form: str = "ek2003",
+) -> np.ndarray:
+    """Eq. 7. `F(theta_s)` -- the flux at saturation -- uses the FINE-
+    resolution properties (`fine_props`), evaluated at `theta_s` itself
+    (not at theta*), per the paper's literal `F(theta_s)` notation.
+
+    Discovered property, worth knowing rather than being surprised by:
+    whenever theta_s > theta_ref (the physically normal case), BOTH Eq. 5
+    forms give beta/ratio = 1.0 exactly at theta=theta_s -- "ek2003" clips
+    its ratio to 1 there (since (theta_s-theta_wilt)/(theta_ref-theta_wilt)
+    exceeds 1 whenever theta_s>theta_ref), and "geowatch"'s ratio is
+    trivially 1 by construction (numerator equals denominator when
+    theta=theta_s). This means `compute_delta_t`'s result is form-
+    independent in the normal case -- the two Eq. 5 forms only diverge in
+    `apply_flux_correction`, where F is evaluated at theta* and theta_ws
+    (generally not at saturation). Not a bug; a consequence of both forms
+    agreeing at the boundary condition theta=theta_s by construction.
+    """
+    f_at_saturation = flux.f_theta(
+        ep,
+        theta_s,
+        fine_props.theta_wilt,
+        theta_ref,
+        theta_s,
+        fine_props.green_veg_fraction,
+        fine_props.iota,
+        flux.DEFAULT_RD,
+        form,
+    )
+    dts = delta_ts(theta_star, theta_s, cts)
+    # f_at_saturation is <= 0 (drying) in the normal case; guard the
+    # degenerate f_at_saturation == 0 case (e.g. zero PET, night-time)
+    # rather than dividing by exactly zero.
+    f_safe = np.where(np.abs(np.asarray(f_at_saturation)) < 1e-12, -1e-12, f_at_saturation)
+    dt_days = dts * (theta_ws - theta_ref) / f_safe
+    return np.clip(dt_days, 0.0, max_days)
 
 
 def apply_flux_correction(
-    theta_local: np.ndarray,
-    theta_coarse: float,
-    flux_local_mm_per_day: np.ndarray,
-    flux_coarse_mm_per_day: float,
-    dt_hours: float,
-    cts: float = DEFAULT_CTS,
-    rd: float = DEFAULT_RD,
-    max_relaxation_days: float = MAX_RELAXATION_DAYS,
+    theta_star: np.ndarray,
+    theta_ws: float,
+    theta_ref_fine: np.ndarray | float,
+    theta_s_fine: np.ndarray | float,
+    ep_fine: np.ndarray | float,
+    fine_props: SoilProperties,
+    theta_ref_coarse: float,
+    theta_s_coarse: float,
+    ep_coarse: float,
+    coarse_props: SoilProperties,
+    delta_t_days: np.ndarray,
+    form: str = "ek2003",
 ) -> np.ndarray:
-    """Reconstructed Eq. 2. Relaxes the Eq.-1-redistributed anomaly
-    (theta_local - theta_coarse) exponentially toward zero over `dt_hours`,
-    at a per-point rate set by `relaxation_timescale_hours`.
+    """Eq. 2: theta = theta* + delta_t * (F(theta*) - F'(theta_ws)).
 
-    This is the mechanism that lets the redistributed pattern evolve
-    forward through a forecast (unlike Eq. 1 alone, which only redistributes
-    a single coarse-scale snapshot and is what Tarrawarra's static-pattern
-    validation actually tests -- see redistribution.py's docstring).
+    F(theta*) uses `fine_props` (this point's own soil/vegetation
+    properties). F'(theta_ws) uses `coarse_props` -- the weather-scale-
+    AVERAGED properties, per the paper's explicit statement that the
+    weather-scale flux term uses weather-scale-averaged soil properties.
+    Passing the same `SoilProperties` instance for both is almost always
+    wrong; the two are kept as separate required arguments (not one
+    optional one) so that mistake is a visible call-site choice, not a
+    silent default.
     """
-    anomaly = theta_local - theta_coarse
-    flux_anomaly = flux_local_mm_per_day - flux_coarse_mm_per_day
-    tau_hours = relaxation_timescale_hours(flux_anomaly, cts, rd, max_relaxation_days)
-    decay = np.exp(-dt_hours / np.maximum(tau_hours, 1e-6))
-    return theta_coarse + anomaly * decay
+    f_fine = flux.f_theta(
+        ep_fine,
+        theta_star,
+        fine_props.theta_wilt,
+        theta_ref_fine,
+        theta_s_fine,
+        fine_props.green_veg_fraction,
+        fine_props.iota,
+        flux.DEFAULT_RD,
+        form,
+    )
+    f_coarse = flux.f_theta(
+        ep_coarse,
+        theta_ws,
+        coarse_props.theta_wilt,
+        theta_ref_coarse,
+        theta_s_coarse,
+        coarse_props.green_veg_fraction,
+        coarse_props.iota,
+        flux.DEFAULT_RD,
+        form,
+    )
+    return theta_star + delta_t_days * (f_fine - f_coarse)
