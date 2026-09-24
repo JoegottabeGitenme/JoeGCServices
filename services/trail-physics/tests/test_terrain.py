@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from physics.terrain import (
+    coarsen_dem,
     compute_aspect,
     compute_d8_flow_accumulation,
     compute_slope,
@@ -208,3 +209,106 @@ class TestComputeTwiPydem:
         dem = (rows - y).astype(np.float64) + 0.01 * (x - cols / 2) ** 2
         twi = compute_twi_pydem(dem, cellsize)
         assert not np.isnan(twi).all()
+
+    def test_apply_twi_limits_off_by_default(self):
+        """Default behavior must match pyDEM's own default (limits off) --
+        a caller who doesn't ask for capping shouldn't get it silently."""
+        rows, cols = 20, 20
+        cellsize = 5.0
+        x = np.abs(np.arange(cols) - cols // 2)
+        dem = np.tile(x.astype(np.float64) * 2.0, (rows, 1))
+        dem += np.arange(rows)[:, None] * 0.1
+
+        default_twi = compute_twi_pydem(dem, cellsize)
+        explicit_off_twi = compute_twi_pydem(dem, cellsize, apply_twi_limits=False)
+        valid = ~np.isnan(default_twi) & ~np.isnan(explicit_off_twi)
+        np.testing.assert_allclose(default_twi[valid], explicit_off_twi[valid])
+
+    def test_apply_twi_limits_caps_the_upper_tail(self):
+        """Enabling limits must not increase the maximum TWI value, and
+        should typically decrease it (capping the upper tail is the whole
+        point of this option) -- verified on a DEM with a genuine
+        channelized high-UCA region so there's something to cap."""
+        rows, cols = 25, 25
+        cellsize = 5.0
+        y, x = np.mgrid[0:rows, 0:cols]
+        # A converging valley (funnels flow toward a narrow low-slope
+        # outlet) creates the kind of high-UCA/low-slope cell that TWI
+        # capping is meant to compress.
+        dem = np.abs(x - cols / 2).astype(np.float64) * 3.0 + (rows - y) * 0.05
+
+        uncapped = compute_twi_pydem(dem, cellsize, apply_twi_limits=False)
+        capped = compute_twi_pydem(dem, cellsize, apply_twi_limits=True)
+        assert np.nanmax(capped) <= np.nanmax(uncapped) + 1e-9
+
+
+def test_coarsen_dem_halves_shape_and_doubles_cellsize():
+    dem = np.arange(16.0).reshape(4, 4)
+    coarsened, new_cellsize = coarsen_dem(dem, cellsize=5.0, factor=2)
+    assert coarsened.shape == (2, 2)
+    assert new_cellsize == pytest.approx(10.0)
+
+
+def test_coarsen_dem_block_mean_is_correct():
+    """A known 4x4 grid of constants per 2x2 block must coarsen to exactly
+    those constants -- the simplest possible correctness check for block
+    averaging."""
+    dem = np.array(
+        [
+            [1.0, 1.0, 2.0, 2.0],
+            [1.0, 1.0, 2.0, 2.0],
+            [3.0, 3.0, 4.0, 4.0],
+            [3.0, 3.0, 4.0, 4.0],
+        ]
+    )
+    coarsened, _ = coarsen_dem(dem, cellsize=5.0, factor=2)
+    np.testing.assert_allclose(coarsened, [[1.0, 2.0], [3.0, 4.0]])
+
+
+def test_coarsen_dem_factor_one_is_a_noop():
+    dem = np.arange(9.0).reshape(3, 3)
+    coarsened, new_cellsize = coarsen_dem(dem, cellsize=5.0, factor=1)
+    np.testing.assert_allclose(coarsened, dem)
+    assert new_cellsize == pytest.approx(5.0)
+
+
+def test_coarsen_dem_crops_uneven_dimensions():
+    """A 5x5 grid at factor=2 doesn't divide evenly -- the trailing row/col
+    must be dropped (cropped to 4x4 -> 2x2), not padded or erroring."""
+    dem = np.arange(25.0).reshape(5, 5)
+    coarsened, _ = coarsen_dem(dem, cellsize=5.0, factor=2)
+    assert coarsened.shape == (2, 2)
+
+
+def test_coarsen_dem_nan_block_stays_nan():
+    dem = np.array(
+        [
+            [np.nan, np.nan, 2.0, 2.0],
+            [np.nan, np.nan, 2.0, 2.0],
+            [3.0, 3.0, 4.0, 4.0],
+            [3.0, 3.0, 4.0, 4.0],
+        ]
+    )
+    coarsened, _ = coarsen_dem(dem, cellsize=5.0, factor=2)
+    assert np.isnan(coarsened[0, 0])
+    assert coarsened[0, 1] == pytest.approx(2.0)
+
+
+def test_coarsen_dem_partial_nan_block_ignores_nan():
+    """A block with SOME (not all) NaN cells must average only the valid
+    ones, not propagate NaN from a single bad cell."""
+    dem = np.array(
+        [
+            [np.nan, 2.0],
+            [4.0, 6.0],
+        ]
+    )
+    coarsened, _ = coarsen_dem(dem, cellsize=5.0, factor=2)
+    assert coarsened.shape == (1, 1)
+    np.testing.assert_allclose(coarsened, [[4.0]])  # mean(2, 4, 6) = 4
+
+
+def test_coarsen_dem_rejects_factor_below_one():
+    dem = np.ones((4, 4))
+    with pytest.raises(ValueError, match="factor must be"):
+        coarsen_dem(dem, cellsize=5.0, factor=0)

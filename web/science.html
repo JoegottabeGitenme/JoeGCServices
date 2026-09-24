@@ -320,8 +320,8 @@
                 <tbody>
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
-                        <td><span class="badge badge-medium">Formula confirmed, terrain input not yet</span></td>
-                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain-wetness values it's fed, however, still don't produce a correction the right size — we've now tried the same terrain-analysis software the original paper used and confirmed that alone isn't the explanation — see Rung&nbsp;1 below, where this exact gap is what's currently failing the test</td>
+                        <td><span class="badge badge-medium">Formula confirmed, calibration narrowing</span></td>
+                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain/soil values it's fed are getting closer to reproducing the published calibration constant with each round of testing (most recently cut the remaining gap roughly in half), but aren't there yet — see Rung&nbsp;1 below for exactly what's been tried and what's left</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -398,43 +398,60 @@
                 Before any of this feeds a public rideability claim, it has to pass a validation ladder, in
                 order — each rung gates the next:
             </p>
-            <h3>Rung 1 — Reproduce a Published Result (attempted with real data: failed, cause identified)</h3>
+            <h3>Rung 1 — Reproduce a Published Result (failing, but the gap has narrowed a lot)</h3>
             <p>
                 A public research catchment in Australia (Tarrawarra; Western &amp; Grayson, 1998) has
                 thirteen days of dense, ground-truth soil moisture measurements alongside detailed terrain
                 and soil surveys — a clean, no-snow, no-weather-model test of exactly the redistribution
-                equation above. We obtained the real dataset and ran the actual validation. It does not
-                pass yet, and we're not going to dress that up: every one of the 13 dates came out worse
-                than simply guessing the catchment-wide average, not a near-miss.
+                equation above. We obtained the real dataset and ran the actual validation. It still doesn't
+                pass, and we're not going to dress that up — but where we started (every date coming out
+                three times worse than simply guessing the catchment average) and where we are now (roughly
+                on par with that same simple guess, with one date landing within 1% of it) are very
+                different places.
             </p>
             <p>
-                We don't think the equation itself is wrong. Checking each date individually, the
-                correlation between our terrain-wetness computation and the real measured pattern is
-                genuinely there (strongly positive on most dates) — and it gets weak on exactly the driest
-                two of the thirteen dates, which matches something the source paper itself says happens
-                physically in very dry or very wet conditions. What doesn't match is the <em>size</em> of
-                the correction: it's roughly 5-6&times; too large relative to what the published calibration
-                constant (k=13) assumes.
+                We tested three concrete, specific ideas for what was causing the gap, each grounded in
+                something the source paper actually says, rather than guessing in the dark:
             </p>
             <p>
-                Our first guess was a boring one — the original paper computed its terrain-wetness values
-                with a specific piece of software (pyDEM) we hadn't yet cross-checked our own implementation
-                against. So we installed it and checked, directly, on the real data. The result: pyDEM's
-                numbers are close enough to ours that switching to it barely moves the needle — a small,
-                genuine improvement in how well the pattern matches, but nowhere near enough to close a
-                5-6&times; gap. That specific guess turned out to be wrong, or at least not the whole story.
-                Two remaining candidates we haven't tested yet: the calibration might assume terrain data at
-                a coarser resolution than what we're using, or the reference software has some optional
-                smoothing settings we haven't enabled. Both are concrete, checkable things — not vague
-                hand-waving.
+                <strong>Idea 1</strong> — maybe the published calibration assumes coarser terrain data than
+                the fine-detail survey we're using. The paper mentions a coarser default resolution
+                elsewhere, but re-reading its own description of this specific comparison, it explicitly
+                says the fine-detail survey was used here. We tested it anyway to be sure, and confirmed
+                empirically: going coarser doesn't help — it actively breaks things, because this catchment
+                is too small to represent meaningfully at that scale. Ruled out, cleanly.
+            </p>
+            <p>
+                <strong>Idea 2</strong> — the paper's own description of this comparison lists soil
+                <em>texture</em> as an input, not the directly-measured drainage-rate data we'd been using.
+                We built a standard, published soil classification method and looked up standard reference
+                values for each texture instead. This measurably reduced our error — but digging into why,
+                it turns out this site's soil is nearly uniform in texture (which, again, matches what the
+                paper itself says about this site), so the "improvement" was mostly a case of removing noisy
+                measurement variability rather than adding real explanatory signal. A genuine but partial
+                answer.
+            </p>
+            <p>
+                <strong>Idea 3</strong> — the reference software we adopted last round has some optional
+                smoothing settings, turned off by default, that a production deployment might reasonably
+                enable. Turning them on gave another real, independent improvement.
+            </p>
+            <p>
+                Combined, these three changes cut our error roughly in half and — more importantly than the
+                raw number — the underlying <em>fit quality</em> genuinely improved rather than just
+                shrinking toward "predict the average everywhere," which is how we can tell this is real
+                progress and not an illusion of one. We're still short of the published target, and we're
+                not going to pretend otherwise.
             </p>
             <p>
                 The tempting shortcut here would be to just find a constant that makes the numbers match and
-                move on. We're deliberately not doing that, twice now — testing a real hypothesis and having
-                it not pan out is a normal, honest part of debugging, and quietly re-tuning a published
-                constant to pass a validation test would defeat the entire point of having the test. The
-                honest status is: real data, real result, real failure, one hypothesis tested and ruled out,
-                two more identified. Nothing past this gate is being built until it's resolved.
+                move on. We're deliberately not doing that — testing real hypotheses and having some pan out
+                partially, some not at all, is a normal, honest part of debugging, and quietly re-tuning a
+                published constant to pass a validation test would defeat the entire point of having the
+                test. The honest status is: real data, real results, real partial progress, a narrower and
+                better-understood remaining gap, and a couple of concrete next places to look — including
+                the possibility that the published number reflects a second modeling stage we haven't built
+                yet, not this stage alone. Nothing past this gate is being built until it actually passes.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>

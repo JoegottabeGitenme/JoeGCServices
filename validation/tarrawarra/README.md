@@ -10,22 +10,25 @@ Per the design doc: **"If you don't land near this, stop and debug. Do this
 before anything else."** `run_validation.py` enforces exactly that --
 non-zero exit if the target isn't met.
 
-## Status (Session 4): real data acquired, Rung 1 run for real, FAIL -- root cause identified, not fabricated-around
+## Status (as of Session 6): FAIL, but closing in -- real, substantial, honestly-earned progress
 
-The full dataset was obtained this session (see "How the data was acquired"
-below) and `run_validation.py` was run against it for the first time. Three
-real bugs were found and fixed along the way (see "Bugs found against real
-data"); after fixing them, **the gate still does not pass**, with a
-specific, diagnosed, and NOT-yet-resolved root cause (see "Why it fails").
-Per the design doc's own instruction, this is exactly the right point to
-stop and report honestly rather than push forward or fabricate a passing
-number.
+The full dataset was obtained in Session 4 (see "How the data was acquired"
+below) and `run_validation.py` has been run against it for real across
+three sessions now (4, 5, 6), testing one concrete, paper-grounded
+hypothesis at a time. **The gate still does not pass.** Per the design
+doc's own instruction, this remains the right point to report honestly
+rather than push forward or fabricate a passing number -- but the gap has
+narrowed substantially:
 
 ```
-Overall baseline (site-mean) RMSE: 0.0370  (doc target: 0.0352)   <- very close, as expected
-Overall Eq. 1 redistribution RMSE: 0.1127  (doc target: 0.0321)   <- 3x WORSE than baseline
-Dates improved: 0/13  (doc target: >= 9)
-RUNG 1: FAIL
+                                    Session 4 (builtin)   Session 6 (best combo)
+Overall baseline (site-mean) RMSE:       0.0370                  0.0370       (doc target: 0.0352)
+Overall Eq. 1 redistribution RMSE:       0.1127                  0.0597       (doc target: 0.0321)
+Implied best-fit k (TWI term):            73.7                    43.9       (doc's stated value: 13)
+Dates improved:                            0/13                    0/13       (doc target: >= 9)
+RUNG 1: FAIL (both), but the gap narrowed from 3x-worse-than-baseline to
+roughly on par with baseline -- see "Session 6" below for exactly which
+three hypotheses closed most of that gap, and which two were ruled out.
 ```
 
 ### How the data was acquired
@@ -139,7 +142,7 @@ All of the above are now covered by dedicated tests in
 gracefully if the data isn't present, so CI doesn't require the data to be
 committed to pass -- though it is committed here).
 
-### Why it fails: still unresolved -- pyDEM was tried directly and it is NOT the (whole) answer
+### Why it fails (Sessions 4-5): pyDEM tested directly, not the (whole) answer
 
 With all five bugs above fixed, Eq. 1's redistribution makes every single
 date's prediction **worse** than the site-mean baseline (0.1127 vs.
@@ -186,42 +189,120 @@ case that's what a saved GeoWATCH raster would contain) is dramatically
 correction term, decisively ruled out).
 
 **What this means**: switching flow-routing algorithms (D8 -> D-infinity)
-does not close the gap. The two candidates that remain most plausible,
-neither yet tested:
+does not close the gap by itself. Two things ruled out by direct algebra,
+not tested empirically (no point): Ks's measurement units (mm/hr vs. any
+other unit) cancel out of Eq. 1's `(ln(Ks) - ln(Ks)-bar)` deviation term
+regardless of choice (a unit conversion is a uniform multiplicative
+constant on Ks, hence an additive constant on ln(Ks), which washes out
+against the mean); the same argument rules out "specific catchment area"
+normalization conventions (per-unit-contour-length vs. raw area) as an
+explanation, for the same reason.
 
-1. **A resolution-scale mismatch.** `k=13` might be calibrated against TWI
-   computed on a coarser "high-resolution" grid (e.g. 30m) than the full
-   5m DEM used here -- coarser grids average out small-scale variability
-   and would shrink TWI's spread, which is the direction needed (smaller
-   deviations -> smaller k needed for the same correction magnitude).
-   Untested: would require regridding the DEM and repeating this exact
-   comparison at 2-3 coarser resolutions.
-2. **pyDEM's non-default options.** `apply_twi_limits` and
-   `uca_saturation_limit=32` are both off by default in the version we
-   ran; a production GeoWATCH configuration might enable them, compressing
-   the upper tail of the TWI distribution. Untested.
+### Session 6: three more hypotheses tested -- real, substantial progress, still not passing
 
-Two things ruled out by direct algebra, not tested empirically (no point):
-Ks's measurement units (mm/hr vs. any other unit) cancel out of Eq. 1's
-`(ln(Ks) - ln(Ks)-bar)` deviation term regardless of choice (a unit
-conversion is a uniform multiplicative constant on Ks, hence an additive
-constant on ln(Ks), which washes out against the mean); the same argument
-rules out "specific catchment area" normalization conventions (per-unit-
-contour-length vs. raw area) as an explanation, for the same reason.
+Three more concrete, paper-grounded hypotheses were tested this session,
+each via a new `run_validation.py` flag:
 
-**What was deliberately NOT done**: fit a local `k` (64-74, depending on
-TWI engine) to make this gate pass. That would defeat the entire purpose
-of Rung 1 -- reproducing a literature-published, independently-calibrated
-constant, not curve-fitting our own implementation to hit a target number.
-`k=13` stays as documented, unmodified, in every configuration tested.
+**1. Resolution mismatch (`--dem-resolution {10,15,30}`, uses
+`physics.terrain.coarsen_dem`)**: the paper's Section 2.4 states
+GeoWATCH's *global* elevation composite is 30m resolution and "sets the
+finest scale at which downscaled soil moisture products can be computed"
+-- but Section 4.2.1 (re-read carefully this session) explicitly says the
+Tarrawarra comparison used the site's own 5m DEM "in lieu of its default
+global geospatial inputs." **Verdict: ruled out by the paper's own text**,
+and independently confirmed empirically -- coarsening to 30m *collapses*
+the TWI/observed-anomaly correlation (0.465 -> 0.193) rather than
+improving it. At only ~13-23 cells across, this ~700m-wide catchment is
+simply too small to resolve real terrain structure at 30m. 10m showed a
+mild, inconclusive improvement (implied k: 74 -> 65); nothing close to 13
+at any resolution.
+
+**2. Soil texture instead of measured conductivity (`--ks-source
+texture`)**: Section 4.2.1 lists "soil texture data" (not measured
+conductivity) as a Tarrawarra input. Built `physics/soil_texture.py`: a
+zero-dependency USDA texture-triangle classifier (boundary data
+transcribed from the public-domain USDA Soil Survey Manual scheme, cross
+-checked for zero coverage gaps across the full valid triangle) feeding
+into Noah's own `SOILPARM.TBL` (STAS table, fetched live from
+`wrf-model/WRF`) for Ks/theta_wilt/theta_ref/theta_s per texture class --
+the same lookup table the paper's own Ek-2003/Chen-1996 flux lineage is
+built on. **Result: real RMSE improvement (0.1127 -> 0.0930)**, but
+diagnosis shows this is mostly a magnitude-shrinkage effect, not better
+physics: Tarrawarra's 11 sample sites are texturally close to homogeneous
+(matching the paper's own description, "the Tarrawara catchment site does
+not show much variability in land cover, vegetation, or soil type"), so
+texture-derived ln(Ks) has ~8x less spread than the noisy measured field
+(std 0.14 vs 1.19) and its correlation with real anomalies is
+statistically indistinguishable from zero (|r| < 0.11 on every date). The
+TWI term's own implied-k is essentially unchanged (74.9, matching the
+measured-Ks baseline of 73.7) -- confirming the persistent gap lives in
+the TWI term, not the Ks term.
+
+**3. pyDEM's non-default capping (`--twi-apply-limits`)**: `apply_twi_limits`/
+`uca_saturation_limit=32` are off by default in pyDEM itself; a production
+GeoWATCH configuration might enable them. **Result: shrinks TWI's standard
+deviation by ~30% (1.43 -> 1.01) and reduces RMSE (0.1089 -> 0.0909)** on
+its own.
+
+**Combining all three (pyDEM + capping + texture-Ks, at native 5m
+resolution -- resolution coarsening does NOT stack usefully with the
+others) gives the best result found across every session so far:**
+
+```
+                                          builtin (Session 4)   pydem+limits+texture-Ks (Session 6)
+Overall Eq. 1 RMSE                              0.1127                       0.0597
+Implied best-fit k (TWI term)                    73.7                        43.9
+Correlation (TWI anomaly vs. observed)           0.465                       0.519
+```
+
+This is real, structural progress, not just magnitude convergence: the
+implied-k gap narrowed from 5.7x to 3.4x, and correlation quality
+genuinely *improved* (didn't just shrink toward the trivial baseline, as
+the resolution-coarsening and texture-Ks-alone experiments partly did).
+One date (`sm270995`, the wettest, hence most topographically-driven) now
+lands at 0.0494 model RMSE vs. 0.0490 baseline -- a near-exact tie, right
+at the edge of "improved." Still FAIL overall (0.0597 vs. target 0.0321,
+0/13 dates improved), but meaningfully closer than any prior session.
+
+**What was deliberately NOT done, again**: fit a local `k` to pass the
+gate. `k=13` remains untouched in every configuration tested, across all
+three sessions now.
 
 **How to reproduce any of the above**:
 ```bash
 pip install pydem   # optional, heavier dep (rasterio + Cython)
-python3 run_validation.py --data-dir ./data                              # builtin D8
-python3 run_validation.py --data-dir ./data --twi-engine pydem           # pyDEM, unscaled
-python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-scaled  # pyDEM, x10
+python3 run_validation.py --data-dir ./data                                     # builtin D8, baseline
+python3 run_validation.py --data-dir ./data --twi-engine pydem                  # pyDEM, unscaled
+python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-scaled     # pyDEM, x10 (ruled out)
+python3 run_validation.py --data-dir ./data --dem-resolution 30                 # resolution sweep (ruled out)
+python3 run_validation.py --data-dir ./data --ks-source texture                 # texture-derived Ks
+python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limits  # pyDEM capping
+python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limits --ks-source texture  # best combo
 ```
+
+### What remains untested
+
+- **Eq. 5 form (paper-literal vs. Ek-2003)**, **Eq. 6's ι normalization**,
+  and **Eq. 2/7's depth normalization** -- all require Stage 2
+  (`--with-flux-correction`), which per the design doc's own discipline
+  should not be built on top of a still-failing Stage 1. The 30cm TDR
+  measurement depth is the obvious first candidate for the depth
+  normalization once this is warranted.
+- **Whether the remaining ~3.4x gap is closeable by TWI-side fixes at
+  all**, or whether it requires Stage 2's own damping (Eq. 2/7
+  systematically pulls stage-1 anomalies back toward the coarse mean --
+  see docs/trail-conditions-design.md Session 3 for why the published
+  0.0321 may represent the full two-stage pipeline, not Stage 1 alone).
+  Session 6's progress makes this more plausible than before: a
+  correctly-calibrated Stage 1 with a genuinely smaller but real
+  amplitude, followed by Stage 2's damping, is a more coherent story than
+  either stage alone reproducing 0.0321.
+- **The pyDEM/paper-scale explanation for the remaining implied-k gap**
+  (43.9 vs. 13) is still open -- possible remaining candidates: a
+  different Ks pedotransfer scheme than Noah's STAS table, a genuinely
+  different `k` interpretation the paper's text doesn't fully spell out,
+  or (per the still-unresolved ambiguity above) that 13 was never meant to
+  be reproduced by Stage 1 in isolation.
 
 ### If the DEM parser fails
 

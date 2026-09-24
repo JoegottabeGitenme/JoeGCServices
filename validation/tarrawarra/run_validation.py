@@ -84,9 +84,10 @@ from scipy.interpolate import griddata
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "services" / "trail-physics"))
 
-from parsers import parse_dem, parse_ksat_file, parse_tdr_file  # noqa: E402
+from parsers import parse_dem, parse_ksat_file, parse_particle_file, parse_tdr_file  # noqa: E402
 from physics.redistribution import redistribute  # noqa: E402
-from physics.terrain import compute_twi, compute_twi_pydem  # noqa: E402
+from physics.soil_texture import soil_hydraulic_properties  # noqa: E402
+from physics.terrain import coarsen_dem, compute_twi, compute_twi_pydem  # noqa: E402
 
 TDR_FILENAMES = [
     "sm270995.tdr",
@@ -133,8 +134,51 @@ def check_data_available(data_dir: Path) -> None:
         sys.exit(1)
 
 
+def load_texture_derived_ksat(particle_path: Path) -> list[tuple[float, float, float]]:
+    """Derive Ks per particle.dat sample SITE (x, y) via USDA texture
+    classification -> Noah SOILPARM.TBL lookup, instead of using measured
+    conductivity (ksat.dat). Session 6 motivation: the paper's own
+    Tarrawarra methodology (Section 4.2.1) lists "soil texture data" as an
+    input, not measured saturated hydraulic conductivity -- this is a
+    direct test of that alternative.
+
+    Each site has 3-4 particle-size samples at different depths (e.g.
+    "0-13", "13-24", ">24"); the SHALLOWEST layer (starting at depth 0) is
+    used, to match TDR's own measurement depth ("the average soil moisture
+    in the top 30 cm," per Readme.tdr) -- deeper, more clay-rich horizons
+    at this site (see README.md) are not what TDR is actually sensing.
+
+    Returns (x, y, satdk_m_per_s) triplets, one per site, suitable for the
+    same nearest-neighbor interpolation `build_terrain_predictors` already
+    uses for measured ksat.dat.
+    """
+    records = parse_particle_file(str(particle_path))
+    surface_by_site: dict[tuple[float, float], object] = {}
+    for r in records:
+        if not r.depth_range_cm.startswith("0-") and r.depth_range_cm != "0":
+            continue
+        surface_by_site[(r.x, r.y)] = r
+
+    triplets = []
+    for (x, y), r in surface_by_site.items():
+        sand = r.coarse_sand_pct + r.fine_sand_pct
+        clay = r.clay_pct
+        params = soil_hydraulic_properties(sand, clay)
+        triplets.append((x, y, params.satdk_m_per_s))
+    if not triplets:
+        raise ValueError(f"No surface-depth (0-...) particle samples found in {particle_path}")
+    return triplets
+
+
 def build_terrain_predictors(
-    dem_path: Path, ksat_path: Path, twi_engine: str = "builtin", twi_scaled: bool = False
+    dem_path: Path,
+    ksat_path: Path,
+    twi_engine: str = "builtin",
+    twi_scaled: bool = False,
+    dem_coarsen_factor: int = 1,
+    ks_source: str = "measured",
+    particle_path: Path | None = None,
+    twi_apply_limits: bool = False,
 ):
     """Compute TWI on the DEM grid, then return a function that interpolates
     (TWI, ln(Ks)) to arbitrary (x, y) points -- since TDR measurement points
@@ -146,48 +190,86 @@ def build_terrain_predictors(
         pydem`). See physics/terrain.py::compute_twi_pydem's docstring.
     twi_scaled: only meaningful for twi_engine="pydem" -- use pyDEM's own
         stored (x10) TWI value instead of the plain unscaled ln() value.
+    dem_coarsen_factor: block-average the DEM to a coarser resolution
+        before computing TWI (see physics.terrain.coarsen_dem). Session 6
+        hypothesis: the paper's k=13 was calibrated against its own 30m
+        global elevation composite (Section 2.4), not the 5m site DEM used
+        for Tarrawarra's site-specific validation -- factor=6 approximates
+        that (5m * 6 = 30m). (This specific hypothesis was tested and
+        found NOT to help -- see README.md -- but the machinery is kept.)
+    ks_source: "measured" (ksat.dat, the field-measured well-permeameter
+        conductivity used since Session 4) or "texture" (derive Ks from
+        USDA soil texture classification of particle.dat samples via Noah
+        SOILPARM.TBL -- see load_texture_derived_ksat's docstring for why:
+        the paper's own Tarrawarra methodology, Section 4.2.1, lists "soil
+        texture data" as an input, not measured conductivity).
+    particle_path: required if ks_source="texture".
+    twi_apply_limits: only meaningful for twi_engine="pydem" -- see
+        compute_twi_pydem's docstring (Session 6 finding: shrinks TWI std
+        by ~30% on the real Tarrawarra DEM).
     """
     grid = parse_dem(str(dem_path))
+    elevation, cellsize = coarsen_dem(grid.elevation, grid.cellsize, dem_coarsen_factor)
     if twi_engine == "builtin":
-        twi_grid = compute_twi(grid.elevation, grid.cellsize)
+        twi_grid = compute_twi(elevation, cellsize)
     elif twi_engine == "pydem":
-        twi_grid = compute_twi_pydem(grid.elevation, grid.cellsize, scaled=twi_scaled)
+        twi_grid = compute_twi_pydem(
+            elevation, cellsize, scaled=twi_scaled, apply_twi_limits=twi_apply_limits
+        )
     else:
         raise ValueError(f"Unknown twi_engine {twi_engine!r} -- must be 'builtin' or 'pydem'")
 
-    nrows, ncols = grid.elevation.shape
+    nrows, ncols = elevation.shape
     # Grid cell centers in the DEM's coordinate system. Row 0 = north edge
     # per the documented convention, so y decreases as row index increases.
-    xs = grid.xllcorner + (np.arange(ncols) + 0.5) * grid.cellsize
-    ys_from_north = grid.yllcorner + grid.cellsize * nrows - (np.arange(nrows) + 0.5) * grid.cellsize
+    # xllcorner/yllcorner are unaffected by coarsening (block-averaging
+    # starts from the same corner); only cellsize and the row/col counts
+    # change.
+    xs = grid.xllcorner + (np.arange(ncols) + 0.5) * cellsize
+    ys_from_north = grid.yllcorner + cellsize * nrows - (np.arange(nrows) + 0.5) * cellsize
     xx, yy = np.meshgrid(xs, ys_from_north)
 
-    ksat_records = parse_ksat_file(str(ksat_path))
-    # The real ksat.dat (Session 4) contains at least one measured 0.0 mm/hr
-    # conductivity (an effectively impermeable point -- a real measurement,
-    # not obviously a data error). ln(0) = -inf, which would poison not just
-    # that single point but the domain-wide log_ks_mean (mean of any array
-    # containing -inf is -inf), corrupting Eq. 1's prediction at EVERY
-    # location, not just near the zero-conductivity point. Rather than
-    # silently substitute an arbitrary floor value, exclude non-positive
-    # measurements from both the domain mean and the interpolation source
-    # pool, with a loud count of how many were dropped.
-    n_before = len(ksat_records)
-    ksat_records = [r for r in ksat_records if r.ksat_mm_hr > 0]
-    n_dropped = n_before - len(ksat_records)
-    if n_dropped:
-        print(
-            f"NOTE: excluded {n_dropped}/{n_before} ksat.dat record(s) with "
-            f"non-positive conductivity (ln(Ks) undefined) from ln(Ks) "
-            f"processing -- see build_terrain_predictors' comment.",
-            file=sys.stderr,
-        )
-    ksat_xy = np.array([(r.x, r.y) for r in ksat_records])
-    ksat_ln = np.log(np.array([r.ksat_mm_hr for r in ksat_records]))
-    # Computed from the SAME filtered ksat_records used for interpolation
+    if ks_source == "measured":
+        ksat_records = parse_ksat_file(str(ksat_path))
+        # The real ksat.dat (Session 4) contains at least one measured 0.0
+        # mm/hr conductivity (an effectively impermeable point -- a real
+        # measurement, not obviously a data error). ln(0) = -inf, which
+        # would poison not just that single point but the domain-wide
+        # log_ks_mean (mean of any array containing -inf is -inf),
+        # corrupting Eq. 1's prediction at EVERY location, not just near
+        # the zero-conductivity point. Rather than silently substitute an
+        # arbitrary floor value, exclude non-positive measurements from
+        # both the domain mean and the interpolation source pool, with a
+        # loud count of how many were dropped.
+        n_before = len(ksat_records)
+        ksat_records = [r for r in ksat_records if r.ksat_mm_hr > 0]
+        n_dropped = n_before - len(ksat_records)
+        if n_dropped:
+            print(
+                f"NOTE: excluded {n_dropped}/{n_before} ksat.dat record(s) with "
+                f"non-positive conductivity (ln(Ks) undefined) from ln(Ks) "
+                f"processing -- see build_terrain_predictors' comment.",
+                file=sys.stderr,
+            )
+        ksat_xy = np.array([(r.x, r.y) for r in ksat_records])
+        ksat_values = np.array([r.ksat_mm_hr for r in ksat_records])
+    elif ks_source == "texture":
+        if particle_path is None:
+            raise ValueError("particle_path is required when ks_source='texture'")
+        triplets = load_texture_derived_ksat(particle_path)
+        ksat_xy = np.array([(x, y) for x, y, _ in triplets])
+        ksat_values = np.array([satdk for _, _, satdk in triplets])
+        # satdk from Noah SOILPARM.TBL is m/s; always > 0 by construction
+        # (no zero-conductivity texture class exists), so no filtering
+        # needed here, unlike the measured path above.
+    else:
+        raise ValueError(f"Unknown ks_source {ks_source!r} -- must be 'measured' or 'texture'")
+
+    ksat_ln = np.log(ksat_values)
+    # Computed from the SAME filtered/derived values used for interpolation
     # above -- deliberately not recomputed separately elsewhere, so there is
-    # exactly one place that decides how non-positive conductivity is
-    # handled, not two independent (and previously inconsistent) ones.
+    # exactly one place that decides how conductivity is sourced and
+    # filtered, not two independent (and previously inconsistent) ones.
     log_ks_mean = float(np.mean(ksat_ln))
 
     def predictors_at(points_xy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -279,6 +361,38 @@ def main():
         "resolution when storing' per pyDEM's own docstring) instead of "
         "the plain unscaled ln() value.",
     )
+    parser.add_argument(
+        "--dem-resolution",
+        type=float,
+        default=5.0,
+        help="Block-average the DEM to this resolution in meters before "
+        "computing TWI (default 5.0 = the site's native resolution, no "
+        "coarsening). Must be a multiple of 5.0 (the native cell size), "
+        "e.g. 10, 15, or 30. Session 6 hypothesis: the paper's k=13 was "
+        "calibrated against its own 30m global elevation composite "
+        "(Section 2.4 of the paper), not Tarrawarra's native 5m site DEM.",
+    )
+    parser.add_argument(
+        "--twi-apply-limits",
+        action="store_true",
+        help="Only meaningful with --twi-engine pydem: enable pyDEM's "
+        "apply_twi_limits/apply_twi_limits_on_uca options (off by default "
+        "in pyDEM itself). Session 6: caps the upper tail of the TWI "
+        "distribution, shrinking its standard deviation by about 30%% on "
+        "the real Tarrawarra DEM.",
+    )
+    parser.add_argument(
+        "--ks-source",
+        choices=["measured", "texture"],
+        default="measured",
+        help="Source of saturated hydraulic conductivity: 'measured' "
+        "(ksat.dat, field well-permeameter measurements) or 'texture' "
+        "(USDA soil texture classification of particle.dat -> Noah "
+        "SOILPARM.TBL lookup). Session 6: the paper's own Tarrawarra "
+        "methodology (Section 4.2.1) lists 'soil texture data' as an "
+        "input, not measured conductivity -- see "
+        "load_texture_derived_ksat's docstring.",
+    )
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
 
@@ -301,16 +415,35 @@ def main():
 
     check_data_available(data_dir)
 
+    NATIVE_RESOLUTION_M = 5.0
+    factor_float = args.dem_resolution / NATIVE_RESOLUTION_M
+    dem_coarsen_factor = round(factor_float)
+    if dem_coarsen_factor < 1 or abs(factor_float - dem_coarsen_factor) > 1e-6:
+        print(
+            f"--dem-resolution {args.dem_resolution} must be a positive "
+            f"integer multiple of the native {NATIVE_RESOLUTION_M}m cell "
+            f"size (e.g. 5, 10, 15, 30).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     predictors_at, twi_grid, log_ks_mean = build_terrain_predictors(
         data_dir / "tarrawar.dem",
         data_dir / "ksat.dat",
         twi_engine=args.twi_engine,
         twi_scaled=args.twi_scaled,
+        dem_coarsen_factor=dem_coarsen_factor,
+        ks_source=args.ks_source,
+        particle_path=data_dir / "particle.dat",
+        twi_apply_limits=args.twi_apply_limits,
     )
     twi_mean = float(np.nanmean(twi_grid))
+    twi_valid_count = int(np.sum(~np.isnan(twi_grid)))
     print(
         f"TWI engine: {args.twi_engine}"
-        + (" (scaled x10)" if args.twi_scaled else ""),
+        + (" (scaled x10)" if args.twi_scaled else "")
+        + f", DEM resolution: {args.dem_resolution}m (factor {dem_coarsen_factor}x), "
+        f"{twi_valid_count} valid TWI cells, Ks source: {args.ks_source}",
         file=sys.stderr,
     )
 

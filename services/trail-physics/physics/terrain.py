@@ -16,6 +16,8 @@ corner of the dem and proceeding row by row").
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 # D8 neighbor offsets (row_delta, col_delta) and their real-world distance
@@ -169,7 +171,66 @@ def fill_pits_and_flats(dem: np.ndarray, epsilon: float = 1e-4) -> np.ndarray:
     return filled
 
 
-def compute_twi_pydem(dem: np.ndarray, cellsize: float, scaled: bool = False) -> np.ndarray:
+def coarsen_dem(dem: np.ndarray, cellsize: float, factor: int) -> tuple[np.ndarray, float]:
+    """Block-average elevation to a coarser grid, e.g. 5m -> 30m at
+    factor=6. Recomputing slope/flow-accumulation/TWI on genuinely
+    coarsened elevation (this function) is the physically correct way to
+    test a resolution-scale hypothesis -- it is NOT the same as computing
+    TWI at fine resolution and then averaging the resulting TWI values
+    post-hoc, which would not reproduce the smoothing effect a coarser
+    input DEM has on slope and specific catchment area.
+
+    Session 6 motivation: GeoWATCH's paper (Section 2.4) states its global
+    elevation composite is 30m resolution and "sets the finest scale at
+    which downscaled soil moisture products can be computed" -- yet
+    Session 4/5's Tarrawarra validation used the site's native 5m DEM
+    throughout. If k=13 was calibrated against 30m-resolution TWI (coarser
+    grids smooth slope and aggregate flow paths, generally SHRINKING TWI's
+    spread), that is a plausible, testable explanation for the ~5-6x
+    magnitude gap documented in validation/tarrawarra/README.md.
+
+    NaN-aware (block mean ignores nodata cells within a block; a block
+    that is entirely NaN stays NaN). If the grid dimensions aren't evenly
+    divisible by `factor`, trailing rows/columns are dropped (cropped to
+    the largest exact multiple) rather than padded -- simpler and honest
+    about a small amount of boundary data loss, appropriate for this
+    diagnostic use, not for a production resampling pipeline.
+
+    Args:
+        dem: elevation grid, NaN for nodata.
+        cellsize: current cell size in meters (assumed square cells).
+        factor: integer number of cells to average per side (e.g. 6 to go
+            from 5m to 30m). Must be >= 1.
+
+    Returns:
+        (coarsened_elevation, new_cellsize)
+    """
+    if factor < 1:
+        raise ValueError(f"factor must be >= 1, got {factor}")
+    if factor == 1:
+        return dem.copy(), float(cellsize)
+
+    rows, cols = dem.shape
+    cropped_rows = (rows // factor) * factor
+    cropped_cols = (cols // factor) * factor
+    cropped = dem[:cropped_rows, :cropped_cols]
+
+    reshaped = cropped.reshape(cropped_rows // factor, factor, cropped_cols // factor, factor)
+    with warnings.catch_warnings():
+        # A block that is entirely NaN legitimately triggers "Mean of empty
+        # slice" and correctly produces NaN -- expected, not an error.
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        coarsened = np.nanmean(reshaped, axis=(1, 3))
+    return coarsened, float(cellsize) * factor
+
+
+def compute_twi_pydem(
+    dem: np.ndarray,
+    cellsize: float,
+    scaled: bool = False,
+    apply_twi_limits: bool = False,
+    uca_saturation_limit: float = 32.0,
+) -> np.ndarray:
     """Topographic wetness index computed via pyDEM (Ueckermann et al. 2018,
     github.com/creare-com/pydem) -- the specific tool the GeoWATCH paper
     (Eylander et al. 2023, Section 2.2) states it used to compute TWI, as
@@ -202,6 +263,18 @@ def compute_twi_pydem(dem: np.ndarray, cellsize: float, scaled: bool = False) ->
             rasters directly (as opposed to calling `calc_twi()` and using
             its return value), this is the version that would match. False
             (default) returns the plain, unscaled ln(uca/slope) value.
+        apply_twi_limits: pyDEM option, off by default in pyDEM itself and
+            in this function (matching pyDEM's own default). When True,
+            caps TWI (and the underlying UCA) at `uca_saturation_limit *
+            min_area`, compressing the upper tail of the distribution.
+            **Session 6 finding**: on the real Tarrawarra DEM, this shrinks
+            TWI's standard deviation by about 30% (1.43 -> 1.01) -- tested
+            through the full Rung 1 harness via
+            `run_validation.py --twi-engine pydem --twi-apply-limits`, see
+            validation/tarrawarra/README.md for the result.
+        uca_saturation_limit: only used when apply_twi_limits=True. pyDEM's
+            own default (32, "units of area" per its own source) is kept
+            as the default here too -- not tuned for this project.
 
     Raises:
         ImportError: if the `pydem` package isn't installed. This is a
@@ -219,7 +292,14 @@ def compute_twi_pydem(dem: np.ndarray, cellsize: float, scaled: bool = False) ->
             "build toolchain for its upstream-contributing-area extension)."
         ) from e
 
-    dp = DEMProcessor(elev=dem.copy(), dX=float(cellsize), dY=float(cellsize))
+    dp = DEMProcessor(
+        elev=dem.copy(),
+        dX=float(cellsize),
+        dY=float(cellsize),
+        apply_twi_limits=apply_twi_limits,
+        apply_twi_limits_on_uca=apply_twi_limits,
+        uca_saturation_limit=uca_saturation_limit,
+    )
     dp.calc_slopes_directions()
     dp.calc_uca()
     unscaled = dp.calc_twi()

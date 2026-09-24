@@ -585,6 +585,93 @@ the gate. `k=13` remains untouched in every tested configuration.
 
 ---
 
+## Session 6 summary (2026-09, continued) — three more hypotheses, real progress, still FAIL
+
+Tested the two concrete next steps Session 5 identified, plus one more
+found by re-reading the paper's Section 4.2.1 carefully: real, substantial
+progress, closing most of the gap, but Rung 1 still does not pass.
+
+### Three hypotheses tested
+
+1. **Resolution mismatch** (`physics.terrain.coarsen_dem`, block-averages
+   elevation before recomputing TWI; `--dem-resolution {10,15,30}`). The
+   paper's Section 2.4 says GeoWATCH's *global* elevation composite is
+   30m — but Section 4.2.1, re-read carefully this session, explicitly
+   says Tarrawarra used the site's own 5m DEM "in lieu of its default
+   global geospatial inputs." **Ruled out** by the paper's own text, and
+   independently confirmed empirically: coarsening to 30m *collapses* the
+   TWI/observed correlation (0.465 → 0.193) rather than improving it — the
+   ~700m catchment is too small (13-23 cells across at 30m) to resolve
+   real terrain structure at that resolution.
+2. **Soil texture instead of measured conductivity** (`--ks-source
+   texture`). Section 4.2.1 lists "soil texture data," not measured
+   conductivity, as an input. Built `physics/soil_texture.py`: a
+   zero-dependency USDA texture-triangle classifier (public-domain
+   boundary data, transcribed and verified against reference corners with
+   zero coverage gaps across the full triangle) feeding Noah's own
+   `SOILPARM.TBL` (STAS table, fetched live from `wrf-model/WRF` — the
+   same lookup the paper's own Ek-2003/Chen-1996 flux lineage is built
+   on). RMSE improved (0.1127 → 0.0930) but diagnosis shows this is mostly
+   a magnitude-shrinkage artifact: Tarrawarra's 11 sample sites are nearly
+   texturally homogeneous (matching the paper's own description), so
+   texture-derived ln(Ks) has ~8x less spread than the noisy measured
+   field, and its correlation with real anomalies is indistinguishable
+   from zero on every date. The TWI term's own implied-k barely moved
+   (74.9 vs. 73.7) — confirming the persistent gap lives in the TWI term,
+   not Ks.
+3. **pyDEM's non-default capping** (`apply_twi_limits`/
+   `uca_saturation_limit=32`, off by default in pyDEM itself;
+   `--twi-apply-limits`). Shrinks TWI's standard deviation ~30% and
+   reduces RMSE (0.1089 → 0.0909) on its own.
+
+### Combined result: real structural progress
+
+Combining all three (pyDEM + capping + texture-Ks, at native 5m
+resolution — coarsening doesn't stack usefully with the others):
+
+| | Session 4 (builtin) | Session 6 (best combo) |
+|---|---|---|
+| Overall Eq. 1 RMSE | 0.1127 | 0.0597 |
+| Implied best-fit k (TWI term) | 73.7 | 43.9 |
+| Correlation (TWI anomaly vs. observed) | 0.465 | 0.519 |
+
+This is genuinely structural, not just magnitude convergence: correlation
+quality *improved* (didn't just shrink toward the trivial baseline the way
+the resolution and texture-Ks-alone experiments partly did), and the
+implied-k gap narrowed from 5.7x to 3.4x. One date (`sm270995`, the
+wettest, most topographically-driven) now lands within 1% of its own
+baseline RMSE. Still FAIL overall (0.0597 vs. target 0.0321, 0/13 dates
+improved) — meaningfully closer than any prior session, not a pass.
+
+**What was deliberately NOT done, again**: fit a local `k` to pass the
+gate. `k=13` remains untouched in every configuration tested across all
+three sessions.
+
+### What remains untested
+
+- Eq. 5's form, Eq. 6's ι normalization, and Eq. 2/7's depth
+  normalization — all require Stage 2, which per the design doc's own
+  discipline shouldn't be built on a still-failing Stage 1.
+- Whether the remaining ~3.4x implied-k gap is closeable by TWI-side fixes
+  at all, or requires Stage 2's own damping effect on stage-1 anomalies —
+  Session 6's progress makes "a correctly-calibrated but smaller Stage 1,
+  followed by Stage 2's damping" a more coherent story than either stage
+  alone reproducing 0.0321.
+- A different Ks pedotransfer scheme than Noah's STAS table, and whether
+  `k=13` was ever meant to be reproduced by Stage 1 in isolation at all
+  (the two-stage-pipeline ambiguity documented since Session 3).
+
+### What this session did NOT do
+
+- **Did not pass Rung 1** — closer than ever, still FAIL.
+- **Did not build Stage 2** — correctly deferred per the design doc's own
+  "don't build on an unresolved Rung 1 failure" rule; Session 6's findings
+  make Stage 2 more clearly relevant to the remaining gap than before, but
+  building it was out of scope this session.
+- **Did not revisit NMM** — still moot until Rung 1 resolves.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design
