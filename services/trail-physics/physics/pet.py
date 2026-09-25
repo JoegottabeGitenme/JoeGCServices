@@ -118,3 +118,168 @@ def hourly_reference_et_mm(
 
     et0 = numerator / denominator
     return np.maximum(et0, 0.0)  # ET can't be negative (condensation is a separate term)
+
+
+# =============================================================================
+# Daily-timestep FAO-56 Penman-Monteith (Chapters 3-4). Session 7 addition,
+# needed for the Tarrawarra validation harness (daily.met provides daily
+# summaries, not hourly HRRR-style grids -- a genuinely different
+# calculation path from `hourly_reference_et_mm` above, not a duplicate:
+# different soil-heat-flux convention (G=0 for daily vs. threaded through
+# for hourly), different numerator constant (900 vs. 37), and actual vapor
+# pressure derived from wet-bulb depression or daily min/max, not specific
+# humidity.
+#
+# Every equation number below (Eq. 6-40) refers to Allen et al. (1998),
+# fetched live and cross-checked against two of the paper's OWN fully
+# worked numerical examples (Example 4: wet-bulb psychrometric ea at
+# 1200m elevation -> 1.91 kPa; Example 18: full daily ETo calculation for
+# Brussels, 6 July -> 3.9 mm/day) -- see test_pet.py, both reproduced
+# exactly.
+# =============================================================================
+
+STANDARD_PSYCHROMETER_COEFFICIENT = 0.000662  # /degC, ventilated (Assmann-type), ~5 m/s air movement -- FAO-56 Eq. 16
+
+
+def atmospheric_pressure_kpa(elevation_m: float) -> float:
+    """FAO-56 Eq. 7: standard atmospheric pressure from station elevation
+    (assumes a standard atmosphere at 20degC -- FAO-56's own stated
+    simplification, not an approximation introduced here)."""
+    return 101.3 * ((293.0 - 0.0065 * elevation_m) / 293.0) ** 5.26
+
+
+def actual_vapor_pressure_from_wetbulb_kpa(
+    dry_bulb_c: np.ndarray,
+    wet_bulb_c: np.ndarray,
+    pressure_kpa: float,
+    psychrometer_coefficient: float = STANDARD_PSYCHROMETER_COEFFICIENT,
+) -> np.ndarray:
+    """FAO-56 Eq. 15/16: actual vapor pressure from a wet/dry-bulb
+    (psychrometer) pair, as Tarrawarra's daily.met provides (not relative
+    humidity or dewpoint). `psychrometer_coefficient` defaults to FAO-56's
+    "ventilated (Assmann type)" value (0.000662/degC) -- Readme.met doesn't
+    state the instrument's exact ventilation, so this is a documented
+    assumption for a standard automatic weather station, not a verified
+    fact about Tarrawarra's specific psychrometer. The other two FAO-56
+    options are 0.000800 (naturally ventilated) and 0.001200
+    (non-ventilated, indoor) -- swap via the parameter if this assumption
+    is ever revisited.
+    """
+    es_wet = saturation_vapor_pressure_kpa(wet_bulb_c + 273.15)
+    gamma_psy = psychrometer_coefficient * pressure_kpa
+    return es_wet - gamma_psy * (dry_bulb_c - wet_bulb_c)
+
+
+def extraterrestrial_radiation_mj_m2_day(lat_deg: float, day_of_year: int) -> float:
+    """FAO-56 Eq. 21/23/24/25: daily extraterrestrial radiation Ra. Positive
+    latitude = northern hemisphere; Tarrawarra (37.65 S) must be passed as
+    a negative value, per FAO-56's own explicit sign convention (Example 7
+    in the primary source)."""
+    lat_rad = np.pi / 180.0 * lat_deg
+    j = day_of_year
+    dr = 1.0 + 0.033 * np.cos(2 * np.pi * j / 365.0)
+    solar_declination = 0.409 * np.sin(2 * np.pi * j / 365.0 - 1.39)
+    # Sunset hour angle (Eq. 25). Clip the arccos argument to [-1, 1] --
+    # near the poles in midsummer/midwinter it can drift fractionally
+    # outside that range due to floating point, which would otherwise
+    # raise instead of correctly saturating at a 24h or 0h day.
+    cos_ws = -np.tan(lat_rad) * np.tan(solar_declination)
+    ws = np.arccos(np.clip(cos_ws, -1.0, 1.0))
+    gsc = 0.0820  # MJ/m^2/min, solar constant
+    return (
+        (24.0 * 60.0 / np.pi)
+        * gsc
+        * dr
+        * (ws * np.sin(lat_rad) * np.sin(solar_declination) + np.cos(lat_rad) * np.cos(solar_declination) * np.sin(ws))
+    )
+
+
+def clear_sky_radiation_mj_m2_day(ra_mj_m2_day: float, elevation_m: float) -> float:
+    """FAO-56 Eq. 37 (elevation-based form, used "when calibrated values
+    for as and bs are not available" -- true here, no station-specific
+    Angstrom calibration exists for Tarrawarra)."""
+    return (0.75 + 2e-5 * elevation_m) * ra_mj_m2_day
+
+
+def net_radiation_daily_mj_m2_day(
+    rs_mj_m2_day: np.ndarray,
+    tmax_c: np.ndarray,
+    tmin_c: np.ndarray,
+    ea_kpa: np.ndarray,
+    ra_mj_m2_day: float,
+    elevation_m: float,
+    albedo: float = 0.23,
+) -> np.ndarray:
+    """FAO-56 Eq. 38-40: net radiation estimated from measured solar
+    (shortwave) radiation, used only when net radiation isn't measured
+    directly (Tarrawarra's own net-radiation sensor has real gaps, e.g. a
+    known outage in Feb 1996 -- see validation/tarrawarra/README.md).
+    `albedo=0.23` is FAO-56's reference-grass value; Tarrawarra's actual
+    surface (grazed pasture) is close enough that FAO-56's own standard
+    value is used rather than inventing a site-specific override.
+    """
+    rns = (1.0 - albedo) * rs_mj_m2_day
+    rso = clear_sky_radiation_mj_m2_day(ra_mj_m2_day, elevation_m)
+    rs_rso = np.minimum(rs_mj_m2_day / rso, 1.0)  # FAO-56: "must be limited so that Rs/Rso <= 1.0"
+    sigma_daily = 4.903e-9  # MJ/(K^4 m^2 day), FAO-56's daily Stefan-Boltzmann constant
+    tmax_k = tmax_c + 273.16
+    tmin_k = tmin_c + 273.16
+    rnl = (
+        sigma_daily
+        * (tmax_k**4 + tmin_k**4)
+        / 2.0
+        * (0.34 - 0.14 * np.sqrt(np.maximum(ea_kpa, 0.0)))
+        * (1.35 * rs_rso - 0.35)
+    )
+    return rns - rnl
+
+
+def daily_reference_et_fao56(
+    tmax_c: np.ndarray,
+    tmin_c: np.ndarray,
+    ea_kpa: np.ndarray,
+    wind_2m_m_s: np.ndarray,
+    net_radiation_mj_m2_day: np.ndarray,
+    elevation_m: float,
+) -> np.ndarray:
+    """FAO-56 Eq. 6: daily reference evapotranspiration. Soil heat flux G
+    is set to 0 per FAO-56's own explicit convention for 24-hour time
+    steps ("the magnitude of daily soil heat flux ... is relatively small
+    ... it may be ignored for 24-hour time steps" -- confirmed against
+    FAO-56's own worked Example 18, where G=0 exactly).
+
+    Args:
+        tmax_c/tmin_c: daily max/min air temperature (Celsius).
+        ea_kpa: actual vapor pressure (kPa) -- see
+            `actual_vapor_pressure_from_wetbulb_kpa`.
+        wind_2m_m_s: wind speed AT 2m height, in m/s. Tarrawarra's own
+            anemometer is already at 2m (per Readme.met's instrument
+            table) -- do NOT apply `wind_speed_2m()`'s 10m->2m log-profile
+            adjustment to this data; that adjustment is for HRRR's native
+            10m wind only.
+        net_radiation_mj_m2_day: measured directly, or from
+            `net_radiation_daily_mj_m2_day` when unmeasured.
+        elevation_m: station elevation, for atmospheric pressure (Eq. 7).
+
+    Returns:
+        Reference ET in mm/day.
+    """
+    tmean_c = (tmax_c + tmin_c) / 2.0
+    pressure_kpa = atmospheric_pressure_kpa(elevation_m)
+
+    delta = vapor_pressure_slope_kpa_per_c(tmean_c + 273.15)
+    gamma = psychrometric_constant_kpa_per_c(pressure_kpa * 1000.0)
+
+    es = (saturation_vapor_pressure_kpa(tmax_c + 273.15) + saturation_vapor_pressure_kpa(tmin_c + 273.15)) / 2.0
+
+    # FAO-56's own Eq. 6 literally uses "+273" (not +273.15) in this one
+    # specific term -- matched exactly here, not a rounding shortcut, so
+    # this function reproduces the primary source's own worked example
+    # (Example 18) to the decimal place; see test_pet.py.
+    numerator = 0.408 * delta * net_radiation_mj_m2_day + gamma * (900.0 / (tmean_c + 273.0)) * wind_2m_m_s * (
+        es - ea_kpa
+    )
+    denominator = delta + gamma * (1.0 + 0.34 * wind_2m_m_s)
+
+    et0 = numerator / denominator
+    return np.maximum(et0, 0.0)

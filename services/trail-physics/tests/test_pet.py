@@ -11,7 +11,13 @@ import numpy as np
 import pytest
 
 from physics.pet import (
+    actual_vapor_pressure_from_wetbulb_kpa,
+    atmospheric_pressure_kpa,
+    clear_sky_radiation_mj_m2_day,
+    daily_reference_et_fao56,
+    extraterrestrial_radiation_mj_m2_day,
     hourly_reference_et_mm,
+    net_radiation_daily_mj_m2_day,
     net_radiation_w_m2,
     psychrometric_constant_kpa_per_c,
     saturation_vapor_pressure_kpa,
@@ -137,3 +143,111 @@ def test_hourly_et_can_decrease_with_wind_under_humid_air():
     et_calm = hourly_reference_et_mm(wind_speed_10m=np.array([1.0]), **kwargs)
     et_windy = hourly_reference_et_mm(wind_speed_10m=np.array([10.0]), **kwargs)
     assert et_windy[0] < et_calm[0]
+
+
+# =============================================================================
+# Session 7: daily-timestep FAO-56 functions, tested against the primary
+# source's OWN fully worked numerical examples (fetched live from
+# fao.org/4/x0490e/, not from memory) -- these are golden reference values
+# from the standard itself, not independently-derived expectations.
+# =============================================================================
+
+
+def test_atmospheric_pressure_matches_fao56_example_2():
+    """FAO-56 Example 2: z=1800m -> P=81.8 kPa."""
+    assert atmospheric_pressure_kpa(1800.0) == pytest.approx(81.8, abs=0.05)
+
+
+def test_atmospheric_pressure_matches_fao56_example_18():
+    """FAO-56 Example 18 (Brussels): z=100m -> P=100.1 kPa."""
+    assert atmospheric_pressure_kpa(100.0) == pytest.approx(100.1, abs=0.05)
+
+
+def test_actual_vapor_pressure_from_wetbulb_matches_fao56_example_4():
+    """FAO-56 Example 4: Tdry=25.6, Twet=19.5, z=1200m -> ea=1.91 kPa
+    (via P=87.9 kPa and the ventilated-psychrometer coefficient)."""
+    pressure_kpa = atmospheric_pressure_kpa(1200.0)
+    assert pressure_kpa == pytest.approx(87.9, abs=0.05)
+    ea = actual_vapor_pressure_from_wetbulb_kpa(
+        dry_bulb_c=np.array([25.6]), wet_bulb_c=np.array([19.5]), pressure_kpa=pressure_kpa
+    )
+    assert ea[0] == pytest.approx(1.91, abs=0.01)
+
+
+def test_extraterrestrial_radiation_matches_fao56_example_8_southern_hemisphere():
+    """FAO-56 Example 8: 3 September at 20 S -> Ra=32.2 MJ/m2/day. This is
+    also the test that matters most for Tarrawarra (37.65 S) -- confirms
+    the southern-hemisphere sign convention (negative latitude) is handled
+    correctly, not just the northern-hemisphere case."""
+    ra = extraterrestrial_radiation_mj_m2_day(lat_deg=-20.0, day_of_year=246)
+    assert ra == pytest.approx(32.2, abs=0.1)
+
+
+def test_extraterrestrial_radiation_matches_fao56_example_18_northern_hemisphere():
+    """FAO-56 Example 18 (Brussels): 6 July at 50.8 N -> Ra=41.09 MJ/m2/day."""
+    ra = extraterrestrial_radiation_mj_m2_day(lat_deg=50.8, day_of_year=187)
+    assert ra == pytest.approx(41.09, abs=0.1)
+
+
+def test_clear_sky_radiation_matches_fao56_example_18():
+    """FAO-56 Example 18: Ra=41.09, z=100m -> Rso=30.90 MJ/m2/day."""
+    rso = clear_sky_radiation_mj_m2_day(ra_mj_m2_day=41.09, elevation_m=100.0)
+    assert rso == pytest.approx(30.90, abs=0.05)
+
+
+def test_net_radiation_daily_matches_fao56_example_18():
+    """FAO-56 Example 18 (Brussels, full Rn-from-Rs pipeline): Rs=22.07,
+    Tmax=21.5, Tmin=12.3, ea=1.409, Ra=41.09, z=100m -> Rn=13.28 MJ/m2/day
+    (via Rns=17.00, Rnl=3.71)."""
+    rn = net_radiation_daily_mj_m2_day(
+        rs_mj_m2_day=np.array([22.07]),
+        tmax_c=np.array([21.5]),
+        tmin_c=np.array([12.3]),
+        ea_kpa=np.array([1.409]),
+        ra_mj_m2_day=41.09,
+        elevation_m=100.0,
+    )
+    assert rn[0] == pytest.approx(13.28, abs=0.1)
+
+
+def test_daily_reference_et_matches_fao56_example_18_end_to_end():
+    """FAO-56 Example 18 (Brussels, 6 July, full daily ETo calculation):
+    Tmax=21.5, Tmin=12.3, ea=1.409 kPa (from RH), u2=2.078 m/s (already
+    converted from the example's own 10m measurement -- the point of this
+    test is the daily ETo equation itself, not the wind-height conversion,
+    which is a separate, already-tested function), Rn=13.28 MJ/m2/day,
+    z=100m -> ETo=3.9 mm/day (published as "3.88 -> 3.9")."""
+    et0 = daily_reference_et_fao56(
+        tmax_c=np.array([21.5]),
+        tmin_c=np.array([12.3]),
+        ea_kpa=np.array([1.409]),
+        wind_2m_m_s=np.array([2.078]),
+        net_radiation_mj_m2_day=np.array([13.28]),
+        elevation_m=100.0,
+    )
+    assert et0[0] == pytest.approx(3.88, abs=0.02)
+
+
+def test_daily_reference_et_is_nonnegative():
+    et0 = daily_reference_et_fao56(
+        tmax_c=np.array([5.0]),
+        tmin_c=np.array([2.0]),
+        ea_kpa=np.array([0.8]),
+        wind_2m_m_s=np.array([1.0]),
+        net_radiation_mj_m2_day=np.array([-2.0]),  # net radiative loss (winter, low sun)
+        elevation_m=100.0,
+    )
+    assert et0[0] >= 0.0
+
+
+def test_daily_reference_et_increases_with_net_radiation():
+    kwargs = dict(
+        tmax_c=np.array([20.0]),
+        tmin_c=np.array([10.0]),
+        ea_kpa=np.array([1.0]),
+        wind_2m_m_s=np.array([2.0]),
+        elevation_m=100.0,
+    )
+    et_low = daily_reference_et_fao56(net_radiation_mj_m2_day=np.array([5.0]), **kwargs)
+    et_high = daily_reference_et_fao56(net_radiation_mj_m2_day=np.array([20.0]), **kwargs)
+    assert et_high[0] > et_low[0]

@@ -10,26 +10,31 @@ Per the design doc: **"If you don't land near this, stop and debug. Do this
 before anything else."** `run_validation.py` enforces exactly that --
 non-zero exit if the target isn't met.
 
-## Status (as of Session 6): FAIL, but closing in -- real, substantial, honestly-earned progress
+## Status (as of Session 7): FAIL, but closing in -- real, substantial, honestly-earned progress
 
 The full dataset was obtained in Session 4 (see "How the data was acquired"
 below) and `run_validation.py` has been run against it for real across
-three sessions now (4, 5, 6), testing one concrete, paper-grounded
-hypothesis at a time. **The gate still does not pass.** Per the design
-doc's own instruction, this remains the right point to report honestly
-rather than push forward or fabricate a passing number -- but the gap has
-narrowed substantially:
+four sessions now (4, 5, 6, 7), testing one concrete, paper-grounded
+hypothesis at a time -- Session 7 built and wired the paper's full
+two-stage pipeline (Eq. 1 + Eq. 2/7), not just Stage 1. **The gate still
+does not pass.** Per the design doc's own instruction, this remains the
+right point to report honestly rather than push forward or fabricate a
+passing number -- but the gap has narrowed substantially:
 
 ```
-                                    Session 4 (builtin)   Session 6 (best combo)
-Overall baseline (site-mean) RMSE:       0.0370                  0.0370       (doc target: 0.0352)
-Overall Eq. 1 redistribution RMSE:       0.1127                  0.0597       (doc target: 0.0321)
-Implied best-fit k (TWI term):            73.7                    43.9       (doc's stated value: 13)
-Dates improved:                            0/13                    0/13       (doc target: >= 9)
-RUNG 1: FAIL (both), but the gap narrowed from 3x-worse-than-baseline to
-roughly on par with baseline -- see "Session 6" below for exactly which
-three hypotheses closed most of that gap, and which two were ruled out.
+                                 Session 4    Session 6      Session 7
+                                 (builtin)   (best Stage 1)  (+ Stage 2)
+Overall baseline RMSE:            0.0370       0.0370          0.0370       (doc target: 0.0352)
+Overall Eq. 1[+2] RMSE:           0.1127       0.0597          0.0579       (doc target: 0.0321)
+Dates improved:                    0/13         0/13            0/13        (doc target: >= 9)
 ```
+
+That's a 48.6% reduction in RMSE from where Session 4 started, and one
+date (`sm270995`, the wettest/most topographically-driven) now lands
+within 0.6% of its own baseline -- the closest any single date has come to
+"improved" across all four sessions. Still FAIL, not a pass -- see
+"Session 7" below for exactly what Stage 2 added, and why its effect was
+smaller than hoped.
 
 ### How the data was acquired
 
@@ -51,8 +56,8 @@ data/
 ├── ksat.dat           # from otherdat.zip
 ├── particle.dat       # from otherdat.zip
 ├── layer.dat          # from otherdat.zip
-├── vegetat.dat        # from otherdat.zip -- for a future --with-flux-correction
-├── daily.met          # from day_flux.zip -- for a future --with-flux-correction
+├── vegetat.dat        # from otherdat.zip -- NOT used by --with-flux-correction (see Session 7: sigma_f is a swept uniform scalar instead, deliberately)
+├── daily.met          # from day_flux.zip -- used by --with-flux-correction (Session 7: Ep via FAO-56 daily Penman-Monteith)
 ├── neutron.pos        # from siteinfo.zip -- NMM site coordinates
 ├── docs/              # from tarradoc.zip -- all 9 real Readme.* files
 ├── tdr/*.tdr           # 13 files, from patterns.zip
@@ -280,29 +285,121 @@ python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limit
 python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limits --ks-source texture  # best combo
 ```
 
-### What remains untested
+### Session 7: Stage 2 (Eq. 2/7) built and wired for real -- a real but smaller-than-hoped effect
 
-- **Eq. 5 form (paper-literal vs. Ek-2003)**, **Eq. 6's ι normalization**,
-  and **Eq. 2/7's depth normalization** -- all require Stage 2
-  (`--with-flux-correction`), which per the design doc's own discipline
-  should not be built on top of a still-failing Stage 1. The 30cm TDR
-  measurement depth is the obvious first candidate for the depth
-  normalization once this is warranted.
-- **Whether the remaining ~3.4x gap is closeable by TWI-side fixes at
-  all**, or whether it requires Stage 2's own damping (Eq. 2/7
-  systematically pulls stage-1 anomalies back toward the coarse mean --
-  see docs/trail-conditions-design.md Session 3 for why the published
-  0.0321 may represent the full two-stage pipeline, not Stage 1 alone).
-  Session 6's progress makes this more plausible than before: a
-  correctly-calibrated Stage 1 with a genuinely smaller but real
-  amplitude, followed by Stage 2's damping, is a more coherent story than
-  either stage alone reproducing 0.0321.
-- **The pyDEM/paper-scale explanation for the remaining implied-k gap**
-  (43.9 vs. 13) is still open -- possible remaining candidates: a
-  different Ks pedotransfer scheme than Noah's STAS table, a genuinely
-  different `k` interpretation the paper's text doesn't fully spell out,
-  or (per the still-unresolved ambiguity above) that 13 was never meant to
-  be reproduced by Stage 1 in isolation.
+Session 6 left one open hypothesis unaddressed: that the published 0.0321
+represents the FULL two-stage pipeline, not Stage 1 alone, since Eq. 2/7's
+sign structure systematically damps Stage 1's (currently over-amplified)
+anomalies. Session 7 built Stage 2 for real -- `--with-flux-correction` is
+no longer a stub -- and tested it.
+
+**What was built** (all in `stage2.py`, kept separate from
+`run_validation.py` for independent testability):
+
+- **Ep (potential evapotranspiration)**: FAO-56 daily Penman-Monteith
+  (`physics/pet.py`, new daily-timestep functions -- Eq. 6-40 of Allen et
+  al. 1998, each cross-checked against the primary source's OWN fully
+  worked numerical examples, not just formula transcription). Driven by
+  `data/daily.met` (a real parser added: 32 tab-delimited columns,
+  confirmed against the file directly). Actual vapor pressure comes from
+  wet/dry-bulb psychrometry (Tarrawarra's own instrumentation), not
+  relative humidity. Net radiation is measured directly when available and
+  falls back to FAO-56's own Rs-based estimate for the 2 dates (of 13)
+  whose survey window predates the net-radiation sensor's installation or
+  falls in a real, isolated sensor outage (Feb 1996).
+- **sigma_f (vegetation greenness fraction)**: per the user's own decision,
+  a spatially-uniform swept scalar (0.4/0.6/0.8) -- the paper's own
+  Tarrawarra input list ("site average soil moisture, 5-m DEM, and soil
+  texture data") does NOT include site vegetation data, meaning GeoWATCH
+  used its own default global greenness layer here, uniform at this 10.8
+  ha site's scale. `data/vegetat.dat`'s biomass measurements are
+  deliberately NOT used -- converting biomass to a greenness fraction
+  would be an invented modeling step the paper doesn't describe.
+- **theta_wilt/theta_ref/theta_s**: reused Session 6's texture
+  classification (fine = per-point nearest-site lookup; coarse = simple
+  mean across all 11 sites, the paper's "weather-scale-averaged soil
+  properties" for a domain that IS one weather-scale block).
+- **iota (Eq. 6)**: computed from the native 5m DEM's slope/aspect at each
+  point. Required a real correctness check first: Tarrawarra is at
+  37.65 S, and every existing `solar_view_factor` test used a
+  northern-hemisphere latitude. Added 4 explicit southern-hemisphere
+  tests (mirroring the existing northern ones) -- all passed with NO code
+  changes needed. `solar_position`/`local_incidence_cosine` are pure
+  trigonometry with no hemisphere-specific branch, so this was a real risk
+  worth checking (exactly the kind of directional bug Session 2's
+  aspect-sign error was), not just a formality.
+- **Active-layer depth** (converts Ep from mm/day to fraction/day -- see
+  below): swept 150/300/1000mm.
+
+**A real dimensional-analysis finding, resolving relaxation.py's
+long-standing "open calibration question"**: for `delta_t` (Eq. 7) to
+actually come out in *days* (matching the paper's explicit "clipped ...
+0 to 30 days"), `F(theta_s)` must be a fraction-per-day rate, not mm/day --
+confirmed by working through the algebra, not assumed. The fix (dividing
+Ep by an assumed active-layer depth) is a standard bucket-model
+conversion, not a hack -- but then a second, more surprising result
+emerged when actually testing the depth sweep:
+
+**The active-layer depth turns out not to matter AT ALL** (confirmed
+bit-for-bit identical results across 150/300/1000mm, then proven exactly
+via algebra): whenever the SAME Ep drives both the fine and coarse flux
+terms (true here -- one weather station, not a spatially-resolved met
+field), Eq. 7's `delta_t` is *exactly* inversely proportional to Ep, while
+Eq. 2's flux-difference term is *exactly* directly proportional to Ep --
+their product (the actual correction applied) is analytically independent
+of Ep's absolute magnitude, and therefore of the depth normalization
+entirely. This **fully closes** the depth-normalization question for any
+site/configuration where fine and coarse Ep are equal -- not just "we
+didn't find a good value," but "the value provably doesn't matter here."
+sigma_f has a real but tiny effect (visible only at the 5th decimal place
+per-point; below display precision in the aggregate RMSE) for the same
+underlying reason (it appears in both the correction's numerator and
+Eq. 7's denominator in closely -- though not exactly -- canceling ways).
+
+**Eq. 5 form does matter, modestly**: `geowatch` (paper-literal, unclipped
+ratio) beat `ek2003` by a small but real margin (0.0579 vs. 0.0587 on the
+best combined configuration).
+
+**Results**: Stage 2 only ever activates on dates where `theta_ws <
+theta_ref` (Eq. 7's `delta_t` clips to exactly 0 otherwise) -- confirmed
+against real Tarrawarra data, this is **7 of the 13 dates**, not a rare
+edge case. On those 7 dates, Stage 2 correctly and consistently pulled
+Stage 1's over-amplified predictions toward the baseline (every single
+active date improved, never made worse) -- physically correct signed
+behavior -- but by a modest amount. Combining Stage 2 with Session 6's
+best Stage 1 configuration (pyDEM + `--twi-apply-limits` + `--ks-source
+texture`) gives the best result found across all four sessions:
+
+```
+                                  Session 6         Session 7
+                              (Stage 1 only)   (Stage 1 + Stage 2)
+Overall Eq. 1[+2] RMSE            0.0597            0.0579
+```
+
+**How to reproduce**:
+```bash
+python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limits \
+    --ks-source texture --with-flux-correction --eq5-form geowatch
+```
+
+### What remains open
+
+- **Whether the remaining gap needs a different TWI calibration, a
+  different Stage 2 detail, or both.** Stage 2's real-but-modest effect
+  means it's a genuine contributor, not the single missing piece -- the
+  bulk of the gap (which Session 4-6 already traced to the TWI term
+  specifically) is still unexplained.
+- **The "modified TWI" sentence** (Section 2.2.1: "the GeoWATCH calculation
+  of the TWI was modified to use volumetric soil moisture instead of
+  relative soil moisture") remains the single most suspicious unexplained
+  detail in the paper's own text -- still not resolved by anything tested
+  across 4 sessions.
+- **Whether 0.0321 is Stage-1-only or the full pipeline** -- Session 7's
+  result doesn't resolve this either way: Stage 2 helped, but not enough
+  to flip the conclusion.
+- Shale Hills (the paper's second validation site, 74 dates, public data)
+  remains the next planned arbiter, per the user's own decision to pursue
+  it after Stage 2 rather than in parallel.
 
 ### If the DEM parser fails
 

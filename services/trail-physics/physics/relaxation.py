@@ -45,17 +45,30 @@ correction). `SoilProperties` below exists specifically so a caller cannot
 accidentally pass one properties bundle where two distinct ones (fine vs.
 coarse-averaged) are required.
 
-**Units, an unresolved ambiguity the paper does not spell out**: for
-`theta = theta* + delta_t * (F(...) - F'(...))` to be dimensionally
-consistent (theta is a dimensionless volumetric fraction), delta_t (days)
-times F (an ET-rate flux) must itself be dimensionless -- meaning F must
-already be expressed as a volumetric-fraction-per-day rate, not a
-depth-per-time rate like FAO-56's mm/day. The paper never states the
-depth-normalization (e.g. dividing by a root-zone or active-layer depth)
-this requires. Treat this as a genuine open calibration question, on the
-same footing as k=13 (Eq. 1) -- something only empirical reproduction
-against Tarrawarra can pin down, not something to silently assume a value
-for here.
+**Units -- resolved by dimensional analysis (Session 7), value still an open
+calibration question.** For `delta_t = delta_ts * (theta_ws-theta_ref) /
+F(theta_s)` to actually come out in days (matching the paper's own explicit
+"clipped between 0 and ... 30 days"), F(theta_s) must have units of
+[1/day] -- a fractional-soil-moisture-per-day rate -- not a depth-per-time
+rate like FAO-56's mm/day. Passing `Ep` in mm/day directly (as
+`services/trail-physics/physics/pet.py` naturally produces) would silently
+give `delta_t` units of day/mm instead of days; the two Eq. 2 flux terms
+happen to still cancel those units correctly in the final correction
+(`delta_t [day/mm] * F_diff [mm/day]` = dimensionless), so the bug would
+NOT show up as an obviously-wrong result -- only as a `delta_t` whose
+*numerical value* has been implicitly calibrated for depth=1mm, an
+arbitrary and almost certainly wrong choice, especially since it's the
+[0,30]-day clip that determines whether corrections ever saturate.
+
+**The fix**: convert `Ep` from mm/day to fraction/day by dividing by an
+assumed active/root-zone depth in mm before calling any function in this
+module (`ep_fraction_per_day = ep_mm_per_day / depth_mm`) -- a standard
+bucket-model unit conversion, not a hack. The depth ITSELF remains a real
+calibration unknown the paper doesn't state; validation/tarrawarra's
+Stage-2 harness sweeps it (300mm primary, matching TDR's own 30cm
+measurement depth, with 150/1000mm as sensitivity bounds), same footing as
+k=13 (Eq. 1) -- something only empirical reproduction against Tarrawarra
+can pin down, not something to silently assume a value for here.
 """
 
 from __future__ import annotations

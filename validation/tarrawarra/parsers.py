@@ -53,6 +53,7 @@ depth" instead, but it's the same 5 numeric columns in the same order).
 
 from __future__ import annotations
 
+import datetime
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -514,4 +515,100 @@ def parse_layer_file(path: str) -> list[LayerRecord]:
             )
     if not records:
         raise ValueError(f"No layer records parsed from {path}")
+    return records
+
+
+@dataclass
+class DailyMetRecord:
+    """One day's meteorological summary. Per Readme.met: "9am Australian
+    eastern standard time for the 24 hours up to the date and time" -- i.e.
+    the record dated e.g. 10/08/95 summarizes the 24h ending 9am on that
+    date. Fields are `None` where the source file has `*` (missing/not yet
+    instrumented -- net radiation and all soil temperatures are `*` for
+    roughly the first 150 days of the record, before those sensors were
+    installed)."""
+
+    date: datetime.date
+    dry_bulb_mean_c: float | None
+    dry_bulb_max_c: float | None
+    dry_bulb_min_c: float | None
+    wet_bulb_mean_c: float | None
+    wet_bulb_max_c: float | None
+    wet_bulb_min_c: float | None
+    surf_air_mean_c: float | None
+    surf_air_max_c: float | None
+    surf_air_min_c: float | None
+    rain_mm: float | None
+    global_rad_kj_m2: float | None
+    net_rad_kj_m2: float | None
+    wind_mean_km_hr: float | None
+    wind_max_km_hr: float | None
+    wind_min_km_hr: float | None
+
+
+def parse_daily_met_file(path: str) -> list[DailyMetRecord]:
+    """Parse met_flux/daily.met. Per Readme.met and confirmed against the
+    real file (Session 7): 32 tab-separated columns --
+
+        Date, Time, DryBulb(Mean,Max,Min), WetBulb(Mean,Max,Min),
+        SurfAir(Mean,Max,Min), Rain, GlobalRad, NetRad,
+        Wind(Mean,Max,Min), then 5 soil depths (2/5/10/20/50cm) x
+        (Mean,Max,Min) = 15 more columns.
+
+    Only the first 15 columns (through wind) are kept here -- soil
+    temperatures aren't needed for Eq. 4/5/7's Ep calculation and are
+    dropped rather than modeled as an unused 15-field tail.
+
+    Date is `d/m/yy` (NOT the `DD-Mon-YY` format the TDR/NMM files use --
+    yet another format inconsistency between files in this dataset).
+    `*` (with or without trailing whitespace -- the header padded columns
+    with spaces for alignment) means missing data and becomes `None`.
+    """
+    records = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            parts = line.split("\t")
+            if len(parts) != 32:
+                continue
+            date_str = parts[0].strip()
+            try:
+                day, month, year = date_str.split("/")
+                year_int = int(year)
+                year_full = 1900 + year_int if year_int >= 50 else 2000 + year_int
+                date = datetime.date(year_full, int(month), int(day))
+            except (ValueError, IndexError):
+                continue  # header/comment line
+
+            def field(i: int) -> float | None:
+                v = parts[i].strip()
+                if v == "*" or v == "":
+                    return None
+                try:
+                    return float(v)
+                except ValueError:
+                    return None
+
+            records.append(
+                DailyMetRecord(
+                    date=date,
+                    dry_bulb_mean_c=field(2),
+                    dry_bulb_max_c=field(3),
+                    dry_bulb_min_c=field(4),
+                    wet_bulb_mean_c=field(5),
+                    wet_bulb_max_c=field(6),
+                    wet_bulb_min_c=field(7),
+                    surf_air_mean_c=field(8),
+                    surf_air_max_c=field(9),
+                    surf_air_min_c=field(10),
+                    rain_mm=field(11),
+                    global_rad_kj_m2=field(12),
+                    net_rad_kj_m2=field(13),
+                    wind_mean_km_hr=field(14),
+                    wind_max_km_hr=field(15),
+                    wind_min_km_hr=field(16),
+                )
+            )
+    if not records:
+        raise ValueError(f"No daily met records parsed from {path}")
     return records

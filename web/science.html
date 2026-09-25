@@ -340,8 +340,8 @@
                     </tr>
                     <tr>
                         <td>Time-relaxation of a redistributed anomaly</td>
-                        <td><span class="badge badge-high">Transcribed</span></td>
-                        <td>Previously an unverified physically-motivated reconstruction; now transcribed directly from the primary source's own equations. One open question the paper itself doesn't resolve: making the units work out requires a depth-normalization the text never states — an empirical calibration question, same as the topographic term's own scaling constant</td>
+                        <td><span class="badge badge-high">Transcribed and running</span></td>
+                        <td>Transcribed directly from the primary source's own equations, then built and tested end-to-end against real data (see Rung&nbsp;1 below) — not just verified on paper. One thing the paper's text never states turned out, once we worked through the math, to not actually matter for our setup at all (an open question fully closed, not left hanging)</td>
                     </tr>
                     <tr>
                         <td>Frozen-ground infiltration gate</td>
@@ -440,18 +440,32 @@
                 Combined, these three changes cut our error roughly in half and — more importantly than the
                 raw number — the underlying <em>fit quality</em> genuinely improved rather than just
                 shrinking toward "predict the average everywhere," which is how we can tell this is real
-                progress and not an illusion of one. We're still short of the published target, and we're
-                not going to pretend otherwise.
+                progress and not an illusion of one.
+            </p>
+            <p>
+                We'd also flagged a fourth possibility: that the equation we'd been testing is only half the
+                published model — a second correction stage might exist specifically to pull an
+                over-eager first-stage estimate back toward reality. We built that second stage and tested
+                it directly rather than leaving it as speculation. It turned out to only ever activate on
+                about half the sample dates (a real, paper-specified condition, not a bug), and on those
+                dates it did exactly what we'd hoped — pulled our over-amplified estimate the right direction,
+                every time, never the wrong way — but by a modest amount, not enough by itself to close the
+                remaining gap. One side effect worth mentioning because it's the kind of thing that's easy to
+                get wrong and hard to notice when you have: a technical assumption buried in that second
+                stage (how to convert an evaporation rate into a rate of soil moisture change) turned out,
+                after working through the math properly, to not matter at all for our specific setup — a
+                loose end we'd have otherwise had to guess at, now provably closed instead.
             </p>
             <p>
                 The tempting shortcut here would be to just find a constant that makes the numbers match and
                 move on. We're deliberately not doing that — testing real hypotheses and having some pan out
                 partially, some not at all, is a normal, honest part of debugging, and quietly re-tuning a
                 published constant to pass a validation test would defeat the entire point of having the
-                test. The honest status is: real data, real results, real partial progress, a narrower and
-                better-understood remaining gap, and a couple of concrete next places to look — including
-                the possibility that the published number reflects a second modeling stage we haven't built
-                yet, not this stage alone. Nothing past this gate is being built until it actually passes.
+                test. The honest status, after four rounds of testing: real data, real results, real
+                cumulative progress (our error is now less than half what it was when we started), a
+                narrower and better-understood remaining gap, and one specific unexplained sentence in the
+                source paper that remains the leading suspect. Nothing past this gate is being built until
+                it actually passes.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>

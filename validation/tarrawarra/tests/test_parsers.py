@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from parsers import (
+    parse_daily_met_file,
     parse_dem,
     parse_ksat_file,
     parse_layer_file,
@@ -398,3 +399,70 @@ def test_parse_layer_file_against_real_downloaded_data():
     assert first.x == pytest.approx(805.0)
     assert first.depth_b1_cm == "39"
     assert first.texture_b1 == "clay"
+
+
+def _met_row(*fields: str) -> str:
+    """Build a synthetic daily.met data row from exactly 32 fields."""
+    assert len(fields) == 32, f"expected 32 fields, got {len(fields)}"
+    return "\t".join(fields) + "\n"
+
+
+def test_parse_daily_met_file_synthetic(tmp_path):
+    """32 tab-separated columns; '*' (with or without padding whitespace)
+    means missing."""
+    all_missing = _met_row("9/08/95", "9:00:00", *(["*"] * 30))
+    real_row = _met_row(
+        "10/08/95", "9:00:00", "6.5", "10.9", "1.9", "6.5", "10", "2.4", "6.9", "14", "1.4",
+        "0", "5080", "4644", "0.4", "6.3", "0", *(["*"] * 15),
+    )
+    path = tmp_path / "daily.met"
+    path.write_text("header\n" * 10 + all_missing + real_row)
+    records = parse_daily_met_file(str(path))
+    assert len(records) == 2
+    assert records[0].dry_bulb_mean_c is None  # all-missing row
+    assert records[1].dry_bulb_mean_c == pytest.approx(6.5)
+    assert records[1].global_rad_kj_m2 == pytest.approx(5080.0)
+    assert records[1].net_rad_kj_m2 == pytest.approx(4644.0)
+
+
+def test_parse_daily_met_file_date_parsing(tmp_path):
+    """d/m/yy, two-digit year -- 95 -> 1995, not 2095."""
+    content = "header\n" + _met_row("9/08/95", "9:00:00", *(["*"] * 30))
+    path = tmp_path / "daily.met"
+    path.write_text(content)
+    records = parse_daily_met_file(str(path))
+    assert records[0].date.year == 1995
+    assert records[0].date.month == 8
+    assert records[0].date.day == 9
+
+
+def test_parse_daily_met_file_wrong_column_count_skipped(tmp_path):
+    content = "header\n" + "9/08/95\t9:00:00\t1\t2\n"  # only 4 columns, not 32
+    path = tmp_path / "daily.met"
+    path.write_text(content)
+    with pytest.raises(ValueError, match="No daily met records parsed"):
+        parse_daily_met_file(str(path))
+
+
+def test_parse_daily_met_file_against_real_data():
+    """If the real daily.met (Session 4) is present, this must match known
+    real values confirmed by direct inspection in Session 7."""
+    real_path = Path(__file__).parent.parent / "data" / "daily.met"
+    if not real_path.exists():
+        pytest.skip("real data/daily.met not present (see README.md)")
+    records = parse_daily_met_file(str(real_path))
+    assert len(records) == 832  # matches "9 August 1995 to 17 November 1997"
+    assert records[0].date.isoformat() == "1995-08-09"
+    assert records[0].dry_bulb_mean_c is None  # instrumentation not yet installed
+    assert records[-1].date.isoformat() == "1997-11-17"
+    # A specific real record with all fields present, confirmed by direct
+    # inspection (Session 7):
+    by_date = {r.date: r for r in records}
+    import datetime
+
+    r = by_date[datetime.date(1995, 10, 4)]
+    assert r.dry_bulb_mean_c == pytest.approx(8.7)
+    assert r.wet_bulb_mean_c == pytest.approx(7.0)
+    assert r.global_rad_kj_m2 == pytest.approx(9531.0)
+    assert r.net_rad_kj_m2 == pytest.approx(4644.0)
+    assert r.wind_mean_km_hr == pytest.approx(6.9)

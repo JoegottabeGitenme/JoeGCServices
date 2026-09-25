@@ -110,13 +110,17 @@ BASELINE_RMSE = 0.0352
 TARGET_DATES_IMPROVED = 9  # of 13
 
 
-def check_data_available(data_dir: Path) -> None:
+def check_data_available(data_dir: Path, require_stage2: bool = False) -> None:
     dem_path = data_dir / "tarrawar.dem"
     ksat_path = data_dir / "ksat.dat"
     missing = [p for p in (dem_path, ksat_path) if not p.exists()]
     missing += [
         data_dir / "tdr" / f for f in TDR_FILENAMES if not (data_dir / "tdr" / f).exists()
     ]
+    if require_stage2:
+        # Stage 2 (--with-flux-correction) additionally needs met data (for
+        # Ep) and particle-size data (for texture-derived soil parameters).
+        missing += [p for p in (data_dir / "daily.met", data_dir / "particle.dat") if not p.exists()]
     if missing:
         print(
             "Tarrawarra data not found. This validation gate requires the "
@@ -282,7 +286,22 @@ def build_terrain_predictors(
     return predictors_at, twi_grid, log_ks_mean
 
 
-def validate_one_date(tdr_path: Path, predictors_at, twi_mean: float, log_ks_mean: float):
+def validate_one_date(
+    tdr_path: Path,
+    predictors_at,
+    twi_mean: float,
+    log_ks_mean: float,
+    stage2_config=None,
+):
+    """stage2_config: a stage2.Stage2Config, or None (default) for
+    Stage 1 (Eq. 1) only. When provided, Stage 2 (Eq. 2/7) is applied on
+    top of Stage 1's per-point prediction for every point, using that
+    survey's own mean Ep -- unless the survey's date window has no usable
+    meteorological data, in which case Stage 2 is skipped for that date
+    ONLY (falls back to Stage 1's own prediction) with a loud warning,
+    rather than silently applying Stage 1-only for every date without
+    saying so.
+    """
     records = parse_tdr_file(str(tdr_path))
     xy = np.array([(r.x, r.y) for r in records])
     # TDR files store %V/V (e.g. 39.1 meaning 39.1%); the design doc's
@@ -292,7 +311,7 @@ def validate_one_date(tdr_path: Path, predictors_at, twi_mean: float, log_ks_mea
     # k=13 constant is an additive correction on whatever scale theta is
     # expressed in; applying it to %-scale theta while k was calibrated
     # against fractional-scale theta would apply a correction of the wrong
-    # relative magnitude, not just report a wrongly-scaled number.
+    # relative magnitude, not just report a wrongly-scaled final number.
     observed = np.array([r.moisture_pct / 100.0 for r in records])
 
     twi_at_points, log_ks_at_points = predictors_at(xy)
@@ -308,6 +327,7 @@ def validate_one_date(tdr_path: Path, predictors_at, twi_mean: float, log_ks_mea
     observed = observed[valid]
     twi_at_points = twi_at_points[valid]
     log_ks_at_points = log_ks_at_points[valid]
+    xy = xy[valid]
 
     theta_coarse = float(observed.mean())
     predicted = redistribute(
@@ -317,6 +337,28 @@ def validate_one_date(tdr_path: Path, predictors_at, twi_mean: float, log_ks_mea
         twi_mean=twi_mean,
         log_ks_mean=log_ks_mean,
     )
+
+    if stage2_config is not None:
+        from stage2 import TDR_DATE_WINDOWS, apply_stage2_for_date
+
+        survey_start_date = TDR_DATE_WINDOWS[tdr_path.name][0]
+        day_of_year = survey_start_date.timetuple().tm_yday
+        corrected, ep_mm_day = apply_stage2_for_date(
+            theta_star=predicted,
+            theta_ws=theta_coarse,
+            points_xy=xy,
+            tdr_filename=tdr_path.name,
+            day_of_year=day_of_year,
+            config=stage2_config,
+        )
+        if corrected is None:
+            print(
+                f"  NOTE: {tdr_path.name}: no usable meteorological data for "
+                f"Stage 2 (Ep) -- falling back to Stage 1 only for this date.",
+                file=sys.stderr,
+            )
+        else:
+            predicted = corrected
 
     baseline_rmse = float(np.sqrt(np.mean((observed - theta_coarse) ** 2)))
     model_rmse = float(np.sqrt(np.mean((observed - predicted) ** 2)))
@@ -334,15 +376,43 @@ def main():
     parser.add_argument(
         "--with-flux-correction",
         action="store_true",
-        help="Apply Eq. 2/7 (physics/relaxation.py) on top of Eq. 1, per the "
-        "paper's full two-stage pipeline (see module docstring for why this "
-        "might be what the published 0.0321 target actually represents). "
-        "NOT YET IMPLEMENTED -- requires Tarrawarra daily meteorological "
-        "data (for Ep), vegetation greenness fraction, and soil-texture- "
-        "derived theta_wilt/theta_ref/theta_s (via a pedotransfer function "
-        "the paper doesn't specify for this site), none of which are wired "
-        "up yet. Passing this flag currently exits with an explanatory error "
-        "rather than silently falling back to Eq. 1 only.",
+        help="Apply Eq. 2/7 (physics/relaxation.py, wired via stage2.py) on "
+        "top of Eq. 1, per the paper's full two-stage pipeline. Session 7: "
+        "implemented for real -- Ep from FAO-56 daily Penman-Monteith "
+        "(data/daily.met), theta_wilt/theta_ref/theta_s from USDA texture "
+        "classification (data/particle.dat, Noah SOILPARM.TBL), iota from "
+        "the native DEM's slope/aspect. sigma_f is a swept uniform scalar "
+        "(see --sigma-f) since the paper's own Tarrawarra input list "
+        "doesn't include site vegetation data.",
+    )
+    parser.add_argument(
+        "--sigma-f",
+        type=float,
+        default=0.6,
+        help="Vegetation greenness fraction for Stage 2 (Eq. 4/5), treated "
+        "as spatially uniform -- see --with-flux-correction's help and "
+        "stage2.py's module docstring for why. Default 0.6 (a mid-range "
+        "grazed-pasture value); sweep with e.g. 0.4 and 0.8 to check "
+        "sensitivity.",
+    )
+    parser.add_argument(
+        "--active-layer-depth-mm",
+        type=float,
+        default=300.0,
+        help="Depth (mm) used to convert Ep from mm/day to fraction/day "
+        "for Stage 2 -- see physics/relaxation.py's module docstring for "
+        "why this conversion is dimensionally required. Default 300mm "
+        "matches TDR's own 30cm measurement depth; try 150 or 1000 for "
+        "sensitivity.",
+    )
+    parser.add_argument(
+        "--eq5-form",
+        choices=["ek2003", "geowatch"],
+        default="ek2003",
+        help="Which Eq. 5 (direct soil evaporation) form Stage 2 uses -- "
+        "see physics/flux.py's module docstring for the Session 3 finding "
+        "that the paper's own printed form ('geowatch') differs from the "
+        "well-established Ek et al. (2003) form used by default here.",
     )
     parser.add_argument(
         "--twi-engine",
@@ -396,24 +466,33 @@ def main():
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
 
+    check_data_available(data_dir, require_stage2=args.with_flux_correction)
+
+    stage2_config = None
     if args.with_flux_correction:
+        from stage2 import Stage2Config, coarse_averaged_soil_params, load_texture_derived_soil_params
+
+        native_grid = parse_dem(str(data_dir / "tarrawar.dem"))
+        site_soil_params = load_texture_derived_soil_params(data_dir / "particle.dat")
+        coarse_soil_params = coarse_averaged_soil_params(site_soil_params)
+        stage2_config = Stage2Config(
+            met_path=data_dir / "daily.met",
+            native_elevation=native_grid.elevation,
+            native_cellsize=native_grid.cellsize,
+            native_xllcorner=native_grid.xllcorner,
+            native_yllcorner=native_grid.yllcorner,
+            site_soil_params=site_soil_params,
+            coarse_soil_params=coarse_soil_params,
+            sigma_f=args.sigma_f,
+            active_layer_depth_mm=args.active_layer_depth_mm,
+            form=args.eq5_form,
+        )
         print(
-            "--with-flux-correction is not yet implemented. It requires "
-            "additional Tarrawarra inputs not yet integrated into this "
-            "harness:\n"
-            "  - met_flux/daily.met (daily meteorological data, for Ep)\n"
-            "  - sundry/vegetat.dat (vegetation greenness fraction)\n"
-            "  - sundry/layer.dat texture classes -> theta_wilt/theta_ref/"
-            "theta_s via a pedotransfer function (not specified by the "
-            "paper for this site -- a modeling choice a future session "
-            "needs to make deliberately, not guess at here)\n"
-            "See run_validation.py's module docstring and README.md's "
-            "'Session 3 update' section for the full context.",
+            f"Stage 2 (flux correction) ENABLED: sigma_f={args.sigma_f}, "
+            f"active_layer_depth={args.active_layer_depth_mm}mm, "
+            f"Eq.5 form={args.eq5_form}",
             file=sys.stderr,
         )
-        sys.exit(1)
-
-    check_data_available(data_dir)
 
     NATIVE_RESOLUTION_M = 5.0
     factor_float = args.dem_resolution / NATIVE_RESOLUTION_M
@@ -454,7 +533,9 @@ def main():
     print(f"{'Date':<20} {'n':>5} {'baseline RMSE':>15} {'Eq.1 RMSE':>12} {'improved?':>10}")
     for filename in TDR_FILENAMES:
         tdr_path = data_dir / "tdr" / filename
-        baseline_rmse, model_rmse, n = validate_one_date(tdr_path, predictors_at, twi_mean, log_ks_mean)
+        baseline_rmse, model_rmse, n = validate_one_date(
+            tdr_path, predictors_at, twi_mean, log_ks_mean, stage2_config=stage2_config
+        )
         baseline_rmses.append(baseline_rmse)
         model_rmses.append(model_rmse)
         improved = model_rmse < baseline_rmse
